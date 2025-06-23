@@ -644,8 +644,7 @@ async fn try_execute_payload(
         Err(ChainError::ParentNotFound) => {
             // Start sync
             context.syncer.sync_to_head(
-                block_hash,
-                #[cfg(feature = "l2")]
+                block_hash, // #[cfg(feature = "l2")]
                 0,
             );
             Ok(PayloadStatus::syncing())

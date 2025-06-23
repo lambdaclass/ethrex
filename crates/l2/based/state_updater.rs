@@ -217,16 +217,16 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
                     .sync_to_head(*newest_fcu_head, latest_batch_committed);
                 state.latest_block_fetched = latest_l1_block;
                 *a = false;
-                state.blockchain.set_synced();
+                // state.blockchain.set_synced();
             } else {
-                warn!("No new BatchCommitted logs found, continuing to sync.");
+                // warn!("No new BatchCommitted logs found, continuing to sync.");
             }
         }
         if !state.blockchain.is_synced() {
             let head_number = state.eth_client.get_block_number().await?;
             let latest_block = state.store.get_latest_block_number().await?;
             if head_number == U256::from(latest_block) {
-                state.blockchain.set_synced();
+                // state.blockchain.set_synced();
             }
         }
     }
@@ -290,7 +290,7 @@ fn determine_new_status(
             if is_lead_sequencer && *current_state == SequencerStatus::Syncing {
                 warn!("Node is not up to date but is the lead sequencer, continue syncing.");
             }
-            info!("Node is not up to date, syncing...");
+            // info!("Node is not up to date, syncing...");
             SequencerStatus::Syncing
         }
     }

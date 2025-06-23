@@ -214,6 +214,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         log_peer_debug(&self.node, "Starting RLPx connection");
 
         if let Err(reason) = self.post_handshake_checks(table.clone()).await {
+            dbg!("error AAAAAAAAAAA");
             self.connection_failed(
                 "Post handshake validations failed",
                 RLPxError::DisconnectSent(reason),
@@ -224,6 +225,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
 
         if let Err(e) = self.exchange_hello_messages().await {
+            dbg!("error BBBBBBBBBBBB");
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
         } else {
@@ -245,6 +247,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 );
             }
             if let Err(e) = self.connection_loop(sender, receiver).await {
+                dbg!("error CCCCCCCCCCC");
                 self.connection_failed("Error during RLPx connection", e, table)
                     .await;
             }
@@ -277,6 +280,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 .await;
         }
 
+        dbg!("enter here!!!!! DISCONNECT REASON: {:?}", &error);
         // Discard peer from kademlia table in some cases
         match error {
             // already connected, don't discard it
@@ -418,18 +422,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     match message {
                         Ok(message) => {
                             log_peer_debug(&self.node, &format!("Received message {}", message));
-                            self.handle_message(message, sender.clone()).await?;
+                            // println!("{}",&message);
+                            self.handle_message(message, sender.clone()).await.inspect_err(|e| {println!("message self error {:?}", e);})?;
                         },
                         Err(e) => {
                             log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
+                            dbg!("error 111111111111111111");
                             return Err(e);
                         }
                     }
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
-                    log_peer_debug(&self.node, &format!("Sending message {}", message));
-                    self.send(message).await?;
+                    // dbg!(&self.node, &format!("Sending message {}", message));
+                    self.send(message).await.inspect_err(|e| {dbg!("receiver",e);})?;
                 }
                 // This is not ideal, but using the receiver without
                 // this function call, causes the loop to take ownership
@@ -468,14 +474,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.send_new_pooled_tx_hashes().await?;
             self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
         }
-        if Instant::now() >= self.next_block_broadcast {
-            self.send_new_block().await?;
-            self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
-        }
-        if Instant::now() >= self.next_batch_broadcast {
-            self.send_sealed_batch().await?;
-            self.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
-        }
+        // if Instant::now() >= self.next_block_broadcast {
+        //     self.send_new_block().await?;
+        //     self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
+        // }
+        // if Instant::now() >= self.next_batch_broadcast {
+        //     self.send_sealed_batch().await?;
+        //     self.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
+        // }
         if Instant::now() >= self.next_block_range_update {
             self.next_block_range_update = Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL;
             if self.should_send_block_range_update().await? {
@@ -819,48 +825,74 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::BatchSealed(_req) => {
                 #[cfg(feature = "l2")]
                 {
-                    if self.should_process_batch_sealed(&_req).await? {
-                        self.process_batch_sealed(&_req).await?;
-                        // for now we broadcast valid messages
-                        self.broadcast_message(Message::BatchSealed(_req))?;
+                    if self.blockchain.is_synced() {
+                        // REVIEW why is not synced, temporary solution next if
+                        return Ok(());
                     }
+                    if self.store_rollup.contains_batch(&_req.batch.number).await? {
+                        dbg!("Batch already exists, ignoring");
+                        return Ok(());
+                    }
+                    dbg!("Received BatchSealed message");
+                    dbg!(&sender);
+                    sender
+                        .send(Message::BatchSealed(_req))
+                        .await
+                        .inspect_err(|e| {
+                            dbg!("error in batch sealed", e);
+                        })?;
+                    // if self.should_process_batch_sealed(&_req).await? {
+                    //     self.process_batch_sealed(&_req).await?;
+                    //     // for now we broadcast valid messages
+                    //     self.broadcast_message(Message::BatchSealed(_req))?;
+                    // }
                 }
             }
-            Message::GetBatchSealed(_req) if peer_supports_based => {
+            Message::GetBatchSealed(_req) => {
                 #[cfg(feature = "l2")]
                 {
+                    dbg!(
+                        "Received GetBatchSealed request for batch {}",
+                        _req.batch_number
+                    );
                     let Some(batch) = self.store_rollup.get_batch(_req.batch_number).await? else {
                         return Err(RLPxError::InternalError(
                             "CHANGE ERROR: Batch not found".to_string(),
                         ));
                     };
-                    let Some(signature) = self
-                        .store_rollup
-                        .get_signature_by_batch(_req.batch_number)
-                        .await?
-                    else {
-                        return Err(RLPxError::InternalError(
-                            "CHANGE ERROR: Signature not found".to_string(),
-                        ));
-                    };
-                    let sig: [u8; 64] = signature[..64].try_into().map_err(|_| {
-                        RLPxError::InternalError(
-                            "CHANGE ERROR: Invalid signature length".to_string(),
-                        )
-                    })?;
-                    let recovery_id: [u8; 4] = signature[64..68].try_into().map_err(|_| {
-                        RLPxError::InternalError(
-                            "CHANGE ERROR: Invalid recovery ID length".to_string(),
-                        )
-                    })?;
+                    dbg!(batch.number);
+                    // let Some(signature) = self
+                    //     .store_rollup
+                    //     .get_signature_by_batch(_req.batch_number)
+                    //     .await?
+                    // else {
+                    //     dbg!("0");
+                    //     return Err(RLPxError::InternalError(
+                    //         "CHANGE ERROR: Signature not found".to_string(),
+                    //     ));
+                    // };
+                    // dbg!("a");
+                    // let sig: [u8; 64] = signature[..64].try_into().map_err(|_| {
+                    //     RLPxError::InternalError(
+                    //         "CHANGE ERROR: Invalid signature length".to_string(),
+                    //     )
+                    // })?;
+                    // dbg!("b");
+                    // let recovery_id: [u8; 4] = signature[64..68].try_into().map_err(|_| {
+                    //     RLPxError::InternalError(
+                    //         "CHANGE ERROR: Invalid recovery ID length".to_string(),
+                    //     )
+                    // })?;
+                    // dbg!("c");
                     // Send the batch sealed message
-                    sender
-                        .send(Message::BatchSealed(BatchSealedMessage {
+                    dbg!(
+                        self.send(Message::BatchSealed(BatchSealedMessage {
                             batch,
-                            signature: sig,
-                            recovery_id,
+                            signature: [0u8; 64], // for now skipping signatures
+                            recovery_id: [0u8; 4],
                         }))
-                        .await?;
+                        .await
+                    )?;
                 }
             }
 

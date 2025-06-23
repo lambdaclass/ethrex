@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerStatus;
-use crate::{SequencerConfig, StateUpdater};
+use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use crate::{based::sequencer_state::SequencerState, utils::prover::proving_systems::ProverType};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;

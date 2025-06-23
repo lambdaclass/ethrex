@@ -330,12 +330,16 @@ impl Syncer {
         }
         #[cfg(feature = "l2")]
         {
+            dbg!(current_batch_number, new_batch_head);
             for batch_number in current_batch_number..=new_batch_head {
+                println!("REQUESTING BATCH {batch_number}");
                 let Some(batch) = self.peers.request_batch(batch_number).await else {
+                    dbg!("RECEIVED NONE");
                     warn!("Sync failed to find target block header, aborting");
                     return Ok(());
                 };
                 // Store the batch number in the rollup store
+                dbg!("STORING BATCH");
                 rollup_store.seal_batch(batch).await?;
                 info!("Sealed batch number {batch_number}");
             }

@@ -32,7 +32,6 @@ pub struct SyncManager {
     #[cfg(feature = "l2")]
     rollup_store: StoreRollup,
     /// The batch number to be synced to
-    #[cfg(feature = "l2")]
     new_batch_head: Arc<Mutex<u64>>,
     /// The batch number it is currently syncing to
     #[cfg(feature = "l2")]
@@ -63,9 +62,8 @@ impl SyncManager {
             #[cfg(feature = "l2")]
             rollup_store,
             #[cfg(feature = "l2")]
-            last_batch_number: Arc::new(Mutex::new(0)),
-            #[cfg(feature = "l2")]
-            new_batch_head: Arc::new(Mutex::new(0)),
+            last_batch_number: Arc::new(Mutex::new(1)),
+            new_batch_head: Arc::new(Mutex::new(1)),
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -91,14 +89,14 @@ impl SyncManager {
             #[cfg(feature = "l2")]
             rollup_store: StoreRollup::default(),
             #[cfg(feature = "l2")]
-            last_batch_number: Arc::new(Mutex::new(0)),
-            #[cfg(feature = "l2")]
-            new_batch_head: Arc::new(Mutex::new(0)),
+            last_batch_number: Arc::new(Mutex::new(1)),
+            // #[cfg(feature = "l2")]
+            new_batch_head: Arc::new(Mutex::new(1)),
         }
     }
 
     /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
-    pub fn sync_to_head(&self, fcu_head: H256, #[cfg(feature = "l2")] batch_number: u64) {
+    pub fn sync_to_head(&self, fcu_head: H256, batch_number: u64) {
         self.set_head(fcu_head);
         self.set_batch_number(batch_number);
         if !self.is_active() {
@@ -124,7 +122,6 @@ impl SyncManager {
         }
     }
 
-    #[cfg(feature = "l2")]
     /// Updates the last batch number. This may be used on the next sync cycle if needed
     fn set_batch_number(&self, batch_number: u64) {
         if let Ok(mut new_batch_head) = self.new_batch_head.try_lock() {
@@ -178,6 +175,7 @@ impl SyncManager {
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
+                #[cfg(feature = "l2")]
                 let last_batch_number_value = {
                     let Ok(last_batch_number) = last_batch_number.try_lock() else {
                         error!("Failed to read latest batch number, unable to sync");
@@ -185,6 +183,7 @@ impl SyncManager {
                     };
                     *last_batch_number
                 };
+                #[cfg(feature = "l2")]
                 let new_batch_head = {
                     let Ok(new_batch_head) = new_batch_head.try_lock() else {
                         error!("Failed to read new batch head, unable to sync");
@@ -206,11 +205,12 @@ impl SyncManager {
                         new_batch_head,
                     )
                     .await;
+                #[cfg(feature = "l2")]
                 {
                     last_batch_number
                         .try_lock()
                         .map(|mut last_batch_number| {
-                            *last_batch_number = new_batch_head;
+                            *last_batch_number = new_batch_head + 1;
                         })
                         .unwrap_or_else(|_| {
                             error!("Failed to update last batch number after sync");
