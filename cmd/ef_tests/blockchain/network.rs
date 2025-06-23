@@ -55,27 +55,36 @@ lazy_static! {
     };
 }
 
-// NOTE: We implement some dummy forks which won't be implemented, just so we can parse the tests
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Network {
-    London = 0, // Dummy fork
-    Berlin = 1, // Dummy fork
+    Frontier = 0,          // For parsing tests
+    Homestead = 1,         // For parsing tests
+    ConstantinopleFix = 2, // For parsing tests
+    Istanbul = 3,          // For parsing tests
+    Byzantium = 4,         // For parsing tests
+    London = 5,            // For parsing tests
+    Berlin = 6,            // For parsing tests
     #[serde(alias = "Paris")]
-    Merge = 2,
+    Merge = 7,
     #[serde(alias = "ParisToShanghaiAtTime15k")]
-    MergeToShanghaiAtTime15k = 3,
-    Shanghai = 4,
-    ShanghaiToCancunAtTime15k = 5,
-    Cancun = 6,
-    CancunToPragueAtTime15k = 7,
-    Prague = 8,
+    MergeToShanghaiAtTime15k = 8,
+    Shanghai = 9,
+    ShanghaiToCancunAtTime15k = 10,
+    Cancun = 11,
+    CancunToPragueAtTime15k = 12,
+    Prague = 13,
 }
 
 impl Network {
     pub fn chain_config(&self) -> &ChainConfig {
         match self {
-            Network::London => &MERGE_CONFIG, // Dummy fork
-            Network::Berlin => &MERGE_CONFIG, // Dummy fork
+            Network::Frontier => panic!("Ethrex doesn't support pre-Merge forks"),
+            Network::Homestead => panic!("Ethrex doesn't support pre-Merge forks"),
+            Network::ConstantinopleFix => panic!("Ethrex doesn't support pre-Merge forks"),
+            Network::Istanbul => panic!("Ethrex doesn't support pre-Merge forks"),
+            Network::Byzantium => panic!("Ethrex doesn't support pre-Merge forks"),
+            Network::London => panic!("Ethrex doesn't support pre-Merge forks"),
+            Network::Berlin => panic!("Ethrex doesn't support pre-Merge forks"),
             Network::Merge => &MERGE_CONFIG,
             Network::MergeToShanghaiAtTime15k => &MERGE_TO_SHANGHAI_AT_15K_CONFIG,
             Network::Shanghai => &SHANGHAI_CONFIG,
