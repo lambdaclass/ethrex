@@ -8,14 +8,15 @@ This section explains step by step how native ETH withdrawals work.
 
 On L2:
 
-1. The user sends a transaction calling `withdraw(address _receiverOnL1)` on the `CommonBridgeL2` contract.
-2. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
+1. The user sends a transaction calling `withdraw(address _receiverOnL1)` on the `CommonBridgeL2` contract, along with the amount of ETH to be withdrawn.
+2. The bridge sends the withdrawn amount to the burn address.
+3. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
 
     ```solidity
     bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
     ```
 
-3. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
+4. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
 
 On L1:
 
@@ -44,6 +45,7 @@ sequenceDiagram
     end
 
     L2Alice->>CommonBridgeL2: withdraws 42 ETH
+    CommonBridgeL2->>CommonBridgeL2: burns 42 ETH
     CommonBridgeL2->>L1Messenger: calls sendMessageToL1
     L1Messenger->>L1Messenger: emits L1Message event
 
@@ -63,16 +65,18 @@ This section explains step by step how native ERC20 withdrawals work.
 
 On L2:
 
-1. The user sends a transaction calling `withdrawERC20(address _token, address _receiverOnL1, uint256 _value)` on the `CommonBridgeL2` contract.
-2. The bridge fetches the address of the L1 token by calling `l1Address()` on the L2 token contract.
-3. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
+1. The user calls `approve` on the L2 tokens to allow the bridge to transfer the asset.
+2. The user sends a transaction calling `withdrawERC20(address _token, address _receiverOnL1, uint256 _value)` on the `CommonBridgeL2` contract.
+3. The bridge calls `burn` on the L2 token, burning the amount to be withdrawn by the user.
+4. The bridge fetches the address of the L1 token by calling `l1Address()` on the L2 token contract.
+5. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
 
     ```solidity
     // ETH_ADDRESS is an arbitrary and unreachable address
     bytes32 data = keccak256(abi.encodePacked(l1Token, _token, _receiverOnL1, _value))
     ```
 
-4. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
+6. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
 
 On L1:
 
@@ -104,8 +108,7 @@ sequenceDiagram
 
     L2Alice->>L2Token: approves token transfer
     L2Alice->>CommonBridgeL2: withdraws 42 of L2Token
-    CommonBridgeL2->>L2Token: transfers tokens to self
-    L2Token-->>CommonBridgeL2: sends 42 tokens
+    CommonBridgeL2->>L2Token: burns the 42 tokens
     CommonBridgeL2->>L1Messenger: calls sendMessageToL1
     L1Messenger->>L1Messenger: emits L1Message event
 
