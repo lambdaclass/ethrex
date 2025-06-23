@@ -83,6 +83,11 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                         "This case should not happen".to_owned(),
                     )));
                 }
+                Err(EFTestRunnerError::TestsFailed) => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
+                }
             }
         }
         ef_test_report.register_fork_result(*fork, ef_test_report_fork);
@@ -328,7 +333,7 @@ pub async fn ensure_post_state(
     fork: &Fork,
     db: &mut GeneralizedDatabase,
 ) -> Result<(), EFTestRunnerError> {
-    let cache = db.cache.clone();
+    let cache = db.current_accounts_state.clone();
     match levm_execution_result {
         Ok(execution_report) => {
             match test.post.vector_post_value(vector, *fork).expect_exception {

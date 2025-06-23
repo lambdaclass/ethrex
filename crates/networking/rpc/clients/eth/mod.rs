@@ -9,10 +9,9 @@ use crate::{
 };
 use bytes::Bytes;
 use errors::{
-    EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
-    GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
-    GetMaxPriorityFeeError, GetNonceError, GetTransactionByHashError, GetTransactionReceiptError,
-    SendRawTransactionError,
+    EstimateGasError, EthClientError, GetBalanceError, GetBlockByHashError, GetBlockByNumberError,
+    GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError, GetMaxPriorityFeeError,
+    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -226,7 +225,9 @@ impl EthClient {
         tx: &EIP1559Transaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(private_key);
+        let signed_tx = tx
+            .sign(private_key)
+            .map_err(|error| EthClientError::FailedToSignPayload(error.to_string()))?;
 
         let mut encoded_tx = signed_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP1559.into());
@@ -240,7 +241,10 @@ impl EthClient {
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
         let mut wrapped_tx = wrapped_tx.clone();
-        wrapped_tx.tx.sign_inplace(private_key);
+        wrapped_tx
+            .tx
+            .sign_inplace(private_key)
+            .map_err(|error| EthClientError::FailedToSignPayload(error.to_string()))?;
 
         let mut encoded_tx = wrapped_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP4844.into());
@@ -443,13 +447,13 @@ impl EthClient {
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => {
                 let res = serde_json::from_value::<String>(result.result)
-                    .map_err(EstimateGasPriceError::SerdeJSONError)?;
-                let res = res.get(2..).ok_or(EstimateGasPriceError::Custom(
+                    .map_err(EstimateGasError::SerdeJSONError)?;
+                let res = res.get(2..).ok_or(EstimateGasError::Custom(
                     "Failed to slice index response in estimate_gas".to_owned(),
                 ))?;
                 u64::from_str_radix(res, 16)
             }
-            .map_err(EstimateGasPriceError::ParseIntError)
+            .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 let error_data = if let Some(error_data) = error_response.error.data {
@@ -498,7 +502,7 @@ impl EthClient {
                 } else {
                     "unknown error".to_owned()
                 };
-                Err(EstimateGasPriceError::RPCError(format!(
+                Err(EstimateGasError::RPCError(format!(
                     "{}: {}",
                     error_response.error.message, error_data
                 ))

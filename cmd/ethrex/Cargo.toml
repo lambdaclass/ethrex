@@ -17,6 +17,7 @@ ethrex-rlp.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
+ethrex-sdk = { workspace = true, optional = true }
 
 bytes.workspace = true
 hex.workspace = true
@@ -71,6 +72,7 @@ blst = ["ethrex-vm/blst"]
 l2 = [
   "dep:ethrex-l2",
   "dep:ethrex-l2-common",
+  "dep:ethrex-sdk",
   "ethrex-vm/l2",
   "ethrex-blockchain/l2",
   "ethrex-rpc/l2",
@@ -80,12 +82,22 @@ rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 sync-test = []
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.5.1", features = ["html_reports", "async_futures", "async_tokio"] }
+ethrex-sdk.workspace = true
+secp256k1.workspace = true
+k256.workspace = true
+tempdir = { version = "0.3.7" }
 
 [[bench]]
 path = "./bench/import_blocks_benchmark.rs"
 name = "import_blocks_benchmark"
 harness = false
 
+[[bench]]
+path = "./bench/build_block_benchmark.rs"
+name = "build_block_benchmark"
+harness = false
+
 [build-dependencies]
 vergen = { version = "9.0.0", features = ["rustc"] }
+
