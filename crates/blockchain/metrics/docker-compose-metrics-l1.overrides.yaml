@@ -31,3 +31,23 @@ services:
       - ./provisioning/grafana_provisioning/dashboards:/etc/grafana/provisioning/dashboards
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+
+  loki:
+    image: grafana/loki:2.9.2
+    ports:
+      - "3100:3100"
+    command:
+      - -config.file=/etc/loki/config.yaml
+    volumes:
+      - ./provisioning/loki/config.yaml:/etc/loki/config.yaml
+    depends_on:
+      - prometheus
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ../../../tooling/sync/logs:/var/log/ethrex:ro
+      - ./provisioning/promtail/config.yaml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
