@@ -1272,6 +1272,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "secp256k1",
  "sha3",
  "thiserror",
  "tokio",
