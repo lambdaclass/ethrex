@@ -193,6 +193,10 @@ impl Store {
         self.engine.get_block_body(block_number).await
     }
 
+    pub async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        self.engine.remove_block(block_number).await
+    }
+
     pub async fn get_block_bodies(
         &self,
         from: BlockNumber,

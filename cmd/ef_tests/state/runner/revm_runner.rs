@@ -113,6 +113,11 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::Internal(reason) => {
                     return Err(EFTestRunnerError::Internal(reason.to_owned()));
                 }
+                EFTestRunnerError::TestsFailed => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
+                }
             }
         }
     }
@@ -371,7 +376,7 @@ pub async fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let mut db = load_initial_state_levm(test).await;
-            db.cache = levm_cache;
+            db.current_accounts_state = levm_cache;
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
                 .map_err(|_| {
                     InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
@@ -499,6 +504,11 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
                         "This case should not happen".to_owned(),
                     )));
+                }
+                Err(EFTestRunnerError::TestsFailed) => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
                 }
             }
         }
