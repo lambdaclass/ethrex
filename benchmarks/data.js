@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750717778573,
+  "lastUpdate": 1750720639951,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -719,6 +719,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 222922089882,
             "range": "± 1209322975",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d89fc93fad30c2a58176a1db8375adbc9f731a1e",
+          "message": "feat(l2): implement calldata decode (#3204)\n\n**Motivation**\n\nWe want to be able to decode ABI-packed data.\n\n**Description**\n\nThis PR copies the implementation [made for\nrex](https://github.com/lambdaclass/rex/pull/134), with two slicing\noperations fixed to avoid panicking.\n\n---------\n\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-06-23T22:17:37Z",
+          "tree_id": "030b7e3a717064fcc1c308ba72eb76f34a5b1918",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d89fc93fad30c2a58176a1db8375adbc9f731a1e"
+        },
+        "date": 1750720632289,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 218503452289,
+            "range": "± 482804344",
             "unit": "ns/iter"
           }
         ]
