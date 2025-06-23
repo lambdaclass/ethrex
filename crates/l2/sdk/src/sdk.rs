@@ -238,6 +238,100 @@ pub async fn claim_withdraw(
         .await
 }
 
+pub async fn claim_erc20withdraw(
+    token_l1: Address,
+    token_l2: Address,
+    amount: U256,
+    l2_withdrawal_tx_hash: H256,
+    from_pk: SecretKey,
+    eth_client: &EthClient,
+    message_proof: &L1MessageProof,
+) -> Result<H256, EthClientError> {
+    let from = get_address_from_secret_key(&from_pk)?;
+    const CLAIM_WITHDRAWAL_ERC20_SIGNATURE: &str =
+        "claimWithdrawalERC20(bytes32,address,address,uint256,uint256,uint256,bytes32[])";
+
+    let calldata_values = vec![
+        Value::Uint(U256::from_big_endian(
+            l2_withdrawal_tx_hash.as_fixed_bytes(),
+        )),
+        Value::Address(token_l1),
+        Value::Address(token_l2),
+        Value::Uint(amount),
+        Value::Uint(U256::from(message_proof.batch_number)),
+        Value::Uint(U256::from(message_proof.index)),
+        Value::Array(
+            message_proof
+                .merkle_proof
+                .iter()
+                .map(|v| Value::Uint(U256::from_big_endian(v.as_bytes())))
+                .collect(),
+        ),
+    ];
+
+    let claim_withdrawal_data =
+        encode_calldata(CLAIM_WITHDRAWAL_ERC20_SIGNATURE, &calldata_values)?;
+
+    println!(
+        "Claiming withdrawal with calldata: {}",
+        hex::encode(&claim_withdrawal_data)
+    );
+
+    let claim_tx = eth_client
+        .build_eip1559_transaction(
+            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+            from,
+            claim_withdrawal_data.into(),
+            Overrides {
+                from: Some(from),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    eth_client
+        .send_eip1559_transaction(&claim_tx, &from_pk)
+        .await
+}
+
+pub async fn deposit_erc20(
+    token_l1: Address,
+    token_l2: Address,
+    amount: U256,
+    from: Address,
+    from_pk: SecretKey,
+    eth_client: &EthClient,
+) -> Result<H256, EthClientError> {
+    println!("Claiming {amount} from bridge to {from:#x}");
+
+    const DEPOSIT_ERC20_SIGNATURE: &str = "depositERC20(address,address,address,uint256)";
+
+    let calldata_values = vec![
+        Value::Address(token_l1),
+        Value::Address(token_l2),
+        Value::Address(from),
+        Value::Uint(amount),
+    ];
+
+    let deposit_data = encode_calldata(DEPOSIT_ERC20_SIGNATURE, &calldata_values)?;
+
+    let deposit_tx = eth_client
+        .build_eip1559_transaction(
+            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+            from,
+            deposit_data.into(),
+            Overrides {
+                from: Some(from),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    eth_client
+        .send_eip1559_transaction(&deposit_tx, &from_pk)
+        .await
+}
+
 pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
 where
     D: Deserializer<'de>,
