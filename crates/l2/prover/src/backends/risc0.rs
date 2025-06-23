@@ -1,9 +1,9 @@
-use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType, BatchProof};
+use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
+    ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
-    default_executor, default_prover, ExecutorEnv, InnerReceipt, ProverOpts, Receipt
 };
 use tracing::info;
 use zkvm_interface::{
@@ -20,7 +20,7 @@ pub enum Error {
     #[error("decode failed: {0}")]
     Risc0SerdeError(#[from] Risc0SerdeError),
     #[error("zkvm dynamic error: {0}")]
-    ZkvmDyn(#[from] anyhow::Error)
+    ZkvmDyn(#[from] anyhow::Error),
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Error> {
@@ -34,10 +34,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn prove(
-    input: ProgramInput,
-    _aligned_mode: bool,
-) -> Result<Receipt, Error> {
+pub fn prove(input: ProgramInput, _aligned_mode: bool) -> Result<Receipt, Error> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -59,10 +56,7 @@ pub fn verify(receipt: &Receipt) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn to_batch_proof(
-    proof: Receipt,
-    _aligned_mode: bool,
-) -> Result<BatchProof, Error> {
+pub fn to_batch_proof(proof: Receipt, _aligned_mode: bool) -> Result<BatchProof, Error> {
     to_calldata(proof).map(BatchProof::ProofCalldata)
 }
 
