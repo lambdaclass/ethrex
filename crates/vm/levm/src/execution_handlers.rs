@@ -75,8 +75,10 @@ impl<'a> VM<'a> {
             Opcode::BLOBHASH => self.op_blobhash(),
             Opcode::BLOBBASEFEE => self.op_blobbasefee(),
             Opcode::PUSH0 => self.op_push0(),
+            Opcode::PUSH1 => self.op_push1(),
+            Opcode::PUSH2 => self.op_push2(),
             // PUSHn
-            op if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op) => {
+            op if (Opcode::PUSH3..=Opcode::PUSH32).contains(&op) => {
                 let n_bytes = get_n_value(op, Opcode::PUSH1)?;
                 self.op_push(n_bytes)
             }

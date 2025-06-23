@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-23
+
+- Use specialized PUSH1 and PUSH2 implementations [#3262](https://github.com/lambdaclass/ethrex/pull/3262)
+
 ### 2025-05-27
 
 - Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
