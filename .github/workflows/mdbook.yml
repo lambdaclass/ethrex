@@ -30,7 +30,8 @@ jobs:
       - name: Install mdbook dependencies
         run: make docs-deps
 
-      - run: mdbook build
+      - name: Build documentation
+        run: make docs
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
