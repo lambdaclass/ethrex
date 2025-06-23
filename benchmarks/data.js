@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750717088521,
+  "lastUpdate": 1750717778573,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -689,6 +689,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221460825038,
             "range": "± 664909599",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f3698b684da6bdadadda2e66a819486895dbdc31",
+          "message": "ci(core): install `mdbook-mermaid` preprocessor (#3281)\n\n**Description**\n\nThis PR changes the mdbook build action to use the `docs-deps` and\n`docs` targets from the makefile to install dependencies and build\ndocumentation, instead of manually doing so like until now.",
+          "timestamp": "2025-06-23T21:29:04Z",
+          "tree_id": "e94f7d01142df84f63689b78c6c48cdb4a999678",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f3698b684da6bdadadda2e66a819486895dbdc31"
+        },
+        "date": 1750717770487,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222922089882,
+            "range": "± 1209322975",
             "unit": "ns/iter"
           }
         ]
