@@ -1,7 +1,0 @@
-# Always optimize; building and running the guest takes much longer without optimization.
-[profile.dev.package.zkvm_interface]
-opt-level = 3
-
-[profile.release.package.zkvm_interface]
-debug = 1
-lto = true
