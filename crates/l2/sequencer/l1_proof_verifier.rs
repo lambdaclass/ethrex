@@ -259,7 +259,7 @@ impl L1ProofVerifier {
         for rpc_url in &self.eth_client.urls {
             for beacon_url in &self.beacon_urls {
                 match aligned_check_proof_verification(
-                    &verification_data,
+                    verification_data,
                     self.network.clone(),
                     rpc_url.as_str().into(),
                     beacon_url.clone(),
