@@ -9,45 +9,118 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
 pub struct Stack {
-    pub stack: Vec<U256>,
+    pub values: Box<[U256; STACK_LIMIT]>,
+    pub offset: usize,
 }
 
 impl Stack {
-    pub fn pop(&mut self) -> Result<U256, ExceptionalHalt> {
-        self.stack.pop().ok_or(ExceptionalHalt::StackUnderflow)
+    pub fn pop<const N: usize>(&mut self) -> Result<&[U256; N], ExceptionalHalt> {
+        // Compile-time check for stack underflow.
+        if N > STACK_LIMIT {
+            return Err(ExceptionalHalt::StackUnderflow);
+        }
+
+        // The following operation can never overflow as both `self.offset` and N are within
+        // STACK_LIMIT (1024).
+        #[allow(clippy::arithmetic_side_effects)]
+        let next_offset = self.offset + N;
+
+        // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
+        // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
+        // check it again.
+        #[allow(clippy::indexing_slicing)]
+        let values = self.values[self.offset..]
+            .first_chunk::<N>()
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        self.offset = next_offset;
+
+        Ok(values)
     }
 
-    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
-        if self.stack.len() >= STACK_LIMIT {
-            return Err(ExceptionalHalt::StackOverflow);
-        }
-        self.stack.push(value);
+    pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
+        // Since the stack grows downwards, when an offset underflow is detected the stack is
+        // overflowing.
+        let next_offset = self
+            .offset
+            .checked_sub(N)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // The following index cannot fail because `next_offset` has already been checked and
+        // `self.offset` is known to be within `STACK_LIMIT`.
+        #[allow(clippy::indexing_slicing)]
+        self.values[next_offset..self.offset].copy_from_slice(values);
+        self.offset = next_offset;
+
         Ok(())
     }
 
     pub fn len(&self) -> usize {
-        self.stack.len()
+        // The following operation cannot underflow because `self.offset` is known to be less than
+        // or equal to `self.values.len()` (aka. `STACK_LIMIT`).
+        #[allow(clippy::arithmetic_side_effects)]
+        {
+            self.values.len() - self.offset
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.stack.is_empty()
+        self.offset == self.values.len()
     }
 
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
-        self.stack.get(index).ok_or(ExceptionalHalt::StackUnderflow)
+        // The following index cannot fail because `self.offset` is known to be within
+        // `STACK_LIMIT`.
+        #[allow(clippy::indexing_slicing)]
+        self.values[self.offset..]
+            .get(index)
+            .ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), ExceptionalHalt> {
-        if a >= self.stack.len() || b >= self.stack.len() {
+    pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
+        let index = self
+            .offset
+            .checked_add(index)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
-        self.stack.swap(a, b);
+
+        self.values.swap(self.offset, index);
         Ok(())
+    }
+}
+
+impl Default for Stack {
+    fn default() -> Self {
+        Self {
+            values: Box::new([U256::zero(); 1024]),
+            offset: 1024,
+        }
+    }
+}
+
+impl fmt::Debug for Stack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct StackValues<'a>(&'a [U256]);
+
+        impl fmt::Debug for StackValues<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list().entries(self.0.iter().rev()).finish()
+            }
+        }
+
+        #[allow(clippy::indexing_slicing)]
+        f.debug_tuple("Stack")
+            .field(&StackValues(&self.values[self.offset..]))
+            .finish()
     }
 }
 

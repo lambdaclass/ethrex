@@ -211,26 +211,6 @@ pub fn get_blob_gas_price(
     Ok(blob_fee)
 }
 
-// =================== Opcode related functions ======================
-
-pub fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
-    let offset = (usize::from(op))
-        .checked_sub(usize::from(base_opcode))
-        .ok_or(ExceptionalHalt::InvalidOpcode)?
-        .checked_add(1)
-        .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-    Ok(offset)
-}
-
-pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
-    let number_of_topics = (u8::from(op))
-        .checked_sub(u8::from(Opcode::LOG0))
-        .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-    Ok(number_of_topics)
-}
-
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
