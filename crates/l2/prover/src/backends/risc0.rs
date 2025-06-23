@@ -2,7 +2,7 @@ use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, Prove
 use ethrex_l2_sdk::calldata::Value;
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
-    ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
+    Digest, ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
 use tracing::info;
@@ -62,16 +62,11 @@ pub fn to_batch_proof(proof: Receipt, _aligned_mode: bool) -> Result<BatchProof,
 
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
     let seal = encode_seal(&receipt)?;
-    let image_id = ZKVM_RISC0_PROGRAM_ID;
     let journal = receipt.journal.bytes;
-
-    // convert image_id into bytes
     let image_id = {
-        let mut res = [0; 32];
-        for i in 0..8 {
-            res[4 * i..][..4].copy_from_slice(&image_id[i].to_be_bytes());
-        }
-        res.to_vec()
+        let digest: Digest = ZKVM_RISC0_PROGRAM_ID.into();
+        let bytes: [u8; 32] = digest.into();
+        bytes.to_vec()
     };
 
     // bytes calldata seal,
