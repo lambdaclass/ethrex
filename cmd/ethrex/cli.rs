@@ -1,6 +1,7 @@
 use std::{
     fs::{File, metadata, read_dir},
     io::{self, Write},
+    num::NonZero,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -241,6 +242,8 @@ pub enum Subcommand {
         path: String,
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
+        #[arg(long = "num-blocks")]
+        num_blocks: Option<NonZero<usize>>,
     },
     #[command(
         name = "export",
@@ -290,7 +293,11 @@ impl Subcommand {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
-            Subcommand::Import { path, removedb } => {
+            Subcommand::Import {
+                path,
+                removedb,
+                num_blocks,
+            } => {
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
@@ -305,7 +312,7 @@ impl Subcommand {
 
                 let network = &opts.network;
                 let genesis = network.get_genesis()?;
-                import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
+                import_blocks(&path, &opts.datadir, genesis, opts.evm, num_blocks).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -354,12 +361,13 @@ pub async fn import_blocks(
     data_dir: &str,
     genesis: Genesis,
     evm: EvmEngine,
+    num_blocks: Option<NonZero<usize>>,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
-    let blocks = if path_metadata.is_dir() {
+    let mut blocks = if path_metadata.is_dir() {
         let mut blocks = vec![];
         let dir_reader = read_dir(path).expect("Failed to read blocks directory");
         for file_res in dir_reader {
@@ -375,6 +383,9 @@ pub async fn import_blocks(
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
+    if let Some(num_blocks) = num_blocks {
+        blocks.truncate(num_blocks.get());
+    }
     let size = blocks.len();
     for block in &blocks {
         let hash = block.hash();
