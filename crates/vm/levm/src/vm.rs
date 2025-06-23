@@ -47,7 +47,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
-    pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    pub storage_original_values: HashMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
