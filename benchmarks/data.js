@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750689482317,
+  "lastUpdate": 1750693604478,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -539,6 +539,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 223704530468,
             "range": "± 513180546",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6f1bb69882588a4b55ed0e7aa4c20b5c5268f6fd",
+          "message": "perf(core): use a lookup table for opcode parsing (#3253)\n\n**Motivation**\n\nOn x86_64, rust has a harder time when the match is used, 2 things\nhappen:\n\nWith match;\n- Apparently it also uses a lookup table internally but it doesn't have\nas much \"info\" about what we doing than when doing it manually, for\nexample the function has an extra xor instruction, it also looks like it\nhas more trouble inlining the From\n\nWithout match:\n- No unneeded xor instruction\n- Easier to inline for the compiler (as seen on the godbolt url), this\navoids a full function call.\n\nGodbolt: https://godbolt.org/z/eG8M1jz3M\n\nCloses https://github.com/lambdaclass/ethrex/issues/2896\n\nShould close https://github.com/lambdaclass/ethrex/issues/2896",
+          "timestamp": "2025-06-23T14:46:05Z",
+          "tree_id": "eb3e02512e563857775cd77cf9f991a3026fdd38",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6f1bb69882588a4b55ed0e7aa4c20b5c5268f6fd"
+        },
+        "date": 1750693596836,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221549469767,
+            "range": "± 375001362",
             "unit": "ns/iter"
           }
         ]
