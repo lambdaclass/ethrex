@@ -30,7 +30,11 @@ impl<'a> VM<'a> {
         })
     }
 
-    // Specialized PUSH1 operation
+    /// Specialized PUSH1 operation
+    ///
+    /// We use specialized push1 and push2 implementations because they are way more frequent than the others,
+    /// so their impact on performance is significant.
+    /// This implementations allow using U256::from, which is considerable more performant than U256::from_big_endian)
     pub fn op_push1(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
