@@ -12,6 +12,9 @@
 10. **INSUFFICIENT_MAX_FEE_PER_BLOB_GAS**: The max fee per blob gas is lower than the base fee per gas.
 11. **TYPE_3_TX_ZERO_BLOBS**: The transaction has zero blobs.
 12. **TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH**: The blob versioned hash is invalid.
-13. **TYPE_3_TX_PRE_FORK**: The transaction is a pre-cancun transaction.
+13. **TYPE_3_TX_PRE_FORK**: Type 3 transaction found before Cancun fork
 14. **TYPE_3_TX_BLOB_COUNT_EXCEEDED**: The blob count is higher than the max allowed.
 15. **TYPE_3_TX_CONTRACT_CREATION**: The type 3 transaction is a contract creation.
+16. **TYPE_4_TX_PRE_FORK**: Type 4 transaction found before Prague fork
+17. **TYPE_4_TX_CONTRACT_CREATION**:  The type 4 transaction is a contract creation.
+18. **TYPE_4_TX_LIST_EMPTY**: Type 4 transaction contains empty authorizations list
