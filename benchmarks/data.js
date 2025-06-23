@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750714723991,
+  "lastUpdate": 1750717088521,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -659,6 +659,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 218602871368,
             "range": "± 342520327",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "18153834+klaus993@users.noreply.github.com",
+            "name": "Klaus @ LambdaClass",
+            "username": "klaus993"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e0bfe4d38c57287710fe6298cd82be9f46ab67d6",
+          "message": "fix(l1,l2): move integration test back to normal GitHub Runners (#3272)\n\n**Motivation**\n\nGo back to the normal GitHub runners, instead of larger runners, because\nthe disk size constraint has been removed from this CI job\n\n**Description**\n\n* Changes `runs-on:` from `integration-test` job in `pr-main_l2.yaml`\nworkflow.\n* Removes actionlint label\n* Removes step and comment related to using the larger runners\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-06-23T21:19:03Z",
+          "tree_id": "363393f5f08d4e226cc9ddb779cb541cc0411147",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e0bfe4d38c57287710fe6298cd82be9f46ab67d6"
+        },
+        "date": 1750717081028,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221460825038,
+            "range": "± 664909599",
             "unit": "ns/iter"
           }
         ]
