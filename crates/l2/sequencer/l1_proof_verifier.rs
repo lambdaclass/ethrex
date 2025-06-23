@@ -103,7 +103,7 @@ impl L1ProofVerifier {
         {
             Some(verify_tx_hash) => {
                 info!(
-                    "Batch {first_batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}"
+                    "Batches verified in OnChainProposer, with transaction hash {verify_tx_hash:#x}"
                 );
             }
             None => {
@@ -123,13 +123,18 @@ impl L1ProofVerifier {
         let proofs = self.get_available_proofs(first_batch_number)?;
         let aggregated_proofs = self.get_aggregated_proofs(proofs).await?;
 
-        match aggregated_proofs.len() {
+        let aggregated_proofs_count = u64::try_from(aggregated_proofs.len())
+            .map_err(|e| ProofVerifierError::InternalError(e.to_string()))?;
+
+        match aggregated_proofs_count {
             0 => return Ok(None),
             1 => info!("Sending verify tx for batch {first_batch_number}"),
-            n => info!(
-                "Sending verify tx for batches {first_batch_number} to {}",
-                first_batch_number + n as u64 - 1
-            ),
+            n => {
+                info!(
+                    "Sending verify tx for batches {first_batch_number} to {}",
+                    first_batch_number + n - 1
+                );
+            }
         };
 
         let mut public_inputs_vec = Vec::new();
