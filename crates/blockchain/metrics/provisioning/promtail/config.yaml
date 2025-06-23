@@ -17,10 +17,10 @@ scrape_configs:
         labels:
           job: ethrex
           __path__: /var/log/ethrex/ethrex-*.log
-  - job_name: consensus
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: consensus
-          __path__: /var/log/consensus/*.log
+  # - job_name: consensus
+  #   static_configs:
+  #     - targets:
+  #         - localhost
+  #       labels:
+  #         job: consensus
+  #         __path__: /var/log/consensus/*.log

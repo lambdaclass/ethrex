@@ -155,7 +155,8 @@ start_ethrex_hoodi: ## Start ethrex for hoodi
     		--datadir "hoodi_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
     		--bootnodes $(HOODI_BOOTNODES) \
-    		--evm $(EVM)
+    		--evm $(EVM) \
+    		--log.file logs/ethrex-sync-hoodi-$(EVM).log
 
 start_ethrex_holesky: ## Start ethrex for holesky
 	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
@@ -170,7 +171,8 @@ start_ethrex_holesky: ## Start ethrex for holesky
     		--datadir "holesky_data/ethrex/$(EVM)" \
     		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
     		--bootnodes $(HOLESKY_BOOTNODES) \
-    		--evm $(EVM)
+    		--evm $(EVM) \
+    		--log.file logs/ethrex-sync-holesky-$(EVM).log
 
 start_hoodi_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for hoodi
 	@echo "Starting L1 docker compose with metrics..."

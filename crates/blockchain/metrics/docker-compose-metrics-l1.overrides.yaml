@@ -46,7 +46,7 @@ services:
   promtail:
     image: grafana/promtail:latest
     volumes:
-      - ../../../tooling/sync/logs:/var/log/ethrex:ro
+      - ../../../logs:/var/log/ethrex:ro
       - ./provisioning/promtail/config.yaml:/etc/promtail/config.yml
     command: -config.file=/etc/promtail/config.yml
     depends_on:
