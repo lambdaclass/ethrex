@@ -63,16 +63,8 @@ contract CommonBridge is
         address onChainProposer
     ) public initializer {
         require(
-            ON_CHAIN_PROPOSER == address(0),
-            "CommonBridge: contract already initialized"
-        );
-        require(
             onChainProposer != address(0),
             "CommonBridge: onChainProposer is the zero address"
-        );
-        require(
-            onChainProposer != address(this),
-            "CommonBridge: onChainProposer is the contract address"
         );
         ON_CHAIN_PROPOSER = onChainProposer;
 
