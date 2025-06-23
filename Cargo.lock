@@ -3613,6 +3613,7 @@ dependencies = [
  "hex-literal",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
+ "kzg-rs",
  "lazy_static",
  "once_cell",
  "rayon",
@@ -3712,7 +3713,6 @@ version = "0.1.0"
 dependencies = [
  "bls12_381 0.8.0",
  "bytes",
- "c-kzg",
  "colored",
  "datatest-stable",
  "derive_more 1.0.0",
@@ -3721,7 +3721,6 @@ dependencies = [
  "hex",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
- "kzg-rs",
  "lambdaworks-math 0.11.0",
  "lazy_static",
  "num-bigint 0.4.6",
@@ -12554,7 +12553,6 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
- "c-kzg",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
@@ -12562,7 +12560,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "kzg-rs",
  "risc0-build",
  "serde",
  "serde_json",

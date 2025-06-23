@@ -16,9 +16,12 @@ use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
-use ethrex_common::types::{
-    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
-    blob_from_bytes, kzg_commitment_to_versioned_hash,
+use ethrex_common::{
+    kzg::KzgError,
+    types::{
+        BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
+        blob_from_bytes, kzg_commitment_to_versioned_hash,
+    },
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
@@ -56,12 +59,9 @@ pub enum StatelessExecutionError {
     #[cfg(feature = "l2")]
     #[error("Blobs bundle error: {0}")]
     BlobsBundleError(#[from] BlobsBundleError),
-    #[cfg(all(feature = "l2", feature = "kzg-rs"))]
+    #[cfg(feature = "l2")]
     #[error("KZG error (proof couldn't be verified): {0}")]
-    KzgRsError(kzg_rs::KzgError),
-    #[cfg(all(feature = "l2", feature = "c-kzg"))]
-    #[error("KZG error (proof couldn't be verified): {0}")]
-    CKzgError(c_kzg::Error),
+    KzgError(#[from] KzgError),
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
@@ -92,20 +92,6 @@ pub enum StatelessExecutionError {
     InvalidDeposit,
     #[error("Internal error: {0}")]
     Internal(String),
-}
-
-#[cfg(all(feature = "l2", feature = "kzg-rs"))]
-impl From<kzg_rs::KzgError> for StatelessExecutionError {
-    fn from(value: kzg_rs::KzgError) -> Self {
-        StatelessExecutionError::KzgRsError(value)
-    }
-}
-
-#[cfg(all(feature = "l2", feature = "c-kzg"))]
-impl From<c_kzg::Error> for StatelessExecutionError {
-    fn from(value: c_kzg::Error) -> Self {
-        StatelessExecutionError::CKzgError(value)
-    }
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -372,35 +358,20 @@ fn compute_withdrawals_and_deposits_digests(
     Ok((withdrawals_merkle_root, deposit_logs_hash))
 }
 
-// TODO: refactor into ethrex-common::blobs_bundle
 #[cfg(feature = "l2")]
 fn verify_blob(
     state_diff: StateDiff,
-    blob_commitment: Commitment,
-    blob_proof: Proof,
+    commitment: Commitment,
+    proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
+    use ethrex_common::kzg::verify_blob_kzg_proof;
+
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
 
-    #[cfg(feature = "kzg-rs")]
-    let is_blob_proof_valid = kzg_rs::KzgProof::verify_blob_kzg_proof(
-        kzg_rs::Blob::from_slice(&blob_data)?,
-        &kzg_rs::Bytes48::from_slice(&blob_commitment)?,
-        &kzg_rs::Bytes48::from_slice(&blob_proof)?,
-        &kzg_rs::get_kzg_settings(),
-    )?;
-
-    #[cfg(feature = "c-kzg")]
-    let is_blob_proof_valid = c_kzg::KzgProof::verify_blob_kzg_proof(
-        &c_kzg::Blob::new(blob_data),
-        &blob_commitment.into(),
-        &blob_proof.into(),
-        &c_kzg::ethereum_kzg_settings(),
-    )?;
-
-    if !is_blob_proof_valid {
+    if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
         return Err(StatelessExecutionError::InvalidBlobProof);
     }
 
-    Ok(kzg_commitment_to_versioned_hash(&blob_commitment))
+    Ok(kzg_commitment_to_versioned_hash(&commitment))
 }

@@ -4,7 +4,9 @@ use bls12_381::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{Address, H160, H256, U256, serde_utils::bool, types::Fork};
+use ethrex_common::{
+    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
+};
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     cyclic_group::IsGroup,
@@ -1056,52 +1058,6 @@ fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
     versioned_hash.into()
 }
 
-/// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
-fn verify_kzg_proof(
-    commitment_bytes: &[u8; 48],
-    z: &[u8; 32],
-    y: &[u8; 32],
-    proof_bytes: &[u8; 48],
-) -> Result<bool, VMError> {
-    #[cfg(feature = "kzg-rs")]
-    {
-        let commitment_bytes = kzg_rs::Bytes48::from_slice(commitment_bytes)
-            .map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
-        let z_bytes =
-            kzg_rs::Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
-        let y_bytes =
-            kzg_rs::Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
-        let proof_bytes = kzg_rs::Bytes48::from_slice(proof_bytes)
-            .map_err(|_| PrecompileError::EvaluationError)?;
-
-        let settings = kzg_rs::KzgSettings::load_trusted_setup_file()
-            .map_err(|_| PrecompileError::EvaluationError)?;
-
-        return kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
-            &commitment_bytes,
-            &z_bytes,
-            &y_bytes,
-            &proof_bytes,
-            &settings,
-        )
-        .map_err(|_| PrecompileError::EvaluationError.into());
-    }
-    #[cfg(feature = "c-kzg")]
-    {
-        return c_kzg::KzgProof::verify_kzg_proof(
-            &c_kzg::Bytes48::new(commitment_bytes.clone()),
-            &c_kzg::Bytes32::new(z.clone()),
-            &c_kzg::Bytes32::new(y.clone()),
-            &c_kzg::Bytes48::new(proof_bytes.clone()),
-            &c_kzg::ethereum_kzg_settings(),
-        )
-        .map_err(|_| PrecompileError::EvaluationError.into());
-    }
-
-    // if no feature is enabled
-    unimplemented!();
-}
-
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
     // Big endian FIELD_ELEMENTS_PER_BLOB bytes
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1164,7 +1120,7 @@ fn point_evaluation(
     }
 
     // This verifies the proof from a point (x, y) and a commitment
-    if !verify_kzg_proof(&commitment, &x, &y, &proof).unwrap_or(false) {
+    if !verify_kzg_proof(commitment, x, y, proof).unwrap_or(false) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 

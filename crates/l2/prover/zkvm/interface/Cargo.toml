@@ -8,8 +8,6 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
 serde_json = "1.0.117"
 thiserror = "2.0.9"
-kzg-rs = { version = "0.2.6", optional = true }
-c-kzg = { version = "1.0.3", optional = true }
 
 ethrex-common = { path = "../../../../common/", default-features = false }
 ethrex-blockchain = { path = "../../../../blockchain/", default-features = false }
@@ -28,12 +26,11 @@ sp1-sdk = { version = "5.0.0", optional = true }
 methods = ["risc0"]
 
 [features]
-default = ["kzg-rs"]
+default = []
 risc0 = ["dep:risc0-build"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
 l2 = ["ethrex-vm/l2"]
-kzg-rs = ["dep:kzg-rs", "ethrex-vm/kzg-rs"]
-c-kzg = ["dep:c-kzg", "ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 
 [lib]
 path = "./src/lib.rs"

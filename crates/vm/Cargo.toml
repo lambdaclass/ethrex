@@ -41,10 +41,9 @@ ethereum-types.workspace = true
 path = "./lib.rs"
 
 [features]
-default = ["kzg-rs"]
+default = []
 l2 = ["ethrex-levm/l2"]
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
-kzg-rs = ["ethrex-levm/kzg-rs"]
 blst = ["revm/blst"]
 debug = ["ethrex-levm/debug"]
 
