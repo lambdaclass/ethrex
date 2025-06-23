@@ -130,7 +130,7 @@ pub fn restore_cache_state(
     callframe_backup: CallFrameBackup,
 ) -> Result<(), VMError> {
     for (address, account) in callframe_backup.original_accounts_info {
-        if let Some(current_account) = db.cache.get_mut(&address) {
+        if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
             current_account.code = account.code;
         }
@@ -141,7 +141,7 @@ pub fn restore_cache_state(
         // that had their storage modified, which means they should be in the cache. That's why
         // we return an internal error in case we haven't found it.
         let account = db
-            .cache
+            .current_accounts_state
             .get_mut(&address)
             .ok_or(InternalError::AccountNotFound)?;
 

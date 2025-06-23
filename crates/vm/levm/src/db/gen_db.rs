@@ -20,17 +20,17 @@ use super::Database;
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
-    pub cache: CacheDB,
-    pub immutable_cache: HashMap<Address, Account>,
+    pub current_accounts_state: HashMap<Address, Account>,
+    pub initial_accounts_state: HashMap<Address, Account>,
     pub tx_backup: Option<CallFrameBackup>,
 }
 
 impl GeneralizedDatabase {
-    pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
+    pub fn new(store: Arc<dyn Database>, current_accounts_state: CacheDB) -> Self {
         Self {
             store,
-            cache: cache.clone(),
-            immutable_cache: cache,
+            current_accounts_state: current_accounts_state.clone(),
+            initial_accounts_state: current_accounts_state,
             tx_backup: None,
         }
     }
@@ -39,14 +39,14 @@ impl GeneralizedDatabase {
     /// Gets account, first checking the cache and then the database
     /// (caching in the second case)
     pub fn get_account(&mut self, address: Address) -> Result<&Account, InternalError> {
-        if !self.cache.contains_key(&address) {
+        if !self.current_accounts_state.contains_key(&address) {
             let account = self.store.get_account(address)?;
-            self.immutable_cache.insert(address, account.clone());
+            self.initial_accounts_state.insert(address, account.clone());
 
-            self.cache.insert(address, account);
+            self.current_accounts_state.insert(address, account);
         }
 
-        self.cache
+        self.current_accounts_state
             .get(&address)
             .ok_or(InternalError::AccountNotFound)
     }
@@ -73,8 +73,8 @@ impl GeneralizedDatabase {
         key: H256,
     ) -> Result<U256, InternalError> {
         let value = self.store.get_storage_value(address, key)?;
-        // Account must already be in immutable_cache
-        match self.immutable_cache.get_mut(&address) {
+        // Account must already be in initial_accounts_state
+        match self.initial_accounts_state.get_mut(&address) {
             Some(account) => {
                 account.storage.insert(key, value);
             }
@@ -127,11 +127,13 @@ impl<'a> VM<'a> {
 
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, InternalError> {
-        let account = match self.db.cache.entry(address) {
+        let account = match self.db.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let account = self.db.store.get_account(address)?;
-                self.db.immutable_cache.insert(address, account.clone());
+                self.db
+                    .initial_accounts_state
+                    .insert(address, account.clone());
 
                 entry.insert(account)
             }
@@ -219,7 +221,7 @@ impl<'a> VM<'a> {
             .call_frame_backup
             .backup_account_info(address, &account)?;
 
-        self.db.cache.insert(address, account);
+        self.db.current_accounts_state.insert(address, account);
         Ok(())
     }
 
@@ -230,19 +232,12 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(value) = self
-            .storage_original_values
-            .get(&address)
-            .and_then(|account_storage| account_storage.get(&key))
-        {
+        if let Some(value) = self.storage_original_values.get(&(address, key)) {
             return Ok(*value);
         }
 
         let value = self.get_storage_value(address, key)?;
-        self.storage_original_values
-            .entry(address)
-            .or_default()
-            .insert(key, value);
+        self.storage_original_values.insert((address, key), value);
         Ok(value)
     }
 
@@ -274,7 +269,7 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(account) = self.db.cache.get(&address) {
+        if let Some(account) = self.db.current_accounts_state.get(&address) {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }
