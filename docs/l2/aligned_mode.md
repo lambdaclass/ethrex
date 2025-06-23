@@ -3,6 +3,7 @@
 This document explains how to run an Ethrex L2 node in **Aligned mode** and highlights the key differences in component behavior compared to the default mode.
 
 ## How to Run
+
 > [!IMPORTANT]  
 > For this guide we assumed that there is an L1 running with all Aligned environment set.
 
@@ -12,24 +13,24 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 
 ```bash
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--genesis-l1-path <GENESIS_L1_PATH> \
-	--genesis-l2-path <GENESIS_L2_PATH> \
-	--contracts-path contracts \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+    --genesis-l1-path <GENESIS_L1_PATH> \
+    --genesis-l2-path <GENESIS_L2_PATH> \
+    --contracts-path contracts \
+    --sp1.verifier-address 0x00000000000000000000000000000000000000aa \
+    --risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+    --tdx.verifier-address 0x00000000000000000000000000000000000000aa \
     --aligned.aggregator-address <ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS> \
     --bridge-owner <ADDRESS> \
-	--on-chain-proposer-owner <ADDRESS> \
-	--private-keys-file-path <PRIVATE_KEYS_FILE_PATH> \
-	--sequencer-registry-owner <ADDRESS>
+    --on-chain-proposer-owner <ADDRESS> \
+    --private-keys-file-path <PRIVATE_KEYS_FILE_PATH> \
+    --sequencer-registry-owner <ADDRESS>
 ```
 
-> [!NOTE]  
+> [!NOTE]
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
-### 2. Deposit funds to the `AlignedBatchePaymentService` contract from the proof sender:
+### 2. Deposit funds to the `AlignedBatchePaymentService` contract from the proof sender
 
 ```bash
 aligned \
@@ -37,8 +38,9 @@ aligned \
 --private_key <PROOF_SENDER_PRIVATE_KEY> \
 --amount <DEPOSIT_AMOUNT>
 ```
-> [!IMPORTANT]  
-> Using the [Aligned cli](https://docs.alignedlayer.com/guides/9_aligned_cli)
+
+> [!IMPORTANT]
+> Using the [Aligned CLI](https://docs.alignedlayer.com/guides/9_aligned_cli)
 
 ### 3. Running a node
 
@@ -46,23 +48,24 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 
 ```bash
 cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2" -- \
-	l2 init \
-	--watcher.block-delay <WATCHER_BLOCK_DELAY> \
-	--network <L2_GENESIS_FILE_PATH> \
-	--http.port <L2_PORT> \
-	--http.addr <L2_RPC_ADDRESS> \
-	--evm levm \
-	--datadir <ethrex_L2_DEV_LIBMDBX> \
-	--bridge-address <BRIDGE_ADDRESS> \
-	--on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-	--proof-coordinator-listen-ip <PROOF_COORDINATOR_ADDRESS> \
-	--aligned \
+    l2 init \
+    --watcher.block-delay <WATCHER_BLOCK_DELAY> \
+    --network <L2_GENESIS_FILE_PATH> \
+    --http.port <L2_PORT> \
+    --http.addr <L2_RPC_ADDRESS> \
+    --evm levm \
+    --datadir <ethrex_L2_DEV_LIBMDBX> \
+    --l1.bridge-address <BRIDGE_ADDRESS> \
+    --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
+    --proof-coordinator.addr <PROOF_COORDINATOR_ADDRESS> \
+    --aligned \
     --aligned-verifier-interval-ms <ETHREX_ALIGNED_VERIFIER_INTERVAL_MS> \
     --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \ 
     --aligned-network <ETHREX_ALIGNED_NETWORK> \
     --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
     --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
 ```
+
 Aligned params explanation:
 
 - `--aligned`: Enables aligned mode, enforcing all required parameters.
@@ -78,7 +81,6 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 ```bash
 SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```
-
 
 ## Behavioral Differences in Aligned Mode
 

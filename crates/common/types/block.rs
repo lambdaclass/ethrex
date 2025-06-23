@@ -4,7 +4,9 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
+    constants::{
+        DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
+    },
     types::{Receipt, Transaction},
 };
 use bytes::Bytes;
@@ -17,7 +19,6 @@ use ethrex_rlp::{
 };
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
@@ -25,14 +26,8 @@ use std::cmp::{Ordering, max};
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
-use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
 
-lazy_static! {
-    pub static ref DEFAULT_OMMERS_HASH: H256 = H256::from_slice(&hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap()); // = Keccak256(RLP([])) as of EIP-3675
-    pub static ref DEFAULT_REQUESTS_HASH: H256 = H256::from_slice(&hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap()); // = Sha256([])) as of EIP-7685
-    pub static ref EMPTY_WITHDRAWALS_HASH: H256 = H256::from_slice(&hex::decode("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()); // = Root of empty Trie as of EIP-4895
-}
 #[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Block {
     pub header: BlockHeader,
@@ -232,13 +227,18 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(&self) -> Vec<(&Transaction, Address)> {
+    pub fn get_transactions_with_sender(
+        &self,
+    ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
-            .par_iter()
-            .map(|tx| (tx, tx.sender()))
-            .collect()
+            .iter()
+            .map(|tx| {
+                let t = (tx, tx.sender()?);
+                Ok(t)
+            })
+            .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
     }
 }
 
@@ -698,7 +698,10 @@ fn validate_excess_blob_gas(
             )
         })
         .unwrap_or_default();
-    if header.excess_blob_gas.unwrap() != expected_excess_blob_gas {
+    if header
+        .excess_blob_gas
+        .is_none_or(|header_excess_blob_gas| header_excess_blob_gas != expected_excess_blob_gas)
+    {
         return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
     }
     Ok(())
@@ -717,7 +720,8 @@ pub fn calc_excess_blob_gas(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::types::{ELASTICITY_MULTIPLIER, EMPTY_KECCACK_HASH};
+    use crate::constants::EMPTY_KECCACK_HASH;
+    use crate::types::ELASTICITY_MULTIPLIER;
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;

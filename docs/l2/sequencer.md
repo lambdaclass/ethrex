@@ -1,15 +1,4 @@
-# ethrex L2 Sequencer
-
-## ToC
-
-- [ethrex L2 Sequencer](#ethrex-l2-sequencer)
-  - [ToC](#toc)
-  - [Components](#components)
-    - [Block Producer](#block-producer)
-    - [L1 Watcher](#l1-watcher)
-    - [L1 Transaction Sender (a.k.a. L1 Committer)](#l1-transaction-sender-aka-l1-committer)
-    - [Proof Coordinator](#proof-coordinator)
-  - [Configuration](#configuration)
+# Ethrex L2 sequencer
 
 ## Components
 
