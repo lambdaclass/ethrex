@@ -4,6 +4,7 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
+    opcodes::Opcode,
     vm::VM,
 };
 use ethrex_common::{H256, U256, types::Fork};
@@ -310,14 +311,6 @@ impl<'a> VM<'a> {
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
     /// function.
-    /// This function returns whether the `jump_address` is a valid JUMPDEST
-    /// for the specified `call_frame` or not.
-    fn is_valid_jump_addr(call_frame: &CallFrame, jump_address: usize) -> bool {
-        call_frame.valid_jump_destinations.contains(&jump_address)
-    }
-
-    /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
-    /// function.
     /// This function will change the PC for the specified call frame
     /// to be equal to the specified address. If the address is not a
     /// valid JUMPDEST, it will return an error
@@ -326,7 +319,25 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        if Self::is_valid_jump_addr(call_frame, jump_address_usize) {
+        // Check if the jump destination is valid by:
+        //   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
+        //   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
+        //     constant associated with a push instruction.
+        #[allow(clippy::as_conversions)]
+        let target_address_is_valid =
+            call_frame
+                .bytecode
+                .get(jump_address_usize)
+                .is_some_and(|&value| {
+                    // It's a constant, therefore the conversion cannot fail.
+                    value == Opcode::JUMPDEST as u8
+                        && call_frame
+                            .invalid_jump_destinations
+                            .binary_search(&jump_address_usize)
+                            .is_err()
+                });
+
+        if target_address_is_valid {
             call_frame.pc = jump_address_usize;
             Ok(())
         } else {
