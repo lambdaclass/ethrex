@@ -59,8 +59,8 @@ contract CommonBridge is
     /// @dev Selector of the mintERC20 function in the CommonBridgeL2 contract
     bytes4 public constant L2_MINTERC20_SELECTOR = 0x79204fe0;
 
-    /// @notice Type of asset being operated.
-    enum AssetType { ETH, ERC20 }
+    /// @notice Token address used to represent ETH
+    address public constant ETH_TOKEN =  0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     modifier onlyOnChainProposer() {
         require(
@@ -107,6 +107,7 @@ contract CommonBridge is
 
     function _deposit(DepositValues memory depositValues) private {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
+        depositsERC20[ETH_TOKEN][ETH_TOKEN] += msg.value;
 
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
@@ -254,22 +255,16 @@ contract CommonBridge is
         uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
-    ) public nonReentrant {
-        bytes32 msgHash = keccak256(abi.encodePacked(AssetType.ETH, msg.sender, claimedAmount));
-        require(
-            _claimWithdrawProof(
-                l2WithdrawalTxHash,
-                msgHash,
-                withdrawalBatchNumber,
-                withdrawalLogIndex,
-                withdrawalProof
-            ),
-            "CommonBridge: invalid withdrawal proof"
+    ) public {
+        claimWithdrawalERC20(
+            l2WithdrawalTxHash,
+            ETH_TOKEN,
+            ETH_TOKEN,
+            claimedAmount,
+            withdrawalBatchNumber,
+            withdrawalLogIndex,
+            withdrawalProof
         );
-
-        (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
-
-        require(success, "CommonBridge: failed to send the claimed amount");
     }
 
     /// @inheritdoc ICommonBridge
@@ -284,7 +279,7 @@ contract CommonBridge is
     ) public nonReentrant {
         require(depositsERC20[tokenL1][tokenL2] >= claimedAmount, "CommonBridge: trying to withdraw more tokens than were deposited");
         depositsERC20[tokenL1][tokenL2] -= claimedAmount;
-        bytes32 msgHash = keccak256(abi.encodePacked(AssetType.ERC20, tokenL1, tokenL2, msg.sender, claimedAmount));
+        bytes32 msgHash = keccak256(abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount));
         require(
             _claimWithdrawProof(
                 l2WithdrawalTxHash,
@@ -295,7 +290,12 @@ contract CommonBridge is
             ),
             "CommonBridge: invalid withdrawal proof"
         );
-        require(IERC20(tokenL1).transfer(msg.sender, claimedAmount), "CommonBridge: transfer failed");
+        if (tokenL1 == ETH_TOKEN) {
+            (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
+            require(success, "CommonBridge: failed to send the claimed amount");
+        } else {
+            require(IERC20(tokenL1).transfer(msg.sender, claimedAmount), "CommonBridge: transfer failed");
+        }
     }
 
     /// @dev msgHash must be derived using msg.sender to prevent malicious claims

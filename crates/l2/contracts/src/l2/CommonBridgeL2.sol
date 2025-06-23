@@ -12,7 +12,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         0x000000000000000000000000000000000000FFFE;
     address public constant BURN_ADDRESS =
         0x0000000000000000000000000000000000000000;
-    enum AssetType { ETH, ERC20 }
+    /// @notice Token address used to represent ETH
+    address public constant ETH_TOKEN =  0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     function withdraw(address _receiverOnL1) external payable {
         require(msg.value > 0, "Withdrawal amount must be positive");
@@ -21,7 +22,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         require(success, "Failed to burn Ether");
 
         IL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
-            AssetType.ETH,
+            ETH_TOKEN,
+            ETH_TOKEN,
             _receiverOnL1,
             msg.value
         )));
@@ -41,7 +43,6 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         require(IERC20(tokenL2).transferFrom(msg.sender, address(this), amount), "CommonBridge: burn failed");
 
         IL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
-            AssetType.ERC20,
             tokenL1,
             tokenL2,
             destination,
