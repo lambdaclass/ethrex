@@ -274,12 +274,9 @@ fn get_account_diffs_in_tx(
             })?;
             // First we add the account info
             for (address, original_account) in transaction_backup.original_accounts_info.iter() {
-                let new_account =
-                    db.cache
-                        .get(address)
-                        .ok_or(BlockProducerError::FailedToGetDataFrom(
-                            "DB Cache".to_owned(),
-                        ))?;
+                let new_account = db.current_accounts_state.get(address).ok_or(
+                    BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
+                )?;
 
                 let nonce_diff: u16 = (new_account.info.nonce - original_account.info.nonce)
                     .try_into()
@@ -312,12 +309,9 @@ fn get_account_diffs_in_tx(
             for (address, original_storage_slots) in
                 transaction_backup.original_account_storage_slots.iter()
             {
-                let account_info =
-                    db.cache
-                        .get(address)
-                        .ok_or(BlockProducerError::FailedToGetDataFrom(
-                            "DB Cache".to_owned(),
-                        ))?;
+                let account_info = db.current_accounts_state.get(address).ok_or(
+                    BlockProducerError::FailedToGetDataFrom("DB Cache".to_owned()),
+                )?;
 
                 let mut added_storage = BTreeMap::new();
                 for key in original_storage_slots.keys() {
