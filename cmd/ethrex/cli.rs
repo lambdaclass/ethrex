@@ -118,6 +118,12 @@ pub struct Options {
         help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
+        long = "log.file",
+        value_name = "LOG_FILE_PATH",
+        help = "File path to write logs to instead of console output",
+        help_heading = "Node options")]
+    pub log_file: Option<PathBuf>,
+    #[arg(
         long = "http.addr",
         default_value = "localhost",
         value_name = "ADDRESS",
@@ -217,6 +223,7 @@ impl Default for Options {
             dev: Default::default(),
             evm: Default::default(),
             force: false,
+            log_file: Default::default(),
         }
     }
 }

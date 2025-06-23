@@ -41,10 +41,43 @@ pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(log_filter)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    if let Some(log_file_path) = &opts.log_file {
+        // Create the directory if it doesn't exist
+        if let Some(parent) = log_file_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("Failed to create log directory: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        // Open file for writing
+        let file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_file_path)
+        {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!("Failed to open log file '{}': {}", log_file_path.display(), e);
+                std::process::exit(1);
+            }
+        };
+
+        let subscriber = FmtSubscriber::builder()
+            .with_env_filter(log_filter)
+            .with_writer(file)
+            .with_ansi(false)
+            .finish();
+        
+        tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    } else {
+        let subscriber = FmtSubscriber::builder()
+            .with_env_filter(log_filter)
+            .finish();
+        
+        tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    }
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
