@@ -7,13 +7,15 @@ use crate::rlp::{
     TriePathsRLP, TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
+use crate::store_db::codec::account_address::AccountAddress;
+use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
+use crate::store_db::codec::block_num_hash::BlockNumHash;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountInfo, AccountState, AccountUpdate, Block, Block, BlockBody, BlockHash, BlockHash,
-        BlockHeader, BlockHeader, BlockNumber, BlockNumber, ChainConfig, ChainConfig, Index, Index,
-        Receipt, Receipt, payload::PayloadBundle, payload::PayloadBundle,
+        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+        BlockNumber, ChainConfig, Index, Receipt, payload::PayloadBundle,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -301,6 +303,32 @@ impl RedBStore {
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn store_account_info_logs(
+        &self,
+        _account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn store_account_storage_logs(
+        &self,
+        _account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        todo!();
+    }
+
     async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
@@ -1342,14 +1370,9 @@ impl StoreEngine for RedBStore {
 
     async fn setup_genesis_flat_account_storage(
         &self,
+        _genesis_block_number: u64,
+        _genesis_block_hash: H256,
         _genesis_accounts: &[(Address, H256, U256)],
-    ) -> Result<(), StoreError> {
-        todo!();
-    }
-
-    async fn update_flat_storage(
-        &self,
-        _updates: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
         todo!();
     }
@@ -1364,14 +1387,9 @@ impl StoreEngine for RedBStore {
 
     async fn setup_genesis_flat_account_info(
         &self,
+        _genesis_block_number: u64,
+        _genesis_block_hash: H256,
         _genesis_accounts: &[(Address, u64, U256, H256, bool)],
-    ) -> Result<(), StoreError> {
-        todo!();
-    }
-
-    async fn update_flat_account_info(
-        &self,
-        _updates: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
         todo!();
     }
