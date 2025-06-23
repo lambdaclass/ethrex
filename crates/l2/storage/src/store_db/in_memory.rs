@@ -206,7 +206,7 @@ impl StoreEngineRollup for Store {
             .batches_by_block
             .retain(|_, batch| *batch <= batch_number);
         store
-            .withdrawal_hashes_by_batch
+            .message_hashes_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
             .block_numbers_by_batch

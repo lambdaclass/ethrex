@@ -308,7 +308,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         let last_kept_block = *kept_blocks.iter().max().unwrap_or(&0);
         let txn = self.db.begin_write().map_err(Box::new)?;
         delete_starting_at(&txn, BATCHES_BY_BLOCK_NUMBER_TABLE, last_kept_block + 1)?;
-        delete_starting_at(&txn, WITHDRAWALS_BY_BATCH, batch_number + 1)?;
+        delete_starting_at(&txn, MESSAGES_BY_BATCH, batch_number + 1)?;
         delete_starting_at(&txn, BLOCK_NUMBERS_BY_BATCH, batch_number + 1)?;
         delete_starting_at(&txn, DEPOSIT_LOGS_HASHES, batch_number + 1)?;
         delete_starting_at(&txn, STATE_ROOTS, batch_number + 1)?;

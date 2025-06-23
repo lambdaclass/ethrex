@@ -282,7 +282,7 @@ impl StoreEngineRollup for Store {
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
         delete_starting_at::<BatchesByBlockNumber>(&txn, last_kept_block + 1)?;
-        delete_starting_at::<WithdrawalHashesByBatch>(&txn, batch_number + 1)?;
+        delete_starting_at::<MessageHashesByBatch>(&txn, batch_number + 1)?;
         delete_starting_at::<BlockNumbersByBatch>(&txn, batch_number + 1)?;
         delete_starting_at::<DepositLogsHash>(&txn, batch_number + 1)?;
         delete_starting_at::<StateRoots>(&txn, batch_number + 1)?;
