@@ -336,8 +336,9 @@ impl StoreEngine for Store {
                     update_batch.account_info_log_updates
                 {
                     let key = addr;
-                    let value = EncodableAccountInfo(new_info);
-                    Self::replace_value_or_delete(&mut cursor, key, Some(value))?;
+                    let value = (new_info != AccountInfo::default())
+                        .then_some(EncodableAccountInfo(new_info));
+                    Self::replace_value_or_delete(&mut cursor, key, value)?;
                 }
                 for (_block_numhash, entry) in update_batch.storage_log_updates {
                     let key = (entry.address.into(), entry.slot.into());
