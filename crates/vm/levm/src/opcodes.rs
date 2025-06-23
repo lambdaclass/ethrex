@@ -173,6 +173,8 @@ pub enum Opcode {
 impl From<u8> for Opcode {
     #[expect(clippy::as_conversions)]
     fn from(byte: u8) -> Self {
+        // We use a manual lookup table instead of a match because it gives improved perfomance
+        // See https://godbolt.org/z/eG8M1jz3M
         const OPCODE_TABLE: [Opcode; 256] = const {
             let mut table = [Opcode::INVALID; 256];
             table[0x00] = Opcode::STOP;
