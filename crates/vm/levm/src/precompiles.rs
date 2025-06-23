@@ -1065,15 +1065,17 @@ fn verify_kzg_proof(
 ) -> Result<bool, VMError> {
     #[cfg(feature = "kzg-rs")]
     {
-        let commitment_bytes =
-            kzg_rs::Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
-        let z_bytes = kzg_rs::Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
-        let y_bytes = kzg_rs::Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
-        let proof_bytes =
-            kzg_rs::Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
+        let commitment_bytes = kzg_rs::Bytes48::from_slice(commitment_bytes)
+            .map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
+        let z_bytes =
+            kzg_rs::Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
+        let y_bytes =
+            kzg_rs::Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
+        let proof_bytes = kzg_rs::Bytes48::from_slice(proof_bytes)
+            .map_err(|_| PrecompileError::EvaluationError)?;
 
-        let settings =
-            kzg_rs::KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::EvaluationError)?;
+        let settings = kzg_rs::KzgSettings::load_trusted_setup_file()
+            .map_err(|_| PrecompileError::EvaluationError)?;
 
         return kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
             &commitment_bytes,
