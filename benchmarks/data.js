@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750682382218,
+  "lastUpdate": 1750689482317,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -509,6 +509,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 225424239608,
             "range": "± 609027739",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bca73af8f97978ae202cc25a2e9f08753b82beb6",
+          "message": "perf(levm): use specialized PUSH1 and PUSH2 implementations (#3262)\n\n**Motivation**\nAccording to stats from @azteca1998 PUSH2 and PUSH1 are widely used:\n\n```\nLoaded 903636264 rows (3447.10MiB)\nStats (of 903636264 records):\n  0xf1: count=   730979  t_min=  2278  t_max=1512728  t_avg=110877.43  t_acc=81049072024  CALL\n  0x61: count=131856777  t_min=   136  t_max= 549032  t_avg=   189.29  t_acc=24959614846  PUSH2\n  0x56: count= 78745029  t_min=   170  t_max=1488792  t_avg=   243.75  t_acc=19194034756  JUMP\n  0x60: count= 86327863  t_min=   136  t_max= 837080  t_avg=   199.78  t_acc=17246262544  PUSH1\n  0x5b: count=107216057  t_min=   102  t_max= 267308  t_avg=   159.43  t_acc=17093508806  JUMPDEST\n  0x50: count= 86546732  t_min=   102  t_max= 353260  t_avg=   174.49  t_acc=15101132640  POP\n  0x57: count= 53096953  t_min=   102  t_max=1382576  t_avg=   233.40  t_acc=12393069292  JUMPI\n  0x81: count= 55585321  t_min=   102  t_max= 267410  t_avg=   192.79  t_acc=10716509980  DUP2\n  0x01: count= 56493418  t_min=   102  t_max=1431060  t_avg=   189.52  t_acc=10706399944  ADD\n  0x91: count= 31380921  t_min=   102  t_max= 146030  t_avg=   205.38  t_acc= 6444862520  SWAP2\n```\n\nFurthermore i keep seeing `U256::from_big_endian` taking quite some time\non samply so I made specialized PUSH1 and PUSH2 implementations that\navoid that, also using fixed size arrays.\n\nBenchmarks:\n\nHoodi 11k:\n\nmain 9m10.471s\npr 8m25.933s\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n# Benchmark Results Comparison\n\n#### Benchmark Results: Factorial\n| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |\n|:---|---:|---:|---:|---:|\n| `levm_Factorial_pr` | 634.2 ± 7.3 | 629.6 | 654.2 | 2.71 ± 0.04 |\n| `levm_Factorial` | 726.1 ± 5.2 | 722.5 | 740.1 | 3.11 ± 0.03 |\n| `levm_FactorialRecursive_pr` | 3.567 ± 0.021 | 3.541 | 3.604 | 2.22 ±\n0.05 |\n| `levm_FactorialRecursive` | 3.828 ± 0.035 | 3.775 | 3.889 | 2.39 ±\n0.03 |\n| `levm_Fibonacci_pr` | 629.2 ± 6.4 | 625.7 | 646.9 | 2.99 ± 0.03 |\n| `levm_Fibonacci` | 727.7 ± 6.5 | 722.3 | 743.9 | 3.47 ± 0.03 |\n| `levm_ManyHashes_pr` | 14.9 ± 0.2 | 14.7 | 15.3 | 1.70 ± 0.03 |\n| `levm_ManyHashes` | 16.3 ± 0.1 | 16.2 | 16.4 | 1.87 ± 0.02 |\n| `levm_BubbleSort_pr` | 5.065 ± 0.023 | 5.034 | 5.107 | 1.58 ± 0.01 |\n| `levm_BubbleSort` | 5.508 ± 0.035 | 5.489 | 5.603 | 1.71 ± 0.02 |\n| `levm_ERC20Transfer_pr` | 461.5 ± 1.3 | 459.7 | 463.4 | 1.87 ± 0.03 |\n| `levm_ERC20Transfer` | 487.9 ± 2.4 | 484.1 | 491.0 | 1.99 ± 0.01 |\n| `levm_ERC20Mint_pr` | 306.8 ± 8.9 | 300.1 | 328.5 | 2.22 ± 0.07 |\n| `levm_ERC20Mint` | 320.1 ± 1.5 | 317.9 | 322.6 | 2.31 ± 0.05 |\n| `levm_ERC20Approval_pr` | 1.779 ± 0.023 | 1.763 | 1.838 | 1.69 ± 0.02\n|\n| `levm_ERC20Approval` | 1.850 ± 0.011 | 1.837 | 1.873 | 1.76 ± 0.02 |\n\n\n\n![image](https://github.com/user-attachments/assets/8f08cb93-ac5d-4909-a15d-cf799f1ce023)\n\nAccording to the samply this makes op_push nearly negligible (from 30%\nto 0%)\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-06-23T13:37:30Z",
+          "tree_id": "4b5b5507508c2b381a4e2bd1e96764a389cbe6e3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bca73af8f97978ae202cc25a2e9f08753b82beb6"
+        },
+        "date": 1750689474181,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 223704530468,
+            "range": "± 513180546",
             "unit": "ns/iter"
           }
         ]
