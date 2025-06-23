@@ -243,6 +243,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     inbound,
                 );
             }
+            if let Err(e) = self.connection_loop(sender, receiver).await {
+                self.connection_failed("Error during RLPx connection", e, table)
+                    .await;
+            }
         }
     }
 
