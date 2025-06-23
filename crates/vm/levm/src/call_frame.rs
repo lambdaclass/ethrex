@@ -169,7 +169,7 @@ impl CallFrame {
         Ok(())
     }
 
-    pub const fn pc(&self) -> usize {
+    pub fn pc(&self) -> usize {
         self.pc
     }
 

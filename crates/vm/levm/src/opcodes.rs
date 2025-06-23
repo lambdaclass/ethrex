@@ -171,9 +171,9 @@ pub enum Opcode {
 }
 
 impl From<u8> for Opcode {
-    #[allow(clippy::as_conversions)]
+    #[expect(clippy::as_conversions)]
     fn from(byte: u8) -> Self {
-        static OPCODE_TABLE: [Opcode; 256] = const {
+        const OPCODE_TABLE: [Opcode; 256] = const {
             let mut table = [Opcode::INVALID; 256];
             table[0x00] = Opcode::STOP;
             table[0x01] = Opcode::ADD;
@@ -326,7 +326,7 @@ impl From<u8> for Opcode {
 
             table
         };
-        #[allow(clippy::indexing_slicing)] // can never happen
+        #[expect(clippy::indexing_slicing)] // can never happen
         OPCODE_TABLE[byte as usize]
     }
 }
