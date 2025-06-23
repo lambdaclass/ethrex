@@ -1,7 +1,7 @@
 use std::{
     fs::{File, metadata, read_dir},
     io::{self, Write},
-    num::NonZero,
+    ops::{Bound, RangeBounds},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -242,8 +242,18 @@ pub enum Subcommand {
         path: String,
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
-        #[arg(long = "num-blocks")]
-        num_blocks: Option<NonZero<usize>>,
+        #[arg(
+            long = "first",
+            value_name = "NUMBER",
+            help = "First block number to export"
+        )]
+        first: Option<usize>,
+        #[arg(
+            long = "last",
+            value_name = "NUMBER",
+            help = "Last block number to export"
+        )]
+        last: Option<usize>,
     },
     #[command(
         name = "export",
@@ -296,7 +306,8 @@ impl Subcommand {
             Subcommand::Import {
                 path,
                 removedb,
-                num_blocks,
+                first,
+                last,
             } => {
                 if removedb {
                     Box::pin(async {
@@ -312,7 +323,17 @@ impl Subcommand {
 
                 let network = &opts.network;
                 let genesis = network.get_genesis()?;
-                import_blocks(&path, &opts.datadir, genesis, opts.evm, num_blocks).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    opts.evm,
+                    (
+                        first.map(Bound::Included).unwrap_or(Bound::Unbounded),
+                        last.map(Bound::Included).unwrap_or(Bound::Unbounded),
+                    ),
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -361,13 +382,13 @@ pub async fn import_blocks(
     data_dir: &str,
     genesis: Genesis,
     evm: EvmEngine,
-    num_blocks: Option<NonZero<usize>>,
+    range: impl RangeBounds<usize>,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
-    let mut blocks = if path_metadata.is_dir() {
+    let blocks = if path_metadata.is_dir() {
         let mut blocks = vec![];
         let dir_reader = read_dir(path).expect("Failed to read blocks directory");
         for file_res in dir_reader {
@@ -383,11 +404,8 @@ pub async fn import_blocks(
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    if let Some(num_blocks) = num_blocks {
-        blocks.truncate(num_blocks.get());
-    }
     let size = blocks.len();
-    for block in &blocks {
+    for block in &blocks[(range.start_bound().cloned(), range.end_bound().cloned())] {
         let hash = block.hash();
         let number = block.header.number;
         info!("Adding block {number} with hash {hash:#x}.");

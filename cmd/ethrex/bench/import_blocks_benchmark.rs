@@ -25,7 +25,7 @@ fn block_import() {
         data_dir,
         genesis,
         evm_engine,
-        None,
+        ..,
     ))
     .expect("Failed to import blocks on the Tokio runtime");
 }
