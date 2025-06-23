@@ -6,6 +6,7 @@ use clap::Parser;
 use ethrex::DEFAULT_DATADIR;
 use ethrex::initializers::open_store;
 use ethrex::utils::set_datadir;
+use ethrex_common::types::BlockHash;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
 use ethrex_common::{
@@ -28,6 +29,7 @@ use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
 const MAX_ACCOUNTS: usize = 256;
+const BLOCK_HASH_LOOKUP_DEPH: u64 = 128;
 
 #[derive(Deserialize, Debug)]
 struct Dump {
@@ -116,6 +118,7 @@ pub async fn archive_sync(
     store.add_block(block).await?;
     store.set_canonical_block(block_number, block_hash).await?;
     store.update_latest_block_number(block_number).await?;
+    fetch_block_hashes(block_number, &mut stream, store).await?;
     let sync_time = mseconds_to_readable(sync_start.elapsed().as_millis());
     info!(
         "Archive Sync complete in {sync_time}.\nHead of local chain is now block {block_number} with hash {block_hash}"
@@ -253,6 +256,30 @@ fn mseconds_to_readable(mut mseconds: u128) -> String {
     apply_time_unit(MSECOND, "ms");
 
     res
+}
+
+/// Fetch the block hashes for the `BLOCK_HASH_LOOKUP_DEPH` blocks before the current one
+/// This is necessary in order to propperly execute the following blocks
+async fn fetch_block_hashes(
+    current_block_number: BlockNumber,
+    stream: &mut UnixStream,
+    store: Store,
+) -> eyre::Result<()> {
+    for offset in 1..BLOCK_HASH_LOOKUP_DEPH {
+        let Some(block_number) = current_block_number.checked_sub(offset) else {
+            break;
+        };
+        let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "debug_dbAncient",
+        "params": ["hashes", 1450409]
+        });
+        let response = send_ipc_json_request(stream, request).await?;
+        let block_hash: BlockHash = serde_json::from_value(response)?;
+        store.set_canonical_block(block_number, block_hash).await?;
+    }
+    Ok(())
 }
 
 #[derive(Parser)]
