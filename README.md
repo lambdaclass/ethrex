@@ -79,7 +79,7 @@ The roadmap below outlines the remaining work required to achieve this milestone
 | P2P Improvements         | Use [spawned](https://github.com/lambdaclass/spawned) to improve peer discovery, sync reliability, and connection handling.                                   | In Progress  |
 | Snap Sync   | Improve Snap Sync implementation to make it more reliable and efficient. | Planned  |
 | Chain Syncing      | Verify the execution of all blocks across all chains. For Proof-of-Stake (PoS) chains (Holesky, Hoodi), verify all blocks since genesis. For chains with a pre-Merge genesis (Sepolia, Mainnet), verify all blocks after the Merge.  | In Progress  |
-Client Stability | Increase client resilience to reorgs and network disruptions. | Planned |
+| Client Stability | Increase client resilience to adverse scenarios and network disruptions. Improve observability and logging. | Planned |
 
 ## Documentation
 
