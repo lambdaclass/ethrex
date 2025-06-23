@@ -261,7 +261,9 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                         .collect();
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
-                    let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone());
+                    let store_with_genesis = Arc::new(Mutex::new(store_with_genesis));
+                    let trie_writer = TrieWriter::new(store_with_genesis.clone()).await;
+                    let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone(), trie_writer);
                     fill_mempool(&block_chain, accounts).await;
 
                     (block_chain, genesis.get_block(), store_with_genesis)

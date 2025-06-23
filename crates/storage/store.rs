@@ -47,11 +47,16 @@ pub enum EngineType {
     RedB,
 }
 
-pub struct UpdateBatch {
-    /// Nodes to be added to the state trie
+/// Contains the account and the storage updates.
+/// It is meant to be sent to the TrieUpdateTask that persist them async.
+pub struct TrieUpdates {
+     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
     /// Storage tries updated and their new nodes
     pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+}
+
+pub struct UpdateBatch {
     /// Blocks to be added
     pub blocks: Vec<Block>,
     /// Receipts added per block
@@ -70,6 +75,10 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    pub async fn store_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError> {
+        self.engine.apply_trie_updates(trie_updates).await
+    }
+
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }

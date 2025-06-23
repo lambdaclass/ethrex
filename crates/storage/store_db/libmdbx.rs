@@ -6,7 +6,7 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
     TriePathsRLP, TupleRLP,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::{TrieUpdates, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -126,24 +126,18 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
             // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            for (node_hash, node_data) in trie_updates.account_updates {
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
-            // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            for (hashed_address, nodes) in update_batch.storage_updates {
+            // store storage updates
+            for (hashed_address, nodes) in trie_updates.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
@@ -152,6 +146,23 @@ impl StoreEngine for Store {
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // store code updates
+            for (hashed_address, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;

@@ -7,6 +7,8 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
+use ethrex_storage::{TrieUpdates, TrieWriter};
+use tokio::sync::Mutex;
 use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
@@ -30,7 +32,7 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{ops::Div, time::Instant};
 
 use vm::StoreVmDatabase;
@@ -47,7 +49,8 @@ use ethrex_common::types::BlobsBundle;
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
-    storage: Store,
+    storage: Arc<Mutex<Store>>,
+    trie_writer: TrieWriter,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
@@ -62,16 +65,20 @@ pub struct BatchBlockProcessingFailure {
 }
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
+        let store = Arc::new(Mutex::new(store));
+        let trie_writer = TrieWriter::new(store.clone());
         Self {
+            trie_writer,
             evm_engine,
-            storage: store,
+            storage: store.clone(),
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
         }
     }
 
-    pub fn default_with_store(store: Store) -> Self {
+    pub fn default_with_store(store: Store, trie_writer: TrieWriter) -> Self {
         Self {
+            trie_writer,
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
@@ -87,11 +94,11 @@ impl Blockchain {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
+            self.storage.lock().await.add_pending_block(block.clone()).await?;
             return Err(ChainError::ParentNotFound);
         };
 
-        let chain_config = self.storage.get_chain_config()?;
+        let chain_config = self.storage.lock().await.get_chain_config()?;
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
@@ -349,9 +356,15 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        let update_batch = UpdateBatch {
+
+        let trie_updates = TrieUpdates {
             account_updates: state_updates,
             storage_updates: accounts_updates,
+        };
+
+        self.trie_writer.write(trie_updates).await;
+
+        let update_batch = UpdateBatch {
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
             code_updates,
@@ -506,16 +519,21 @@ impl Blockchain {
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
         let new_state_root = account_updates_list.state_trie_hash;
-        let state_updates = account_updates_list.state_updates;
-        let accounts_updates = account_updates_list.storage_updates;
+        let account_updates = account_updates_list.state_updates;
+        let storage_updates = account_updates_list.storage_updates;
         let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        let trie_updates = TrieUpdates {
+            account_updates,
+            storage_updates,
+        };
+
+        self.trie_writer.write(trie_updates).await;
+
         let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
             code_updates,

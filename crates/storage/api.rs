@@ -6,6 +6,7 @@ use ethrex_common::types::{
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
+use crate::store::TrieUpdates;
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
@@ -14,6 +15,9 @@ use ethrex_trie::{Nibbles, Trie};
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+    /// Apply trie updates
+    async fn apply_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError>;
+
     /// Store changes in a batch from a vec of blocks
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
