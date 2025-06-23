@@ -37,7 +37,7 @@ Read more about our engineering philosophy [here](https://blog.lambdaclass.com/l
 
 ## 🗺️ Roadmap
 
-This project is under active development. Over the next **two months**, our **primary objective is to finalize and audit the first version of the stack**.  
+This project is under active development. Over the next **two months**, our **primary objective is to finalize and audit the first version of the stack**.
 This means every component — from L1 syncing to L2 bridging and prover integration — must meet stability, performance, and security standards.
 
 The roadmap below outlines the remaining work required to achieve this milestone, organized into three major areas: **L2**, **DevOps & Performance**, and **L1**.
@@ -77,8 +77,9 @@ The roadmap below outlines the remaining work required to achieve this milestone
 | Feature                  | Description                                                                                                                                                    | Status       |
 |--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
 | P2P Improvements         | Use [spawned](https://github.com/lambdaclass/spawned) to improve peer discovery, sync reliability, and connection handling.                                   | In Progress  |
-| SnapSync Stabilization   | Improve state healing under Mainnet load while using SnapSync.                                                                                        | Planned  |
-| Block Processing  Stability      | Full sync is actively running on Holesky and Hoodi networks, with continuous fixes applied. Additionally, while SnapSync isn’t fully reliable yet, archive sync will be supported to process post-Merge Mainnet and Sepolia blocks. The goal is to fix issues as they arise and stabilize the node across environments.  | In Progress  |
+| Snap Sync   | Improve Snap Sync implementation to make it more reliable and efficient. | Planned  |
+| Chain Syncing      | Verify the execution of all blocks across all chains. For Proof-of-Stake (PoS) chains (Holesky, Hoodi), verify all blocks since genesis. For chains with a pre-Merge genesis (Sepolia, Mainnet), verify all blocks after the Merge.  | In Progress  |
+Client Stability | Increase client resilience to reorgs and network disruptions. | Planned |
 
 ## Documentation
 
