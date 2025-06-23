@@ -29,10 +29,6 @@ pub fn insert_account(
     cached_accounts.insert(address, account)
 }
 
-pub fn remove_account(cached_accounts: &mut CacheDB, address: &Address) -> Option<Account> {
-    cached_accounts.remove(address)
-}
-
 pub fn is_account_cached(cached_accounts: &CacheDB, address: &Address) -> bool {
     cached_accounts.contains_key(address)
 }
