@@ -8,6 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
+import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -54,10 +55,6 @@ contract CommonBridge is
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
     mapping (address => mapping (address => uint256)) public depositsERC20;
-
-    /// @notice Function of the L2 bridge to call for minting ERC20 tokens
-    /// @dev Selector of the mintERC20 function in the CommonBridgeL2 contract
-    bytes4 public constant L2_MINTERC20_SELECTOR = 0x79204fe0;
 
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =  0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
@@ -156,7 +153,7 @@ contract CommonBridge is
         require(IERC20(tokenL1).transferFrom(msg.sender, address(this), amount), "CommonBridge: transferFrom failed");
 
         depositsERC20[tokenL1][tokenL2] += amount;
-        bytes memory callData = bytes.concat(L2_MINTERC20_SELECTOR, abi.encode(tokenL1, tokenL2, destination, amount));
+        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintERC20, (tokenL1, tokenL2, destination, amount));
         uint256 gasLimit = 21000 * 10;
         
         bytes32 l2MintTxHash = keccak256(
