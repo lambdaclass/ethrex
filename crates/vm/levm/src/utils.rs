@@ -130,7 +130,9 @@ pub fn restore_cache_state(
     callframe_backup: CallFrameBackup,
 ) -> Result<(), VMError> {
     for (address, account) in callframe_backup.original_accounts_info {
-        if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+        if let Some(current_account) =
+            cache::get_account_mut(&mut db.current_accounts_state, &address)
+        {
             current_account.info = account.info;
             current_account.code = account.code;
         }
@@ -140,7 +142,7 @@ pub fn restore_cache_state(
         // This call to `get_account_mut` should never return None, because we are looking up accounts
         // that had their storage modified, which means they should be in the cache. That's why
         // we return an internal error in case we haven't found it.
-        let account = cache::get_account_mut(&mut db.cache, &address)
+        let account = cache::get_account_mut(&mut db.current_accounts_state, &address)
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
@@ -484,7 +486,7 @@ impl<'a> VM<'a> {
         intrinsic_gas = intrinsic_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
 
         // Create Cost
-        if self.is_create() {
+        if self.is_create()? {
             // https://eips.ethereum.org/EIPS/eip-2#specification
             intrinsic_gas = intrinsic_gas
                 .checked_add(CREATE_BASE_COST)
@@ -550,7 +552,7 @@ impl<'a> VM<'a> {
     /// Calculates the minimum gas to be consumed in the transaction.
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
-        let calldata = if self.is_create() {
+        let calldata = if self.is_create()? {
             &self.current_call_frame()?.bytecode
         } else {
             &self.current_call_frame()?.calldata
@@ -625,18 +627,20 @@ impl<'a> VM<'a> {
             created_accounts: HashSet::new(),
             refunded_gas: 0,
             transient_storage: HashMap::new(),
+            logs: Vec::new(),
         };
 
         Ok(())
     }
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
-    pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
+    /// Bool indicates whether it is a `create` transaction or not.
+    pub fn get_tx_callee(&mut self) -> Result<(Address, bool), VMError> {
         match self.tx.to() {
             TxKind::Call(address_to) => {
                 self.substate.accessed_addresses.insert(address_to);
 
-                Ok(address_to)
+                Ok((address_to, false))
             }
 
             TxKind::Create => {
@@ -647,7 +651,7 @@ impl<'a> VM<'a> {
                 self.substate.accessed_addresses.insert(created_address);
                 self.substate.created_accounts.insert(created_address);
 
-                Ok(created_address)
+                Ok((created_address, true))
             }
         }
     }

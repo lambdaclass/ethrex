@@ -316,6 +316,14 @@ impl StoreEngine for RedBStore {
                     state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
                 }
 
+                // store code updates
+                let mut code_store = write_txn.open_table(ACCOUNT_CODES_TABLE)?;
+                for (hashed_address, code) in update_batch.code_updates {
+                    let account_code_hash = <H256 as Into<AccountCodeHashRLP>>::into(hashed_address);
+                    let account_code = <bytes::Bytes as Into<AccountCodeRLP>>::into(code);
+                    code_store.insert(account_code_hash, account_code)?;
+                }
+
                 let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
                 for (hashed_address, nodes) in update_batch.storage_updates {
                     for (node_hash, node_data) in nodes {
@@ -501,6 +509,24 @@ impl StoreEngine for RedBStore {
         } else {
             Ok(None)
         }
+    }
+
+    async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let Some(hash) = self.get_block_hash_by_block_number(block_number)? else {
+            return Ok(());
+        };
+        let hash = <H256 as Into<BlockHashRLP>>::into(hash);
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+
+        write_txn
+            .open_table(CANONICAL_BLOCK_HASHES_TABLE)?
+            .remove(block_number)?;
+        write_txn.open_table(BLOCK_BODIES_TABLE)?.remove(&hash)?;
+        write_txn.open_table(HEADERS_TABLE)?.remove(&hash)?;
+        write_txn.open_table(BLOCK_NUMBERS_TABLE)?.remove(&hash)?;
+
+        write_txn.commit()?;
+        Ok(())
     }
 
     async fn get_block_bodies(

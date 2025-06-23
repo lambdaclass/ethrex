@@ -100,6 +100,11 @@ impl StoreEngine for Store {
             }
         }
 
+        // store code updates
+        for (hashed_address, code) in update_batch.code_updates {
+            store.account_codes.insert(hashed_address, code);
+        }
+
         for (hashed_address, nodes) in update_batch.storage_updates {
             let mut addr_store = store
                 .storage_trie_nodes
@@ -158,6 +163,18 @@ impl StoreEngine for Store {
         } else {
             Ok(None)
         }
+    }
+
+    async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        let Some(hash) = store.canonical_hashes.get(&block_number).cloned() else {
+            return Ok(());
+        };
+        store.canonical_hashes.remove(&block_number);
+        store.block_numbers.remove(&hash);
+        store.headers.remove(&hash);
+        store.bodies.remove(&hash);
+        Ok(())
     }
 
     async fn get_block_bodies(

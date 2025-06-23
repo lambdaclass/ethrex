@@ -1,4 +1,4 @@
-use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::errors::ProofCoordinatorError;
 use ethrex_common::{Address, Bytes};
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_l2_sdk::get_address_from_secret_key;
@@ -21,11 +21,11 @@ pub async fn prepare_quote_prerequisites(
     rpc_url: &str,
     private_key_str: &str,
     quote: &str,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     let chain_id = eth_client
         .get_chain_id()
         .await
-        .map_err(ProverServerError::EthClientError)?;
+        .map_err(ProofCoordinatorError::EthClientError)?;
 
     Command::new(QPL_TOOL_PATH)
         .args([
@@ -41,7 +41,7 @@ pub async fn prepare_quote_prerequisites(
         .env("RPC_URL", rpc_url)
         .env("CHAIN_ID", format!("{chain_id}"))
         .output()
-        .map_err(ProverServerError::ComandError)?;
+        .map_err(ProofCoordinatorError::ComandError)?;
     Ok(())
 }
 
@@ -52,7 +52,7 @@ pub async fn register_tdx_key(
     private_key: &SecretKey,
     on_chain_proposer_address: Address,
     quote: Bytes,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     debug!("Registering TDX key");
 
     let calldata_values = vec![Value::Bytes(quote)];
@@ -64,14 +64,15 @@ pub async fn register_tdx_key(
         .await?
         .try_into()
         .map_err(|_| {
-            ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            ProofCoordinatorError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
     let tdx_address = get_tdx_address(eth_client, on_chain_proposer_address).await?;
     let verify_tx = eth_client
         .build_eip1559_transaction(
             tdx_address,
-            get_address_from_secret_key(private_key).map_err(ProverServerError::EthClientError)?,
+            get_address_from_secret_key(private_key)
+                .map_err(ProofCoordinatorError::EthClientError)?,
             calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -94,7 +95,7 @@ pub async fn register_tdx_key(
 async fn get_tdx_address(
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
-) -> Result<Address, ProverServerError> {
+) -> Result<Address, ProofCoordinatorError> {
     let calldata = keccak("TDXVERIFIER()")[..4].to_vec();
 
     let response = eth_client
@@ -108,7 +109,7 @@ async fn get_tdx_address(
     let trimmed_response = &response[26..];
 
     Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-        ProverServerError::InternalError(
+        ProofCoordinatorError::InternalError(
             "Failed to convert TDXVERIFIER result to address".to_owned(),
         )
     })

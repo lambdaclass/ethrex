@@ -58,7 +58,7 @@ impl Store {
 
     pub async fn init(&self) -> Result<(), StoreError> {
         // Stores batch 0 with block 0
-        self.store_batch(Batch {
+        self.seal_batch(Batch {
             number: 0,
             first_block: 0,
             last_block: 0,
@@ -239,7 +239,7 @@ impl Store {
         }))
     }
 
-    pub async fn store_batch(&self, batch: Batch) -> Result<(), StoreError> {
+    pub async fn seal_batch(&self, batch: Batch) -> Result<(), StoreError> {
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
         for block_number in blocks.iter() {
@@ -287,5 +287,10 @@ impl Store {
     /// Sets the lastest sent batch proof
     pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.engine.set_lastest_sent_batch_proof(batch_number).await
+    }
+
+    /// Reverts to a previous batch, discarding operations in them
+    pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.engine.revert_to_batch(batch_number).await
     }
 }
