@@ -273,7 +273,7 @@ async fn fetch_block_hashes(
         "id": 1,
         "jsonrpc": "2.0",
         "method": "debug_dbAncient",
-        "params": ["hashes", 1450409]
+        "params": ["hashes", block_number]
         });
         let response = send_ipc_json_request(stream, request).await?;
         let block_hash: BlockHash = serde_json::from_value(response)?;
