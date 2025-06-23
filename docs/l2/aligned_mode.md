@@ -241,7 +241,7 @@ If successful, the `l1_proof_verifier` will print the following logs:
 
 ```
 INFO ethrex_l2::sequencer::l1_proof_verifier: Proof for batch 1 aggregated by Aligned with commitment 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7 and Merkle root 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7
-INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 verified in AlignedProofAggregatorService, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
+INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
 ```
 
 ## Behavioral Differences in Aligned Mode
@@ -260,15 +260,14 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 verified in AlignedProofAg
 
 ### Proof Verifier
 
-- Only spawned in Aligned mode.
+- Spawned only in Aligned mode.
 - Monitors whether the next proof has been aggregated by Aligned.
-- Once verified, it triggers the advancement of the `OnChainProposer` contract.
+- Once verified, collects all already aggregated proofs and triggers the advancement of the `OnChainProposer` contract by sending a single transaction.
 
 ![Aligned Mode Proof Verifier](img/aligned_mode_proof_verifier.png)
 
 ### OnChainProposer
 
 - Uses `verifyBatchAligned()` instead of `verifyBatch()`.
+- Receives an array of proofs to verify.
 - Delegates proof verification to the `AlignedProofAggregatorService` contract.
-- Currently supports one proof per transaction.
-- Future updates aim to support verifying an array of proofs in a single call.
