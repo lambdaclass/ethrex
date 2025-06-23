@@ -169,7 +169,7 @@ impl L1ProofVerifier {
         Ok(Some(verify_tx_hash))
     }
 
-    /// Returns all available proofs starting from `batch_number`
+    /// Returns all proofs that have already been generated, starting from the given batch number.
     fn get_available_proofs(
         &self,
         mut batch_number: u64,
@@ -189,6 +189,8 @@ impl L1ProofVerifier {
         }
     }
 
+    /// Receives an array of proofs.
+    /// Returns only those proofs that were aggregated by Aligned.
     async fn get_aggregated_proofs(
         &self,
         proofs: Vec<(u64, BatchProof)>,
@@ -215,6 +217,7 @@ impl L1ProofVerifier {
         Ok(aggregated_proofs)
     }
 
+    /// Checks if the received proof was aggregated by Aligned.
     async fn check_proof_verification(
         &self,
         verification_data: AggregationModeVerificationData,
