@@ -187,7 +187,7 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
         node_is_up_to_date,
         lead_sequencer == state.sequencer_address,
     );
-    if let SequencerStatus::Syncing = current_state {
+    if let SequencerStatus::Syncing = new_status {
         let mut a = state.is_syncing.lock().await;
         if !*a && !state.blockchain.is_synced() {
             let latest_l1_block = state.eth_client.get_block_number().await?;

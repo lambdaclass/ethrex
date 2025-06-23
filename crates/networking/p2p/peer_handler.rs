@@ -176,7 +176,6 @@ impl PeerHandler {
     #[cfg(feature = "l2")]
     pub async fn request_batch(&self, batch_number: u64) -> Option<Batch> {
         use crate::rlpx::{based::GetBatchSealedMessage, p2p::SUPPORTED_BASED_CAPABILITIES};
-        dbg!("ENTERING HERE", batch_number);
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage { batch_number });
             let (peer_id, peer_channel) = self
@@ -192,22 +191,18 @@ impl PeerHandler {
             }
             if let Some(batch) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
-                    use crate::rlpx::based::BatchSealedMessage;
-                    dbg!("WAITING FOR BATCH");
-                    let a = receiver.recv().await;
-                    dbg!("AFNSDIFNOSDAFAS");
-                    match a {
-                        Some(RLPxMessage::BatchSealed(BatchSealedMessage { batch, .. })) => {
-                            // dbg!(&batch);
+                    use crate::rlpx::based::GetBatchSealedResponseMessage;
+                    match receiver.recv().await {
+                        Some(RLPxMessage::GetBatchSealedResponse(
+                            GetBatchSealedResponseMessage { batch },
+                        )) if batch.number == batch_number => {
                             return Some(batch);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => {
-                            dbg!("some vacío");
                             continue;
                         }
                         None => {
-                            dbg!("none response");
                             return None;
                         } // Retry request
                     }
@@ -217,8 +212,7 @@ impl PeerHandler {
             .ok()
             .flatten()
             {
-                // dbg!(&batch);
-                // penalize peer if the signature is incorrect or the batch is invalid
+                // TODO: penalize peer if the signature is incorrect or the batch is invalid
                 return Some(batch);
             }
         }

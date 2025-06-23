@@ -49,12 +49,12 @@ impl RLPxMessage for NewBlockMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct BatchSealedMessage {
+pub struct NewBatchSealedMessage {
     pub batch: Batch,
     pub signature: [u8; 64],
     pub recovery_id: [u8; 4],
 }
-impl RLPxMessage for BatchSealedMessage {
+impl RLPxMessage for NewBatchSealedMessage {
     const CODE: u8 = 0x1;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
@@ -105,7 +105,7 @@ impl RLPxMessage for BatchSealedMessage {
                 proofs,
             },
         };
-        Ok(BatchSealedMessage {
+        Ok(NewBatchSealedMessage {
             batch,
             signature,
             recovery_id,
@@ -158,5 +158,60 @@ impl RLPxMessage for GetBatchSealedMessage {
         let (batch_number, decoder) = decoder.decode_field("batch_number")?;
         decoder.finish()?;
         Ok(GetBatchSealedMessage { batch_number })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GetBatchSealedResponseMessage {
+    pub batch: Batch,
+}
+impl RLPxMessage for GetBatchSealedResponseMessage {
+    const CODE: u8 = 0x3;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.batch.number)
+            .encode_field(&self.batch.first_block)
+            .encode_field(&self.batch.last_block)
+            .encode_field(&self.batch.state_root)
+            .encode_field(&self.batch.deposit_logs_hash)
+            .encode_field(&self.batch.withdrawal_hashes)
+            .encode_field(&self.batch.blobs_bundle.blobs)
+            .encode_field(&self.batch.blobs_bundle.commitments)
+            .encode_field(&self.batch.blobs_bundle.proofs)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (batch_number, decoder) = decoder.decode_field("batch_number")?;
+        let (first_block, decoder) = decoder.decode_field("first_block")?;
+        let (last_block, decoder) = decoder.decode_field("last_block")?;
+        let (state_root, decoder) = decoder.decode_field("state_root")?;
+        let (deposit_logs_hash, decoder) = decoder.decode_field("deposit_logs_hash")?;
+        let (withdrawal_hashes, decoder) = decoder.decode_field("withdrawal_hashes")?;
+        let (blobs, decoder) = decoder.decode_field("blobs")?;
+        let (commitments, decoder) = decoder.decode_field("commitments")?;
+        let (proofs, decoder) = decoder.decode_field("proofs")?;
+        decoder.finish()?;
+        let batch = Batch {
+            number: batch_number,
+            first_block,
+            last_block,
+            state_root,
+            deposit_logs_hash,
+            withdrawal_hashes,
+            blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+            },
+        };
+        Ok(GetBatchSealedResponseMessage { batch })
     }
 }

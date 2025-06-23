@@ -2,9 +2,9 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
-use crate::rlpx::based::GetBatchSealedMessage;
+use crate::rlpx::based::{GetBatchSealedMessage, GetBatchSealedResponseMessage};
 
-use super::based::{BatchSealedMessage, NewBlockMessage};
+use super::based::{NewBatchSealedMessage, NewBlockMessage};
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -64,8 +64,9 @@ pub(crate) enum Message {
     TrieNodes(TrieNodes),
     // based capability
     NewBlock(NewBlockMessage),
-    BatchSealed(BatchSealedMessage),
+    NewBatchSealed(NewBatchSealedMessage),
     GetBatchSealed(GetBatchSealedMessage),
+    GetBatchSealedResponse(GetBatchSealedResponseMessage),
 }
 
 impl Message {
@@ -105,8 +106,11 @@ impl Message {
 
             // based capability
             Message::NewBlock(_) => BASED_CAPABILITY_OFFSET + NewBlockMessage::CODE,
-            Message::BatchSealed(_) => BASED_CAPABILITY_OFFSET + BatchSealedMessage::CODE,
+            Message::NewBatchSealed(_) => BASED_CAPABILITY_OFFSET + NewBatchSealedMessage::CODE,
             Message::GetBatchSealed(_) => BASED_CAPABILITY_OFFSET + GetBatchSealedMessage::CODE,
+            Message::GetBatchSealedResponse(_) => {
+                BASED_CAPABILITY_OFFSET + GetBatchSealedResponseMessage::CODE
+            }
         }
     }
     pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
@@ -170,13 +174,20 @@ impl Message {
                 NewBlockMessage::CODE => {
                     return Ok(Message::NewBlock(NewBlockMessage::decode(data)?));
                 }
-                BatchSealedMessage::CODE => {
-                    return Ok(Message::BatchSealed(BatchSealedMessage::decode(data)?));
+                NewBatchSealedMessage::CODE => {
+                    return Ok(Message::NewBatchSealed(NewBatchSealedMessage::decode(
+                        data,
+                    )?));
                 }
                 GetBatchSealedMessage::CODE => {
                     return Ok(Message::GetBatchSealed(GetBatchSealedMessage::decode(
                         data,
                     )?));
+                }
+                GetBatchSealedResponseMessage::CODE => {
+                    return Ok(Message::GetBatchSealedResponse(
+                        GetBatchSealedResponseMessage::decode(data)?,
+                    ));
                 }
                 _ => return Err(RLPDecodeError::MalformedData),
             }
@@ -211,8 +222,9 @@ impl Message {
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
             Message::NewBlock(msg) => msg.encode(buf),
-            Message::BatchSealed(msg) => msg.encode(buf),
+            Message::NewBatchSealed(msg) => msg.encode(buf),
             Message::GetBatchSealed(msg) => msg.encode(buf),
+            Message::GetBatchSealedResponse(msg) => msg.encode(buf),
         }
     }
 }
@@ -245,8 +257,9 @@ impl Display for Message {
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
             Message::NewBlock(_) => "based:NewBlock".fmt(f),
-            Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
+            Message::NewBatchSealed(_) => "based:BatchSealed".fmt(f),
             Message::GetBatchSealed(_) => "based:GetBatchSealed".fmt(f),
+            Message::GetBatchSealedResponse(_) => "based:GetBatchSealedResponse".fmt(f),
         }
     }
 }
