@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750693604478,
+  "lastUpdate": 1750702110495,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -569,6 +569,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221549469767,
             "range": "± 375001362",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "48ca855ec68c597b477cb2f81c2b775e9235e865",
+          "message": "docs(levm): add type 4 transaction validations (#3085)\n\nAdd type 4 transaction validations to validations.md docs\n\nCloses #2545",
+          "timestamp": "2025-06-23T17:09:03Z",
+          "tree_id": "60f3912aa663eaf0f0f4a704dc0aa397382e415a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/48ca855ec68c597b477cb2f81c2b775e9235e865"
+        },
+        "date": 1750702102879,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220033548282,
+            "range": "± 429821547",
             "unit": "ns/iter"
           }
         ]
