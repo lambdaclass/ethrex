@@ -8,7 +8,7 @@ Minimalist, stable, modular and fast implementation of the Ethereum protocol in 
 [tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fethrex_client%2F&logo=telegram&label=chat&color=neon
 [tg-url]: https://t.me/ethrex_client
 
-## Installation
+## Quick-start
 
 <!-- TODO: move this somewhere else in the document -->
 
@@ -19,10 +19,27 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 curl -sSL https://raw.githubusercontent.com/lambdaclass/ethrex/94678636ec78ffd59bdc8482ddddca21d47bda94/install.sh | sh
 ```
 
-This installs the `ethrex` binary, that you can run with the default options:
+This installs the `ethrex` binary, and downloads two scripts used for quickly starting a local L1+L2 stack.
+You can have your own L2 running just by running both scripts in different terminals.
+
+### Starting the L1
+
+After running the install script, you can start the L1 by running the `l1` script that was downloaded.
+This can be done by going to the same directory the install script was run from and executing:
 
 ```sh
-ethrex
+./l1
+```
+
+This uses the file `genesis-l1-dev.json` that was also downloaded by the script.
+
+### Starting the L2
+
+After running the install script, you can start the L2 by running the `l2` script that was downloaded.
+This can be done by going to the same directory the install script was run from and executing:
+
+```sh
+./l2
 ```
 
 ## L1 and L2 support
