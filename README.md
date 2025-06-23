@@ -8,7 +8,24 @@ Minimalist, stable, modular and fast implementation of the Ethereum protocol in 
 [tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fethrex_client%2F&logo=telegram&label=chat&color=neon
 [tg-url]: https://t.me/ethrex_client
 
-# L1 and L2 support
+## Installation
+
+<!-- TODO: move this somewhere else in the document -->
+
+To install the client, [first install Rust](https://www.rust-lang.org/tools/install) and run:
+
+```sh
+# TODO: update with link to main branch
+curl -sSL https://raw.githubusercontent.com/lambdaclass/ethrex/94678636ec78ffd59bdc8482ddddca21d47bda94/install.sh | sh
+```
+
+This installs the `ethrex` binary, that you can run with the default options:
+
+```sh
+ethrex
+```
+
+## L1 and L2 support
 
 This client supports running in two different modes:
 
