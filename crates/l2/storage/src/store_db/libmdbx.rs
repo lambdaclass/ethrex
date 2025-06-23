@@ -11,8 +11,8 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
-    DatabaseOptions, Mode, PageSize, ReadWriteOptions,
-    orm::{Database, Table},
+    DatabaseOptions, Mode, PageSize, RW, ReadWriteOptions,
+    orm::{Database, Table, Transaction},
     table, table_info,
 };
 
@@ -271,6 +271,38 @@ impl StoreEngineRollup for Store {
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
+            return Ok(());
+        };
+        let last_kept_block = *kept_blocks.iter().max().unwrap_or(&0);
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        delete_starting_at::<BatchesByBlockNumber>(&txn, last_kept_block + 1)?;
+        delete_starting_at::<MessageHashesByBatch>(&txn, batch_number + 1)?;
+        delete_starting_at::<BlockNumbersByBatch>(&txn, batch_number + 1)?;
+        delete_starting_at::<DepositLogsHash>(&txn, batch_number + 1)?;
+        delete_starting_at::<StateRoots>(&txn, batch_number + 1)?;
+        delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
+        txn.commit().map_err(StoreError::LibmdbxError)?;
+        Ok(())
+    }
+}
+
+/// Deletes keys above key, assuming they are contiguous
+fn delete_starting_at<T: Table<Key = u64>>(
+    txn: &Transaction<RW>,
+    mut key: u64,
+) -> Result<(), StoreError> {
+    while let Some(val) = txn.get::<T>(key).map_err(StoreError::LibmdbxError)? {
+        txn.delete::<T>(key, Some(val))
+            .map_err(StoreError::LibmdbxError)?;
+        key += 1;
+    }
+    Ok(())
 }
 
 table!(
