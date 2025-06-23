@@ -5,7 +5,7 @@ services:
       - ./store:/store
     command: >
       l2 init 
-      --network /fixtures/genesis/l2.json 
+      --network genesis/l2.json 
       --http.addr 0.0.0.0 
       --http.port 1729 
       --authrpc.port 8552 
