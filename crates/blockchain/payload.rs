@@ -531,7 +531,7 @@ impl Blockchain {
         context.payload.header.requests_hash = context
             .requests
             .as_ref()
-            .map(|requests| compute_requests_hash(&requests));
+            .map(|requests| compute_requests_hash(requests));
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
 
