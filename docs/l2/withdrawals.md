@@ -137,7 +137,7 @@ First, we need to understand the generic mechanism behind it:
 
 ### L1Message
 
-To allow generic L2->L1 messages, a system contract is added which allows sending arbitary data.
+To allow generic L2->L1 messages, a system contract is added which allows sending arbitary data. This data is emitted as `L1Message` events, which nodes automatically extract from blocks.
 
 ```rust
 struct L1Message {
@@ -147,8 +147,40 @@ struct L1Message {
 }
 ```
 
-This data is collected and put in a merkle tree whose root is published as part of the batch commitment.
+When sequencers commit a new batch, they include the merkle root of all the `L1Message`s inside the batch.
 That way, L1 contracts can verify some data was sent from a specific L2 sender.
+
+```mermaid
+---
+title: L1Message Merkle tree
+---
+flowchart TD
+    
+    Msg2[L1Message<sub>2</sub>]
+    Root([Root])
+    Node1([Node<sub>1</sub>])
+    Node2([Node<sub>2</sub>])
+
+    Root --- Node1
+    Root --- Node2
+
+    subgraph Msg1["L1Message<sub>1</sub>"]
+        direction LR
+
+        txHash1["txHash<sub>1</sub>"]
+        from1["from<sub>1</sub>"]
+        dataHash1["hash(data<sub>1</sub>)"]
+
+        txHash1 --- from1
+        from1 --- dataHash1
+    end
+
+    Node1 --- Msg1
+    Node2 --- Msg2
+```
+
+As shown in the diagram, the leaves of the tree are the hash of each encoded `L1Message`.
+Messages are encoded by packing the bytes of the transaction hash that generated it in the L2, the address of the sender, and the hashed data attached to the message.
 
 ### Bridging
 
