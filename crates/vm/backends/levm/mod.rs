@@ -196,7 +196,7 @@ impl LEVM {
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
                 db.immutable_cache
-                    .get(address)
+                    .get_mut(address)
                     .ok_or(EvmError::Custom(format!(
                         "Failed to get account {address} from immutable cache",
                     )))?;
@@ -215,6 +215,7 @@ impl LEVM {
 
             let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
                 acc_info_updated = true;
+                initial_state_account.code = new_state_account.code.clone();
                 Some(new_state_account.code.clone())
             } else {
                 None
@@ -227,12 +228,14 @@ impl LEVM {
                 let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
 
                 if new_value != old_value {
+                    initial_state_account.storage.insert(*key, *new_value);
                     added_storage.insert(*key, *new_value);
                     storage_updated = true;
                 }
             }
 
             let info = if acc_info_updated {
+                initial_state_account.info = new_state_account.info.clone();
                 Some(new_state_account.info.clone())
             } else {
                 None
@@ -259,7 +262,7 @@ impl LEVM {
             account_updates.push(account_update);
         }
         db.cache.clear();
-        db.immutable_cache.clear();
+        // db.immutable_cache.clear();
         Ok(account_updates)
     }
 
