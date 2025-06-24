@@ -36,12 +36,14 @@ const DB_SCHEMA: [&str; 10] = [
 ];
 
 impl SQLStore {
-    pub async fn new(path: &str) -> Result<Self, RollupStoreError> {
-        let db = Builder::new_local(path).build().await?;
-        let conn = db.connect()?;
-        let store = SQLStore { conn };
-        store.init_db().await?;
-        Ok(store)
+    pub fn new(path: &str) -> Result<Self, RollupStoreError> {
+        futures::executor::block_on(async {
+            let db = Builder::new_local(path).build().await?;
+            let conn = db.connect()?;
+            let store = SQLStore { conn };
+            store.init_db().await?;
+            Ok(store)
+        })
     }
     async fn execute<T: IntoParams>(&self, sql: &str, params: T) -> Result<(), RollupStoreError> {
         self.conn.execute(sql, params).await?;
@@ -451,7 +453,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schema_tables() -> anyhow::Result<()> {
-        let store = SQLStore::new(":memory:").await?;
+        let store = SQLStore::new(":memory:")?;
         let tables = [
             "blocks",
             "messages",

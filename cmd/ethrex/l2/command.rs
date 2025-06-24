@@ -338,7 +338,7 @@ impl Command {
                                 .to_str()
                                 .expect("Invalid store path"),
                             EngineTypeRollup::Libmdbx,
-                        ).await?;
+                        )?;
                         rollup_store
                             .init()
                             .await

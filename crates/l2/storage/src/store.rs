@@ -41,7 +41,7 @@ pub enum EngineType {
 }
 
 impl Store {
-    pub async fn new(_path: &str, engine_type: EngineType) -> Result<Self, RollupStoreError> {
+    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, RollupStoreError> {
         info!("Starting l2 storage engine ({engine_type:?})");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
@@ -57,7 +57,7 @@ impl Store {
             },
             #[cfg(feature = "sql")]
             EngineType::SQL => Self {
-                engine: Arc::new(SQLStore::new(_path).await?),
+                engine: Arc::new(SQLStore::new(_path)?),
             },
         };
         info!("Started l2 store engine");

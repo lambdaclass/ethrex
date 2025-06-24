@@ -12,6 +12,7 @@ ethrex-rlp.workspace = true
 ethereum-types.workspace = true
 
 async-trait.workspace = true
+futures.workspace = true
 anyhow = "1.0.86"
 thiserror.workspace = true
 tracing.workspace = true

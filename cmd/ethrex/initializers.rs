@@ -103,9 +103,8 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
             let engine_type = EngineTypeRollup::InMemory;
         }
     }
-    let rollup_store = StoreRollup::new(data_dir, engine_type)
-        .await
-        .expect("Failed to create StoreRollup");
+    let rollup_store =
+        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await

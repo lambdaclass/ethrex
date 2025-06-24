@@ -381,7 +381,6 @@ pub mod test_utils {
         let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
         #[cfg(feature = "l2")]
         let rollup_store = StoreRollup::new("", EngineTypeRollup::InMemory)
-            .await
             .expect("Failed to create in-memory storage");
         start_api(
             http_addr,
@@ -426,7 +425,6 @@ pub mod test_utils {
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
             #[cfg(feature = "l2")]
             rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
-                .await
                 .expect("Fail to create in-memory db test"),
         }
     }
