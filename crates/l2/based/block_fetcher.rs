@@ -15,7 +15,7 @@ use ethrex_l2_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
+use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, send_after};
@@ -33,6 +33,8 @@ pub enum BlockFetcherError {
     EthClientError(#[from] ethrex_rpc::clients::EthClientError),
     #[error("Block Fetcher failed due to a Store error: {0}")]
     StoreError(#[from] ethrex_storage::error::StoreError),
+    #[error("State Updater failed due to a RollupStore error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
     #[error("Internal Error: {0}")]
     InternalError(String),
     #[error("Failed to store fetched block: {0}")]

@@ -7,6 +7,9 @@ use serde_json::Value;
 use crate::authentication::AuthenticationError;
 use ethrex_blockchain::error::MempoolError;
 
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::RollupStoreError;
+
 #[derive(Debug, Deserialize)]
 pub enum RpcErr {
     MethodNotFound(String),
@@ -249,6 +252,13 @@ pub struct RpcErrorResponse {
 /// Failure to read from DB will always constitute an internal error
 impl From<StoreError> for RpcErr {
     fn from(value: StoreError) -> Self {
+        RpcErr::Internal(value.to_string())
+    }
+}
+
+#[cfg(feature = "l2")]
+impl From<RollupStoreError> for RpcErr {
+    fn from(value: RollupStoreError) -> Self {
         RpcErr::Internal(value.to_string())
     }
 }
