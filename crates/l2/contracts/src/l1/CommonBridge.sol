@@ -315,7 +315,6 @@ contract CommonBridge is
         );
         require(
             claimedWithdrawals[withdrawalId] == false,
-            claimedWithdrawals[withdrawalId] == false,
             "CommonBridge: the withdrawal was already claimed"
         );
         claimedWithdrawals[withdrawalId] = true;
@@ -336,7 +335,6 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
-        bytes32 msgHash = keccak256(abi.encodePacked(msg.sender, claimedAmount));
         bytes32 withdrawalLeaf = keccak256(
             abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
         );
