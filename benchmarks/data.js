@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750799623633,
+  "lastUpdate": 1750799756636,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1109,6 +1109,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 222492241004,
             "range": "± 279592992",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e846b11033de83d369ba5a9ab1621cbef7d3307a",
+          "message": "chore(l2): remove redundant checks in contracts (#3282)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe have a bunch of redundant and too cautious `require`s in the\ncontracts that increase the cost of deployment and don't provide too\nmuch value.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n- Remove checks for storage slots different from 0, since the\n`initializer` modifier already handle those cases.\n- Remove checks for addresses different from the contract itself, since\nthey don't add too much value.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-06-24T20:16:33Z",
+          "tree_id": "09abaafea256af08890263ce17c8eb48f5fead5a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e846b11033de83d369ba5a9ab1621cbef7d3307a"
+        },
+        "date": 1750799748733,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222279872168,
+            "range": "± 353295224",
             "unit": "ns/iter"
           }
         ]
