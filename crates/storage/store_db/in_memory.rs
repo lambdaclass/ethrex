@@ -165,6 +165,18 @@ impl StoreEngine for Store {
         }
     }
 
+    async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        let Some(hash) = store.canonical_hashes.get(&block_number).cloned() else {
+            return Ok(());
+        };
+        store.canonical_hashes.remove(&block_number);
+        store.block_numbers.remove(&hash);
+        store.headers.remove(&hash);
+        store.bodies.remove(&hash);
+        Ok(())
+    }
+
     async fn get_block_bodies(
         &self,
         from: BlockNumber,

@@ -268,3 +268,9 @@ pub enum ExecutionCacheError {
     #[error("Failed (de)serializing result: {0}")]
     Bincode(#[from] bincode::Error),
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectionHandlerError {
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
+}

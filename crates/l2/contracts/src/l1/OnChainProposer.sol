@@ -4,6 +4,7 @@ pragma solidity =0.8.29;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
@@ -17,7 +18,8 @@ contract OnChainProposer is
     IOnChainProposer,
     Initializable,
     UUPSUpgradeable,
-    Ownable2StepUpgradeable
+    Ownable2StepUpgradeable,
+    PausableUpgradeable
 {
     /// @notice Committed batches data.
     /// @dev This struct holds the information about the committed batches.
@@ -219,7 +221,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
         bytes32 lastBlockHash
-    ) external override onlySequencer {
+    ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
@@ -254,9 +256,15 @@ contract OnChainProposer is
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(blobVersionedHash == 0, "L2 running as validium but blob was published");
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
         } else {
-            require(blobVersionedHash != 0, "L2 running as rollup but blob was not published");
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -289,7 +297,7 @@ contract OnChainProposer is
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external override onlySequencer {
+    ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
@@ -354,7 +362,7 @@ contract OnChainProposer is
         uint256 firstBatchNumber,
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
-    ) external override onlySequencer {
+    ) external override onlySequencer whenNotPaused {
         require(
             ALIGNEDPROOFAGGREGATOR != DEV_MODE,
             "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
@@ -463,9 +471,42 @@ contract OnChainProposer is
         );
     }
 
+    /// @inheritdoc IOnChainProposer
+    function revertBatch(
+        uint256 batchNumber
+    ) external override onlySequencer whenPaused {
+        require(
+            batchNumber >= lastVerifiedBatch,
+            "OnChainProposer: can't revert verified batch"
+        );
+        require(
+            batchNumber < lastCommittedBatch,
+            "OnChainProposer: no batches are being reverted"
+        );
+
+        // Remove old batches
+        for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
+            delete batchCommitments[i + 1];
+        }
+
+        lastCommittedBatch = batchNumber;
+
+        emit BatchReverted(batchCommitments[lastCommittedBatch].newStateRoot);
+    }
+
     /// @notice Allow owner to upgrade the contract.
     /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyOwner {}
+
+    /// @inheritdoc IOnChainProposer
+    function pause() external override onlyOwner {
+        _pause();
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function unpause() external override onlyOwner {
+        _unpause();
+    }
 }

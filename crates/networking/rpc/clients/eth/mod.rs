@@ -9,10 +9,9 @@ use crate::{
 };
 use bytes::Bytes;
 use errors::{
-    EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
-    GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
-    GetMaxPriorityFeeError, GetNonceError, GetTransactionByHashError, GetTransactionReceiptError,
-    SendRawTransactionError,
+    EstimateGasError, EthClientError, GetBalanceError, GetBlockByHashError, GetBlockByNumberError,
+    GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError, GetMaxPriorityFeeError,
+    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -461,13 +460,13 @@ impl EthClient {
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => {
                 let res = serde_json::from_value::<String>(result.result)
-                    .map_err(EstimateGasPriceError::SerdeJSONError)?;
-                let res = res.get(2..).ok_or(EstimateGasPriceError::Custom(
+                    .map_err(EstimateGasError::SerdeJSONError)?;
+                let res = res.get(2..).ok_or(EstimateGasError::Custom(
                     "Failed to slice index response in estimate_gas".to_owned(),
                 ))?;
                 u64::from_str_radix(res, 16)
             }
-            .map_err(EstimateGasPriceError::ParseIntError)
+            .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 let error_data = if let Some(error_data) = error_response.error.data {
@@ -516,7 +515,7 @@ impl EthClient {
                 } else {
                     "unknown error".to_owned()
                 };
-                Err(EstimateGasPriceError::RPCError(format!(
+                Err(EstimateGasError::RPCError(format!(
                     "{}: {}",
                     error_response.error.message, error_data
                 ))
@@ -1190,14 +1189,10 @@ impl EthClient {
         let bytes = hex::decode(hex)
             .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {}", e)))?;
 
-        if bytes.len() != 32 {
-            return Err(EthClientError::Custom(
-                "Expected 32 bytes for bytes32 value".to_owned(),
-            ));
-        }
+        let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+            EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned())
+        })?;
 
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
         Ok(arr)
     }
 

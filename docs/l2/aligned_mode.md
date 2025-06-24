@@ -47,7 +47,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
-### 3. Deposit funds to the `AlignedBatchePaymentService` contract from the proof sender
+### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
 
 ```bash
 aligned \
