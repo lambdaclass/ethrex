@@ -455,13 +455,7 @@ impl Blockchain {
         for (i, block) in blocks.iter().enumerate() {
             if cancellation_token.is_cancelled() {
                 info!("Received shutdown signal, aborting");
-                return Err((
-                    ChainError::Custom(String::from("shutdown signal")),
-                    Some(BatchBlockProcessingFailure {
-                        failed_block_hash: block.hash(),
-                        last_valid_hash,
-                    }),
-                ));
+                return Err((ChainError::Custom(String::from("shutdown signal")), None));
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
