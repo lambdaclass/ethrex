@@ -6,18 +6,18 @@ use ethrex_common::{
     types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
-use redb::{AccessGuard, Database, Key, TableDefinition, Value};
+use redb::{AccessGuard, Database, Key, ReadableTable, TableDefinition, Value, WriteTransaction};
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, OperationsCountRLP, Rlp, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, MessageHashesRLP, OperationsCountRLP, Rlp},
 };
 
 const BATCHES_BY_BLOCK_NUMBER_TABLE: TableDefinition<BlockNumber, u64> =
     TableDefinition::new("BatchesByBlockNumbers");
 
-const WITHDRAWALS_BY_BATCH: TableDefinition<u64, WithdrawalHashesRLP> =
-    TableDefinition::new("WithdrawalHashesByBatch");
+const MESSAGES_BY_BATCH: TableDefinition<u64, MessageHashesRLP> =
+    TableDefinition::new("MesageHashesByBatch");
 
 const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
     TableDefinition::new("BlockNumbersByBatch");
@@ -105,7 +105,7 @@ pub fn init_db() -> Result<Database, RollupStoreError> {
     let table_creation_txn = db.begin_write().map_err(Box::new)?;
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
-    table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;
+    table_creation_txn.open_table(MESSAGES_BY_BATCH)?;
     table_creation_txn.open_table(OPERATIONS_COUNTS)?;
     table_creation_txn.open_table(BLOB_BUNDLES)?;
     table_creation_txn.open_table(STATE_ROOTS)?;
@@ -138,25 +138,25 @@ impl StoreEngineRollup for RedBStoreRollup {
             .await
     }
 
-    async fn get_withdrawal_hashes_by_batch(
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         Ok(self
-            .read(WITHDRAWALS_BY_BATCH, batch_number)
+            .read(MESSAGES_BY_BATCH, batch_number)
             .await?
             .map(|w| w.value().to()))
     }
 
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawals: Vec<H256>,
+        messages: Vec<H256>,
     ) -> Result<(), RollupStoreError> {
         self.write(
-            WITHDRAWALS_BY_BATCH,
+            MESSAGES_BY_BATCH,
             batch_number,
-            <Vec<H256> as Into<WithdrawalHashesRLP>>::into(withdrawals),
+            <Vec<H256> as Into<MessageHashesRLP>>::into(messages),
         )
         .await
     }
@@ -253,13 +253,13 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
-        let (transaction_count, withdrawals_count, deposits_count) = {
+        let (transaction_count, messages_count, deposits_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
-                current_operations[1] + withdrawals_inc,
+                current_operations[1] + messages_inc,
                 current_operations[2] + deposits_inc,
             )
         };
@@ -268,7 +268,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             OPERATIONS_COUNTS,
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, withdrawals_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
             ),
         )
         .await
@@ -303,4 +303,34 @@ impl StoreEngineRollup for RedBStoreRollup {
     ) -> Result<(), RollupStoreError> {
         self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
     }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
+            return Ok(());
+        };
+        let last_kept_block = *kept_blocks.iter().max().unwrap_or(&0);
+        let txn = self.db.begin_write().map_err(Box::new)?;
+        delete_starting_at(&txn, BATCHES_BY_BLOCK_NUMBER_TABLE, last_kept_block + 1)?;
+        delete_starting_at(&txn, MESSAGES_BY_BATCH, batch_number + 1)?;
+        delete_starting_at(&txn, BLOCK_NUMBERS_BY_BATCH, batch_number + 1)?;
+        delete_starting_at(&txn, DEPOSIT_LOGS_HASHES, batch_number + 1)?;
+        delete_starting_at(&txn, STATE_ROOTS, batch_number + 1)?;
+        delete_starting_at(&txn, BLOB_BUNDLES, batch_number + 1)?;
+        txn.commit()?;
+        Ok(())
+    }
+}
+
+/// Deletes keys above key, assuming they are contiguous
+fn delete_starting_at<V: redb::Value>(
+    txn: &WriteTransaction,
+    table: TableDefinition<u64, V>,
+    mut key: u64,
+) -> Result<(), RollupStoreError> {
+    let mut table = txn.open_table(table)?;
+    while table.get(key)?.is_some() {
+        table.remove(key)?;
+        key += 1;
+    }
+    Ok(())
 }

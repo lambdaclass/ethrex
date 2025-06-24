@@ -7,8 +7,8 @@ use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::deposits::DepositError;
+use ethrex_l2_common::l1_messages::L1MessagingError;
 use ethrex_l2_common::state_diff::StateDiffError;
-use ethrex_l2_common::withdrawals::WithdrawalError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
@@ -244,8 +244,8 @@ pub enum CommitterError {
     FailedToGetWithdrawals(#[from] UtilsError),
     #[error("Deposit error: {0}")]
     DepositError(#[from] DepositError),
-    #[error("Withdrawal error: {0}")]
-    WithdrawalError(#[from] WithdrawalError),
+    #[error("L1Message error: {0}")]
+    L1MessageError(#[from] L1MessagingError),
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -280,4 +280,10 @@ pub enum ExecutionCacheError {
     Io(#[from] std::io::Error),
     #[error("Failed (de)serializing result: {0}")]
     Bincode(#[from] bincode::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectionHandlerError {
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }

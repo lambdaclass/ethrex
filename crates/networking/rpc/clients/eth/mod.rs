@@ -9,10 +9,9 @@ use crate::{
 };
 use bytes::Bytes;
 use errors::{
-    EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
-    GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
-    GetMaxPriorityFeeError, GetNonceError, GetTransactionByHashError, GetTransactionReceiptError,
-    SendRawTransactionError,
+    EstimateGasError, EthClientError, GetBalanceError, GetBlockByHashError, GetBlockByNumberError,
+    GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError, GetMaxPriorityFeeError,
+    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -96,10 +95,10 @@ const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WithdrawalProof {
+pub struct L1MessageProof {
     pub batch_number: u64,
     pub index: usize,
-    pub withdrawal_hash: H256,
+    pub message_hash: H256,
     pub merkle_proof: Vec<H256>,
 }
 
@@ -226,7 +225,9 @@ impl EthClient {
         tx: &EIP1559Transaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(private_key);
+        let signed_tx = tx
+            .sign(private_key)
+            .map_err(|error| EthClientError::FailedToSignPayload(error.to_string()))?;
 
         let mut encoded_tx = signed_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP1559.into());
@@ -240,7 +241,10 @@ impl EthClient {
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
         let mut wrapped_tx = wrapped_tx.clone();
-        wrapped_tx.tx.sign_inplace(private_key);
+        wrapped_tx
+            .tx
+            .sign_inplace(private_key)
+            .map_err(|error| EthClientError::FailedToSignPayload(error.to_string()))?;
 
         let mut encoded_tx = wrapped_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP4844.into());
@@ -443,13 +447,13 @@ impl EthClient {
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => {
                 let res = serde_json::from_value::<String>(result.result)
-                    .map_err(EstimateGasPriceError::SerdeJSONError)?;
-                let res = res.get(2..).ok_or(EstimateGasPriceError::Custom(
+                    .map_err(EstimateGasError::SerdeJSONError)?;
+                let res = res.get(2..).ok_or(EstimateGasError::Custom(
                     "Failed to slice index response in estimate_gas".to_owned(),
                 ))?;
                 u64::from_str_radix(res, 16)
             }
-            .map_err(EstimateGasPriceError::ParseIntError)
+            .map_err(EstimateGasError::ParseIntError)
             .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 let error_data = if let Some(error_data) = error_response.error.data {
@@ -498,7 +502,7 @@ impl EthClient {
                 } else {
                     "unknown error".to_owned()
                 };
-                Err(EstimateGasPriceError::RPCError(format!(
+                Err(EstimateGasError::RPCError(format!(
                     "{}: {}",
                     error_response.error.message, error_data
                 ))
@@ -1176,55 +1180,53 @@ impl EthClient {
         ))
     }
 
-    pub async fn get_withdrawal_proof(
+    pub async fn get_message_proof(
         &self,
         transaction_hash: H256,
-    ) -> Result<Option<WithdrawalProof>, EthClientError> {
-        use errors::GetWithdrawalProofError;
+    ) -> Result<Option<Vec<L1MessageProof>>, EthClientError> {
+        use errors::GetMessageProofError;
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
-            method: "ethrex_getWithdrawalProof".to_string(),
+            method: "ethrex_getMessageProof".to_string(),
             params: Some(vec![json!(format!("{:#x}", transaction_hash))]),
         };
 
         match self.send_request(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
-                .map_err(GetWithdrawalProofError::SerdeJSONError)
+                .map_err(GetMessageProofError::SerdeJSONError)
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
-                Err(GetWithdrawalProofError::RPCError(error_response.error.message).into())
+                Err(GetMessageProofError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
     }
 
-    pub async fn wait_for_withdrawal_proof(
+    pub async fn wait_for_message_proof(
         &self,
         transaction_hash: H256,
         max_retries: u64,
-    ) -> Result<WithdrawalProof, EthClientError> {
-        let mut withdrawal_proof = self.get_withdrawal_proof(transaction_hash).await?;
+    ) -> Result<Vec<L1MessageProof>, EthClientError> {
+        let mut message_proof = self.get_message_proof(transaction_hash).await?;
         let mut r#try = 1;
-        while withdrawal_proof.is_none() {
+        while message_proof.is_none() {
             println!(
-                "[{try}/{max_retries}] Retrying to get withdrawal proof for tx {transaction_hash:#x}"
+                "[{try}/{max_retries}] Retrying to get message proof for tx {transaction_hash:#x}"
             );
 
             if max_retries == r#try {
                 return Err(EthClientError::Custom(format!(
-                    "Withdrawal proof for tx {transaction_hash:#x} not found after {max_retries} retries"
+                    "L1Message proof for tx {transaction_hash:#x} not found after {max_retries} retries"
                 )));
             }
             r#try += 1;
 
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-            withdrawal_proof = self.get_withdrawal_proof(transaction_hash).await?;
+            message_proof = self.get_message_proof(transaction_hash).await?;
         }
-        withdrawal_proof.ok_or(EthClientError::Custom(
-            "Withdrawal proof is None".to_owned(),
-        ))
+        message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
     }
 
     async fn get_fee_from_override_or_get_gas_price(

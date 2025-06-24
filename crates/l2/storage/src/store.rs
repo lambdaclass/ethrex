@@ -72,7 +72,7 @@ impl Store {
             last_block: 0,
             state_root: H256::zero(),
             deposit_logs_hash: H256::zero(),
-            withdrawal_hashes: Vec::new(),
+            message_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
         })
         .await?;
@@ -115,22 +115,20 @@ impl Store {
             .await
     }
 
-    pub async fn get_withdrawal_hashes_by_batch(
+    pub async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
-        self.engine
-            .get_withdrawal_hashes_by_batch(batch_number)
-            .await
+        self.engine.get_message_hashes_by_batch(batch_number).await
     }
 
-    pub async fn store_withdrawal_hashes_by_batch(
+    pub async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawal_hashes: Vec<H256>,
+        message_hashes: Vec<H256>,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
+            .store_message_hashes_by_batch(batch_number, message_hashes)
             .await
     }
 
@@ -223,10 +221,11 @@ impl Store {
         ).map_err(|e| {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
-        let withdrawal_hashes = self
-            .get_withdrawal_hashes_by_batch(batch_number)
-            .await?.ok_or(RollupStoreError::Custom(
-            "Failed while trying to retrieve the withdrawal hashes of a known batch. This is a bug."
+        let message_hashes = self
+            .get_message_hashes_by_batch(batch_number)
+            .await?
+            .ok_or(RollupStoreError::Custom(
+            "Failed while trying to retrieve the message hashes of a known batch. This is a bug."
                 .to_owned(),
         ))?;
         let deposit_logs_hash = self
@@ -242,7 +241,7 @@ impl Store {
             last_block,
             state_root,
             blobs_bundle,
-            withdrawal_hashes,
+            message_hashes,
             deposit_logs_hash,
         }))
     }
@@ -256,7 +255,7 @@ impl Store {
         }
         self.store_block_numbers_by_batch(batch.number, blocks)
             .await?;
-        self.store_withdrawal_hashes_by_batch(batch.number, batch.withdrawal_hashes)
+        self.store_message_hashes_by_batch(batch.number, batch.message_hashes)
             .await?;
         self.store_deposit_logs_hash_by_batch(batch.number, batch.deposit_logs_hash)
             .await?;
@@ -271,10 +270,10 @@ impl Store {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .update_operations_count(transaction_inc, deposits_inc, withdrawals_inc)
+            .update_operations_count(transaction_inc, deposits_inc, messages_inc)
             .await
     }
 
@@ -298,5 +297,10 @@ impl Store {
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
         self.engine.set_lastest_sent_batch_proof(batch_number).await
+    }
+
+    /// Reverts to a previous batch, discarding operations in them
+    pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.engine.revert_to_batch(batch_number).await
     }
 }

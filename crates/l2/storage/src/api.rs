@@ -26,17 +26,17 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<(), RollupStoreError>;
 
-    /// Gets the withdrawal hashes by a given batch number.
-    async fn get_withdrawal_hashes_by_batch(
+    /// Gets the message hashes by a given batch number.
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError>;
 
-    /// Stores the withdrawal hashes by a given batch number.
-    async fn store_withdrawal_hashes_by_batch(
+    /// Stores the message hashes by a given batch number.
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawal_hashes: Vec<H256>,
+        message_hashes: Vec<H256>,
     ) -> Result<(), RollupStoreError>;
 
     /// Stores the block numbers by a given batch_number
@@ -89,7 +89,7 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), RollupStoreError>;
 
     async fn get_operations_count(&self) -> Result<[u64; 3], RollupStoreError>;
@@ -101,4 +101,6 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64)
     -> Result<(), RollupStoreError>;
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 }

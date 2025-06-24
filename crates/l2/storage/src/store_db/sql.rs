@@ -24,11 +24,11 @@ impl Debug for SQLStore {
 
 const DB_SCHEMA: [&str; 9] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
-    "CREATE TABLE withdrawals (batch INT, idx INT, withdrawal_hash BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE messages (batch INT, idx INT, withdrawal_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, deposits INT, withdrawals INT)",
+    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, deposits INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
     "INSERT INTO latest_sent VALUES (0, 0)",
@@ -132,15 +132,15 @@ impl StoreEngineRollup for SQLStore {
         .await
     }
 
-    /// Gets the withdrawal hashes by a given batch number.
-    async fn get_withdrawal_hashes_by_batch(
+    /// Gets the message hashes by a given batch number.
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         let mut hashes = vec![];
         let mut rows = self
             .query(
-                "SELECT * from withdrawals WHERE batch = ?1 ORDER BY idx ASC",
+                "SELECT * from messages WHERE batch = ?1 ORDER BY idx ASC",
                 vec![batch_number],
             )
             .await?;
@@ -156,20 +156,20 @@ impl StoreEngineRollup for SQLStore {
     }
 
     /// Stores the withdrawal hashes by a given batch number.
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawal_hashes: Vec<H256>,
     ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
-            "DELETE FROM withdrawals WHERE batch = ?1",
+            "DELETE FROM messages WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
         for (index, hash) in withdrawal_hashes.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
-                "INSERT INTO withdrawals VALUES (?1, ?2, ?3)",
+                "INSERT INTO messages VALUES (?1, ?2, ?3)",
                 (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
             ));
         }
@@ -331,11 +331,11 @@ impl StoreEngineRollup for SQLStore {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.execute(
-            "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, withdrawals = withdrawals + ?3", 
-            (transaction_inc, deposits_inc, withdrawals_inc)).await?;
+            "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, messages = withdrawals + ?3", 
+            (transaction_inc, deposits_inc, messages_inc)).await?;
         Ok(())
     }
 
@@ -377,6 +377,33 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<(), RollupStoreError> {
         self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
             .await?;
+        Ok(())
+    }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM blocks WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+            (
+                "DELETE FROM messages WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+            (
+                "DELETE FROM deposits WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+            (
+                "DELETE FROM state_roots WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+            (
+                "DELETE FROM blob_bundles WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
+        ])
+        .await?;
         Ok(())
     }
 }
