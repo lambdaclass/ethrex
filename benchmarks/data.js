@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750795415085,
+  "lastUpdate": 1750797747018,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1049,6 +1049,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220661716482,
             "range": "± 296977084",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b246bd60fbb0aec2b3bbe4680fd22f5f1a1167e",
+          "message": "feat(l2): implement SQL backend for L2 store (#3093)\n\n**Motivation**\n\nWe want a SQL-based backend for easier inspection.\n\n**Description**\n\nImplements a SQLite-like backend using libSQL.\n\nRemoves the RefUnwindSafe requirement from the rollup store, where it\nwasn't needed.\n\nRefactors usages of StoreError in the rollup store into\nRollupStoreError, to avoid cluttering the Store with features it doesn't\nimplement.",
+          "timestamp": "2025-06-24T19:42:10Z",
+          "tree_id": "452b4b3246e2829b09b3e8cb3aea5073a8426aeb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5b246bd60fbb0aec2b3bbe4680fd22f5f1a1167e"
+        },
+        "date": 1750797738929,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220463701192,
+            "range": "± 816678874",
             "unit": "ns/iter"
           }
         ]
