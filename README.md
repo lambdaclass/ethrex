@@ -465,7 +465,7 @@ make restart
 
 Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/main/src/prelaunch_data_generator/genesis_constants/genesis_constants.star), but there's an extra one:
 
-```
+```json
 {
     "address": "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
     "private_key": "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
@@ -474,8 +474,7 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 
 ## ethrex L2 Docs
 
-- [ethrex L2 Docs](./crates/l2/docs/README.md)
-
+- [ethrex L2 Docs](https://docs.ethrex.xyz/l2/index.html)
 
 ## 📚 References and acknowledgements
 
