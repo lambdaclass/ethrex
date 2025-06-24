@@ -772,7 +772,7 @@ mod tests {
 
         // Test weighted selection distribution
         let mut selection_counts = [0; 3];
-        for _ in 0..300 {
+        for _ in 0..600 {
             if let Some(selected) = table.get_peer_with_score_filter(&|_| true) {
                 for (i, &peer_id) in peer_ids.iter().enumerate() {
                     if selected.node.node_id() == peer_id {
