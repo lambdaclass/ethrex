@@ -548,7 +548,7 @@ impl EFTestReportForkResult {
         );
     }
 
-    pub fn register_post_state_validation_error_state_root_mismatch(
+    pub fn register_error_on_reverting_levm_state(
         &mut self,
         reason: String,
         failed_vector: TestVector,

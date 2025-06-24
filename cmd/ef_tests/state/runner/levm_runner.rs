@@ -73,8 +73,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                         .register_post_state_validation_error_mismatch(reason, *vector);
                 }
                 Err(EFTestRunnerError::FailedToRevertLEVMState(reason)) => {
-                    ef_test_report_fork
-                        .register_post_state_validation_error_state_root_mismatch(reason, *vector);
+                    ef_test_report_fork.register_error_on_reverting_levm_state(reason, *vector);
                 }
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
