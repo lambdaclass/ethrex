@@ -84,8 +84,8 @@ On L1:
 
 1. The user gives the `CommonBridge` allowance via an `approve` call to the L1 token contract.
 2. The user calls `depositERC20` on the bridge, specifying the L1 and L2 token addresses, the amount to deposit, along with the intended L2 recipient.
-3. The bridge locks the specified L1 token amount in the bridge, updating the mapping with the amount locked for the L1 and L2 token pair. This ensures that L2 token withdrawals don't consume L1 tokens that weren't deposited into that L2 token.
-   - TODO: we should consider moving this book-keeping logic to the L2 bridge.
+3. The bridge locks the specified L1 token amount in the bridge, updating the mapping with the amount locked for the L1 and L2 token pair.
+   This ensures that L2 token withdrawals don't consume L1 tokens that weren't deposited into that L2 token (see ["Why store the provenance of bridged tokens?"](#why-store-the-provenance-of-bridged-tokens) for more information).
 4. The bridge emits a `DepositInitiated` event:
 
     ```solidity
@@ -150,4 +150,43 @@ sequenceDiagram
     Sequencer->>OnChainProposer: publishes batch
     OnChainProposer->>CommonBridge: consumes pending deposits
     CommonBridge-->>CommonBridge: pendingDepositLogs.pop()
+```
+
+## Why store the provenance of bridged tokens?
+
+As said before, storing the provenance of bridged tokens or, in other words, how many tokens were sent from each L1 token to each L2 token, ensures that L2 token withdrawals don't unlock L1 tokens that weren't deposited into another L2 token.
+
+This can be better understood with an example:
+
+```mermaid
+---
+title: Attacker exploits alternative bridge without token provenance
+---
+sequenceDiagram
+    box rgb(33,66,99) L1
+        actor L1Eve as Eve
+        actor L1Alice as Alice
+        participant CommonBridge
+    end
+
+    box rgb(139, 63, 63) L2
+        participant CommonBridgeL2
+        actor L2Alice as Alice
+        actor L2Eve as Eve
+    end
+
+    Note over L1Eve,L2Eve: Alice does a normal deposit
+    L1Alice ->> CommonBridge: Deposits 100 Foo tokens into FooL2
+    CommonBridge -->> CommonBridgeL2: Notifies deposit
+    CommonBridgeL2 ->> L2Alice: Sends 100 FooL2 tokens
+
+    Note over L1Eve,L2Eve: Eve does a deposit to ensure the L2 token they control is registered with the bridge
+    L1Eve ->> CommonBridge: Deposits 1 Foo token into Bar
+    CommonBridge -->> CommonBridgeL2: Notifies deposit
+    CommonBridgeL2 ->> L2Eve: Sends 1 Bar token
+
+    Note over L1Eve,L2Eve: Eve does a malicious withdawal of Alice's funds
+    L2Eve ->> CommonBridgeL2: Withdraws 101 Bar tokens into Foo
+    CommonBridgeL2 -->> CommonBridge: Notifies withdrawal
+    CommonBridge ->> L1Eve: Sends 101 Foo tokens
 ```
