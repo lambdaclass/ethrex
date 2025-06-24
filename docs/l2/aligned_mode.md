@@ -22,6 +22,21 @@ This will generate the SP1 ELF program and verification key under:
 
 
 ### 2. Deploying L1 Contracts
+### 1. Generate the SP1 ELF Program and Verification Key
+
+Run:
+
+```bash
+cd ethrex/crates/l2
+SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
+```
+
+This will generate the SP1 ELF program and verification key under:
+- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf`
+- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk`
+
+
+### 2. Deploying L1 Contracts
 
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
@@ -39,6 +54,8 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
     --bridge-owner <ADDRESS> \
     --on-chain-proposer-owner <ADDRESS> \
     --private-keys-file-path <PRIVATE_KEYS_FILE_PATH> \
+    --sequencer-registry-owner <ADDRESS> \
+    --sp1-vk-path <SP1_VERIFICATION_KEY_PATH>
     --sequencer-registry-owner <ADDRESS> \
     --sp1-vk-path <SP1_VERIFICATION_KEY_PATH>
 ```
