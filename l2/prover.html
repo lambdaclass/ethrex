@@ -250,7 +250,7 @@ Before the <code>zkVM</code> code (or guest), there is a directory called <code>
 <p>In summary, the <code>Prover</code> manages the inputs from the <code>ProofCoordinator</code> and then "calls" the <code>zkVM</code> to perform the proving process and generate the <code>groth16</code> ZK proof.</p>
 <h2 id="workflow"><a class="header" href="#workflow">Workflow</a></h2>
 <p>The <code>ProofCoordinator</code> monitors requests for new jobs from the <code>Prover</code>, which are sent when the prover is available. Upon receiving a new job, the Prover generates the proof, after which the <code>Prover</code> sends the proof back to the <code>ProofCoordinator</code>.</p>
-<pre><code class="language-mermaid">sequenceDiagram
+<pre class="mermaid">sequenceDiagram
     participant zkVM
     participant Prover
     participant ProofCoordinator
@@ -260,7 +260,7 @@ Before the <code>zkVM</code> code (or guest), there is a directory called <code>
     zkVM--&gt;&gt;-Prover: Creates zkProof
     Prover-&gt;&gt;+ProofCoordinator: ProofData::Submit(batch_number, zkProof)
     ProofCoordinator--&gt;&gt;-Prover: ProofData::SubmitAck(batch_number)
-</code></pre>
+</pre>
 <h2 id="how"><a class="header" href="#how">How</a></h2>
 <p><strong>Dependencies:</strong></p>
 <ul>
@@ -574,6 +574,8 @@ These proofs allow verifying that a value is included (or its key doesn't exist)
         <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
 
 
     </div>

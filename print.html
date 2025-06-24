@@ -1060,34 +1060,34 @@ number_of_deposit_logs_u16 ||
 </style>
 <h1 id="withdrawals-1"><a class="header" href="#withdrawals-1">Withdrawals</a></h1>
 <p>This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.</p>
-<p>A new <code>Withdraw</code> type of transaction on L2 is introduced, where users send a certain amount of <code>eth</code> (or the native token in a custom token setup) with it. This money is then burned on the L2 and the operator sends a <code>WithdrawLog</code> to L1, so the user can then send a transaction to claim the withdrawal associated to that log and receive their funds from the Common bridge.</p>
-<p>In more detail, the full changes/additions are:</p>
+<p>First, we need to understand the generic mechanism behind it:</p>
+<h2 id="l1message"><a class="header" href="#l1message">L1Message</a></h2>
+<p>To allow generic L2-&gt;L1 messages, a system contract is added which allows sending arbitary data.</p>
+<pre><code>struct L1Message {
+    tx_hash: H256, // L2 transaction where it was included
+    address: Address, // Who called L1Message.sol
+    data: bytes32 // payload
+}
+</code></pre>
+<p>This data is collected, put in a merkle tree whose root is published as part of the batch commitment.</p>
+<p>This way, L1 contracts can access the data.</p>
+<h2 id="bridging"><a class="header" href="#bridging">Bridging</a></h2>
+<p>On the L2 side, a contract burns the eth (or other assets, in the future) and emits a message to the L1 containing the details of this operation:</p>
 <ul>
-<li>A <code>Withdraw</code> transaction type is introduced, comprised of the regular fields in an EIP-1559 transaction.</li>
-<li>On every block, each <code>Withdraw</code> transaction will burn (i.e. deduct from the sender) the value attached to it.</li>
-<li>The sequencer will then collect all <code>Withdraw</code> transactions from the blocks included in the batch, will generate a <code>WithdrawLog</code> for each, will build a merkle tree from them and calculate the corresponding root, which we call <code>WithdrawLogsRoot</code>. The <code>WithdrawLog</code> contains the following fields:
-<ul>
-<li><code>to</code>: the address in L1 that is allowed to claim the funds (this is decided by the user as part of a withdraw transaction). This comes from the regular <code>to</code> field on the Withdraw transaction (i.e. we are reusing that field with a slightly different meaning; what it means here is "the address that can claim the funds on L1").</li>
-<li><code>amount</code>: the amount of money withdrawn (i.e. the <code>msg.value</code> of the transaction).</li>
-<li><code>tx_hash</code>: the transaction hash in the L2 block it was included in. This will be important for claiming the withdrawal as it will require a merkle proof to be provided along with the index on the tree.</li>
+<li>Destination: L1 address that can claim the deposit</li>
+<li>Amount: how much was burnt</li>
 </ul>
-</li>
-<li>As part of the L1 <code>commit</code> transaction, the sequencer will send the list of all <code>WithdrawLog</code>s on the EIP 4844 blob (i.e. as a section of the state diffs) and the <code>WithdrawLogsRoot</code> as calldata as part of the public input to the proof. The contract will then:
+<p>When the batch is commited, the OnChainProposer notifies the bridge which saves the message tree root.</p>
+<p>Once the batch containing this transaction is verified, the user can claim their funds on the L1.</p>
+<p>To do this, they compute a merkle proof for the included batch and call the L1 bridge contract.</p>
+<p>This contract then:</p>
 <ul>
-<li>Verify that the withdraw logs passed on the blob are the correct ones (this is done as part of the proof of equivalence protocol explained below).</li>
-<li>Store the <code>WithdrawLogsRoot</code> on a mapping <code>(batchNumber -&gt; LogsRoot)</code></li>
-</ul>
-</li>
-<li>For users to complete their withdraw process and receive funds on the L1, they need to call a <code>claimWithdraw(l2WithdrawalTxHash, claimedAmount, withdrawalBatchNumber, withdrawalLogIndex)</code> function on the common bridge, where <code>merkleProof</code> is an inclusion proof of the withdraw log to the root of the merkle tree the contract has stored. The contract will then do the following:
-<ul>
-<li>Check that the <code>batchNumber</code> corresponds to a committed and verified batch.</li>
-<li>Check that this withdrawal has not been already claimed.</li>
-<li>Retrieve the <code>withdrawLogsRoot</code> from the given <code>batchNumber</code>.</li>
-<li>Verify the merkle proof given by the user, passing the proof, the root, and the <code>tx_hash</code>.</li>
-<li>If any check above failed, revert. If all checks passed, send the appropriate funds to the user, then set the <code>withdrawLog</code> as claimed.</li>
-<li>After the withdrawal is sent, we mark it as claimed so it cannot be claimed twice.</li>
-</ul>
-</li>
+<li>Verifies that the batch is validated</li>
+<li>Ensures the withdrawal wasn't already claimed</li>
+<li>Computes the expected leaf</li>
+<li>Validates that the proof leads from the leaf to the root of the message tree</li>
+<li>Gives the funds to the user</li>
+<li>Marks the withdrawl as claimed</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
@@ -1473,7 +1473,7 @@ Before the <code>zkVM</code> code (or guest), there is a directory called <code>
 <p>In summary, the <code>Prover</code> manages the inputs from the <code>ProofCoordinator</code> and then "calls" the <code>zkVM</code> to perform the proving process and generate the <code>groth16</code> ZK proof.</p>
 <h2 id="workflow"><a class="header" href="#workflow">Workflow</a></h2>
 <p>The <code>ProofCoordinator</code> monitors requests for new jobs from the <code>Prover</code>, which are sent when the prover is available. Upon receiving a new job, the Prover generates the proof, after which the <code>Prover</code> sends the proof back to the <code>ProofCoordinator</code>.</p>
-<pre><code class="language-mermaid">sequenceDiagram
+<pre class="mermaid">sequenceDiagram
     participant zkVM
     participant Prover
     participant ProofCoordinator
@@ -1483,7 +1483,7 @@ Before the <code>zkVM</code> code (or guest), there is a directory called <code>
     zkVM--&gt;&gt;-Prover: Creates zkProof
     Prover-&gt;&gt;+ProofCoordinator: ProofData::Submit(batch_number, zkProof)
     ProofCoordinator--&gt;&gt;-Prover: ProofData::SubmitAck(batch_number)
-</code></pre>
+</pre>
 <h2 id="how"><a class="header" href="#how">How</a></h2>
 <p><strong>Dependencies:</strong></p>
 <ul>
@@ -2502,35 +2502,35 @@ for block in parse(rlp_file) {
 <h3 id="states"><a class="header" href="#states">States</a></h3>
 <p>In ethereum the first state is determined by the genesis file. After that, each block represents a state transition. To be formal about it, if we have a state $S$ and a block $B$, we can define $B' = f(S,B)$ as the application of a state transition function.</p>
 <p>This means that a blockchain, internally, looks like this.</p>
-<pre><code class="language-mermaid">flowchart LR
-    Sg["Sg (genesis)"]
-    S1a["S1"]
-    S2a["S2"]
-    S3a["S3"]
+<pre class="mermaid">flowchart LR
+    Sg[&quot;Sg (genesis)&quot;]
+    S1a[&quot;S1&quot;]
+    S2a[&quot;S2&quot;]
+    S3a[&quot;S3&quot;]
 
-    Sg -- "f(Sg, B1)" --&gt; S1a
-    S1a -- "f(S1, B2)" --&gt; S2a
-    S2a -- "f(S2, B3)" --&gt; S3a
-</code></pre>
+    Sg -- &quot;f(Sg, B1)&quot; --&gt; S1a
+    S1a -- &quot;f(S1, B2)&quot; --&gt; S2a
+    S2a -- &quot;f(S2, B3)&quot; --&gt; S3a
+</pre>
 <p>We start from a genesis state, and each time we add a block we generate a new state. We don't only save the current state ($S_3$), we save all of them in the DB after execution. This seems wasteful, but the reason will become more obvious very soon. This means that we can get the state for any block number. We say that if we get the state for block number one, we actually are getting the state right after applying <code>B1</code>.</p>
 <p>Due to the highly available nature of ethereum, sometimes multiple different blocks can be proposed for a single state. This creates what we call "soft forks".</p>
-<pre><code class="language-mermaid">flowchart LR
-    Sg["Sg (genesis)"]
-    S1a["S1"]
-    S2a["S2"]
-    S3a["S3"]
-    S1b["S1'"]
-    S2b["S2'"]
-    S3b["S3'"]
+<pre class="mermaid">flowchart LR
+    Sg[&quot;Sg (genesis)&quot;]
+    S1a[&quot;S1&quot;]
+    S2a[&quot;S2&quot;]
+    S3a[&quot;S3&quot;]
+    S1b[&quot;S1'&quot;]
+    S2b[&quot;S2'&quot;]
+    S3b[&quot;S3'&quot;]
 
-    Sg -- "f(Sg, B1)" --&gt; S1a
-    S1a -- "f(S1, B2)" --&gt; S2a
-    S2a -- "f(S2, B3)" --&gt; S3a
+    Sg -- &quot;f(Sg, B1)&quot; --&gt; S1a
+    S1a -- &quot;f(S1, B2)&quot; --&gt; S2a
+    S2a -- &quot;f(S2, B3)&quot; --&gt; S3a
 
-    Sg -- "f(Sg, B1')" --&gt; S1b
-    S1b -- "f(S1', B2')" --&gt; S2b
-    S2b -- "f(S2', B3')" --&gt; S3b
-</code></pre>
+    Sg -- &quot;f(Sg, B1')&quot; --&gt; S1b
+    S1b -- &quot;f(S1', B2')&quot; --&gt; S2b
+    S2b -- &quot;f(S2', B3')&quot; --&gt; S3b
+</pre>
 <p>This means that for a single block number we actually have different post-states, depending on which block we executed. In turn, this means that using a block number is not a reliable way of getting a state. To fix this, what we do is calculate the hash of a block, which is unique, and use that as an identifier for both the block and its corresponding block state. In that way, if I request the DB the state for <code>hash(B1)</code> it understands that I'm looking for <code>S1</code>, whereas if I request the DB the state for <code>hash(B1')</code> I'm looking for <code>S1'</code>.</p>
 <p>How we determine which is the right fork is called <strong>Fork choice</strong>, which is not done by the execution client, but by the consensus client. What concerns to us is that if we currently think we are on <code>S3</code> and the consensus client notifies us that actually <code>S3'</code> is the current fork, we need to change our current state to that one. That means that we need to save every post-state in case we need to change forks. This changing of the nodes perception of the correct soft fork to a different one is called <strong>reorg</strong>.</p>
 <h3 id="vm---state-interaction"><a class="header" href="#vm---state-interaction">VM - State interaction</a></h3>
@@ -2938,6 +2938,8 @@ appending the length as the size of the encoded buffer (number of bytes).</p>
         <script src="book.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="mermaid.min.js"></script>
+        <script src="mermaid-init.js"></script>
 
         <script>
         window.addEventListener('load', function() {

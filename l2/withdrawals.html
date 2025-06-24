@@ -238,34 +238,34 @@
 </style>
 <h1 id="withdrawals"><a class="header" href="#withdrawals">Withdrawals</a></h1>
 <p>This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.</p>
-<p>A new <code>Withdraw</code> type of transaction on L2 is introduced, where users send a certain amount of <code>eth</code> (or the native token in a custom token setup) with it. This money is then burned on the L2 and the operator sends a <code>WithdrawLog</code> to L1, so the user can then send a transaction to claim the withdrawal associated to that log and receive their funds from the Common bridge.</p>
-<p>In more detail, the full changes/additions are:</p>
+<p>First, we need to understand the generic mechanism behind it:</p>
+<h2 id="l1message"><a class="header" href="#l1message">L1Message</a></h2>
+<p>To allow generic L2-&gt;L1 messages, a system contract is added which allows sending arbitary data.</p>
+<pre><code>struct L1Message {
+    tx_hash: H256, // L2 transaction where it was included
+    address: Address, // Who called L1Message.sol
+    data: bytes32 // payload
+}
+</code></pre>
+<p>This data is collected, put in a merkle tree whose root is published as part of the batch commitment.</p>
+<p>This way, L1 contracts can access the data.</p>
+<h2 id="bridging"><a class="header" href="#bridging">Bridging</a></h2>
+<p>On the L2 side, a contract burns the eth (or other assets, in the future) and emits a message to the L1 containing the details of this operation:</p>
 <ul>
-<li>A <code>Withdraw</code> transaction type is introduced, comprised of the regular fields in an EIP-1559 transaction.</li>
-<li>On every block, each <code>Withdraw</code> transaction will burn (i.e. deduct from the sender) the value attached to it.</li>
-<li>The sequencer will then collect all <code>Withdraw</code> transactions from the blocks included in the batch, will generate a <code>WithdrawLog</code> for each, will build a merkle tree from them and calculate the corresponding root, which we call <code>WithdrawLogsRoot</code>. The <code>WithdrawLog</code> contains the following fields:
-<ul>
-<li><code>to</code>: the address in L1 that is allowed to claim the funds (this is decided by the user as part of a withdraw transaction). This comes from the regular <code>to</code> field on the Withdraw transaction (i.e. we are reusing that field with a slightly different meaning; what it means here is "the address that can claim the funds on L1").</li>
-<li><code>amount</code>: the amount of money withdrawn (i.e. the <code>msg.value</code> of the transaction).</li>
-<li><code>tx_hash</code>: the transaction hash in the L2 block it was included in. This will be important for claiming the withdrawal as it will require a merkle proof to be provided along with the index on the tree.</li>
+<li>Destination: L1 address that can claim the deposit</li>
+<li>Amount: how much was burnt</li>
 </ul>
-</li>
-<li>As part of the L1 <code>commit</code> transaction, the sequencer will send the list of all <code>WithdrawLog</code>s on the EIP 4844 blob (i.e. as a section of the state diffs) and the <code>WithdrawLogsRoot</code> as calldata as part of the public input to the proof. The contract will then:
+<p>When the batch is commited, the OnChainProposer notifies the bridge which saves the message tree root.</p>
+<p>Once the batch containing this transaction is verified, the user can claim their funds on the L1.</p>
+<p>To do this, they compute a merkle proof for the included batch and call the L1 bridge contract.</p>
+<p>This contract then:</p>
 <ul>
-<li>Verify that the withdraw logs passed on the blob are the correct ones (this is done as part of the proof of equivalence protocol explained below).</li>
-<li>Store the <code>WithdrawLogsRoot</code> on a mapping <code>(batchNumber -&gt; LogsRoot)</code></li>
-</ul>
-</li>
-<li>For users to complete their withdraw process and receive funds on the L1, they need to call a <code>claimWithdraw(l2WithdrawalTxHash, claimedAmount, withdrawalBatchNumber, withdrawalLogIndex)</code> function on the common bridge, where <code>merkleProof</code> is an inclusion proof of the withdraw log to the root of the merkle tree the contract has stored. The contract will then do the following:
-<ul>
-<li>Check that the <code>batchNumber</code> corresponds to a committed and verified batch.</li>
-<li>Check that this withdrawal has not been already claimed.</li>
-<li>Retrieve the <code>withdrawLogsRoot</code> from the given <code>batchNumber</code>.</li>
-<li>Verify the merkle proof given by the user, passing the proof, the root, and the <code>tx_hash</code>.</li>
-<li>If any check above failed, revert. If all checks passed, send the appropriate funds to the user, then set the <code>withdrawLog</code> as claimed.</li>
-<li>After the withdrawal is sent, we mark it as claimed so it cannot be claimed twice.</li>
-</ul>
-</li>
+<li>Verifies that the batch is validated</li>
+<li>Ensures the withdrawal wasn't already claimed</li>
+<li>Computes the expected leaf</li>
+<li>Validates that the proof leads from the leaf to the root of the message tree</li>
+<li>Gives the funds to the user</li>
+<li>Marks the withdrawl as claimed</li>
 </ul>
 
                     </main>
@@ -314,6 +314,8 @@
         <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
 
 
     </div>
