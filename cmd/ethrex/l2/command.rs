@@ -18,7 +18,7 @@ use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
-use ethrex_l2_sdk::calldata::Value;
+use ethrex_l2_common::calldata::Value;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
     EthClient,
