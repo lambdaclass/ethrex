@@ -28,7 +28,7 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex .
+	docker build -t ethrex . --build-arg BUILD_FLAGS="--features metrics"
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
@@ -46,7 +46,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 7d7864cf1cc34138b427c3c7d0e36623efc19300
+ETHEREUM_PACKAGE_REVISION := 6a896a15e6d686b0a60adf4ee97954065bc82435
 
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
@@ -173,3 +173,19 @@ test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
+
+# Using & so make calls this recipe only once per run
+mermaid-init.js mermaid.min.js &:
+	@# Required for mdbook-mermaid to work
+	@mdbook-mermaid install . \
+		|| (echo "mdbook-mermaid invocation failed, remember to install docs dependencies first with \`make docs-deps\`" \
+		&& exit 1)
+
+docs-deps: ## 📦 Install dependencies for generating the documentation
+	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck
+
+docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
+	mdbook build
+
+docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
+	mdbook serve --open

@@ -1,6 +1,6 @@
 # State diffs
 
-This architecture was inspired by MatterLabs' ZKsync pubdata architecture (see [here](https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md)).
+This architecture was inspired by [MatterLabs' ZKsync pubdata architecture](https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md).
 
 To provide data availability for our network, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.
 
@@ -18,7 +18,7 @@ After executing a batch of L2 blocks, the EVM will return the following data:
 - A list of withdrawal logs (as explained in milestone 1 we already collect these and publish a merkle root of their values as calldata, but we still need to send them as the state diff).
 - A list of triples `(address, nonce_increase, balance)` for every modified account. The `nonce_increase` is a value that says by how much the nonce of the account was increased in the batch (this could be more than one as there can be multiple transactions for the account in the batch). The balance is just the new balance value for the account.
 
-The full state diff sent for each batch will then be a sequence of bytes encoded as follows. We use the notation `un` for a sequence of `n` bits, so `u16` is a 16-bit sequence and `u96` a 96-bit one, we don’t really care about signedness here; if we don’t specify it, the value is of variable length and a field before it specifies it.
+The full state diff sent for each batch will then be a sequence of bytes encoded as follows. We use the notation `un` for a sequence of `n` bits, so `u16` is a 16-bit sequence and `u96` a 96-bit one, we don't really care about signedness here; if we don't specify it, the value is of variable length and a field before it specifies it.
 
 - The first byte is a `u8`: the version header. For now it should always be one, but we reserve it for future changes to the encoding/compression format.
 - Next come the block header info of the last block in the batch:
@@ -39,9 +39,9 @@ The full state diff sent for each batch will then be a sequence of bytes encoded
   - If the contract was created and the bytecode is previously known (i.e. `type & 0x10 == 16`), the next 32 bytes, a `u256`, is the hash of the bytecode of the contract.
   - Note that values `8` and `16` are mutually exclusive, and if `type` is greater or equal to `4`, then the address is a contract. Each address can only appear once in the list.
 - Next the `WithdrawalLogs` field:
-    - First two bytes are the number of entries, then come the tuples `(to_u160, amount_u256, tx_hash_u256)`.
+  - First two bytes are the number of entries, then come the tuples `(to_u160, amount_u256, tx_hash_u256)`.
 - Next the `DepositLogs` field:
-    - First two bytes are the number of entries, then come the tuples `(to_u160, value_u256)`.
+  - First two bytes are the number of entries, then come the tuples `(to_u160, value_u256)`.
 - In case of the only changes on an account are produced by withdrawals, the `ModifiedAccounts` for that address field must be omitted. In this case, the state diff can be computed by incrementing the nonce in one unit and subtracting the amount from the balance.
 
 To recap, using `||` for byte concatenation and `[]` for optional parameters, the full encoding for state diffs is:

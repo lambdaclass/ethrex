@@ -11,14 +11,14 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
-    DatabaseOptions, Mode, PageSize, ReadWriteOptions,
-    orm::{Database, Table},
+    DatabaseOptions, Mode, PageSize, RW, ReadWriteOptions,
+    orm::{Database, Table, Transaction},
     table, table_info,
 };
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, OperationsCountRLP, Rlp, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, MessageHashesRLP, OperationsCountRLP, Rlp},
 };
 
 pub struct Store {
@@ -67,7 +67,7 @@ const DB_PAGE_SIZE: usize = 4096;
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
     let tables = [
         table_info!(BatchesByBlockNumber),
-        table_info!(WithdrawalHashesByBatch),
+        table_info!(MessageHashesByBatch),
         table_info!(BlockNumbersByBatch),
         table_info!(OperationsCount),
         table_info!(SignatureByBlockHash),
@@ -116,22 +116,22 @@ impl StoreEngineRollup for Store {
             .await
     }
 
-    async fn get_withdrawal_hashes_by_batch(
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
         Ok(self
-            .read::<WithdrawalHashesByBatch>(batch_number)
+            .read::<MessageHashesByBatch>(batch_number)
             .await?
             .map(|w| w.to()))
     }
 
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawals: Vec<H256>,
+        messages: Vec<H256>,
     ) -> Result<(), StoreError> {
-        self.write::<WithdrawalHashesByBatch>(batch_number, withdrawals.into())
+        self.write::<MessageHashesByBatch>(batch_number, messages.into())
             .await
     }
 
@@ -229,21 +229,21 @@ impl StoreEngineRollup for Store {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), StoreError> {
-        let (transaction_count, withdrawals_count, deposits_count) = {
+        let (transaction_count, messages_count, deposits_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
                 current_operations[1] + deposits_inc,
-                current_operations[2] + withdrawals_inc,
+                current_operations[2] + messages_inc,
             )
         };
 
         self.write::<OperationsCount>(
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, withdrawals_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
             ),
         )
         .await
@@ -305,6 +305,38 @@ impl StoreEngineRollup for Store {
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
+            return Ok(());
+        };
+        let last_kept_block = *kept_blocks.iter().max().unwrap_or(&0);
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        delete_starting_at::<BatchesByBlockNumber>(&txn, last_kept_block + 1)?;
+        delete_starting_at::<MessageHashesByBatch>(&txn, batch_number + 1)?;
+        delete_starting_at::<BlockNumbersByBatch>(&txn, batch_number + 1)?;
+        delete_starting_at::<DepositLogsHash>(&txn, batch_number + 1)?;
+        delete_starting_at::<StateRoots>(&txn, batch_number + 1)?;
+        delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
+        txn.commit().map_err(StoreError::LibmdbxError)?;
+        Ok(())
+    }
+}
+
+/// Deletes keys above key, assuming they are contiguous
+fn delete_starting_at<T: Table<Key = u64>>(
+    txn: &Transaction<RW>,
+    mut key: u64,
+) -> Result<(), StoreError> {
+    while let Some(val) = txn.get::<T>(key).map_err(StoreError::LibmdbxError)? {
+        txn.delete::<T>(key, Some(val))
+            .map_err(StoreError::LibmdbxError)?;
+        key += 1;
+    }
+    Ok(())
 }
 
 table!(
@@ -313,8 +345,8 @@ table!(
 );
 
 table!(
-    /// Withdrawals by batch number
-    ( WithdrawalHashesByBatch ) u64 => WithdrawalHashesRLP
+    /// messages by batch number
+    ( MessageHashesByBatch ) u64 => MessageHashesRLP
 );
 
 table!(
@@ -323,7 +355,7 @@ table!(
 );
 
 table!(
-    /// Transaction, deposits, withdrawals count
+    /// Transaction, deposits, messages count
     ( OperationsCount ) u64 => OperationsCountRLP
 );
 
