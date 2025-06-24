@@ -204,6 +204,20 @@ impl LEVM {
             let mut acc_info_updated = false;
             let mut storage_updated = false;
 
+            // Edge case: Account was destroyed and created again afterwards with CREATE2.
+            if db.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
+                account_updates.push(AccountUpdate::removed(*address));
+                let new_account_update = AccountUpdate {
+                    address: *address,
+                    removed: false,
+                    info: Some(new_state_account.info.clone()),
+                    code: Some(new_state_account.code.clone()),
+                    added_storage: new_state_account.storage.clone(),
+                };
+                account_updates.push(new_account_update);
+                continue;
+            }
+
             // 1. Account Info has been updated if balance, nonce or bytecode changed.
             if initial_state_account.info.balance != new_state_account.info.balance {
                 acc_info_updated = true;
