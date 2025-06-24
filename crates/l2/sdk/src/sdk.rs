@@ -5,7 +5,7 @@ use calldata::encode_calldata;
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
 use ethrex_l2_common::calldata::Value;
-use ethrex_rpc::clients::eth::WithdrawalProof;
+use ethrex_rpc::clients::eth::L1MessageProof;
 use ethrex_rpc::clients::eth::{
     EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
 };
@@ -30,6 +30,11 @@ pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xff,
+]);
+
+pub const L1_MESSENGER_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfe,
 ]);
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
@@ -187,7 +192,7 @@ pub async fn claim_withdraw(
     from: Address,
     from_pk: SecretKey,
     eth_client: &EthClient,
-    withdrawal_proof: &WithdrawalProof,
+    message_proof: &L1MessageProof,
 ) -> Result<H256, EthClientError> {
     println!("Claiming {amount} from bridge to {from:#x}");
 
@@ -199,10 +204,10 @@ pub async fn claim_withdraw(
             l2_withdrawal_tx_hash.as_fixed_bytes(),
         )),
         Value::Uint(amount),
-        Value::Uint(withdrawal_proof.batch_number.into()),
-        Value::Uint(U256::from(withdrawal_proof.index)),
+        Value::Uint(message_proof.batch_number.into()),
+        Value::Uint(U256::from(message_proof.index)),
         Value::Array(
-            withdrawal_proof
+            message_proof
                 .merkle_proof
                 .iter()
                 .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))
@@ -362,6 +367,7 @@ const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
     0xc0, 0xb4, 0x95, 0x6c,
 ]);
 
+#[derive(Default)]
 pub struct ProxyDeployment {
     pub proxy_address: Address,
     pub proxy_tx_hash: H256,
@@ -556,4 +562,23 @@ pub async fn initialize_contract(
         .await?;
 
     Ok(initialize_tx_hash)
+}
+
+pub async fn call_contract(
+    client: &EthClient,
+    private_key: &SecretKey,
+    to: Address,
+    signature: &str,
+    parameters: Vec<Value>,
+) -> Result<H256, EthClientError> {
+    let calldata = encode_calldata(signature, &parameters)?.into();
+    let from = get_address_from_secret_key(private_key)?;
+    let tx = client
+        .build_eip1559_transaction(to, from, calldata, Default::default())
+        .await?;
+
+    let tx_hash = client.send_eip1559_transaction(&tx, private_key).await?;
+
+    wait_for_transaction_receipt(tx_hash, client, 100).await?;
+    Ok(tx_hash)
 }

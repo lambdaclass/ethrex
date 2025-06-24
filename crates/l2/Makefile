@@ -1,4 +1,4 @@
-.PHONY: help init down clean restart cli init-local-l1 init-l1 down-local-l1 \
+.PHONY: help init down clean restart init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
 		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 ci_test test \
 		init-testnet deploy-l1-testnet restart-testnet
@@ -50,6 +50,7 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
+ETHREX_PROOF_COORDINATOR_DEV_MODE?=true
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -131,6 +132,7 @@ DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADD
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
+	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
 	l2 init \
 	--watcher.block-delay 0 \
