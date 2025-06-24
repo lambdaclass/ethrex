@@ -38,7 +38,7 @@ fn build_risc0_program() {
     // this errs if the dir already exists, so we don't handle an error.
     let _ = std::fs::create_dir("./risc0/out");
 
-    std::fs::write("./risc0/out/riscv32im-risc0-vk", &image_id.to_string())
+    std::fs::write("./risc0/out/riscv32im-risc0-vk", &image_id)
         .expect("could not write Risc0 vk to file");
 }
 
