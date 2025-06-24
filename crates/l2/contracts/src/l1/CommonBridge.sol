@@ -45,6 +45,10 @@ contract CommonBridge is
     /// @dev It is used as the nonce of the mint transaction created by the L1Watcher.
     uint256 public depositId;
 
+    /// @notice Address of the bridge on the L2
+    /// @dev It's used to validate withdrawals
+    address public constant L2_BRIDGE_ADDRESS = address(0xffff);
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -197,6 +201,7 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
+        bytes32 withdrawalId = keccak256(abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex));
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
             "CommonBridge: the batch that emitted the withdrawal logs was not committed"
@@ -207,7 +212,7 @@ contract CommonBridge is
             "CommonBridge: the batch that emitted the withdrawal logs was not verified"
         );
         require(
-            claimedWithdrawals[l2WithdrawalTxHash] == false,
+            claimedWithdrawals[withdrawalId] == false,
             "CommonBridge: the withdrawal was already claimed"
         );
         require(
@@ -225,9 +230,9 @@ contract CommonBridge is
 
         require(success, "CommonBridge: failed to send the claimed amount");
 
-        claimedWithdrawals[l2WithdrawalTxHash] = true;
+        claimedWithdrawals[withdrawalId] = true;
 
-        emit WithdrawalClaimed(l2WithdrawalTxHash, msg.sender, claimedAmount);
+        emit WithdrawalClaimed(withdrawalId, msg.sender, claimedAmount);
     }
 
     function _verifyWithdrawProof(
@@ -237,8 +242,9 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
+        bytes32 msgHash = keccak256(abi.encodePacked(msg.sender, claimedAmount));
         bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(msg.sender, claimedAmount, l2WithdrawalTxHash)
+            abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
         );
         for (uint256 i = 0; i < withdrawalProof.length; i++) {
             if (withdrawalLogIndex % 2 == 0) {

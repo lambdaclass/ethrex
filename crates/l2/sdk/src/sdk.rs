@@ -4,7 +4,7 @@ use bytes::Bytes;
 use calldata::{Value, encode_calldata};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
-use ethrex_rpc::clients::eth::WithdrawalProof;
+use ethrex_rpc::clients::eth::L1MessageProof;
 use ethrex_rpc::clients::eth::{
     EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
 };
@@ -29,6 +29,11 @@ pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xff,
+]);
+
+pub const L1_MESSENGER_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfe,
 ]);
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
@@ -186,7 +191,7 @@ pub async fn claim_withdraw(
     from: Address,
     from_pk: SecretKey,
     eth_client: &EthClient,
-    withdrawal_proof: &WithdrawalProof,
+    message_proof: &L1MessageProof,
 ) -> Result<H256, EthClientError> {
     println!("Claiming {amount} from bridge to {from:#x}");
 
@@ -198,10 +203,10 @@ pub async fn claim_withdraw(
             l2_withdrawal_tx_hash.as_fixed_bytes(),
         )),
         Value::Uint(amount),
-        Value::Uint(withdrawal_proof.batch_number.into()),
-        Value::Uint(U256::from(withdrawal_proof.index)),
+        Value::Uint(message_proof.batch_number.into()),
+        Value::Uint(U256::from(message_proof.index)),
         Value::Array(
-            withdrawal_proof
+            message_proof
                 .merkle_proof
                 .iter()
                 .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))
