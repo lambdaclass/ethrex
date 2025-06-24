@@ -67,7 +67,7 @@ We need to have go installed for the first time we run hive, an easy way to do t
 ```shell
 asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 
-# If you need to se GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
+# If you need to set GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
 ```
 
 And uncommenting the golang line in the asdf `.tool-versions` file:
