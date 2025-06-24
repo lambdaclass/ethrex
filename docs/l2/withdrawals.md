@@ -22,7 +22,7 @@ On L1:
 
 1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
 2. The user submits a withdrawal proof when calling `claimWithdrawal` on the L1 `CommonBridge`.
-   The proof can be obtained by calling `ethrex_getWithdrawalProof` in any L2 node, after the batch containing the withdrawal transaction was committed in the L1.
+   The proof can be obtained by calling `ethrex_getWithdrawalProof` in any L2 node, after the batch containing the withdrawal transaction was verified in the L1.
 3. The bridge asserts the proof is valid.
 4. The bridge sends the locked funds specified in the `L1Message` to the user.
 
@@ -82,7 +82,7 @@ On L1:
 
 1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
 2. The user submits a withdrawal proof when calling `claimWithdrawalERC20` on the L1 `CommonBridge`.
-   The proof can be obtained by calling `ethrex_getWithdrawalProof` in any L2 node, after the batch containing the withdrawal transaction was committed in the L1.
+   The proof can be obtained by calling `ethrex_getWithdrawalProof` in any L2 node, after the batch containing the withdrawal transaction was verified in the L1.
 3. The bridge asserts the proof is valid and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.
 4. The bridge transfers the locked tokens specified in the `L1Message` to the user and discounts the transferred amount from the L1 and L2 token pair in the mapping.
 
@@ -122,3 +122,43 @@ sequenceDiagram
     CommonBridge->>L1Token: transfers tokens
     L1Token-->>L1Alice: sends 42 tokens
 ```
+
+## Generic L2->L1 messaging
+
+First, we need to understand the generic mechanism behind it:
+
+### L1Message
+
+To allow generic L2->L1 messages, a system contract is added which allows sending arbitary data.
+
+```rust
+struct L1Message {
+    tx_hash: H256, // L2 transaction where it was included
+    from: Address, // Who called L1Message.sol
+    data_hash: H256 // hashed payload
+}
+```
+
+This data is collected and put in a merkle tree whose root is published as part of the batch commitment.
+That way, L1 contracts can verify some data was sent from a specific L2 sender.
+
+### Bridging
+
+On the L2 side, for the case of asset bridging, a contract burns some assets.
+It then sends a message to the L1 containing the details of this operation:
+
+- Destination: L1 address that can claim the deposit
+- Amount: how much was burnt
+
+When the batch is committed on the L1, the `OnChainProposer` notifies the bridge which saves the message tree root.
+Once the batch containing this transaction is verified, the user can claim their funds on the L1.
+To do this, they compute a merkle proof for the included batch and call the L1 `CommonBridge` contract.
+
+This contract then:
+
+- Verifies that the batch is verified
+- Ensures the withdrawal wasn't already claimed
+- Computes the expected leaf
+- Validates that the proof leads from the leaf to the root of the message tree
+- Gives the funds to the user
+- Marks the withdrawal as claimed
