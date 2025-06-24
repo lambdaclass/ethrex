@@ -88,5 +88,5 @@ libsecp256k1 = "0.7.2"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
-spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", rev = "928c99f961b8d2dd27efd4eccd151499848f6339"}
-spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", rev = "928c99f961b8d2dd27efd4eccd151499848f6339"}
+spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.1-alpha"}
+spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.1-alpha"}
