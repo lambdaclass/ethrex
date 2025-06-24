@@ -8,7 +8,7 @@ use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 use crate::store_db::redb::RedBStoreRollup;
 use ethrex_common::{
     H256,
-    types::{Blob, BlobsBundle, BlockNumber, batch::Batch},
+    types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use ethrex_storage::error::StoreError;
 use tracing::info;
@@ -286,6 +286,27 @@ impl Store {
     /// Sets the lastest sent batch proof
     pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.engine.set_lastest_sent_batch_proof(batch_number).await
+    }
+
+    /// Returns the account updates yielded from executing a block
+    pub async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+        self.engine
+            .get_account_updates_by_block_number(block_number)
+            .await
+    }
+
+    /// Stores the account updates yielded from executing a block
+    pub async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_account_updates_by_block_number(block_number, account_updates)
+            .await
     }
 
     /// Reverts to a previous batch, discarding operations in them
