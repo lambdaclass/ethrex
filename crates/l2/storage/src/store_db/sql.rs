@@ -469,17 +469,3 @@ mod tests {
         Ok(())
     }
 }
-
-/*
-const DB_SCHEMA: [&str; 9] = [
-    "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
-    "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
-    "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
-    "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, deposits INT, messages INT)",
-    "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
-    "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
-    "INSERT INTO latest_sent VALUES (0, 0)",
-];
- */
