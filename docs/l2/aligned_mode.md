@@ -268,6 +268,6 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 
 ### OnChainProposer
 
-- Uses `verifyBatchAligned()` instead of `verifyBatch()`.
+- Uses `verifyBatchesAligned()` instead of `verifyBatch()`.
 - Receives an array of proofs to verify.
 - Delegates proof verification to the `AlignedProofAggregatorService` contract.

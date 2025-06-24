@@ -303,7 +303,7 @@ contract OnChainProposer is
         // TODO: organize each zkvm proof arguments in their own structs
         require(
             ALIGNEDPROOFAGGREGATOR == DEV_MODE,
-            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchAligned instead"
+            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchesAligned instead"
         );
         require(
             batchNumber == lastVerifiedBatch + 1,
@@ -358,7 +358,7 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
-    function verifyBatchAligned(
+    function verifyBatchesAligned(
         uint256 firstBatchNumber,
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList

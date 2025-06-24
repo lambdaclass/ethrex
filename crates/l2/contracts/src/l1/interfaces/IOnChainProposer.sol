@@ -87,7 +87,7 @@ interface IOnChainProposer {
     /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
     /// @param alignedPublicInputsList An array of public input bytes, one per proof.
     /// @param alignedMerkleProofsList An array of Merkle proofs (sibling hashes), one per proof.
-    function verifyBatchAligned(
+    function verifyBatchesAligned(
         uint256 firstBatchNumber,
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
