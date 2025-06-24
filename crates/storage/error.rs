@@ -53,3 +53,10 @@ pub enum StoreError {
     #[error("Failed to lock database for writing")]
     LockError,
 }
+
+#[cfg(feature = "libmdbx")]
+impl From<anyhow::Error> for StoreError {
+    fn from(err: anyhow::Error) -> Self {
+        StoreError::LibmdbxError(err)
+    }
+}
