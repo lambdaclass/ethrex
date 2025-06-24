@@ -1,10 +1,14 @@
 use aligned_sdk::{
-    aggregation_layer::{AggregationModeVerificationData, ProofStatus, check_proof_verification},
+    aggregation_layer::{
+        AggregationModeVerificationData, ProofStatus, ProofVerificationAggModeError,
+        check_proof_verification as aligned_check_proof_verification,
+    },
     common::types::Network,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_rpc::EthClient;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
@@ -39,7 +43,7 @@ pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), Sequenc
 
 struct L1ProofVerifier {
     eth_client: EthClient,
-    beacon_url: String,
+    beacon_urls: Vec<String>,
     l1_address: Address,
     l1_private_key: SecretKey,
     on_chain_proposer_address: Address,
@@ -56,6 +60,7 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
         let sp1_vk = eth_client
             .get_sp1_vk(committer_cfg.on_chain_proposer_address)
@@ -63,7 +68,7 @@ impl L1ProofVerifier {
 
         Ok(Self {
             eth_client,
-            beacon_url: aligned_cfg.beacon_url.clone(),
+            beacon_urls,
             network: aligned_cfg.network.clone(),
             l1_address: proof_coordinator_cfg.l1_address,
             l1_private_key: proof_coordinator_cfg.l1_private_key,
@@ -206,7 +211,7 @@ impl L1ProofVerifier {
             let commitment = H256(verification_data.commitment());
 
             if let Some((merkle_root, merkle_path)) =
-                self.check_proof_verification(verification_data).await?
+                self.check_proof_aggregation(verification_data).await?
             {
                 info!(
                     "Proof for batch {batch_number} aggregated by Aligned with commitment {commitment:#x} and Merkle root {merkle_root:#x}"
@@ -218,23 +223,11 @@ impl L1ProofVerifier {
     }
 
     /// Checks if the received proof was aggregated by Aligned.
-    async fn check_proof_verification(
+    async fn check_proof_aggregation(
         &self,
         verification_data: AggregationModeVerificationData,
     ) -> Result<Option<(H256, Vec<[u8; 32]>)>, ProofVerifierError> {
-        let rpc_url = self.eth_client.urls.first().ok_or_else(|| {
-            ProofVerifierError::InternalError("No Ethereum RPC URL configured".to_owned())
-        })?;
-
-        let proof_status = check_proof_verification(
-            &verification_data,
-            self.network.clone(),
-            rpc_url.as_str().into(),
-            self.beacon_url.clone(),
-            None,
-        )
-        .await
-        .map_err(|e| ProofVerifierError::InternalError(format!("{:?}", e)))?;
+        let proof_status = self.check_proof_verification(&verification_data).await?;
 
         let (merkle_root, merkle_path) = match proof_status {
             ProofStatus::Verified {
@@ -256,4 +249,44 @@ impl L1ProofVerifier {
 
         Ok(Some((merkle_root, merkle_path)))
     }
+
+    /// Performs the call to the aligned proof verification function with retries over multiple RPC URLs and beacon URLs.
+    async fn check_proof_verification(
+        &self,
+        verification_data: &AggregationModeVerificationData,
+    ) -> Result<ProofStatus, ProofVerifierError> {
+        for rpc_url in &self.eth_client.urls {
+            for beacon_url in &self.beacon_urls {
+                match aligned_check_proof_verification(
+                    verification_data,
+                    self.network.clone(),
+                    rpc_url.as_str().into(),
+                    beacon_url.clone(),
+                    None,
+                )
+                .await
+                {
+                    Ok(proof_status) => return Ok(proof_status),
+                    Err(ProofVerificationAggModeError::BeaconClient(_)) => continue,
+                    Err(ProofVerificationAggModeError::EthereumProviderError(_)) => break,
+                    Err(e) => return Err(ProofVerifierError::InternalError(format!("{:?}", e))),
+                }
+            }
+        }
+        Err(ProofVerifierError::InternalError(
+            "Verification failed. All RPC URLs were exhausted.".to_string(),
+        ))
+    }
+}
+
+fn parse_beacon_urls(beacon_urls: &[Url]) -> Vec<String> {
+    beacon_urls
+        .iter()
+        .map(|url| {
+            url.as_str()
+                .strip_suffix('/')
+                .unwrap_or_else(|| url.as_str())
+                .to_string()
+        })
+        .collect()
 }

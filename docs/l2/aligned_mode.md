@@ -212,9 +212,9 @@ ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../.
 > Set `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1.
 
 Suggestion:
-When running the integration test, consider increasing the `commit-time-ms` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
+When running the integration test, consider increasing the `--committer.commit-time` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
 ```
---commit-time-ms 120000
+--committer.commit-time 120000
 ```
 
 4. Start prover:
