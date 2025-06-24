@@ -339,7 +339,6 @@ contract CommonBridge is
         bytes32 msgHash = keccak256(abi.encodePacked(msg.sender, claimedAmount));
         bytes32 withdrawalLeaf = keccak256(
             abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
-            abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
         );
         for (uint256 i = 0; i < withdrawalProof.length; i++) {
             if (withdrawalLogIndex % 2 == 0) {
