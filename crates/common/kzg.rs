@@ -2,6 +2,7 @@ use crate::types::{Blob, Commitment, Proof};
 
 #[derive(thiserror::Error, Debug)]
 pub enum KzgError {
+    #[cfg(feature = "c-kzg")]
     #[error("c-kzg error: {0}")]
     CKzg(#[from] c_kzg::Error),
     #[error("kzg-rs error: {0}")]
@@ -56,7 +57,7 @@ pub fn verify_kzg_proof(
             &kzg_rs::Bytes48(commitment_bytes),
             &kzg_rs::Bytes32(z),
             &kzg_rs::Bytes32(y),
-            &kzg_rs::Bytes48(proof),
+            &kzg_rs::Bytes48(proof_bytes),
             &kzg_rs::get_kzg_settings(),
         )
         .map_err(KzgError::from)
