@@ -461,7 +461,6 @@ fn deploy_tdx_contracts(
         .env("ON_CHAIN_PROPOSER", format!("{:#x}", on_chain_proposer))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .spawn()
         .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn make: {err}")))?
         .wait()
@@ -493,20 +492,15 @@ async fn initialize_contracts(
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
-    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
+
+    let sp1_vk = std::fs::read(&opts.sp1_vk_path)
+    .unwrap_or_else(|_| {
         warn!(
             path = opts.sp1_vk_path,
             "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
         );
-        "0x00".to_string()
-    });
-    let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
-        .map_err(|err| {
-            DeployerError::DecodingError(format!(
-                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
-            ))
-        })?
-        .into();
+        vec![0u8; 32]
+    }).into();
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
