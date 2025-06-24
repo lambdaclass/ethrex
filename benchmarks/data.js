@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750797747018,
+  "lastUpdate": 1750799623633,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1079,6 +1079,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220463701192,
             "range": "± 816678874",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "18153834+klaus993@users.noreply.github.com",
+            "name": "Klaus @ LambdaClass",
+            "username": "klaus993"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2d24185147fc5be9f2b98afb3ab8351cdd44d851",
+          "message": "fix(l1,l2): update Rust version to 1.87.0 in every CI workflow, parametrize it by putting it in a GitHub Variable (#3284)\n\n**Motivation**\n\n* There are [17 CI\nfiles](https://github.com/search?q=repo%3Alambdaclass%2Fethrex+dtolnay%2Frust-toolchain&type=code)\nthat use the [`dtolnay/rust-toolchain` GitHub\nAction](https://github.com/dtolnay/rust-toolchain).\n* Each one of these sets up Rust in the GitHub runner, and a version\nspecification is needed\n* By storing the unified Rust version in a [GitHub\nVariable](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/store-information-in-variables)\nwe don't need to update 17 files each time we need to update the Rust\nversion\n\n**Description**\n\nPreviously, we were using the action this way: `uses:\ndtolnay/rust-toolchain@<rust_version>`.\nFor example: `dtolnay/rust-toolchain@1.87.0`.\nThis is the easy way of pinning a Rust version using this GitHub Action.\n\nAs we want to parametrize this and put it in a variable, we need to\nremove the version specification from the GitHub Workflow YAML `uses:`,\nas GitHub Actions syntax doesn't accept putting expressions in there.\nThe `@<version>` actually means \"get this GitHub Action from the target\nrepository **_branch_**\", so we can just use the action version [from\ntheir `master`\nbranch](https://github.com/dtolnay/rust-toolchain/tree/master) and\nspecify the version with a setting below like this:\n\n```yaml\nuses: dtolnay/rust-toolchain@master\n  with:\n    toolchain: ${{ vars.RUST_VERSION }}\n```\n\nSo we can use the GitHub Variable RUST_VERSION to store it. If there is\nany special case which needs a different version, we can just put the\nversion directly inside the `toolchain:` spec.",
+          "timestamp": "2025-06-24T20:14:19Z",
+          "tree_id": "212d98bd740accf3ec735b591d3862c66a407026",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2d24185147fc5be9f2b98afb3ab8351cdd44d851"
+        },
+        "date": 1750799616060,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222492241004,
+            "range": "± 279592992",
             "unit": "ns/iter"
           }
         ]
