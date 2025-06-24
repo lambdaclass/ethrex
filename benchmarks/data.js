@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750765886696,
+  "lastUpdate": 1750775702983,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -869,6 +869,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008648111416026345,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "37ab4d38fd6d942baa1bc7a0cc88b8746f2c15f5",
+          "message": "refactor(l2): use L1Messages for withdrawals (#3187)\n\n**Motivation**\n\nIn preparation to support more complex bridging (such as of ERC20\nassets), we want to use generic L2->L1 messaging primitives that can be\neasily extended and reused.\n\n**Description**\n\nThis replaces withdrawals with a new type L1Message, and has the bridge\nmake use of them.\n\n- Allows for multiple messages per transaction\n- Allows for arbitrary data to be sent. Hashed for easier handling.\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-06-24T13:40:13Z",
+          "tree_id": "b5b47bf0beed5ae19cabb4b1ee8cec5c277c50d9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/37ab4d38fd6d942baa1bc7a0cc88b8746f2c15f5"
+        },
+        "date": 1750775695394,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008681465013774104,
             "unit": "Mgas/s"
           }
         ]
