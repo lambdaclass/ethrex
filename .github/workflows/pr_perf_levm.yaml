@@ -87,13 +87,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: pr-result
-          path: ./pr
+          path: ./pr/crates/vm/levm/target/release/benchmark
 
       - name: Download main results
         uses: actions/download-artifact@v4
         with:
           name: main-result
-          path: ./main
+          path: ./main/crates/vm/levm/target/release/benchmark
 
       - name: Run benchmarks
         run: |
