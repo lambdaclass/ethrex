@@ -20,7 +20,7 @@ On L2:
 
 Off-chain:
 
-1. The L1 watcher on each node extracts `L1Message` events, generating a merkle tree with the hashed messages as leaves.
+1. On each L2 node, the L1 watcher extracts `L1Message` events, generating a merkle tree with the hashed messages as leaves.
 
 On L1:
 
@@ -84,7 +84,7 @@ On L2:
 
 Off-chain:
 
-1. The L1 watcher on each node extracts `L1Message` events, generating a merkle tree with the hashed messages as leaves.
+1. On each L2 node, the L1 watcher extracts `L1Message` events, generating a merkle tree with the hashed messages as leaves.
 
 On L1:
 
