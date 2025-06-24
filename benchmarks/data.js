@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750799756636,
+  "lastUpdate": 1750801004455,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1139,6 +1139,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 222279872168,
             "range": "± 353295224",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a11dda349151747fe86e0d627823a4353964a77",
+          "message": "chore(l2): remove nested workspace (#3277)\n\n**Motivation**\n\nWhen installing with `cargo install --git\nhttps://github.com/lambdaclass/ethrex.git ethrex`, I was getting weird\nerrors from the `zkvm_interface` crate. Looking into that, I found that\nwe have a nested workspace in our repo. This is not supported, and hence\nshould be avoided.\n\n**Description**\n\nThis PR removes the second workspace. I also tried keeping some of the\noptimization options for the package in\n4635cfec948a12e52d6a61ec317781845714838c, but the `lto` option was\ngiving me problems. In case we want to re-add them, the other options\ncan be added directly to the main `Cargo.toml` instead of a\n`config.toml`.",
+          "timestamp": "2025-06-24T20:36:01Z",
+          "tree_id": "740b19aaa6ca5fd2b08951082d8a0b58ef8c5f15",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a11dda349151747fe86e0d627823a4353964a77"
+        },
+        "date": 1750800995655,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222105366835,
+            "range": "± 599026439",
             "unit": "ns/iter"
           }
         ]
