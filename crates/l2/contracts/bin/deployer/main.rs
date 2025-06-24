@@ -362,8 +362,8 @@ fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
             DeployerError::DecodingError(format!(
                 "failed to parse vk ({vk_string}) from hex: {err}"
             ))
-        })?
-        .into()
+        })
+        .map(Bytes::from)
 }
 
 async fn initialize_contracts(
