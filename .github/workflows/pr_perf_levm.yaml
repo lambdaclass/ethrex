@@ -87,16 +87,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: pr-result
-          path: ./pr/crates/vm/levm/target/release/benchmark
+          path: ./pr
 
       - name: Download main results
         uses: actions/download-artifact@v4
         with:
           name: main-result
-          path: ./main/crates/vm/levm/target/release/benchmark
+          path: ./main
 
       - name: Run benchmarks
         run: |
+          mkdir -p main && cp ./main/benchmark main/benchmark
+          mkdir -p pr && cp ./pr/benchmark pr/benchmark
           cd crates/vm/levm
           make revm-comparison-ci
           {
