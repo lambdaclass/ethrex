@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction, Transaction,
-    TxKind, code_hash,
+    AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction, TxKind,
+    code_hash,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address};
@@ -14,11 +14,11 @@ use serde::{Deserialize, Serialize};
 
 use lazy_static::lazy_static;
 
-use crate::{deposits::DepositLog, withdrawals::WithdrawalLog};
+use crate::{deposits::DepositLog, l1_messages::L1Message};
 
 lazy_static! {
-    /// The serialized length of a default withdrawal log
-    pub static ref WITHDRAWAL_LOG_LEN: usize = WithdrawalLog::default().encode().len();
+    /// The serialized length of a default l1message log
+    pub static ref L1MESSAGE_LOG_LEN: usize = L1Message::default().encode().len();
 
     /// The serialized length of a default deposit log
     pub static ref DEPOSITS_LOG_LEN: usize = DepositLog::default().encode().len();
@@ -82,7 +82,7 @@ pub struct StateDiff {
     pub version: u8,
     pub last_header: BlockHeader,
     pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
-    pub withdrawal_logs: Vec<WithdrawalLog>,
+    pub l1_messages: Vec<L1Message>,
     pub deposit_logs: Vec<DepositLog>,
 }
 
@@ -126,7 +126,7 @@ impl Default for StateDiff {
             version: 1,
             last_header: BlockHeader::default(),
             modified_accounts: BTreeMap::new(),
-            withdrawal_logs: Vec::new(),
+            l1_messages: Vec::new(),
             deposit_logs: Vec::new(),
         }
     }
@@ -170,11 +170,11 @@ impl StateDiff {
             encoded.extend(account_encoded);
         }
 
-        let withdrawal_len: u16 = self.withdrawal_logs.len().try_into()?;
-        encoded.extend(withdrawal_len.to_be_bytes());
-        for withdrawal in self.withdrawal_logs.iter() {
-            let withdrawal_encoded = withdrawal.encode();
-            encoded.extend(withdrawal_encoded);
+        let message_len: u16 = self.l1_messages.len().try_into()?;
+        encoded.extend(message_len.to_be_bytes());
+        for message in self.l1_messages.iter() {
+            let message_encoded = message.encode();
+            encoded.extend(message_encoded);
         }
 
         let deposits_len: u16 = self.deposit_logs.len().try_into()?;
@@ -221,18 +221,18 @@ impl StateDiff {
             modified_accounts.insert(address, account_diff);
         }
 
-        let withdrawal_logs_len = decoder.get_u16()?;
+        let l1messages_len = decoder.get_u16()?;
 
-        let mut withdrawal_logs = Vec::with_capacity(withdrawal_logs_len.into());
-        for _ in 0..withdrawal_logs_len {
-            let address = decoder.get_address()?;
-            let amount = decoder.get_u256()?;
-            let tx_hash = decoder.get_h256()?;
+        let mut l1messages = Vec::with_capacity(l1messages_len.into());
+        for _ in 0..l1messages_len {
+            let tx = decoder.get_h256()?;
+            let from = decoder.get_address()?;
+            let data = decoder.get_h256()?;
 
-            withdrawal_logs.push(WithdrawalLog {
-                address,
-                amount,
-                tx_hash,
+            l1messages.push(L1Message {
+                from,
+                data_hash: data,
+                tx_hash: tx,
             });
         }
 
@@ -254,7 +254,7 @@ impl StateDiff {
             version,
             last_header,
             modified_accounts,
-            withdrawal_logs,
+            l1_messages: l1messages,
             deposit_logs,
         })
     }
@@ -572,7 +572,7 @@ pub fn get_nonce_diff(
 pub fn prepare_state_diff(
     last_header: BlockHeader,
     db: &impl VmDatabase,
-    withdrawals: &[Transaction],
+    l1messages: &[L1Message],
     deposits: &[PrivilegedL2Transaction],
     account_updates: Vec<AccountUpdate>,
 ) -> Result<StateDiff, StateDiffError> {
@@ -596,17 +596,7 @@ pub fn prepare_state_diff(
         modified_accounts,
         version: StateDiff::default().version,
         last_header,
-        withdrawal_logs: withdrawals
-            .iter()
-            .map(|tx| WithdrawalLog {
-                address: match tx.to() {
-                    TxKind::Call(address) => address,
-                    TxKind::Create => Address::zero(),
-                },
-                amount: tx.value(),
-                tx_hash: tx.compute_hash(),
-            })
-            .collect(),
+        l1_messages: l1messages.to_vec(),
         deposit_logs: deposits
             .iter()
             .map(|tx| DepositLog {
