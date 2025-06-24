@@ -11,10 +11,7 @@ We welcome contributions to the documentation! If you want to help improve or ex
   ```sh
   make docs-serve
   ```
-  or
-  ```sh
-  mdbook serve docs
-  ```
+
   This will start a local server and open the docs in your browser.
 
 ## Adding or Editing Content
