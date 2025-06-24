@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750777885370,
+  "lastUpdate": 1750777914605,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1018,6 +1018,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008681465013774104,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fe1e166d133f48ea01fca2a0a5c2764f269e7383",
+          "message": "fix(l1,l2): improve metrics (#3160)\n\n**Motivation**\n\nOur `transaction_tracker` metric is reset every time the node is\nrestarted.\n\n**Description**\n\n- Uses the `increase()` function in Grafana to avoid resetting the\ncounter on node restarts.\n- Initializes each possible value to 0 when starting the metrics to\nproperly calculate increments.\n- Splits the Transaction panel into two: `Transactions` and `Transaction\nErrors`.\n- Inverts the colors in `Gas Limit Usage` and `Blob Gas Usage`.\n- Pushes transaction metrics only after closing the block in L2, since\ntransactions may be added or removed depending on the state diff size.\n\n**Last Blob Usage**:  Before | After\n\n\n\n<img width=\"312\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/cd8e5471-3fa9-491b-93c0-10cf24da663c\"\n/>\n\n\n<img width=\"324\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/1fe9b992-1d05-4269-86dd-78ec1f885be0\"\n/>\n\n\n**Transactions**\n\n<img width=\"700\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/ff785f62-fc07-406f-8e8e-4d0f2b4d9aa1\"\n/>\n\n**Transaction Errors**\n\n<img width=\"694\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/146d46b0-c22b-4ff4-969d-a57acdc7916b\"\n/>\n\n\n### How to test\n\n1. Start an L2 node with metrics enabled:\n\n```bash\ncd ethrex/crates/l2\nmake init\n```\n2. Go to `http://localhost:3802/` to watch the Grafana dashboard.\n\n3. Restart the node and check that the `Transactions` panel is not\nreset.\n\n```bash\ncrtl + c\nmake init-l2-no-metrics\n```\n\n4. Modify `apply_plain_transactions` in\n`ethrex/crates/blockchain/payload.rs:543` to generate some errors:\n\n```Rust\npub fn apply_plain_transaction(\nhead: &HeadTransaction,\ncontext: &mut PayloadBuildContext,\n) -> Result<Receipt, ChainError> {\n \n      use std::time::{SystemTime, UNIX_EPOCH};\n      \n      let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();\n      let seed = (now.as_secs() ^ now.subsec_nanos() as u64) as usize;\n\n      match seed % 5 {\n            1 => Err(ChainError::ParentNotFound),\n            2 => Err(ChainError::ParentStateNotFound),\n            3 => Err(ChainError::InvalidTransaction(\"tx error\".into())),\n            4 => Err(ChainError::WitnessGeneration(\"witness failure\".into())),\n            _ => Err(ChainError::Custom(\"custom error\".into())),\n      }\n\n}\n```\n\n5. Restart the node and send some transactions:\n\n```bash\ncd ethrex\ncargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers -n http://localhost:1729\n```\n\nif necessary run `ulimit -n 65536` before the command.\n\nCloses None",
+          "timestamp": "2025-06-24T13:45:49Z",
+          "tree_id": "02f89869e2c9ab3e0094dd4337ca7d0decbde7e6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fe1e166d133f48ea01fca2a0a5c2764f269e7383"
+        },
+        "date": 1750777906012,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008797799553322166,
             "unit": "Mgas/s"
           }
         ]
