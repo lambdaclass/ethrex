@@ -366,16 +366,18 @@ async fn show_storage_tries_rebuild_progress(
     let rebuilt_storages_count = all_storages_in_queue.saturating_sub(current_storages_in_queue);
     let storage_rebuild_time = total_rebuild_time / (rebuilt_storages_count as u128 + 1);
     // Check if state sync has already finished before reporting estimated finish time
-    let state_sync_finished = if let Ok(Some(checkpoint)) = store.get_state_trie_key_checkpoint() {
-        checkpoint
-            .iter()
-            .enumerate()
-            .all(|(i, checkpoint)| checkpoint == &STATE_TRIE_SEGMENTS_END[i])
-    } else {
-        false
-    };
+    let state_sync_finished =
+        if let Ok(Some(checkpoint)) = store.get_state_trie_key_checkpoint().await {
+            checkpoint
+                .iter()
+                .enumerate()
+                .all(|(i, checkpoint)| checkpoint == &STATE_TRIE_SEGMENTS_END[i])
+        } else {
+            false
+        };
     // Show current speed only as debug data
-    debug!("Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
+    debug!(
+        "Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
         storage_rebuild_time, current_storages_in_queue,
     );
     if state_sync_finished {
