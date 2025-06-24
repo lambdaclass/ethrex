@@ -8,7 +8,7 @@
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie};
 use std::{array, collections::HashMap};
 use tokio::{
     sync::mpsc::{Receiver, Sender, channel},
@@ -325,27 +325,45 @@ async fn rebuild_storage_tries(
     store: Store,
 ) -> Result<(), SyncError> {
     debug_assert_eq!(account_hashes.len(), expected_roots.len());
-    let mut storage_tries = Vec::new();
-    for hash in account_hashes.iter() {
-        storage_tries.push(store.open_storage_trie(*hash, *EMPTY_TRIE_HASH)?);
+    struct TrieTracker {
+        account_hash: H256,
+        expected_root: H256,
+        trie: Trie,
+        start: H256,
+        complete: bool,
+    }
+
+    let mut trie_trackers = Vec::new();
+    for (account_hash, expected_root) in account_hashes.into_iter().zip(expected_roots.into_iter())
+    {
+        let tracker = TrieTracker {
+            account_hash,
+            expected_root,
+            trie: store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?,
+            start: H256::zero(),
+            complete: false,
+        };
+        trie_trackers.push(tracker);
     }
     let mut nodes = HashMap::new();
-    let mut starts: Vec<H256> = (0..account_hashes.len()).map(|_| H256::zero()).collect();
     let mut snapshot_reads_since_last_commit = 0;
-    while !storage_tries.is_empty() {
+    while trie_trackers.iter().any(|t| !t.complete) {
         snapshot_reads_since_last_commit += 1;
-        for i in 0..account_hashes.len() {
+        for tracker in trie_trackers.iter_mut() {
+            if tracker.complete {
+                continue;
+            }
             let batch = store
-                .read_storage_snapshot(account_hashes[i], starts[i])
+                .read_storage_snapshot(tracker.account_hash, tracker.start)
                 .await?;
             let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
             // Update start
             if let Some(last) = batch.last() {
-                starts[i] = next_hash(last.0);
+                tracker.start = next_hash(last.0);
             }
             // Process batch
             for (key, val) in batch {
-                storage_tries[i].insert(key.0.to_vec(), val.encode_to_vec())?;
+                tracker.trie.insert(key.0.to_vec(), val.encode_to_vec())?;
             }
 
             // Commit nodes if needed
@@ -353,7 +371,7 @@ async fn rebuild_storage_tries(
                 || snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT
             {
                 nodes
-                    .entry(account_hashes[i])
+                    .entry(tracker.account_hash)
                     .or_insert(Vec::new())
                     .extend(tracker.trie.commit_without_storing());
 
@@ -378,22 +396,12 @@ async fn rebuild_storage_tries(
                     tracker.trie = store
                         .open_storage_trie(tracker.account_hash, tracker.trie.hash_no_commit())?;
                 }
-                // Remove trie
-                storage_tries.remove(i);
-                account_hashes.remove(i);
-                starts.remove(i);
-                expected_roots.remove(i);
+                // Mark as complete
+                tracker.complete = true;
             }
         }
         if snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
-            // Commit al tries we have available
-            for i in 0..account_hashes.len() {
-                nodes
-                    .entry(account_hashes[i])
-                    .or_insert(Vec::new())
-                    .extend(storage_tries[i].commit_without_storing());
-            }
         }
     }
     store.apply_storage_trie_changes(nodes).await?;
