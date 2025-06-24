@@ -27,6 +27,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
 };
+use revm_primitives::AccountInfo;
 use std::cmp::min;
 use std::collections::HashMap;
 
@@ -245,6 +246,11 @@ impl LEVM {
             // If the account was already empty then this is not an update
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
+            if removed {
+                initial_state_account.storage.clear();
+                initial_state_account.code.clear();
+                initial_state_account.info = ethrex_common::types::AccountInfo::default();
+            }
 
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated
