@@ -751,6 +751,8 @@ mod tests {
             .collect();
         let mut peer_ids = Vec::new();
 
+        let mut table = get_test_table();
+
         for key in &peer_keys {
             let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, *key);
             table.insert_node(node);
