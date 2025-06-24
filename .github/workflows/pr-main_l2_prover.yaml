@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   lint_zk:
-    name: Lint {{ matrix.backend }} backend
+    name: Lint ${{ matrix.backend }} backend
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -28,6 +28,7 @@ jobs:
         # but it throws a "error decoding response body" in that case
         run: |
           curl -L https://risczero.com/install | bash
+          source "/home/runner/.bashrc"
           rzup install cargo-risczero 2.1.0
           rzup install rust
       - name: RISC-V SP1 toolchain install
