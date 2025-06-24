@@ -101,24 +101,63 @@ jobs:
           chmod +x ./pr/benchmark
           cd crates/vm/levm
           make revm-comparison-ci
-          {
-            echo "#### Benchmark Results: Factorial";
-            cat Factorial.md || echo "No results";
-            echo "#### Benchmark Results: Factorial - Recursive";
-            cat FactorialRecursive.md || echo "No results";
-            echo "#### Benchmark Results: Fibonacci";
-            cat Fibonacci.md || echo "No results";
-            echo "#### Benchmark Results: ManyHashes";
-            cat ManyHashes.md || echo "No results";
-            echo "#### Benchmark Results: BubbleSort";
-            cat BubbleSort.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Transfer";
-            cat ERC20Transfer.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Mint";
-            cat ERC20Mint.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Approval";
-            cat ERC20Approval.md || echo "No results";
-          } > ../../../result.md
+
+          for f in Factorial.md FactorialRecursive.md Fibonacci.md ManyHashes.md BubbleSort ERC20Transfer.md ERC20Mint.md ERC20Approval.md; do
+            awk -F'|' -v file="$f" '      
+            /`main_revm_/ {
+              gsub(/±.*/, "", $3);       # Remove ± part
+              gsub(/[[:space:]]/, "", $3); # Remove spaces
+              main_revm = $3 + 0;             # Convert to number
+              main_revm_row = $0;
+            }
+            /`main_levm_/ {
+              gsub(/±.*/, "", $3);
+              gsub(/[[:space:]]/, "", $3);
+              main_levm = $3 + 0;
+              main_levm_row = $0;
+            }
+            /`pr_revm_/ {
+              gsub(/±.*/, "", $3);
+              gsub(/[[:space:]]/, "", $3);
+              pr_revm = $3 + 0;
+              pr_revm_row = $0;
+            }
+            /`pr_levm_/ {
+              gsub(/±.*/, "", $3);
+              gsub(/[[:space:]]/, "", $3);
+              pr_levm = $3 + 0;
+              pr_levm_row = $0;
+            }
+            END {
+              if (main_revm && main_levm && pr_revm && pr_levm) {
+                delta_revm = main_revm - pr_revm;
+                if (delta_revm < 0) delta_revm = -delta_revm;
+                delta_levm = main_levm - pr_levm;
+                if (delta_levm < 0) delta_levm = -delta_levm;
+                if ((delta_revm > 0.5) || (delta_levm > 0.5)) {
+                  printf "#### Benchmark Results: %s", file
+                  print "| Command | Mean [s] | Min [s] | Max [s] | Relative |"
+                  print "|:---|---:|---:|---:|---:|"
+                  if (delta_levm > 0.5) {
+                    print main_revm_row
+                    print main_levm_row
+                    if (delta_revm > 0.5) {
+                      print pr_revm_row
+                    }
+                    print pr_levm_row
+                  } else if (delta_revm > 0.5) {
+                    print main_revm_row
+                    print main_levm_row
+                    if (delta_levm > 0.5) {
+                      print pr_levm_row
+                    }
+                    print pr_revm_row
+                  }
+                }
+              } 
+            }
+            ' f >> ../../../result.md
+          done
 
       - name: Find comment
         continue-on-error: true
