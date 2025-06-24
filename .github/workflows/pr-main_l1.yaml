@@ -22,8 +22,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
 
       - name: Add Rust Cache
@@ -51,7 +52,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
