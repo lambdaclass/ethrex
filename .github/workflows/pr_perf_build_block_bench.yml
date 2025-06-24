@@ -1,4 +1,4 @@
-name: '"Build block" benchmark'
+name: Benchmark Block building
 
 on:
   pull_request:
