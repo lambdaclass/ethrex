@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
+use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
 
@@ -422,6 +423,7 @@ impl Blockchain {
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
+        cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
@@ -451,6 +453,16 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
+            if cancellation_token.is_cancelled() {
+                info!("Received shutdown signal, aborting");
+                return Err((
+                    ChainError::Custom(String::from("shutdown signal")),
+                    Some(BatchBlockProcessingFailure {
+                        failed_block_hash: block.hash(),
+                        last_valid_hash,
+                    }),
+                ));
+            }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 find_parent_header(&block.header, &self.storage).map_err(|err| {
