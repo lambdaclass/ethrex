@@ -102,7 +102,7 @@ jobs:
           cd crates/vm/levm
           make revm-comparison-ci
 
-          for f in Factorial.md FactorialRecursive.md Fibonacci.md ManyHashes.md BubbleSort ERC20Transfer.md ERC20Mint.md ERC20Approval.md; do
+          for f in Factorial.md FactorialRecursive.md Fibonacci.md ManyHashes.md BubbleSort.md ERC20Transfer.md ERC20Mint.md ERC20Approval.md; do
             awk -F'|' -v file="$f" '      
             /`main_revm_/ {
               gsub(/±.*/, "", $3);       # Remove ± part
@@ -156,7 +156,7 @@ jobs:
                 }
               } 
             }
-            ' f >> ../../../result.md
+            ' "$f" >> ../../../result.md
           done
 
       - name: Find comment
