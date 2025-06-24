@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750731677842,
+  "lastUpdate": 1750765338835,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -779,6 +779,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221032735781,
             "range": "± 438425879",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46385380+tomasdema@users.noreply.github.com",
+            "name": "Tomás Agustín De Mattey",
+            "username": "tomasdema"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c141419d06626fc84a3bbe7d0ce80a0ae4e074ac",
+          "message": "docs(core): update roadmap (#3279)\n\n**Motivation**\n\nRoadmap was hard to follow through in a fast read. \n\n**Description**\n\nRearranged the roadmap items to group \"In Progress\" and \"Planned\" tasks\nproperly.",
+          "timestamp": "2025-06-24T10:41:47Z",
+          "tree_id": "0030a34385742ebeec6505973f379334631f470c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c141419d06626fc84a3bbe7d0ce80a0ae4e074ac"
+        },
+        "date": 1750765331280,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221004987563,
+            "range": "± 776610129",
             "unit": "ns/iter"
           }
         ]
