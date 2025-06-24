@@ -66,16 +66,22 @@ table!(
     ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
 );
 
-// TODO: maybe the log tables could save 64 bytes per
-// entry by storing the address in the value instead
 dupsort!(
-    /// Account codes table.
-    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoLogEntry
+    /// Account info write log table.
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
+    ( AccountsStateWriteLog ) (BlockNumHash, BlockNumHash)[BlockNumHash] => AccountInfoLogEntry
 );
 
 dupsort!(
     /// Storage write log table.
-    ( AccountsStorageWriteLog ) BlockNumHash => AccountStorageLogEntry
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
+    ( AccountsStorageWriteLog ) (BlockNumHash, BlockNumHash)[BlockNumHash] => AccountStorageLogEntry
 );
 
 dupsort!(
@@ -284,19 +290,26 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
-            let Some(first_block) = update_batch.blocks.first() else {
+            let (Some(first_block), Some(last_block)) =
+                (update_batch.blocks.first(), update_batch.blocks.last())
+            else {
                 return Ok(());
             };
+            let parent_block = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
+            let final_block = (last_block.header.number, last_block.hash()).into();
 
             let mut account_info_log_cursor = tx
                 .cursor::<AccountsStateWriteLog>()
                 .map_err(StoreError::LibmdbxError)?;
-            for (blk, addr, old_info, new_info) in
-                update_batch.account_info_log_updates.iter().cloned()
+            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
                 account_info_log_cursor
                     .upsert(
-                        blk,
+                        (final_block, parent_block),
                         AccountInfoLogEntry {
                             address: addr.0,
                             info: new_info,
@@ -309,9 +322,9 @@ impl StoreEngine for Store {
             let mut account_storage_logs_cursor = tx
                 .cursor::<AccountsStorageWriteLog>()
                 .map_err(StoreError::LibmdbxError)?;
-            for (blk, entry) in update_batch.storage_log_updates.iter().cloned() {
+            for entry in update_batch.storage_log_updates.iter().cloned() {
                 account_storage_logs_cursor
-                    .upsert(blk, entry)
+                    .upsert((final_block, parent_block), entry)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -319,11 +332,6 @@ impl StoreEngine for Store {
                 .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
                 .map_err(StoreError::LibmdbxError)?
                 .unwrap_or_default();
-            let parent_block = (
-                first_block.header.number - 1,
-                first_block.header.parent_hash,
-            )
-                .into();
             if meta == parent_block {
                 let mut cursor = tx
                     .cursor::<FlatAccountInfo>()
@@ -332,26 +340,19 @@ impl StoreEngine for Store {
                     .cursor::<FlatAccountStorage>()
                     .map_err(StoreError::LibmdbxError)?;
 
-                for (_block_numhash, addr, _old_info, new_info) in
-                    update_batch.account_info_log_updates
-                {
+                for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
                     let key = addr;
                     let value = (new_info != AccountInfo::default())
                         .then_some(EncodableAccountInfo(new_info));
                     Self::replace_value_or_delete(&mut cursor, key, value)?;
                 }
-                for (_block_numhash, entry) in update_batch.storage_log_updates {
+                for entry in update_batch.storage_log_updates {
                     let key = (entry.address.into(), entry.slot.into());
                     let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
                     Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
                 }
-                if let Some(block) = update_batch.blocks.iter().max_by_key(|b| b.header.number) {
-                    tx.upsert::<FlatTablesBlockMetadata>(
-                        FlatTablesBlockMetadataKey {},
-                        (block.header.number, block.header.hash()).into(),
-                    )
+                tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)
                     .map_err(StoreError::LibmdbxError)?;
-                }
             }
 
             // for each block in the update batch, we iterate over the account updates (by index)
@@ -444,7 +445,6 @@ impl StoreEngine for Store {
                 return Ok(()); // No snapshot to revert
             };
 
-            let mut block_headers_cursor = tx.cursor::<Headers>()?;
             let mut canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
             let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
             let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
@@ -461,11 +461,11 @@ impl StoreEngine for Store {
             let mut key = old_snapshot_meta;
 
             while canonical_hash != snapshot_hash {
-                let mut found_state_log = state_log_cursor.seek_exact(key)?;
-                let mut found_storage_log = storage_log_cursor.seek_exact(key)?;
+                let mut found_state_log = state_log_cursor.seek_closest(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
                 // loop over log_entries, take log_value and restore it in the flat tables
                 while let Some((read_key_num_hash, log_entry)) = found_state_log {
-                    if read_key_num_hash != key {
+                    if read_key_num_hash.0 != key {
                         break;
                     }
                     let old_info = log_entry.previous_info;
@@ -475,10 +475,14 @@ impl StoreEngine for Store {
                     Self::replace_value_or_delete(&mut flat_info_cursor, addr, info)?;
 
                     found_state_log = state_log_cursor.next()?;
+                    // We update this here to ensure it's the previous block according
+                    // to the logs found.
+                    block_num = read_key_num_hash.1.0;
+                    snapshot_hash = read_key_num_hash.1.1;
                 }
 
                 while let Some((read_key_num_hash, log_entry)) = found_storage_log {
-                    if read_key_num_hash != key {
+                    if read_key_num_hash.1 != key {
                         break;
                     }
                     let old_value = log_entry.old_value;
@@ -493,21 +497,18 @@ impl StoreEngine for Store {
                     )?;
 
                     found_storage_log = storage_log_cursor.next()?;
+                    // We update this here to ensure it's the previous block according
+                    // to the logs found.
+                    block_num = read_key_num_hash.1.0;
+                    snapshot_hash = read_key_num_hash.1.1;
                 }
 
                 // Update the cursors
                 canonical_hash = canonical_cursor
-                    .seek_exact(block_num - 1)?
+                    .seek_exact(block_num)?
                     .map(|(_, hash)| hash.to())
                     .transpose()?
                     .unwrap_or_default();
-                snapshot_hash = block_headers_cursor
-                    .seek_exact(snapshot_hash.into())?
-                    .map(|(_, header)| header.to())
-                    .transpose()?
-                    .unwrap_or_default()
-                    .parent_hash;
-                block_num -= 1;
                 key = (block_num, snapshot_hash).into();
             }
             tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
@@ -537,11 +538,11 @@ impl StoreEngine for Store {
                 let (block_num, block_hash_rlp) = key_value?;
                 let block_hash = block_hash_rlp.to()?;
                 key = (block_num, block_hash).into();
-                let mut found_state_log = state_log_cursor.seek_exact(key)?;
-                let mut found_storage_log = storage_log_cursor.seek_exact(key)?;
+                let mut found_state_log = state_log_cursor.seek_closest(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
                 // loop over log_entries, take log_value and restore it in the flat tables
                 while let Some((read_key_num_hash, log_entry)) = found_state_log {
-                    if read_key_num_hash != key {
+                    if read_key_num_hash.0 != key {
                         break;
                     }
 
@@ -555,7 +556,7 @@ impl StoreEngine for Store {
                 }
 
                 while let Some((read_key_num_hash, log_entry)) = found_storage_log {
-                    if read_key_num_hash != key {
+                    if read_key_num_hash.0 != key {
                         break;
                     }
 

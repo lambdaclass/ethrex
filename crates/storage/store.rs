@@ -1,6 +1,6 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
-use crate::store_db::codec::{account_address::AccountAddress, block_num_hash::BlockNumHash};
+use crate::store_db::codec::account_address::AccountAddress;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -62,8 +62,8 @@ pub struct UpdateBatch {
     pub code_updates: Vec<(H256, Bytes)>,
 
     /// Updates for the log tables
-    pub account_info_log_updates: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
-    pub storage_log_updates: Vec<(BlockNumHash, AccountStorageLogEntry)>,
+    pub account_info_log_updates: Vec<(AccountAddress, AccountInfo, AccountInfo)>,
+    pub storage_log_updates: Vec<AccountStorageLogEntry>,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -135,69 +135,60 @@ impl Store {
 
     pub fn build_account_info_logs<'a>(
         &self,
-        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a Vec<AccountUpdate>)>,
-    ) -> Result<Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>, StoreError> {
+        account_updates: impl Iterator<Item = &'a AccountUpdate>,
+    ) -> Result<Vec<(AccountAddress, AccountInfo, AccountInfo)>, StoreError> {
         let mut accounts_info_log = Vec::new();
         let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
 
-        for (block, account_updates) in account_updates_per_block {
-            let block_numhash: BlockNumHash = (block.header.number, block.header.hash()).into();
-            for account_update in account_updates {
-                let new_info = if account_update.removed {
-                    AccountInfo::default()
-                } else {
-                    let Some(new_info) = &account_update.info else {
-                        continue;
-                    };
-                    new_info.clone()
+        for account_update in account_updates {
+            let new_info = if account_update.removed {
+                AccountInfo::default()
+            } else {
+                let Some(new_info) = &account_update.info else {
+                    continue;
                 };
-                let address = account_update.address;
-                let old_info = match previous_account_info.get(&address) {
-                    Some(info) => info.clone(),
-                    None => self
-                        .engine
-                        .get_current_account_info(address)?
-                        .unwrap_or_default(),
-                };
-                // NOTE: this might also be useful as preparation for the snapshot
-                previous_account_info.insert(address, new_info.clone());
-                accounts_info_log.push((block_numhash, address.into(), old_info, new_info.clone()));
-            }
+                new_info.clone()
+            };
+            let address = account_update.address;
+            let old_info = match previous_account_info.get(&address) {
+                Some(info) => info.clone(),
+                None => self
+                    .engine
+                    .get_current_account_info(address)?
+                    .unwrap_or_default(),
+            };
+            // NOTE: this might also be useful as preparation for the snapshot
+            previous_account_info.insert(address, new_info.clone());
+            accounts_info_log.push((address.into(), old_info, new_info.clone()));
         }
         Ok(accounts_info_log)
     }
 
     pub fn build_account_storage_logs<'a>(
         &self,
-        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a Vec<AccountUpdate>)>,
-    ) -> Result<Vec<(BlockNumHash, AccountStorageLogEntry)>, StoreError> {
+        account_updates: impl Iterator<Item = &'a AccountUpdate>,
+    ) -> Result<Vec<AccountStorageLogEntry>, StoreError> {
         let mut accounts_storage_log = Vec::new();
         let mut previous_account_storage = HashMap::<(H160, H256), U256>::new();
 
-        for (block, account_updates) in account_updates_per_block {
-            let block_numhash: BlockNumHash = (block.header.number, block.hash()).into();
-            for account_update in account_updates {
-                let address = account_update.address;
-                for (slot, new_value) in account_update.added_storage.iter() {
-                    let old_value = match previous_account_storage.get(&(address, *slot)) {
-                        Some(value) => *value,
-                        None => self
-                            .engine
-                            .get_current_storage(address, *slot)?
-                            .unwrap_or_default(),
-                    };
-                    // NOTE: this might also be useful as preparation for the snapshot
-                    previous_account_storage.insert((address, *slot), *new_value);
-                    accounts_storage_log.push((
-                        block_numhash,
-                        AccountStorageLogEntry {
-                            address,
-                            slot: *slot,
-                            old_value,
-                            new_value: *new_value,
-                        },
-                    ));
-                }
+        for account_update in account_updates {
+            let address = account_update.address;
+            for (slot, new_value) in account_update.added_storage.iter() {
+                let old_value = match previous_account_storage.get(&(address, *slot)) {
+                    Some(value) => *value,
+                    None => self
+                        .engine
+                        .get_current_storage(address, *slot)?
+                        .unwrap_or_default(),
+                };
+                // NOTE: this might also be useful as preparation for the snapshot
+                previous_account_storage.insert((address, *slot), *new_value);
+                accounts_storage_log.push(AccountStorageLogEntry {
+                    address,
+                    slot: *slot,
+                    old_value,
+                    new_value: *new_value,
+                });
             }
         }
         Ok(accounts_storage_log)
