@@ -495,11 +495,6 @@ impl Blockchain {
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
-
-            let account_updates = vm
-                .get_state_transitions()
-                .map_err(|err| (ChainError::EvmError(err), None))?;
-            account_updates_acc.push(account_updates);
         }
 
         let last_block = blocks
@@ -509,11 +504,10 @@ impl Blockchain {
         let last_block_number = last_block.header.number;
         let last_block_gas_limit = last_block.header.gas_limit;
 
-        let account_updates = account_updates_acc
-            .iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>();
+        let account_updates = vm
+            .get_state_transitions()
+            .map_err(|err| (ChainError::EvmError(err), None))?;
+
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
