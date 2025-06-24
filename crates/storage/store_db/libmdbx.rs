@@ -15,7 +15,6 @@ use crate::rlp::{
     TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use crate::store_db::codec::block_num_hash;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -289,7 +288,7 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            let tx = db.begin_readwrite()?;
 
             let (Some(first_block), Some(last_block)) =
                 (update_batch.blocks.first(), update_batch.blocks.last())
@@ -303,43 +302,30 @@ impl StoreEngine for Store {
                 .into();
             let final_block = (last_block.header.number, last_block.hash()).into();
 
-            let mut account_info_log_cursor = tx
-                .cursor::<AccountsStateWriteLog>()
-                .map_err(StoreError::LibmdbxError)?;
+            let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
             for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
-                account_info_log_cursor
-                    .upsert(
-                        (final_block, parent_block),
-                        AccountInfoLogEntry {
-                            address: addr.0,
-                            info: new_info,
-                            previous_info: old_info,
-                        },
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+                account_info_log_cursor.upsert(
+                    (final_block, parent_block),
+                    AccountInfoLogEntry {
+                        address: addr.0,
+                        info: new_info,
+                        previous_info: old_info,
+                    },
+                )?;
             }
 
-            let mut account_storage_logs_cursor = tx
-                .cursor::<AccountsStorageWriteLog>()
-                .map_err(StoreError::LibmdbxError)?;
+            let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             for entry in update_batch.storage_log_updates.iter().cloned() {
-                account_storage_logs_cursor
-                    .upsert((final_block, parent_block), entry)
-                    .map_err(StoreError::LibmdbxError)?;
+                account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
             }
 
             let meta = tx
-                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
-                .map_err(StoreError::LibmdbxError)?
+                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
                 .unwrap_or_default();
             if meta == parent_block {
-                let mut cursor = tx
-                    .cursor::<FlatAccountInfo>()
-                    .map_err(StoreError::LibmdbxError)?;
-                let mut storage_cursor = tx
-                    .cursor::<FlatAccountStorage>()
-                    .map_err(StoreError::LibmdbxError)?;
+                let mut cursor = tx.cursor::<FlatAccountInfo>()?;
+                let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
 
                 for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
                     let key = addr;
@@ -352,22 +338,19 @@ impl StoreEngine for Store {
                     let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
                     Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
                 }
-                tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)
-                    .map_err(StoreError::LibmdbxError)?;
+                tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)?;
             }
 
             // for each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
-                    .map_err(StoreError::LibmdbxError)?;
+                tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
             }
 
             // store code updates
             for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
-                    .map_err(StoreError::LibmdbxError)?;
+                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())?;
             }
 
             for (hashed_address, nodes) in update_batch.storage_updates {
@@ -375,8 +358,7 @@ impl StoreEngine for Store {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
+                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
                 }
             }
             for block in update_batch.blocks {
@@ -388,24 +370,20 @@ impl StoreEngine for Store {
                     tx.upsert::<TransactionLocations>(
                         transaction.compute_hash().into(),
                         (number, hash, index as u64).into(),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+                    )?;
                 }
 
                 tx.upsert::<Bodies>(
                     hash.into(),
                     BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                )?;
 
                 tx.upsert::<Headers>(
                     hash.into(),
                     BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                )?;
 
-                tx.upsert::<BlockNumbers>(hash.into(), number)
-                    .map_err(StoreError::LibmdbxError)?;
+                tx.upsert::<BlockNumbers>(hash.into(), number)?;
             }
             for (block_hash, receipts) in update_batch.receipts {
                 let mut key_values = vec![];
@@ -423,11 +401,9 @@ impl StoreEngine for Store {
                 {
                     key_values.append(&mut entries);
                 }
-                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+                let mut cursor = tx.cursor::<Receipts>()?;
                 for (key, value) in key_values {
-                    cursor
-                        .upsert(key, value)
-                        .map_err(StoreError::LibmdbxError)?;
+                    cursor.upsert(key, value)?;
                 }
             }
 
