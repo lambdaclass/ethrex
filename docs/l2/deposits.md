@@ -28,7 +28,7 @@ On L1:
 Off-chain:
 
 1. The L1 watcher on each node processes `DepositInitiated` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
-2. The privileged transaction is treated similarly to an EIP-1559 transaction, but with the following changes:
+2. The privileged transaction is an [EIP-2718 typed transaction](https://eips.ethereum.org/EIPS/eip-2718), somewhat similar to an [EIP-1559 transaction](https://eips.ethereum.org/EIPS/eip-1559), but with the following changes:
    1. They don't have sender signatures. Those are validated in the L1, since the sender of the L1 deposit transaction is the sender in the L2.
       As a consequence of this, privileged transactions can also be sent from L1 contracts.
    2. At the start of the execution, the `recipient` account balance is increased by the transaction's value. The transaction's value is set to zero during the rest of the execution.
