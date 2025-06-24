@@ -206,6 +206,8 @@ impl LEVM {
 
             // Edge case: Account was destroyed and created again afterwards with CREATE2.
             if db.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
+                // Push to account updates the removal of the account and then push the new state of the account.
+                // This is for clearing the account's storage when it was selfdestructed in the first place.
                 account_updates.push(AccountUpdate::removed(*address));
                 let new_account_update = AccountUpdate {
                     address: *address,
