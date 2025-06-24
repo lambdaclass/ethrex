@@ -30,7 +30,7 @@ use super::{
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 
 /// Max storages to rebuild in parallel
-const MAX_PARALLEL_REBUILDS: usize = 15;
+const MAX_PARALLEL_REBUILDS: usize = 10;
 
 const MAX_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
 
