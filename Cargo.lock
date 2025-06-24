@@ -4003,6 +4003,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-l2-common",
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
