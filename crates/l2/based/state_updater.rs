@@ -5,7 +5,7 @@ use ethrex_common::{Address, types::Block};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
+use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerError, send_after};
 use tracing::{debug, error, info, warn};
 
@@ -26,6 +26,8 @@ pub enum StateUpdaterError {
     CalldataParsingError(String),
     #[error("State Updater failed due to a Store error: {0}")]
     StoreError(#[from] ethrex_storage::error::StoreError),
+    #[error("State Updater failed due to a RollupStore error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
     #[error("Failed to apply fork choice for fetched block: {0}")]
     InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
     #[error("Internal Error: {0}")]
