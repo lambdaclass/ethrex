@@ -105,28 +105,28 @@ jobs:
           for f in Factorial.md FactorialRecursive.md Fibonacci.md ManyHashes.md BubbleSort.md ERC20Transfer.md ERC20Mint.md ERC20Approval.md; do
             awk -F'|' -v file="$f" '      
             /`main_revm_/ {
+              main_revm_row = $0;
               gsub(/±.*/, "", $3);       # Remove ± part
               gsub(/[[:space:]]/, "", $3); # Remove spaces
               main_revm = $3 + 0;             # Convert to number
-              main_revm_row = $0;
             }
             /`main_levm_/ {
+              main_levm_row = $0;
               gsub(/±.*/, "", $3);
               gsub(/[[:space:]]/, "", $3);
               main_levm = $3 + 0;
-              main_levm_row = $0;
             }
             /`pr_revm_/ {
+              pr_revm_row = $0;
               gsub(/±.*/, "", $3);
               gsub(/[[:space:]]/, "", $3);
               pr_revm = $3 + 0;
-              pr_revm_row = $0;
             }
             /`pr_levm_/ {
+              pr_levm_row = $0;
               gsub(/±.*/, "", $3);
               gsub(/[[:space:]]/, "", $3);
               pr_levm = $3 + 0;
-              pr_levm_row = $0;
             }
             END {
               if (main_revm && main_levm && pr_revm && pr_levm) {
@@ -135,7 +135,7 @@ jobs:
                 delta_levm = main_levm - pr_levm;
                 if (delta_levm < 0) delta_levm = -delta_levm;
                 if ((delta_revm > 0.5) || (delta_levm > 0.5)) {
-                  printf "#### Benchmark Results: %s", file
+                  printf "#### Benchmark Results: %s \n", file
                   print "| Command | Mean [s] | Min [s] | Max [s] | Relative |"
                   print "|:---|---:|---:|---:|---:|"
                   if (delta_levm > 0.5) {
