@@ -919,6 +919,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if !self.blockchain.is_synced() {
             return Ok(false);
         }
+        let latest_block_number = self.storage.get_latest_block_number().await?;
+        if latest_block_number > self.latest_block_added {
+            self.latest_block_added = latest_block_number;
+        }
+
         if self.latest_block_added >= msg.block.header.number
             || self.blocks_on_queue.contains_key(&msg.block.header.number)
         {
