@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750790092620,
+  "lastUpdate": 1750795415085,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1019,6 +1019,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220310290530,
             "range": "± 857262126",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d671a809973d3c60d14fe06f85161ceb93e87875",
+          "message": "refactor(l2): use hardcoded vk in Aligned mode (#3175)\n\n**Motivation**\n\nWe are passing the verification key every time we call\n`verifyBatchAligned()`.\n\n**Description**\n\n- Initializes `SP1_VERIFICATION_KEY` in the `OnChainProposer` contract\nwith the Aligned vk and reuses it in `verifyBatchAligned()`.\n- Since `l1_proof_verifier` needs the vk for\n`aligned_sdk:check_proof_verification()`, it retrieves it from the\ncontract as well.\n\n\nCloses #3030\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-24T19:04:02Z",
+          "tree_id": "b4ce937a9867ae5012962ef2ec8d4fcebc0f5c5a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d671a809973d3c60d14fe06f85161ceb93e87875"
+        },
+        "date": 1750795407696,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220661716482,
+            "range": "± 296977084",
             "unit": "ns/iter"
           }
         ]
