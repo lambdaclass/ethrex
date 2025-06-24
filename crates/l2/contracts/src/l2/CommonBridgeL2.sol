@@ -2,7 +2,7 @@
 pragma solidity =0.8.29;
 
 import "./interfaces/ICommonBridgeL2.sol";
-import "./interfaces/IL1Messenger.sol";
+import "./interfaces/IL2ToL1Messenger.sol";
 import "./interfaces/IERC20L2.sol";
 
 /// @title CommonBridge L2 contract.
@@ -21,7 +21,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
         require(success, "Failed to burn Ether");
 
-        IL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
             ETH_TOKEN,
             ETH_TOKEN,
             _receiverOnL1,
@@ -42,7 +42,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
         require(IERC20(tokenL2).transferFrom(msg.sender, address(this), amount), "CommonBridge: burn failed");
 
-        IL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
+        IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
             tokenL1,
             tokenL2,
             destination,
