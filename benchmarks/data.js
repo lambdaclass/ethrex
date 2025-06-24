@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750731100019,
+  "lastUpdate": 1750731677842,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -749,6 +749,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 218503452289,
             "range": "± 482804344",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8880fb4c7fc2fcbb5b802a22f430e2ccaeba418c",
+          "message": "fix(l2): fix rpc job (#3244)\n\n#3180 happened again\n\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-06-24T01:21:41Z",
+          "tree_id": "f1f12afdac43f08caae758cff6ac25325e41c4d0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8880fb4c7fc2fcbb5b802a22f430e2ccaeba418c"
+        },
+        "date": 1750731670874,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221032735781,
+            "range": "± 438425879",
             "unit": "ns/iter"
           }
         ]
