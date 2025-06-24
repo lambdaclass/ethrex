@@ -287,7 +287,6 @@ async fn rebuild_storage_trie(
     loop {
         snapshot_reads_since_last_commit += 1;
         let batch = store.read_storage_snapshot(account_hash, start).await?;
-
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {
