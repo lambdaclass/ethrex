@@ -142,6 +142,28 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
   - `make rm-db-l2 && make down`
   - `make deploy-l1 && make init-l2`
 
+- If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions [here](https://github.com/risc0/risc0-ethereum/tree/main/contracts/script).
+- For a local L1 running with ethrex, we do the following:
+   1. clone the risc0-ethereum repo
+   1. edit the `risc0-ethereum/contracts/script/deployment.toml` file by adding
+      ```toml
+      [chains.ethrex]
+      name = "Ethrex local devnet"
+      id = 9
+      ```
+   1. export env. variables (we are using an ethrex's rich L1 account)
+      ```bash
+      export VERIFIER_ESTOP_OWNER="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+      export DEPLOYER_PRIVATE_KEY="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+      export DEPLOYER_ADDRESS="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+      export CHAIN_KEY="ethrex"
+      export RPC_URL="http://localhost:8545"
+      ```
+   1. run the deployment script
+      ```bash
+      bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
+      ```
+
 ## Configuration
 
 Configuration is done through environment variables or CLI flags.
