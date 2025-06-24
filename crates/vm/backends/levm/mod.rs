@@ -195,6 +195,7 @@ impl LEVM {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            // That is not what's happenning here.
             let initial_state_account =
                 db.immutable_cache
                     .get_mut(address)
@@ -267,7 +268,7 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
-        db.cache.clear();
+        // db.cache.clear();
         // db.immutable_cache.clear();
         Ok(account_updates)
     }
