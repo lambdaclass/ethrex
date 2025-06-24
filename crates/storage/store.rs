@@ -133,6 +133,9 @@ impl Store {
         self.engine.replay_writes_until_head(head).await
     }
 
+    // TODO: build_account_info_logs and build_account_storage_logs became a bit
+    // redundant. Just pass the account_updates whole and process inside the
+    // apply_updates function.
     pub fn build_account_info_logs<'a>(
         &self,
         account_updates: impl Iterator<Item = &'a AccountUpdate>,
