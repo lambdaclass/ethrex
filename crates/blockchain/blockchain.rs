@@ -347,11 +347,11 @@ impl Blockchain {
         let code_updates = apply_updates_list.code_updates;
         let account_info_log_updates = self
             .storage
-            .build_account_info_logs(std::iter::once((block, &account_updates.to_vec())))
+            .build_account_info_logs(account_updates.iter())
             .map_err(ChainError::StoreError)?;
         let storage_log_updates = self
             .storage
-            .build_account_storage_logs(std::iter::once((block, &account_updates.to_vec())))
+            .build_account_storage_logs(account_updates.iter())
             .map_err(ChainError::StoreError)?;
 
         // Check state root matches the one in block header
@@ -458,8 +458,6 @@ impl Blockchain {
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
-        let mut account_updates_acc = Vec::with_capacity(blocks_len);
-
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
             // for the first block, we need to query the store
@@ -516,8 +514,6 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
-        let account_updates_per_block = blocks.iter().zip(account_updates_acc.iter());
-
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
@@ -529,12 +525,12 @@ impl Blockchain {
         // call helper function to build write logs
         let account_info_log_updates = self
             .storage
-            .build_account_info_logs(account_updates_per_block.clone())
+            .build_account_info_logs(account_updates.iter())
             .map_err(|e| (e.into(), None))?;
 
         let storage_log_updates = self
             .storage
-            .build_account_storage_logs(account_updates_per_block)
+            .build_account_storage_logs(account_updates.iter())
             .map_err(|e| (e.into(), None))?;
 
         let update_batch = UpdateBatch {

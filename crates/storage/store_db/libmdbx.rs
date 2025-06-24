@@ -15,6 +15,7 @@ use crate::rlp::{
     TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store_db::codec::block_num_hash;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -538,9 +539,16 @@ impl StoreEngine for Store {
         {
             let (block_num, block_hash_rlp) = key_value?;
             let block_hash = block_hash_rlp.to()?;
+            let old_block_num_hash = block_num_hash;
             block_num_hash = (block_num, block_hash).into();
             let mut found_state_log = state_log_cursor.seek_closest(block_num_hash)?;
             let mut found_storage_log = storage_log_cursor.seek_closest(block_num_hash)?;
+            if found_state_log.as_ref().map(|x| x.0) != Some((block_num_hash, old_block_num_hash))
+                && found_storage_log.as_ref().map(|x| x.0)
+                    != Some((block_num_hash, old_block_num_hash))
+            {
+                continue;
+            }
             // loop over log_entries, take log_value and restore it in the flat tables
             while let Some((read_key_num_hash, log_entry)) = found_state_log {
                 if read_key_num_hash.0 != block_num_hash {
