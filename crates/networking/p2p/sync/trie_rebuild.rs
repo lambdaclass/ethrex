@@ -9,7 +9,7 @@ use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
-use std::array;
+use std::{array, collections::HashMap};
 use tokio::{
     sync::mpsc::{Receiver, Sender, channel},
     task::JoinSet,
@@ -252,7 +252,8 @@ async fn rebuild_storage_trie_in_background(
 
         // Spawn tasks to rebuild current storages
         let rebuild_start = Instant::now();
-        let mut rebuild_tasks = JoinSet::new();
+        let mut account_hashes = Vec::new();
+        let mut expected_roots = Vec::new();
         for _ in 0..MAX_PARALLEL_REBUILDS {
             if pending_storages.is_empty() {
                 break;
@@ -260,16 +261,10 @@ async fn rebuild_storage_trie_in_background(
             let (account_hash, expected_root) = pending_storages
                 .pop()
                 .expect("Unreachable code, pending_storages can't be empty in this point");
-            let store = store.clone();
-            rebuild_tasks.spawn(rebuild_storage_trie(
-                account_hash,
-                expected_root,
-                store.clone(),
-            ));
+            account_hashes.push(account_hash);
+            expected_roots.push(expected_root);
         }
-        for res in rebuild_tasks.join_all().await {
-            res?;
-        }
+        rebuild_storage_tries(account_hashes, expected_roots, store.clone()).await?;
         total_rebuild_time += rebuild_start.elapsed().as_millis();
     }
     store
@@ -318,6 +313,74 @@ async fn rebuild_storage_trie(
             .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
             .await?;
     }
+    Ok(())
+}
+
+/// Rebuilds a storage trie by reading from the storage snapshot
+/// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
+/// If the expected_root is `REBUILDER_INCOMPLETE_STORAGE_ROOT` then this validation will be skipped, the sender should make sure to queue said storage for healing
+async fn rebuild_storage_tries(
+    mut account_hashes: Vec<H256>,
+    mut expected_roots: Vec<H256>,
+    store: Store,
+) -> Result<(), SyncError> {
+    debug_assert_eq!(account_hashes.len(), expected_roots.len());
+    let mut storage_tries = Vec::new();
+    for hash in account_hashes.iter() {
+        storage_tries.push(store.open_storage_trie(*hash, *EMPTY_TRIE_HASH)?);
+    }
+    let mut nodes = HashMap::new();
+    let mut starts: Vec<H256> = (0..account_hashes.len()).map(|_| H256::zero()).collect();
+    let mut snapshot_reads_since_last_commit = 0;
+    while !storage_tries.is_empty() {
+        snapshot_reads_since_last_commit += 1;
+        for i in 0..account_hashes.len() {
+            let batch = store
+                .read_storage_snapshot(account_hashes[i], starts[i])
+                .await?;
+            let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
+            // Update start
+            if let Some(last) = batch.last() {
+                starts[i] = next_hash(last.0);
+            }
+            // Process batch
+            for (key, val) in batch {
+                storage_tries[i].insert(key.0.to_vec(), val.encode_to_vec())?;
+            }
+            // Return if we have no more snapshot values to process for this storage
+            if unfilled_batch {
+                // Extract nodes and remove trie
+                nodes
+                    .entry(account_hashes[i])
+                    .or_insert(Vec::new())
+                    .extend(storage_tries[i].commit_without_storing());
+                // Check root
+                if storage_tries[i].hash_no_commit() != expected_roots[i] {
+                    warn!("Mismatched storage root for account {}", account_hashes[i]);
+                    store
+                        .set_storage_heal_paths(vec![(account_hashes[i], vec![Nibbles::default()])])
+                        .await?;
+                }
+                // Remove trie
+                storage_tries.remove(i);
+                account_hashes.remove(i);
+                starts.remove(i);
+                expected_roots.remove(i);
+            }
+        }
+
+        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+            snapshot_reads_since_last_commit = 0;
+            // Commit al tries we have available
+            for i in 0..account_hashes.len() {
+                nodes
+                    .entry(account_hashes[i])
+                    .or_insert(Vec::new())
+                    .extend(storage_tries[i].commit_without_storing());
+            }
+        }
+    }
+    store.apply_storage_trie_changes(nodes).await?;
     Ok(())
 }
 

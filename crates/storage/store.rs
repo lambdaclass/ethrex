@@ -74,6 +74,13 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
+    pub async fn apply_storage_trie_changes(
+        &self,
+        changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+    ) -> Result<(), StoreError> {
+        self.engine.apply_storage_trie_changes(changeset).await
+    }
+
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
         let store = match engine_type {

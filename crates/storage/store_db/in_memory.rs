@@ -87,6 +87,13 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn apply_storage_trie_changes(
+        &self,
+        _changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
