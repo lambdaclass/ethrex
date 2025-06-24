@@ -556,18 +556,18 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red"
-              },
-              {
-                "color": "orange",
-                "value": 25
+                "color": "green"
               },
               {
                 "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
                 "value": 50
               },
               {
-                "color": "green",
+                "color": "red",
                 "value": 75
               }
             ]
@@ -793,13 +793,51 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 1,
+            "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
-          "mappings": []
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -811,21 +849,11 @@
       },
       "id": 14,
       "options": {
-        "displayLabels": [
-          "percent"
-        ],
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
-        },
-        "pieType": "donut",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
         },
         "tooltip": {
           "hideZeros": false,
@@ -833,25 +861,25 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.0.0",
       "targets": [
         {
           "disableTextWrap": false,
-          "editorMode": "builder",
+          "editorMode": "code",
           "exemplar": false,
-          "expr": "transactions_tracker",
+          "expr": "floor(increase(transaction_errors_count[$__range]))",
           "format": "time_series",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "{{tx_type}} || {{status}}",
+          "legendFormat": "{{tx_error}}",
           "range": true,
           "refId": "A",
           "useBackend": false
         }
       ],
-      "title": "Status of Transactions",
-      "type": "piechart"
+      "title": "Transaction Errors",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -899,7 +927,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.0.0",
       "targets": [
         {
           "datasource": {
@@ -907,14 +935,14 @@
             "uid": "prom-001"
           },
           "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "transactions_tracker",
+          "editorMode": "code",
+          "expr": "floor(increase(transactions_tracker[$__range]))",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
           "instant": false,
           "interval": "",
-          "legendFormat": "{{tx_type}} || {{status}}",
+          "legendFormat": "{{tx_type}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -942,18 +970,18 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red"
-              },
-              {
-                "color": "orange",
-                "value": 25
+                "color": "green"
               },
               {
                 "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
                 "value": 50
               },
               {
-                "color": "green",
+                "color": "red",
                 "value": 75
               }
             ]
@@ -1315,7 +1343,7 @@
           "useBackend": false
         }
       ],
-      "title": "Committed Operations",
+      "title": "Historical Committed Operations",
       "type": "stat"
     },
     {

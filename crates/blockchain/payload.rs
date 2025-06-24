@@ -27,7 +27,7 @@ use sha3::{Digest, Keccak256};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxStatus, MetricsTxType};
+use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
 
 use crate::{
     Blockchain,
@@ -429,19 +429,13 @@ impl Blockchain {
                     // Pull transaction from the mempool
                     self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Succeeded,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
+                    metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
                     receipt
                 }
                 // Ignore following txs from sender
                 Err(e) => {
                     error!("Failed to execute transaction: {tx_hash:x}, {e}");
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Failed,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
+                    metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     txs.pop();
                     continue;
                 }
