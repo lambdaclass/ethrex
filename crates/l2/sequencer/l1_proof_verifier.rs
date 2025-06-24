@@ -8,6 +8,7 @@ use aligned_sdk::{
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_rpc::EthClient;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
@@ -59,6 +60,7 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
         let sp1_vk = eth_client
             .get_sp1_vk(committer_cfg.on_chain_proposer_address)
@@ -66,7 +68,7 @@ impl L1ProofVerifier {
 
         Ok(Self {
             eth_client,
-            beacon_urls: aligned_cfg.beacon_urls.clone(),
+            beacon_urls,
             network: aligned_cfg.network.clone(),
             l1_address: proof_coordinator_cfg.l1_address,
             l1_private_key: proof_coordinator_cfg.l1_private_key,
@@ -275,4 +277,16 @@ impl L1ProofVerifier {
             "Verification failed. All RPC URLs were exhausted.".to_string(),
         ))
     }
+}
+
+fn parse_beacon_urls(beacon_urls: &[Url]) -> Vec<String> {
+    beacon_urls
+        .into_iter()
+        .map(|url| {
+            url.as_str()
+                .strip_suffix('/')
+                .unwrap_or_else(|| url.as_str())
+                .to_string()
+        })
+        .collect()
 }
