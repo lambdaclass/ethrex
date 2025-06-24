@@ -39,8 +39,7 @@ On L2:
 
 1. The privileged transaction increases the account balance of the recipient by the deposit amount.
 2. Additionally, a call to the sender address is executed, which immediately halts in case the sender is an EOA.
-
-<!-- TODO: what happens if the call reverts? -->
+   In case the call reverts, changes from the execution are reverted as normal, but the initial balance increase is kept.
 
 Back on L1:
 
