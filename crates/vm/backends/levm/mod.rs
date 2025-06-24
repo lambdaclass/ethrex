@@ -201,9 +201,6 @@ impl LEVM {
                         "Failed to get account {address} from immutable cache",
                     )))?;
 
-            let mut acc_info_updated = false;
-            let mut storage_updated = false;
-
             // Edge case: Account was destroyed and created again afterwards with CREATE2.
             if db.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
                 // Push to account updates the removal of the account and then push the new state of the account.
@@ -219,6 +216,9 @@ impl LEVM {
                 account_updates.push(new_account_update);
                 continue;
             }
+
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
 
             // 1. Account Info has been updated if balance, nonce or bytecode changed.
             if initial_state_account.info.balance != new_state_account.info.balance {

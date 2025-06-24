@@ -298,6 +298,14 @@ impl REVM {
                 continue;
             }
 
+            // If account is empty, do not add to the database
+            if account
+                .account_info()
+                .is_some_and(|acc_info| acc_info.is_empty())
+            {
+                continue;
+            }
+
             // Edge case: Account was destroyed and created again afterwards with CREATE2.
             if matches!(account.status, AccountStatus::DestroyedChanged) {
                 // Push to account updates the removal of the account and then push the new state of the account.
@@ -329,15 +337,6 @@ impl REVM {
                 }
                 continue;
             }
-
-            // If account is empty, do not add to the database
-            if account
-                .account_info()
-                .is_some_and(|acc_info| acc_info.is_empty())
-            {
-                continue;
-            }
-
             // Apply account changes to DB
             let mut account_update = AccountUpdate::new(address);
             // If the account was changed then both original and current info will be present in the bundle account
