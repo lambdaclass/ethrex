@@ -349,7 +349,7 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &str) -> Result<Vec<u8>, DeployerError> {
+fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
     let vk_string = read_to_string(path).unwrap_or_else(|_| {
         warn!(
             ?path,
