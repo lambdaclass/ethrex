@@ -7,7 +7,21 @@ This document explains how to run an Ethrex L2 node in **Aligned mode** and high
 > [!IMPORTANT]  
 > For this guide we assumed that there is an L1 running with all Aligned environment set.
 
-### 1. Deploying L1 Contracts
+### 1. Generate the SP1 ELF Program and Verification Key
+
+Run:
+
+```bash
+cd ethrex/crates/l2
+SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
+```
+
+This will generate the SP1 ELF program and verification key under:
+- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf`
+- `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk`
+
+
+### 2. Deploying L1 Contracts
 
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
@@ -25,14 +39,15 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
     --bridge-owner <ADDRESS> \
     --on-chain-proposer-owner <ADDRESS> \
     --private-keys-file-path <PRIVATE_KEYS_FILE_PATH> \
-    --sequencer-registry-owner <ADDRESS>
+    --sequencer-registry-owner <ADDRESS> \
+    --sp1-vk-path <SP1_VERIFICATION_KEY_PATH>
 ```
 
 > [!NOTE]
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
-### 2. Deposit funds to the `AlignedBatchePaymentService` contract from the proof sender
+### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
 
 ```bash
 aligned \
@@ -44,7 +59,7 @@ aligned \
 > [!IMPORTANT]
 > Using the [Aligned CLI](https://docs.alignedlayer.com/guides/9_aligned_cli)
 
-### 3. Running a node
+### 4. Running a node
 
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
@@ -89,6 +104,10 @@ SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```
 
 ## How to Run Using an Aligned Dev Environment
+
+> [!IMPORTANT]
+> This guide asumes you have already generated the SP1 ELF Program and Verification Key. See: [Generate the SP1 ELF Program and Verification Key](#1-generate-the-sp1-elf-program-and-verification-key)
+
 
 ### Set Up the Aligned Environment
 
@@ -207,10 +226,22 @@ SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 
 ### Aggregate proofs:
 
-After some time, you will see that the `l1_proof_verifier` is waiting for Aligned to aggregate the proofs. You can aggregate them by running:
+After some time, you will see that the `l1_proof_verifier` is waiting for Aligned to aggregate the proofs:
+```
+2025-06-18T22:03:53.470356Z  INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 has not yet been aggregated by Aligned. Waiting for 5 seconds
+```
+
+You can aggregate them by running:
 ```
 cd aligned_layer
 make start_proof_aggregator AGGREGATOR=sp1
+```
+
+If successful, the `l1_proof_verifier` will print the following logs:
+
+```
+INFO ethrex_l2::sequencer::l1_proof_verifier: Proof for batch 1 aggregated by Aligned with commitment 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7 and Merkle root 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7
+INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 verified in AlignedProofAggregatorService, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
 ```
 
 ## Behavioral Differences in Aligned Mode

@@ -1,5 +1,6 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=PROVER_CLIENT_ALIGNED");
 
     #[cfg(feature = "risc0")]
     build_risc0_program();
@@ -53,8 +54,16 @@ fn build_sp1_program() {
         .expect("could not read SP1 elf file");
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
-    let vk = vk.vk.bytes32();
-    dbg!(&vk);
-    std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
-        .expect("could not write SP1 vk to file");
+
+    let aligned_mode = std::env::var("PROVER_CLIENT_ALIGNED").unwrap_or("false".to_string());
+
+    if aligned_mode == "true" {
+        let vk = vk.vk.hash_bytes();
+        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
+            .expect("could not write SP1 vk to file");
+    } else {
+        let vk = vk.vk.bytes32_raw();
+        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
+            .expect("could not write SP1 vk to file");
+    };
 }
