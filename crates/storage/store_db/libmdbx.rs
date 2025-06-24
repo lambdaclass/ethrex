@@ -436,152 +436,150 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
+    /// Rewinds (a.k.a undo) writes from the write logs until a canonical block is reached.
+    ///
+    /// This is used to restore the flat tables from the write logs after a reorg.
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
-        let inner = || -> Result<_, _> {
-            let tx = self.db.begin_readwrite()?;
-            let Some(old_snapshot_meta) =
-                tx.get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
-            else {
-                return Ok(()); // No snapshot to revert
-            };
+        let tx = self.db.begin_readwrite()?;
+        let Some(old_snapshot_meta) =
+            tx.get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+        else {
+            return Ok(()); // No snapshot to revert
+        };
 
-            let mut canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
-            let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
-            let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
-            let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
-            let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+        let mut canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
+        let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+        let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+        let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
+        let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
 
-            let mut block_num = old_snapshot_meta.0;
-            let mut canonical_hash = canonical_cursor
+        let mut block_num = old_snapshot_meta.0;
+        let mut canonical_hash = canonical_cursor
+            .seek_exact(block_num)?
+            .map(|(_, hash)| hash.to())
+            .transpose()?
+            .unwrap_or_default();
+        let mut snapshot_hash = old_snapshot_meta.1;
+        let mut key = old_snapshot_meta;
+
+        while canonical_hash != snapshot_hash {
+            let mut found_state_log = state_log_cursor.seek_closest(key)?;
+            let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
+            // loop over log_entries, take log_value and restore it in the flat tables
+            while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                if read_key_num_hash.0 != key {
+                    break;
+                }
+                let old_info = log_entry.previous_info;
+                let addr = log_entry.address.into();
+                let info =
+                    (old_info != AccountInfo::default()).then_some(EncodableAccountInfo(old_info));
+                Self::replace_value_or_delete(&mut flat_info_cursor, addr, info)?;
+
+                // We update this here to ensure it's the previous block according
+                // to the logs found.
+                BlockNumHash(block_num, snapshot_hash) = read_key_num_hash.1;
+                found_state_log = state_log_cursor.next()?;
+            }
+
+            while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                if read_key_num_hash.1 != key {
+                    break;
+                }
+                let old_value = log_entry.old_value;
+                let slot = log_entry.slot;
+                let addr = log_entry.address;
+                let storage_key = (addr.into(), slot.into());
+                let value_aux = (!old_value.is_zero()).then_some(old_value.into());
+                Self::replace_value_or_delete(&mut flat_storage_cursor, storage_key, value_aux)?;
+
+                // We update this here to ensure it's the previous block according
+                // to the logs found.
+                BlockNumHash(block_num, snapshot_hash) = read_key_num_hash.1;
+                found_storage_log = storage_log_cursor.next()?;
+            }
+
+            // Update the cursors
+            canonical_hash = canonical_cursor
                 .seek_exact(block_num)?
                 .map(|(_, hash)| hash.to())
                 .transpose()?
                 .unwrap_or_default();
-            let mut snapshot_hash = old_snapshot_meta.1;
-            let mut key = old_snapshot_meta;
-
-            while canonical_hash != snapshot_hash {
-                let mut found_state_log = state_log_cursor.seek_closest(key)?;
-                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
-                // loop over log_entries, take log_value and restore it in the flat tables
-                while let Some((read_key_num_hash, log_entry)) = found_state_log {
-                    if read_key_num_hash.0 != key {
-                        break;
-                    }
-                    let old_info = log_entry.previous_info;
-                    let addr = log_entry.address.into();
-                    let info = (old_info != AccountInfo::default())
-                        .then_some(EncodableAccountInfo(old_info));
-                    Self::replace_value_or_delete(&mut flat_info_cursor, addr, info)?;
-
-                    found_state_log = state_log_cursor.next()?;
-                    // We update this here to ensure it's the previous block according
-                    // to the logs found.
-                    block_num = read_key_num_hash.1.0;
-                    snapshot_hash = read_key_num_hash.1.1;
-                }
-
-                while let Some((read_key_num_hash, log_entry)) = found_storage_log {
-                    if read_key_num_hash.1 != key {
-                        break;
-                    }
-                    let old_value = log_entry.old_value;
-                    let slot = log_entry.slot;
-                    let addr = log_entry.address;
-                    let storage_key = (addr.into(), slot.into());
-                    let value_aux = (!old_value.is_zero()).then_some(old_value.into());
-                    Self::replace_value_or_delete(
-                        &mut flat_storage_cursor,
-                        storage_key,
-                        value_aux,
-                    )?;
-
-                    found_storage_log = storage_log_cursor.next()?;
-                    // We update this here to ensure it's the previous block according
-                    // to the logs found.
-                    block_num = read_key_num_hash.1.0;
-                    snapshot_hash = read_key_num_hash.1.1;
-                }
-
-                // Update the cursors
-                canonical_hash = canonical_cursor
-                    .seek_exact(block_num)?
-                    .map(|(_, hash)| hash.to())
-                    .transpose()?
-                    .unwrap_or_default();
-                key = (block_num, snapshot_hash).into();
-            }
-            tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
-            tx.commit()
-        };
-
-        inner().map_err(StoreError::LibmdbxError)
+            key = (block_num, snapshot_hash).into();
+        }
+        tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
+        tx.commit().map_err(|err| err.into())
     }
-    // NOTE: assumes current flat representation corresponds to a block
-    // in the canonical chain.
-    async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError> {
-        let inner = || -> Result<_, _> {
-            let tx = self.db.begin_readwrite()?;
-            let current_snapshot_meta = tx
-                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
-                .unwrap_or_default();
-            let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
-            let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
-            let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
-            let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
-            let mut key = current_snapshot_meta;
 
-            for key_value in tx
-                .cursor::<CanonicalBlockHashes>()?
-                .walk(Some(current_snapshot_meta.0 + 1))
-            {
-                let (block_num, block_hash_rlp) = key_value?;
-                let block_hash = block_hash_rlp.to()?;
-                key = (block_num, block_hash).into();
-                let mut found_state_log = state_log_cursor.seek_closest(key)?;
-                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
-                // loop over log_entries, take log_value and restore it in the flat tables
-                while let Some((read_key_num_hash, log_entry)) = found_state_log {
-                    if read_key_num_hash.0 != key {
-                        break;
-                    }
+    /// Replays writes from the write logs until the head block is reached.
+    ///
+    /// This is used to restore the flat tables from the write logs after a reorg.
+    /// Assumes that the current flat representation corresponds to a block in the canonical chain.
+    /// *NOTE:* this function is meant to be called after calling `undo_writes_until_canonical` to
+    /// restore the flat tables to stay in sync with the canonical chain after a reorg.
+    ///
+    /// # Arguments
+    ///
+    ///  * `head_hash` - The block hash of the head block to replay writes until.
+    async fn replay_writes_until_head(&self, head_hash: H256) -> Result<(), StoreError> {
+        let tx = self.db.begin_readwrite()?;
+        let current_snapshot_meta = tx
+            .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+            .unwrap_or_default();
+        let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+        let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+        let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
+        let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+        let mut block_num_hash = current_snapshot_meta;
 
-                    let new_info = log_entry.info;
-                    let key = log_entry.address.into();
-                    let value_aux = (new_info != AccountInfo::default())
-                        .then_some(EncodableAccountInfo(new_info));
-                    Self::replace_value_or_delete(&mut flat_info_cursor, key, value_aux)?;
-
-                    found_state_log = state_log_cursor.next()?;
-                }
-
-                while let Some((read_key_num_hash, log_entry)) = found_storage_log {
-                    if read_key_num_hash.0 != key {
-                        break;
-                    }
-
-                    let new_value = log_entry.new_value;
-                    let slot = log_entry.slot;
-                    let addr = log_entry.address;
-                    let storage_key = (addr.into(), slot.into());
-                    let storage_value = (!new_value.is_zero()).then_some(new_value.into());
-                    Self::replace_value_or_delete(
-                        &mut flat_storage_cursor,
-                        storage_key,
-                        storage_value,
-                    )?;
-
-                    found_storage_log = storage_log_cursor.next()?;
-                }
-                if head == key.1 {
+        for key_value in tx
+            .cursor::<CanonicalBlockHashes>()?
+            .walk(Some(current_snapshot_meta.0 + 1))
+        {
+            let (block_num, block_hash_rlp) = key_value?;
+            let block_hash = block_hash_rlp.to()?;
+            block_num_hash = (block_num, block_hash).into();
+            let mut found_state_log = state_log_cursor.seek_closest(block_num_hash)?;
+            let mut found_storage_log = storage_log_cursor.seek_closest(block_num_hash)?;
+            // loop over log_entries, take log_value and restore it in the flat tables
+            while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                if read_key_num_hash.0 != block_num_hash {
                     break;
                 }
-            }
-            tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
-            tx.commit()
-        };
 
-        inner().map_err(StoreError::LibmdbxError)
+                let new_info = log_entry.info;
+                let key = log_entry.address.into();
+                let value_aux =
+                    (new_info != AccountInfo::default()).then_some(EncodableAccountInfo(new_info));
+                Self::replace_value_or_delete(&mut flat_info_cursor, key, value_aux)?;
+
+                found_state_log = state_log_cursor.next()?;
+            }
+
+            while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                if read_key_num_hash.0 != block_num_hash {
+                    break;
+                }
+
+                let new_value = log_entry.new_value;
+                let storage_slot = log_entry.slot;
+                let account_address = log_entry.address;
+                let storage_key = (account_address.into(), storage_slot.into());
+                let storage_value = (!new_value.is_zero()).then_some(new_value.into());
+                Self::replace_value_or_delete(
+                    &mut flat_storage_cursor,
+                    storage_key,
+                    storage_value,
+                )?;
+
+                found_storage_log = storage_log_cursor.next()?;
+            }
+            if head_hash == block_num_hash.1 {
+                break;
+            }
+        }
+        tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, block_num_hash)?;
+        tx.commit().map_err(|err| err.into())
     }
 
     async fn add_block_header(
