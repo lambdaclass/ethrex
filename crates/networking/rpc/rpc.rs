@@ -445,11 +445,11 @@ pub async fn map_mempool_requests(
 
 #[cfg(feature = "l2")]
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    use crate::l2::withdrawal::GetWithdrawalProof;
+    use crate::l2::l1_message::GetL1MessageProof;
 
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
-        "ethrex_getWithdrawalProof" => GetWithdrawalProof::call(req, context).await,
+        "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }

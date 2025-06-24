@@ -2,10 +2,13 @@
 pragma solidity =0.8.29;
 
 import "./interfaces/ICommonBridgeL2.sol";
+import "./interfaces/IL1Messenger.sol";
 
 /// @title CommonBridge L2 contract.
 /// @author LambdaClass
 contract CommonBridgeL2 is ICommonBridgeL2 {
+    address public constant L1_MESSENGER = 
+        0x000000000000000000000000000000000000FFFE;
     address public constant BURN_ADDRESS =
         0x0000000000000000000000000000000000000000;
 
@@ -15,8 +18,9 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
         require(success, "Failed to burn Ether");
 
-        // This event gets pushed to L1, the sequencer monitors
-        // them on every block.
-        emit WithdrawalInitiated(msg.sender, _receiverOnL1, msg.value);
+        IL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
+            _receiverOnL1,
+            msg.value
+        )));
     }
 }
