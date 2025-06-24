@@ -4,7 +4,7 @@ use std::path::Path;
 
 const TEST_FOLDER: &str = "vectors/";
 
-//TODO: Fix this test and remove this.
+//TODO: Fix this test and remove this. https://github.com/lambdaclass/ethrex/issues/3283
 const SKIPPED_TESTS: &[&str] = &["tests/constantinople/eip1014_create2/test_recreate"];
 
 fn parse_and_execute_runner(path: &Path) -> datatest_stable::Result<()> {
