@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750776997419,
+  "lastUpdate": 1750777885370,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -899,6 +899,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220687860813,
             "range": "± 781158718",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b135bebfc1e6d74c3324376def79cffc315a121d",
+          "message": "ci(l1,l2): add 'build block' benchmark to PR checks (#2827)\n\n**Motivation**\n\nMake the \"build block\" benchmark run in the CI.\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-06-24T14:11:42Z",
+          "tree_id": "bf2ab404844a1d0bff5492a42a82bc2839f98c8d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b135bebfc1e6d74c3324376def79cffc315a121d"
+        },
+        "date": 1750777877832,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220785440981,
+            "range": "± 450845566",
             "unit": "ns/iter"
           }
         ]
