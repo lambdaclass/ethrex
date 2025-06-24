@@ -16,18 +16,15 @@ pub struct TrieWriter {
 }
 
 impl TrieWriter {
-    pub fn new(store: Arc<Mutex<Store>>) -> Self {
+    pub fn new(store: Store) -> Self {
         let (sender, receiver) = mpsc::channel(WRITER_CHANNEL_SIZE);
         let handle = tokio::spawn(Self::writer_loop(store.clone(), receiver));
         Self { sender, handle }
     }
 
-    pub async fn writer_loop(store: Arc<Mutex<Store>>, mut receiver: mpsc::Receiver<TrieUpdates>) {
+    pub async fn writer_loop(store: Store, mut receiver: mpsc::Receiver<TrieUpdates>) {
         while let Some(update) = receiver.recv().await {
-            {
-                let store = store.lock().await;
-                store.store_trie_updates(update).await.unwrap();
-            }
+            store.store_trie_updates(update).await.unwrap();
         }
     }
 

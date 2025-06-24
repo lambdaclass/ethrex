@@ -110,9 +110,8 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     rollup_store
 }
 
-pub fn init_blockchain(evm_engine: EvmEngine, store: Store, trie_writer: TrieWriter) -> Arc<Blockchain> {
-    let store = Arc::new(Mutex::new(store));
-    Blockchain::new(evm_engine, store, trie_writer).into()
+pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+    Blockchain::new(evm_engine, store).into()
 }
 
 #[allow(clippy::too_many_arguments)]

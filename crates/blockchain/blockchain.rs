@@ -49,7 +49,7 @@ use ethrex_common::types::BlobsBundle;
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
-    storage: Arc<Mutex<Store>>,
+    storage: Store,
     trie_writer: TrieWriter,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
@@ -65,7 +65,6 @@ pub struct BatchBlockProcessingFailure {
 }
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
-        let store = Arc::new(Mutex::new(store));
         let trie_writer = TrieWriter::new(store.clone());
         Self {
             trie_writer,
@@ -94,11 +93,11 @@ impl Blockchain {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.lock().await.add_pending_block(block.clone()).await?;
+            self.storage.add_pending_block(block.clone()).await?;
             return Err(ChainError::ParentNotFound);
         };
 
-        let chain_config = self.storage.lock().await.get_chain_config()?;
+        let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
