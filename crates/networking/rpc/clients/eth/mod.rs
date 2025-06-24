@@ -1189,14 +1189,10 @@ impl EthClient {
         let bytes = hex::decode(hex)
             .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {}", e)))?;
 
-        if bytes.len() != 32 {
-            return Err(EthClientError::Custom(
-                "Expected 32 bytes for bytes32 value".to_owned(),
-            ));
-        }
+        let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+            EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned())
+        })?;
 
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
         Ok(arr)
     }
 
