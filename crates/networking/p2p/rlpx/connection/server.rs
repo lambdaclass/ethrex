@@ -10,7 +10,7 @@ use futures::{stream::SplitSink, SinkExt as _, Stream};
 use k256::{ecdsa::SigningKey, PublicKey};
 use rand::random;
 use spawned_concurrency::tasks::{
-    send_after, CallResponse, CastResponse, GenServer, GenServerHandle,
+    send_interval, CallResponse, CastResponse, GenServer, GenServerHandle,
 };
 use tokio::{
     net::{TcpSocket, TcpStream},
@@ -125,8 +125,11 @@ impl RLPxConnectionState {
     }
 }
 
+#[derive(Clone)]
 pub enum CallMessage {}
 
+#[derive(Clone)]
+#[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
     BackendMessage(Message),
@@ -136,6 +139,7 @@ pub enum CastMessage {
 }
 
 #[derive(Clone)]
+#[allow(private_interfaces)]
 pub enum OutMessage {
     InitResponse {
         node: Node,
@@ -234,15 +238,15 @@ impl GenServer for RLPxConnection {
             // Send transactions transaction hashes from mempool at connection start
             send_new_pooled_tx_hashes(&mut established_state).await?;
 
-            // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
-            send_after(
+            // Periodic broadcast check repeated events.
+            send_interval(
                 TX_BROADCAST_INTERVAL,
                 handle.clone(),
                 CastMessage::SendNewPooledTxHashes,
             );
 
-            // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
-            send_after(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
+            // Periodic Pings repeated events.
+            send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
 
             spawn_listener(handle.clone(), &established_state.node, stream);
 
@@ -266,7 +270,7 @@ impl GenServer for RLPxConnection {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        handle: &RLPxConnectionHandle,
+        _handle: &RLPxConnectionHandle,
         mut state: Self::State,
     ) -> CastResponse<Self> {
         if let InnerState::Established(mut established_state) = state.0.clone() {
@@ -289,17 +293,9 @@ impl GenServer for RLPxConnection {
                 Self::CastMsg::SendPing => {
                     let _ = send(&mut established_state, Message::Ping(PingMessage {})).await;
                     log_peer_debug(&established_state.node, "Ping sent");
-                    // TODO this should be removed when spawned_concurrency::tasks::send_interval is implemented.
-                    send_after(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
                     let _ = send_new_pooled_tx_hashes(&mut established_state).await;
-                    // TODO this should be removed when spawned_concurrency::tasks::send_interval is implemented.
-                    send_after(
-                        TX_BROADCAST_INTERVAL,
-                        handle.clone(),
-                        CastMessage::SendNewPooledTxHashes,
-                    );
                 }
                 Self::CastMsg::BroadcastMessage(id, msg) => {
                     log_peer_debug(

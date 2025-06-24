@@ -129,7 +129,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
+        let _ = RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }
 
