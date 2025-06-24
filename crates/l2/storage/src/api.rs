@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
 };
 
 use crate::error::RollupStoreError;
@@ -102,5 +102,16 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64)
     -> Result<(), RollupStoreError>;
 
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, RollupStoreError>;
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), RollupStoreError>;
+    
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 }

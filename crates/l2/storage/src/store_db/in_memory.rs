@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
 };
 
 use crate::api::StoreEngineRollup;
@@ -33,6 +33,8 @@ struct StoreInner {
     lastest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
+    /// Map of block number to account updates
+    account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
 }
 
 impl Store {
@@ -200,6 +202,28 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
         self.inner()?.lastest_sent_batch_proof = batch_number;
+        Ok(())
+    }
+
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .account_updates_by_block_number
+            .get(&block_number)
+            .cloned())
+    }
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .account_updates_by_block_number
+            .insert(block_number, account_updates);
         Ok(())
     }
 
