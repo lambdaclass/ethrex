@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750801004455,
+  "lastUpdate": 1750801864397,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1169,6 +1169,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 222105366835,
             "range": "± 599026439",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9fab1cb7c2369d6b762d1e0aa775af55498fafac",
+          "message": "fix(l2): remove withdrawals processing in build_payload (#3297)\n\n**Motivation**\n\nWhen producing a block in L2 mode, we unnecessarily call\n`blockchain::apply_withdrawals`, even though we don't have a consensus\nnode passing withdrawals via the `ForkChoiceUpdated` engine message. In\nfact, we create a default value\n[here](https://github.com/lambdaclass/ethrex/blob/d671a809973d3c60d14fe06f85161ceb93e87875/crates/l2/sequencer/block_producer.rs#L171).\n\n**Description**\n\n- Removes the call to `blockchain::apply_withdrawals()` in\n`payload_builder`.\n\nCloses None",
+          "timestamp": "2025-06-24T20:50:06Z",
+          "tree_id": "4ee96703bdb1a355573ab1ccdb22a8f0ee2c08a5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9fab1cb7c2369d6b762d1e0aa775af55498fafac"
+        },
+        "date": 1750801855950,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220352185029,
+            "range": "± 300589884",
             "unit": "ns/iter"
           }
         ]
