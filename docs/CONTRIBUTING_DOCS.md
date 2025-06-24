@@ -6,8 +6,8 @@ We welcome contributions to the documentation! If you want to help improve or ex
 
 - All documentation lives in this `docs/` directory and its subfolders.
 - The documentation is written in Markdown and rendered using [mdBook](https://rust-lang.github.io/mdBook/).
-- To preview your changes locally, install mdBook (`cargo install mdbook`) and run:
-  
+- To preview your changes locally, [install the dependencies](#documentation-dependencies) and run:
+
   ```sh
   make docs-serve
   ```
@@ -20,7 +20,7 @@ We welcome contributions to the documentation! If you want to help improve or ex
 - To edit an existing page, simply modify the relevant `.md` file.
 - For style and formatting, try to keep a consistent tone and structure with the rest of the documentation.
 
-## Using mdBook Plugins
+## Documentation dependencies
 
 We use some mdBook preprocessors and backends for extra features:
 
@@ -28,7 +28,7 @@ We use some mdBook preprocessors and backends for extra features:
 - [`mdbook-mermaid`](https://github.com/badboy/mdbook-mermaid) for diagrams.
 - [`mdbook-linkcheck`](https://github.com/Michael-F-Bryan/mdbook-linkcheck) for checking broken links (optional).
 
-You can install all dependencies with:
+You can install mdBook and all dependencies with:
 
 ```sh
 make docs-deps
