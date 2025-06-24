@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750776423499,
+  "lastUpdate": 1750776997419,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -869,6 +869,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221578918460,
             "range": "± 385628545",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "18153834+klaus993@users.noreply.github.com",
+            "name": "Klaus @ LambdaClass",
+            "username": "klaus993"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "34c588c5a3cbf71c2ba00796c2d1eef5395ce61e",
+          "message": "fix(l1,l2): swap back to standard GitHub runners (#3285)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-24T13:55:22Z",
+          "tree_id": "82a861ba44af75941fc4adde3a0f107c1c0d8e24",
+          "url": "https://github.com/lambdaclass/ethrex/commit/34c588c5a3cbf71c2ba00796c2d1eef5395ce61e"
+        },
+        "date": 1750776989926,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220687860813,
+            "range": "± 781158718",
             "unit": "ns/iter"
           }
         ]
