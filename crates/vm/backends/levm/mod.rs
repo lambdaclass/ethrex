@@ -27,7 +27,6 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
 };
-use revm_primitives::AccountInfo;
 use std::cmp::min;
 use std::collections::HashMap;
 
@@ -195,10 +194,9 @@ impl LEVM {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            // That is not what's happenning here.
             let initial_state_account =
                 db.immutable_cache
-                    .get_mut(address)
+                    .get(address)
                     .ok_or(EvmError::Custom(format!(
                         "Failed to get account {address} from immutable cache",
                     )))?;
@@ -217,7 +215,6 @@ impl LEVM {
 
             let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
                 acc_info_updated = true;
-                initial_state_account.code = new_state_account.code.clone();
                 Some(new_state_account.code.clone())
             } else {
                 None
@@ -230,14 +227,12 @@ impl LEVM {
                 let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
 
                 if new_value != old_value {
-                    initial_state_account.storage.insert(*key, *new_value);
                     added_storage.insert(*key, *new_value);
                     storage_updated = true;
                 }
             }
 
             let info = if acc_info_updated {
-                initial_state_account.info = new_state_account.info.clone();
                 Some(new_state_account.info.clone())
             } else {
                 None
@@ -247,11 +242,6 @@ impl LEVM {
             // If the account was already empty then this is not an update
             let was_empty = initial_state_account.is_empty();
             let removed = new_state_account.is_empty() && !was_empty;
-            if removed {
-                initial_state_account.storage.clear();
-                initial_state_account.code.clear();
-                initial_state_account.info = ethrex_common::types::AccountInfo::default();
-            }
 
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated
@@ -268,8 +258,8 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
-        // db.cache.clear();
-        // db.immutable_cache.clear();
+        db.cache.clear();
+        db.immutable_cache.clear();
         Ok(account_updates)
     }
 
