@@ -542,6 +542,24 @@ impl StoreEngine for RedBStore {
         }
     }
 
+    async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let Some(hash) = self.get_block_hash_by_block_number(block_number)? else {
+            return Ok(());
+        };
+        let hash = <H256 as Into<BlockHashRLP>>::into(hash);
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+
+        write_txn
+            .open_table(CANONICAL_BLOCK_HASHES_TABLE)?
+            .remove(block_number)?;
+        write_txn.open_table(BLOCK_BODIES_TABLE)?.remove(&hash)?;
+        write_txn.open_table(HEADERS_TABLE)?.remove(&hash)?;
+        write_txn.open_table(BLOCK_NUMBERS_TABLE)?.remove(&hash)?;
+
+        write_txn.commit()?;
+        Ok(())
+    }
+
     async fn get_block_bodies(
         &self,
         from: BlockNumber,

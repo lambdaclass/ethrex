@@ -62,6 +62,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError>;
 
+    /// Remove canonical block
+    async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError>;
+
     /// Obtain canonical block bodies in from..=to
     async fn get_block_bodies(
         &self,

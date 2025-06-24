@@ -9,7 +9,7 @@ pub enum EthClientError {
     #[error("eth_gasPrice request error: {0}")]
     GetGasPriceError(#[from] GetGasPriceError),
     #[error("eth_estimateGas request error: {0}")]
-    EstimateGasPriceError(#[from] EstimateGasPriceError),
+    EstimateGasError(#[from] EstimateGasError),
     #[error("eth_sendRawTransaction request error: {0}")]
     SendRawTransactionError(#[from] SendRawTransactionError),
     #[error("eth_call request error: {0}")]
@@ -35,7 +35,7 @@ pub enum EthClientError {
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
     #[error("ethrex_getWithdrawalProof request error: {0}")]
-    GetWithdrawalProofError(#[from] GetWithdrawalProofError),
+    GetMessageProofError(#[from] GetMessageProofError),
     #[error("eth_maxPriorityFeePerGas request error: {0}")]
     GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
     #[error("Unreachable nonce")]
@@ -67,7 +67,7 @@ pub enum GetGasPriceError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EstimateGasPriceError {
+pub enum EstimateGasError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
@@ -219,7 +219,7 @@ pub enum CalldataEncodeError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GetWithdrawalProofError {
+pub enum GetMessageProofError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
