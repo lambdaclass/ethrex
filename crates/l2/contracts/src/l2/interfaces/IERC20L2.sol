@@ -9,6 +9,7 @@ interface IERC20L2 is IERC20 {
     /// @notice Returns the address of the token on the L1
     /// @dev Used to verify token reception.
     function l1Address() external returns (address);
+
     /// @notice Mints tokens to the givne address
     /// @dev Should be callable by the bridge
     function mint(address destination, uint256 amount) external;
