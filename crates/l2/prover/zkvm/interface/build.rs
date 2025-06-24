@@ -28,10 +28,17 @@ fn build_risc0_program() {
         .build()
         .unwrap();
 
-    embed_methods_with_options(std::collections::HashMap::from([(
+    let built_guests = embed_methods_with_options(std::collections::HashMap::from([(
         "zkvm-risc0-program",
         guest_options,
     )]));
+    let image_id = built_guests[0].image_id;
+
+    // this errs if the dir already exists, so we don't handle an error.
+    let _ = std::fs::create_dir("./risc0/out");
+
+    std::fs::write("./risc0/out/riscv32im-risc0-vk", &image_id.to_string())
+        .expect("could not write Risc0 vk to file");
 }
 
 #[cfg(feature = "sp1")]

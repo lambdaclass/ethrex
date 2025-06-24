@@ -54,7 +54,6 @@ interface IOnChainProposer {
     /// @param batchNumber is the number of the batch to be verified.
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
-    /// @param risc0ImageId Digest of the zkVM imageid.
     /// @param risc0Journal public_inputs aka journal
     /// ----------------------------------------------------------------------
     /// @param sp1PublicValues Values used to perform the execution
@@ -66,7 +65,6 @@ interface IOnChainProposer {
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,

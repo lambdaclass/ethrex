@@ -28,9 +28,9 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address)";
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address)";
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[])";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -349,6 +349,23 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
+fn read_vk(path: &str) -> Result<Vec<u8>, DeployerError> {
+    let vk_string = read_to_string(path).unwrap_or_else(|_| {
+        warn!(
+            ?path,
+            "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
+        );
+        "0x00".to_string()
+    });
+    hex::decode(vk_string.trim_start_matches("0x"))
+        .map_err(|err| {
+            DeployerError::DecodingError(format!(
+                "failed to parse vk ({vk_string}) from hex: {err}"
+            ))
+        })?
+        .into()
+}
+
 async fn initialize_contracts(
     contract_addresses: ContractAddresses,
     eth_client: &EthClient,
@@ -363,20 +380,9 @@ async fn initialize_contracts(
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
-    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
-        warn!(
-            path = opts.sp1_vk_path,
-            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
-        );
-        "0x00".to_string()
-    });
-    let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
-        .map_err(|err| {
-            DeployerError::DecodingError(format!(
-                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
-            ))
-        })?
-        .into();
+
+    let sp1_vk = read_vk(&opts.sp1_vk_path)?;
+    let risc0_vk = read_vk(&opts.risc0_vk_path)?;
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -392,6 +398,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.tdx_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
+            Value::FixedBytes(risc0_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
         ];

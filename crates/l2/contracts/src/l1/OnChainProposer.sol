@@ -84,6 +84,8 @@ contract OnChainProposer is
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
 
+    bytes32 public RISC0_VERIFICATION_KEY;
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -107,6 +109,7 @@ contract OnChainProposer is
         address tdxverifier,
         address alignedProofAggregator,
         bytes32 sp1Vk,
+        bytes32 risc0Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
     ) public initializer {
@@ -179,6 +182,12 @@ contract OnChainProposer is
             "OnChainProposer: contract already initialized"
         );
         SP1_VERIFICATION_KEY = sp1Vk;
+        // Set the Risc0 program verification key
+        require(
+            RISC0_VERIFICATION_KEY == bytes32(0),
+            "OnChainProposer: contract already initialized"
+        );
+        RISC0_VERIFICATION_KEY = risc0Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -281,7 +290,6 @@ contract OnChainProposer is
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,
@@ -311,7 +319,7 @@ contract OnChainProposer is
             _verifyPublicData(batchNumber, risc0Journal);
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
-                risc0ImageId,
+                RISC0_VERIFICATION_KEY,
                 sha256(risc0Journal)
             );
         }

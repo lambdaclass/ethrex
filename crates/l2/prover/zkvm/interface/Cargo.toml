@@ -19,6 +19,7 @@ ethrex-l2-common = { path = "../../../common", default-features = false }
 
 [build-dependencies]
 risc0-build = { version = "2.1.2", optional = true }
+risc0-zkvm = { version = "2.1.0", optional = true }
 sp1-build = { version = "5.0.0", optional = true }
 sp1-sdk = { version = "5.0.0", optional = true }
 
@@ -27,7 +28,7 @@ methods = ["risc0"]
 
 [features]
 default = []
-risc0 = ["dep:risc0-build"]
+risc0 = ["dep:risc0-build", "dep:risc0-zkvm"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
 l2 = ["ethrex-vm/l2"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]

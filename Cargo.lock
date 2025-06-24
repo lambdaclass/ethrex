@@ -12561,6 +12561,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "risc0-build",
+ "risc0-zkvm",
  "serde",
  "serde_json",
  "serde_with",
