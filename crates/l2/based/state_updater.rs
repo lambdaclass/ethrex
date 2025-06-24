@@ -9,7 +9,6 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerError, send_after};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -49,7 +48,6 @@ pub struct StateUpdaterState {
     sequencer_state: SequencerState,
     blockchain: Arc<Blockchain>,
     sync_manager: SyncManager,
-    is_syncing: Arc<Mutex<bool>>,
     latest_block_fetched: U256,
 }
 
@@ -75,7 +73,6 @@ impl StateUpdaterState {
             sequencer_state,
             blockchain,
             sync_manager,
-            is_syncing: Arc::new(Mutex::new(false)),
             latest_block_fetched: U256::zero(),
         })
     }
@@ -188,8 +185,7 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
         lead_sequencer == state.sequencer_address,
     );
     if let SequencerStatus::Syncing = new_status {
-        let mut a = state.is_syncing.lock().await;
-        if !*a && !state.blockchain.is_synced() {
+        if !state.blockchain.is_synced() {
             let latest_l1_block = state.eth_client.get_block_number().await?;
             let latest_batch_committed = state
                 .eth_client
@@ -211,22 +207,13 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
                             "BatchCommitted log does not contain enough topics".to_string(),
                         )
                     })?;
-                *a = true;
                 state
                     .sync_manager
                     .sync_to_head(*newest_fcu_head, latest_batch_committed);
                 state.latest_block_fetched = latest_l1_block;
-                *a = false;
                 // state.blockchain.set_synced();
             } else {
                 // warn!("No new BatchCommitted logs found, continuing to sync.");
-            }
-        }
-        if !state.blockchain.is_synced() {
-            let head_number = state.eth_client.get_block_number().await?;
-            let latest_block = state.store.get_latest_block_number().await?;
-            if head_number == U256::from(latest_block) {
-                // state.blockchain.set_synced();
             }
         }
     }
