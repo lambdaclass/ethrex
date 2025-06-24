@@ -275,10 +275,6 @@ async fn send_proof_to_aligned(
 
 /// Performs a call to aligned SDK estimate_fee function with retries over all RPC URLs.
 async fn estimate_fee(state: &L1ProofSenderState) -> Result<ethers::types::U256, ProofSenderError> {
-    let result = Err(ProofSenderError::AlignedFeeEstimateError(
-        "All Ethereum RPC URLs failed".to_string(),
-    ));
-
     for rpc_url in &state.eth_client.urls {
         if let Ok(estimation) =
             aligned_estimate_fee(rpc_url.as_str(), state.fee_estimate.clone()).await
@@ -286,7 +282,9 @@ async fn estimate_fee(state: &L1ProofSenderState) -> Result<ethers::types::U256,
             return Ok(estimation);
         }
     }
-    result
+    Err(ProofSenderError::AlignedFeeEstimateError(
+        "All Ethereum RPC URLs failed".to_string(),
+    ))
 }
 
 pub async fn send_proof_to_contract(

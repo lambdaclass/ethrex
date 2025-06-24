@@ -253,9 +253,6 @@ impl L1ProofVerifier {
         &self,
         verification_data: &AggregationModeVerificationData,
     ) -> Result<ProofStatus, ProofVerifierError> {
-        let result = Err(ProofVerifierError::InternalError(
-            "Verification failed. All RPC URLs were exhausted.".to_string(),
-        ));
         for rpc_url in &self.eth_client.urls {
             for beacon_url in &self.beacon_urls {
                 match aligned_check_proof_verification(
@@ -274,6 +271,8 @@ impl L1ProofVerifier {
                 }
             }
         }
-        result
+        Err(ProofVerifierError::InternalError(
+            "Verification failed. All RPC URLs were exhausted.".to_string(),
+        ))
     }
 }
