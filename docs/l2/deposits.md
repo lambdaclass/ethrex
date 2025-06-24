@@ -104,7 +104,7 @@ On L1:
 
 On L2:
 
-1. The privileged transaction performs a call to `mintERC20` on the `L2CommonBridge` from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.
+1. The privileged transaction performs a call to `mintERC20` on the `CommonBridgeL2` from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.
 2. The bridge calls `mint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
 3. If the call reverts, the L2 bridge automatically initiates a withdrawal.
 
