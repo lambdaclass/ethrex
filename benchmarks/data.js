@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750801864397,
+  "lastUpdate": 1750807772503,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1199,6 +1199,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220352185029,
             "range": "± 300589884",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5a39b693d285690b479657d69b0939f03bd5075f",
+          "message": "feat(l1): running localnet with client comparisions (#3221)\n\n**Motivation**\n\nWe want to be able to spin up a local network with 3 nodes,\nethrex[levm], ethrex[revm] and reth an be able to compare throughput\nbetween them on different spamoor configurations.\n\n**Description**\n\nThis PR add a new make target that spin-up a localnet with ethrex[levm],\nethrex[revm] and reth, enable the metrics exporter, and prepare the\ndashboard to be able to be used in arbitrary datasources, both imported\nor provisioned, automatically setting a datasource variable to the\ndefault prometheus.",
+          "timestamp": "2025-06-24T22:29:24Z",
+          "tree_id": "55758539e0bfbaa198ef96bf470eeeae9546ec45",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a39b693d285690b479657d69b0939f03bd5075f"
+        },
+        "date": 1750807764503,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220274983454,
+            "range": "± 790969873",
             "unit": "ns/iter"
           }
         ]
