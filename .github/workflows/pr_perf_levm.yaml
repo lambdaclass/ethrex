@@ -97,8 +97,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          mkdir -p main && cp ./main/benchmark main/benchmark
-          mkdir -p pr && cp ./pr/benchmark pr/benchmark
+          ls
           cd crates/vm/levm
           make revm-comparison-ci
           {
