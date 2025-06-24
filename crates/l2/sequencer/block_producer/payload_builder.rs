@@ -45,7 +45,6 @@ pub async fn build_payload(
 
     blockchain.apply_withdrawals(&mut context)?;
     fill_transactions(blockchain.clone(), &mut context, store).await?;
-    blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();

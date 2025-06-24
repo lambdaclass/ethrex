@@ -501,12 +501,6 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "l2")] {
-            return Ok(Default::default());
-        }
-    }
-
     let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db)?.output.into();
     let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db)?
         .output
