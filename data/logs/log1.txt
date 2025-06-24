@@ -1,0 +1,146 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+warning: unused import: `BlockFetcher`
+ --> crates/l2/sequencer/mod.rs:4:13
+  |
+4 | use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+  |             ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `ethrex-l2` (lib) generated 1 warning (run `cargo fix --lib -p ethrex-l2` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 53.75s
+     Running `target/release/ethrex l2 init --watcher.block-delay 0 --eth.rpc-url 'http://localhost:8545' --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 --committer.l1-private-key 0xba73c72b16553dbba5a275f541c06e77dcf7773514898dc0f3ddfe13c44f9e11 --proof-coordinator.l1-private-key 0x7a738a3a8ee9cdbb5ee8dfc1fc5d97847eaba4d31fd94f89e57880f8901fa029 --network test_data/genesis-l2.json --datadir '' --proof-coordinator.addr 127.0.0.1 --proof-coordinator.port 4567 --http.port 1730 --state-updater.sequencer-registry 0xf7f6da755319dee748cd24d9fd53bd8c2cd7391a --l1.on-chain-proposer-address 0x71763b021372a5941eee1f46243b6d53fed0bd03 --l1.bridge-address 0x3b4b5b9a7a5bd24997ff04f1c8a81b3005c32519 --based --p2p.enabled --p2p.port 30304 --discovery.port 30304 --bootnodes 'enode://e0e2df7fbb5ab93b6cfcae3abdc5622eeceb2a8ec96e29efaff1edd11de339796d642442ac5eddb77571463b7022a2312119229229b54f6a4263c13998ef6ade@10.0.10.14:30303'`
+[2m2025-06-24T18:06:49.074707Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Starting storage engine (Libmdbx)
+[2m2025-06-24T18:06:49.076038Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Started store engine
+[2m2025-06-24T18:06:49.076094Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing initial state from genesis
+[2m2025-06-24T18:06:49.077739Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing genesis block with number 0 and hash 0x38f1…2218
+[2m2025-06-24T18:06:49.079134Z[0m [32m INFO[0m [2methrex_storage_rollup::store[0m[2m:[0m Starting l2 storage engine (InMemory)
+[2m2025-06-24T18:06:49.079193Z[0m [32m INFO[0m [2methrex_storage_rollup::store[0m[2m:[0m Started l2 store engine
+[2m2025-06-24T18:06:49.079392Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Key file not found, creating a new key and saving to "/Users/tomasparadelo/Library/Application Support/node.key"
+[2m2025-06-24T18:06:49.080029Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Node: enode://7492a2ce695dd3a24d11c4379d34a520dfc15d4518f1927a2fdbb9b5fb4d26a6fe21ad15d46c1dda665a994a383534e8749e118f80cb535d4b5f3d7e5b9f168e@10.0.10.14:30304
+[2m2025-06-24T18:06:49.082732Z[0m [33m WARN[0m [2methrex::initializers[0m[2m:[0m No valid addresses provided, ethrex_SendTransaction will always fail
+[2m2025-06-24T18:06:49.085348Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting HTTP server at [::1]:1730
+[2m2025-06-24T18:06:49.085362Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Not starting Auth-RPC server. The address passed as argument is [::1]:8551
+[2m2025-06-24T18:06:49.085398Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Reading known peers from config file "/Users/tomasparadelo/Library/Application Support//node_config.json"
+[2m2025-06-24T18:06:49.085454Z[0m [31mERROR[0m [2methrex::initializers[0m[2m:[0m Could not read from peers file: No config file found: No such file or directory (os error 2)
+[2m2025-06-24T18:06:49.085756Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Starting discovery service at 10.0.10.14:30304
+[2m2025-06-24T18:06:49.085952Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Listening for requests at 10.0.10.14:30304
+[2m2025-06-24T18:06:49.086061Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 1
+[2m2025-06-24T18:06:49.086099Z[0m [32m INFO[0m [2methrex_l2::sequencer[0m[2m:[0m Starting Sequencer in Syncing mode
+[2m2025-06-24T18:06:49.086502Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-24T18:06:49.086494Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 1
+[2m2025-06-24T18:06:49.086553Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-24T18:06:49.092398Z[0m [32m INFO[0m [2methrex_l2::sequencer::proof_coordinator[0m[2m:[0m Receiving message
+[2m2025-06-24T18:06:49.092436Z[0m [32m INFO[0m [2methrex_l2::sequencer::proof_coordinator[0m[2m:[0m Starting TCP server at 127.0.0.1:4567 accepting 3 concurrent clients.
+[2m2025-06-24T18:06:49.239503Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0x38f1283bc5ef53db7c05445d6e1e7e90b8890d5881e762a1cb5ee8aa48482218 to sync_head 0x08faeb450dd4f3ea0727931c703eeaa53d9d1652665500d579d0966ea17a2eb8
+[2m2025-06-24T18:06:49.239547Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x08fa…2eb8
+[2m2025-06-24T18:06:49.271062Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.58 Ggas/s TIME SPENT: 7 ms. #Txs: 193. exec/Ggas: 1234 ms (71%), st/Ggas: 493 ms (29%)
+[2m2025-06-24T18:06:49.427343Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m [SYNCING] Requested, stored, and executed 525 blocks in 0.182 seconds.
+Started at block with hash 0xcafa…bd02 (number 1).
+Finished at block with hash 0x08fa…2eb8 (number 525).
+Blocks per second: 2884.615
+[2m2025-06-24T18:06:49.506193Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 1
+[2m2025-06-24T18:06:49.582114Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 2
+[2m2025-06-24T18:06:49.686676Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 3
+[2m2025-06-24T18:06:50.501588Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:07:00.503889Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:07:10.505674Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:07:19.088127Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:07:20.507883Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync failed to request batch seal, aborting
+[2m2025-06-24T18:07:20.507922Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 31 secs
+[2m2025-06-24T18:07:49.087756Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:08:19.023054Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0x0e9eecdd237882149f5dbbf16e0c84c70829787224e71f8cbf9b44bb983d190b to sync_head 0xa0f5dd4db207b72afd6d4b4b320906100c091c972f08b993aa5584b7819c7b60
+[2m2025-06-24T18:08:19.023096Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0xa0f5…7b60
+[2m2025-06-24T18:08:19.023118Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:08:19.087092Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:08:29.025326Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:08:39.026695Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:08:49.028351Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync failed to find target block header, aborting
+[2m2025-06-24T18:08:49.028429Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 30 secs
+[2m2025-06-24T18:08:49.086722Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:08:54.753049Z[0m [32m INFO[0m [2methrex_rpc::eth::client[0m[2m:[0m Requested chain id
+[2m2025-06-24T18:08:54.753428Z[0m [32m INFO[0m [2methrex_rpc::eth::account[0m[2m:[0m Requested nonce of account 0xe255…6425 at block Latest
+[2m2025-06-24T18:08:54.754728Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested estimate on block: Latest
+[2m2025-06-24T18:08:54.755640Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x94b052b3de5b3807fe156646a32eae6b590c722ce9756ec53cdf20a4c8445370
+[2m2025-06-24T18:08:56.758297Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x94b052b3de5b3807fe156646a32eae6b590c722ce9756ec53cdf20a4c8445370
+[2m2025-06-24T18:08:58.761140Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x94b052b3de5b3807fe156646a32eae6b590c722ce9756ec53cdf20a4c8445370
+[2m2025-06-24T18:09:00.763379Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x94b052b3de5b3807fe156646a32eae6b590c722ce9756ec53cdf20a4c8445370
+[2m2025-06-24T18:09:19.086801Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:09:21.648410Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0xf276707e332792aef6df0f119e4b5454bb6a1d72a1097467d106430f13c36c0b to sync_head 0xf276707e332792aef6df0f119e4b5454bb6a1d72a1097467d106430f13c36c0b
+[2m2025-06-24T18:09:21.648449Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0xf276…6c0b
+[2m2025-06-24T18:09:21.648474Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:09:23.158846Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.181780Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.211813Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.237668Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.265819Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.291613Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.318043Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.344516Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.370630Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.396603Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.422721Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.448524Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.474352Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.500378Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.526840Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.553309Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.579876Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.607550Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.634240Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.662414Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.688781Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.714339Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.740015Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.765543Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.792267Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:31.649788Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:09:41.651263Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:09:49.086186Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:09:51.653735Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync failed to find target block header, aborting
+[2m2025-06-24T18:09:51.653824Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 30 secs
+[2m2025-06-24T18:10:19.085134Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:10:25.385648Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0x320c45ef5cc1b612fcd4a2f939e94e05414e7e805094cb54d84d363f687bd487 to sync_head 0x48d397b0a33f88d578cf6d305d71ab781a1443b976a5f39c326a1d4082334b9b
+[2m2025-06-24T18:10:25.385725Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x48d3…4b9b
+[2m2025-06-24T18:10:25.385795Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:10:35.387457Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:10:45.389622Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:10:49.085729Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:10:55.392028Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync failed to find target block header, aborting
+[2m2025-06-24T18:10:55.392116Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 30 secs
+[2m2025-06-24T18:11:19.085035Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:11:28.200658Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0xecb8b76cc71a03ff097fcf8cfdcc5739c21a4904e4f706e0ee3bf359f66cc476 to sync_head 0xecb8b76cc71a03ff097fcf8cfdcc5739c21a4904e4f706e0ee3bf359f66cc476
+[2m2025-06-24T18:11:28.200734Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0xecb8…c476
+[2m2025-06-24T18:11:28.200803Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:11:38.203109Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:11:48.205363Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:11:49.085494Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-24T18:11:49.085534Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-24T18:11:49.085564Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:11:58.207953Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync failed to find target block header, aborting
+[2m2025-06-24T18:11:58.208014Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 30 secs
+[2m2025-06-24T18:12:19.084517Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:12:31.077461Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0xf3952365437da5021e85fce60232f9ef28a40d660dd75db5ea11efa38a088b4b to sync_head 0xf3952365437da5021e85fce60232f9ef28a40d660dd75db5ea11efa38a088b4b
+[2m2025-06-24T18:12:31.077524Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0xf395…8b4b
+[2m2025-06-24T18:12:31.077580Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:12:41.079141Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:12:49.083898Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:12:51.080087Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:13:01.081953Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync failed to find target block header, aborting
+[2m2025-06-24T18:13:01.082046Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 30 secs
+[2m2025-06-24T18:13:19.083474Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:13:33.771939Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0x15c846af52b2cd107b3faf45fe83fe3caacf36f12ebfe2f93c3025280c1b298f to sync_head 0x15c846af52b2cd107b3faf45fe83fe3caacf36f12ebfe2f93c3025280c1b298f
+[2m2025-06-24T18:13:33.772002Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x15c8…298f
+[2m2025-06-24T18:13:33.772058Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:13:43.773858Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:13:49.083155Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:13:53.774727Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-24T18:14:03.776105Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync failed to find target block header, aborting
+[2m2025-06-24T18:14:03.776194Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 30 secs
+[2m2025-06-24T18:14:19.083375Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 0
+[2m2025-06-24T18:14:37.488699Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0x8be2f82d64e922b0851611eadf73f282f44f83c83980271936cdae0757ba9977 to sync_head 0x8be2f82d64e922b0851611eadf73f282f44f83c83980271936cdae0757ba9977
+[2m2025-06-24T18:14:37.488740Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x8be2…9977
+[2m2025-06-24T18:14:37.488768Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec

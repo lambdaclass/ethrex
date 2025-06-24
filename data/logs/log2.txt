@@ -1,0 +1,790 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling ethrex-blockchain v0.1.0 (/Users/tomasparadelo/ethrex/crates/blockchain)
+   Compiling ethrex-p2p v0.1.0 (/Users/tomasparadelo/ethrex/crates/networking/p2p)
+   Compiling zkvm_interface v0.1.0 (/Users/tomasparadelo/ethrex/crates/l2/prover/zkvm/interface)
+   Compiling ethrex-rpc v0.1.0 (/Users/tomasparadelo/ethrex/crates/networking/rpc)
+   Compiling ethrex-sdk v0.1.0 (/Users/tomasparadelo/ethrex/crates/l2/sdk)
+   Compiling ethrex-dev v0.1.0 (/Users/tomasparadelo/ethrex/crates/blockchain/dev)
+   Compiling ethrex-l2 v0.1.0 (/Users/tomasparadelo/ethrex/crates/l2)
+warning: unused import: `BlockFetcher`
+ --> crates/l2/sequencer/mod.rs:4:13
+  |
+4 | use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+  |             ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+   Compiling ethrex v0.1.0 (/Users/tomasparadelo/ethrex/cmd/ethrex)
+warning: `ethrex-l2` (lib) generated 1 warning (run `cargo fix --lib -p ethrex-l2` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 53.32s
+     Running `target/release/ethrex l2 init --watcher.block-delay 0 --eth.rpc-url 'http://localhost:8545' --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 --committer.l1-private-key 0x8cfe380955165dd01f4e33a3c68f4e08881f238fbbea71a2ab407f4a3759705b --proof-coordinator.l1-private-key 0x5bb463c0e64039550de4f95b873397b36d76b2f1af62454bb02cf6024d1ea703 --network test_data/genesis-l2.json --datadir '' --proof-coordinator.addr 127.0.0.1 --proof-coordinator.port 4568 --http.port 1731 --state-updater.sequencer-registry 0xf7f6da755319dee748cd24d9fd53bd8c2cd7391a --l1.on-chain-proposer-address 0x71763b021372a5941eee1f46243b6d53fed0bd03 --l1.bridge-address 0x3b4b5b9a7a5bd24997ff04f1c8a81b3005c32519 --based --p2p.enabled --p2p.port 30305 --discovery.port 30305 --bootnodes 'enode://e0e2df7fbb5ab93b6cfcae3abdc5622eeceb2a8ec96e29efaff1edd11de339796d642442ac5eddb77571463b7022a2312119229229b54f6a4263c13998ef6ade@10.0.10.14:30303'`
+[2m2025-06-24T18:06:49.076044Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Starting storage engine (Libmdbx)
+[2m2025-06-24T18:06:49.076631Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Started store engine
+[2m2025-06-24T18:06:49.076681Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing initial state from genesis
+[2m2025-06-24T18:06:49.077843Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing genesis block with number 0 and hash 0x38f1…2218
+[2m2025-06-24T18:06:49.079150Z[0m [32m INFO[0m [2methrex_storage_rollup::store[0m[2m:[0m Starting l2 storage engine (InMemory)
+[2m2025-06-24T18:06:49.079174Z[0m [32m INFO[0m [2methrex_storage_rollup::store[0m[2m:[0m Started l2 store engine
+[2m2025-06-24T18:06:49.079281Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Key file not found, creating a new key and saving to "/Users/tomasparadelo/Library/Application Support/node.key"
+[2m2025-06-24T18:06:49.079672Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Node: enode://f5414ddf1333e94897ef665fa0b1d780dd4d082f67066fc9667f2da0b19fb69fe4e499eb68535362de5184ccfcc0a194efc242d05451331561d31e2524009f31@10.0.10.14:30305
+[2m2025-06-24T18:06:49.082760Z[0m [33m WARN[0m [2methrex::initializers[0m[2m:[0m No valid addresses provided, ethrex_SendTransaction will always fail
+[2m2025-06-24T18:06:49.085174Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Reading known peers from config file "/Users/tomasparadelo/Library/Application Support//node_config.json"
+[2m2025-06-24T18:06:49.085211Z[0m [31mERROR[0m [2methrex::initializers[0m[2m:[0m Could not read from peers file: No config file found: No such file or directory (os error 2)
+[2m2025-06-24T18:06:49.085327Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting HTTP server at [::1]:1731
+[2m2025-06-24T18:06:49.085337Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Not starting Auth-RPC server. The address passed as argument is [::1]:8551
+[2m2025-06-24T18:06:49.085760Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Starting discovery service at 10.0.10.14:30305
+[2m2025-06-24T18:06:49.086041Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Listening for requests at 10.0.10.14:30305
+[2m2025-06-24T18:06:49.086125Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 1
+[2m2025-06-24T18:06:49.086198Z[0m [32m INFO[0m [2methrex_l2::sequencer[0m[2m:[0m Starting Sequencer in Syncing mode
+[2m2025-06-24T18:06:49.086853Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 1
+[2m2025-06-24T18:06:49.086861Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-24T18:06:49.086934Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-24T18:06:49.092766Z[0m [32m INFO[0m [2methrex_l2::sequencer::proof_coordinator[0m[2m:[0m Receiving message
+[2m2025-06-24T18:06:49.092791Z[0m [32m INFO[0m [2methrex_l2::sequencer::proof_coordinator[0m[2m:[0m Starting TCP server at 127.0.0.1:4568 accepting 3 concurrent clients.
+[2m2025-06-24T18:06:49.241517Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0x38f1283bc5ef53db7c05445d6e1e7e90b8890d5881e762a1cb5ee8aa48482218 to sync_head 0x08faeb450dd4f3ea0727931c703eeaa53d9d1652665500d579d0966ea17a2eb8
+[2m2025-06-24T18:06:49.241576Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x08fa…2eb8
+[2m2025-06-24T18:06:49.270838Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.68 Ggas/s TIME SPENT: 6 ms. #Txs: 193. exec/Ggas: 493 ms (33%), st/Ggas: 987 ms (67%)
+[2m2025-06-24T18:06:49.404855Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.02 Ggas/s TIME SPENT: 1 ms. #Txs: 1. exec/Ggas: 0 ms (0%), st/Ggas: 0 ms (0%)
+[2m2025-06-24T18:06:49.427259Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m [SYNCING] Requested, stored, and executed 525 blocks in 0.180 seconds.
+Started at block with hash 0xcafa…bd02 (number 1).
+Finished at block with hash 0x08fa…2eb8 (number 525).
+Blocks per second: 2916.667
+[2m2025-06-24T18:06:49.503189Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 1
+[2m2025-06-24T18:06:49.577326Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 2
+[2m2025-06-24T18:06:49.654110Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 3
+[2m2025-06-24T18:06:49.988359Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 4
+[2m2025-06-24T18:06:50.071002Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 5
+[2m2025-06-24T18:06:50.331850Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 6
+[2m2025-06-24T18:06:50.407106Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 7
+[2m2025-06-24T18:06:50.483501Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 8
+[2m2025-06-24T18:06:50.557255Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 9
+[2m2025-06-24T18:06:50.629172Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 10
+[2m2025-06-24T18:06:50.699414Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 11
+[2m2025-06-24T18:06:50.770458Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 12
+[2m2025-06-24T18:06:50.842084Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 13
+[2m2025-06-24T18:06:50.910689Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 14
+[2m2025-06-24T18:06:50.980661Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 15
+[2m2025-06-24T18:06:51.049265Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 16
+[2m2025-06-24T18:06:51.118509Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 17
+[2m2025-06-24T18:06:51.187566Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 18
+[2m2025-06-24T18:06:51.257669Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 19
+[2m2025-06-24T18:06:51.404351Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 20
+[2m2025-06-24T18:06:51.552130Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 21
+[2m2025-06-24T18:06:51.622054Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 22
+[2m2025-06-24T18:06:51.692546Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 23
+[2m2025-06-24T18:06:51.763442Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 24
+[2m2025-06-24T18:06:51.833348Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 25
+[2m2025-06-24T18:06:51.902460Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 26
+[2m2025-06-24T18:06:51.970598Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 27
+[2m2025-06-24T18:06:52.042858Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 28
+[2m2025-06-24T18:06:52.113964Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 29
+[2m2025-06-24T18:06:52.184517Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 30
+[2m2025-06-24T18:06:52.254521Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 31
+[2m2025-06-24T18:06:52.324591Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 32
+[2m2025-06-24T18:06:52.393025Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 33
+[2m2025-06-24T18:06:52.549240Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 34
+[2m2025-06-24T18:06:52.691246Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 35
+[2m2025-06-24T18:06:52.761092Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 36
+[2m2025-06-24T18:06:52.831834Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 37
+[2m2025-06-24T18:06:52.902954Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 38
+[2m2025-06-24T18:06:52.973549Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 39
+[2m2025-06-24T18:06:53.044152Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 40
+[2m2025-06-24T18:06:53.115285Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 41
+[2m2025-06-24T18:06:53.185589Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 42
+[2m2025-06-24T18:06:53.185627Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 3 secs
+[2m2025-06-24T18:06:53.353875Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:06:53.353901Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m State transition: Syncing -> Following
+[2m2025-06-24T18:06:53.353906Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:06:54.360879Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:06:55.368401Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:06:56.377601Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:06:57.384792Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:06:58.391164Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:06:59.397170Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:00.401249Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:01.405564Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:02.410204Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:03.413850Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:04.418031Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:05.424566Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:06.432160Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:07.439030Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:08.446332Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:09.454121Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:10.460472Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:11.465393Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:12.472418Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:13.476979Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:14.482454Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:15.489051Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m State transition: Following -> Syncing
+[2m2025-06-24T18:07:15.489114Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is synchronizing to catch up with the latest state.
+[2m2025-06-24T18:07:16.494802Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0x08faeb450dd4f3ea0727931c703eeaa53d9d1652665500d579d0966ea17a2eb8 to sync_head 0x09bdb9a7c41df7caa932b0e475c826999c3cfecb4643871c41d6a5d5c8c8fdc3
+[2m2025-06-24T18:07:16.494841Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x09bd…fdc3
+[2m2025-06-24T18:07:16.500869Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m [SYNCING] Requested, stored, and executed 12 blocks in 0.005 seconds.
+Started at block with hash 0xed4b…482f (number 526).
+Finished at block with hash 0x09bd…fdc3 (number 537).
+Blocks per second: 2400.000
+[2m2025-06-24T18:07:16.565923Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sealed batch number 43
+[2m2025-06-24T18:07:16.565958Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle finished, time elapsed: 0 secs
+[2m2025-06-24T18:07:17.500709Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:17.500744Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m State transition: Syncing -> Following
+[2m2025-06-24T18:07:17.500750Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:18.506624Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:18.862360Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 538 with hash 0x5d72cd989c46d37ffb99e710e03eeb33c47b7c4b0e9480801b6874b577f2ab81
+[2m2025-06-24T18:07:18.863616Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 539 with hash 0x2abd855ae02e9835c89b176775283f925f94724a67c72e8f9d66a3bcc84a96c5
+[2m2025-06-24T18:07:19.087689Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:07:19.510537Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:20.514696Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:21.520189Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:22.524439Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:23.529629Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:23.715988Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 540 with hash 0x12a56798c93cfaaef0bb451b6ef73600f104ecb9a3da4b9d47a8d8ce8c66de92
+[2m2025-06-24T18:07:24.536626Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:25.546634Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:26.551212Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:27.555181Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:28.561123Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:29.078801Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:07:29.080480Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 541 with hash 0xfc673925a3e5d1d1dca8ed9c66d1758633a67b1c389aa303f238f2d509981fee
+[2m2025-06-24T18:07:29.568941Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:30.577010Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:31.585443Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:32.593496Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:33.602433Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:33.933142Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 542 with hash 0xabf3654f5b1ac70640e09012251f12d2ccb7c39bedc45c5eb6e0e5c335c5cf72
+[2m2025-06-24T18:07:34.612232Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:35.617574Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:36.621992Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:37.627225Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:38.599331Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 543 with hash 0x25741ede3ed4a1bfe44357017ac324d83e0af3d1a28d6a51f1778bebf1975e9e
+[2m2025-06-24T18:07:38.635430Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:39.643009Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:40.649574Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:41.655852Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:42.660951Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:43.623582Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:07:43.625197Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 544 with hash 0xee5d6396373c10cb8447b3319fa542e7e49108ec3223124528bcdf07e6de2ffc
+[2m2025-06-24T18:07:43.665055Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:44.670459Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:45.677087Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:46.685591Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:47.693747Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:48.646800Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:07:48.648333Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 545 with hash 0xa0e329b9e8fbd9394dbd4b121cb560f0446dac12ff2b911308ca41ed39d78d2c
+[2m2025-06-24T18:07:48.701142Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:49.087327Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:07:49.709258Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:50.716937Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:51.724173Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:52.731368Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:53.668871Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:07:53.670657Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 546 with hash 0xb14bce3e38404a761e6304ee20aee039460948a7a4accd58c19524d229ca992c
+[2m2025-06-24T18:07:53.740392Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:54.746476Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:55.754314Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:56.761082Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:57.769031Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:58.690501Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:07:58.692459Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 547 with hash 0xa35d170704e59fda5a7e23d5135281a6ef83554b42d2cc8ef45b8d477d7d2801
+[2m2025-06-24T18:07:58.776043Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:07:59.784311Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:00.792179Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:01.800071Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:02.807522Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:03.713645Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:03.715630Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 548 with hash 0x14c257d1dfbf9fd0be554006d74885c4c00d32ac1093597e7ac7c6fb4e51736b
+[2m2025-06-24T18:08:03.814905Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:04.822869Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:05.830838Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:06.838811Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:07.846684Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:08.738261Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:08.740311Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 549 with hash 0x8796d36285e79b6e5fddf15bc268ce6cd72b90622a8ed11c4bd8c09c8c801d30
+[2m2025-06-24T18:08:08.853219Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:09.860796Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:10.869166Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:11.876824Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:12.885056Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:13.761402Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:13.763481Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 550 with hash 0xa0f5dd4db207b72afd6d4b4b320906100c091c972f08b993aa5584b7819c7b60
+[2m2025-06-24T18:08:13.893410Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:14.901383Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:15.906764Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:16.911550Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:17.351768Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Sealed batch 44 with blocks from 538 to 550
+[2m2025-06-24T18:08:17.917349Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:18.923544Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:18.931068Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:18.932826Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 551 with hash 0x0e9eecdd237882149f5dbbf16e0c84c70829787224e71f8cbf9b44bb983d190b
+[2m2025-06-24T18:08:19.087734Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:08:19.930848Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:20.939184Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:21.946364Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:22.955733Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:23.880826Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 552 with hash 0x1b5fee82e7c9b3b9abe5a5fe4c4b3510f83169c5409fdae782a7475bc9f28fe3
+[2m2025-06-24T18:08:23.960620Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:24.968912Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:25.976346Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:26.984875Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:27.993821Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:28.902880Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:28.904194Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 553 with hash 0x9eefca4125127864e933171a0b5c2cb6c39d0baa5433dd2412945b1ff006e267
+[2m2025-06-24T18:08:29.001417Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:30.007620Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:31.016915Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:32.026358Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:33.035588Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:33.925131Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:33.926831Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 554 with hash 0x0bd936d276418ecbfceafc71d3452b85afba5d6294ee4691b8523c965af25fc4
+[2m2025-06-24T18:08:34.043897Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:35.052583Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:36.063124Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:37.069589Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:38.078619Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:38.948006Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:38.949520Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 555 with hash 0xe54128f92ed6b7e44feacaf4f996f4cac64e146076d00a24dbf7be0229613136
+[2m2025-06-24T18:08:39.087315Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:40.095615Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:41.105310Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:42.113250Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:43.122066Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:43.968843Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:43.970622Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 556 with hash 0x2e4d98839c24574fb3d0ffde68752ee90c02bb0c0fa0fc9510463ccaea2abd0b
+[2m2025-06-24T18:08:44.130279Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:45.138615Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:46.146771Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:47.156844Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:48.165048Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:48.993750Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:08:48.995717Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 557 with hash 0xf2cc39d6d0e3506ec1112b3c75080d23ce2f0adb3f428fdcb1e48b8b95ac1769
+[2m2025-06-24T18:08:49.086568Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:08:49.172722Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:50.181171Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:51.185819Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:52.192931Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:53.197693Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:54.020427Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 2 ms. #Txs: 0.
+[2m2025-06-24T18:08:54.021992Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 558 with hash 0x4b629250060cab31d27815039bee44f79f06f1ac67b51e0f6cfdd14b28891352
+[2m2025-06-24T18:08:54.206704Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:55.214724Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:56.222320Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:57.231253Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:58.240275Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:08:59.044569Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.01 Ggas/s TIME SPENT: 2 ms. #Txs: 1. exec/Ggas: 0 ms (0%), st/Ggas: 47619 ms (50%)
+[2m2025-06-24T18:08:59.045965Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 559 with hash 0xfdfcaaf0415f986973964df86de6b6c06568cfbe52426b63c05cf3daf9a93d84
+[2m2025-06-24T18:08:59.248810Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:00.257818Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:01.264238Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:02.273068Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:03.281597Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:04.068079Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 2 ms. #Txs: 0.
+[2m2025-06-24T18:09:04.069349Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 560 with hash 0x431e33bb7673481dfe15d72620980688155b08bfb23148f49a0ba7868639e8c5
+[2m2025-06-24T18:09:04.290949Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:05.299315Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:06.308178Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:07.317953Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:08.325525Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:09.093272Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:09:09.094708Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 561 with hash 0xcc34ecc0298b628d5afb49bffb905b94c260ddd7b80e57781606ec154385bdda
+[2m2025-06-24T18:09:09.333384Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:10.342965Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:11.352273Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:12.360612Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:13.370005Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:14.114879Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 562 with hash 0xff76e588d7d57aa00ff580d7d5d7fd16e37cd8ba4ec837c3041a3c9b12f5bcf3
+[2m2025-06-24T18:09:14.378566Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:15.386804Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:16.394883Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:17.404468Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:18.413179Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:19.086468Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:09:19.138110Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 563 with hash 0xf276707e332792aef6df0f119e4b5454bb6a1d72a1097467d106430f13c36c0b
+[2m2025-06-24T18:09:19.419481Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:19.702913Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Sealed batch 45 with blocks from 551 to 563
+[2m2025-06-24T18:09:20.424271Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:21.433165Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:22.442062Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:23.104918Z[0m [32m INFO[0m [2methrex_rpc::eth::account[0m[2m:[0m Requested balance of account 0xe255…6425 at block Latest
+[2m2025-06-24T18:09:23.115454Z[0m [32m INFO[0m [2methrex_rpc::eth::client[0m[2m:[0m Requested chain id
+[2m2025-06-24T18:09:23.115680Z[0m [32m INFO[0m [2methrex_rpc::eth::account[0m[2m:[0m Requested nonce of account 0xe255…6425 at block Latest
+[2m2025-06-24T18:09:23.116800Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested estimate on block: Latest
+[2m2025-06-24T18:09:23.128153Z[0m [32m INFO[0m [2methrex_rpc::eth::client[0m[2m:[0m Requested chain id
+[2m2025-06-24T18:09:23.128400Z[0m [32m INFO[0m [2methrex_rpc::eth::account[0m[2m:[0m Requested nonce of account 0xe255…6425 at block Latest
+[2m2025-06-24T18:09:23.128863Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested estimate on block: Latest
+[2m2025-06-24T18:09:23.158855Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.182137Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.211996Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.237792Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.265950Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.293452Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.318114Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.344638Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.370818Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.397493Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.422867Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.448122Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:23.449370Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.474534Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.501411Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.528187Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.553862Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.580016Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.607866Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.634418Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.662355Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.688729Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.714927Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.740140Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.765913Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:23.782867Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.02 Ggas/s TIME SPENT: 1 ms. #Txs: 1. exec/Ggas: 0 ms (0%), st/Ggas: 47619 ms (100%)
+[2m2025-06-24T18:09:23.784593Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 564 with hash 0xe5f6285fd8a3073269cf5a2ed398487a1cda473b59c314f2dc93ff5163bbb158
+[2m2025-06-24T18:09:23.792311Z[0m [32m INFO[0m [2methrex_rpc::eth::transaction[0m[2m:[0m Requested receipt for transaction 0x4ba6c12d8f0fb6a5fe1cf9352bf6606019257f989027fc1a04ecddd153298b64
+[2m2025-06-24T18:09:24.456642Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:25.466133Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:26.475808Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:27.483253Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:28.491897Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:28.809840Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:09:28.811797Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 565 with hash 0x061d37bee774b6327c324c4353baf75652e937388ec4e37bf3047bfdba6753cb
+[2m2025-06-24T18:09:29.502833Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:30.510816Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:31.518564Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:32.527601Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:33.536313Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:33.832826Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:09:33.834994Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 566 with hash 0xde0a3ac475577c76c1d1f29d59f3e7a3e8094528d10ad3d4dfe1c069e80ec4bd
+[2m2025-06-24T18:09:34.543824Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:35.554734Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:36.562515Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:37.570722Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:38.574767Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:38.856220Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 567 with hash 0x21b85933dc14a06f5bf0d853f5fc097c4fdbb36bd3bdca320c3dab68891c27b5
+[2m2025-06-24T18:09:39.582415Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:40.590652Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:41.598821Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:42.607773Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:43.616745Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:43.876918Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:09:43.879267Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 568 with hash 0x7166a7cf1279e853ed98c3ae19fe17f25aab02f358e7fa427b876f4b33f87d55
+[2m2025-06-24T18:09:44.625502Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:45.634327Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:46.643381Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:47.651710Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:48.661289Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:48.898939Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:09:48.901604Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 569 with hash 0x2d06e7637fbe513013ab7e87db3de84de7d250d0e743c5e882dfac2cf3a4f0c7
+[2m2025-06-24T18:09:49.086049Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:09:49.670150Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:50.679536Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:51.687429Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:52.695858Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:53.705294Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:53.923479Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:09:53.925899Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 570 with hash 0x7dbda76e459a5d8ec450e638c258680d3dddf5604b885315baf8ad3767b63f44
+[2m2025-06-24T18:09:54.715292Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:55.725971Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:56.735282Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:57.744507Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:58.752365Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:09:58.949724Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:09:58.951098Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 571 with hash 0xdf2483bf2ce51256c058f88a543806546f3a8914e584b6c4e63ce6330ce32f92
+[2m2025-06-24T18:09:59.762100Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:00.770483Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:01.780142Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:02.790809Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:03.800258Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:03.971141Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:03.973891Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 572 with hash 0x18a2966ff532f9ee61be465753b587a7349f8dedd4fb734f45d25cd5d327bbdf
+[2m2025-06-24T18:10:04.810052Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:05.820756Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:06.828875Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:07.837999Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:08.849204Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:08.999200Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:09.001555Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 573 with hash 0x87e4eb9eafa15c6381a386e20d40da39390efbee9a0379e443a1936095c82bbc
+[2m2025-06-24T18:10:09.859413Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:10.865656Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:11.872644Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:12.883210Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:13.892875Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:14.025817Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:14.027563Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 574 with hash 0xfb59b5463b047b6217a430fb16ac8ba88e21e14dad31e96df8fe4210bb829658
+[2m2025-06-24T18:10:14.903184Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:15.909986Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:16.919048Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:17.925429Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:18.936235Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:19.048209Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:19.050439Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 575 with hash 0x48d397b0a33f88d578cf6d305d71ab781a1443b976a5f39c326a1d4082334b9b
+[2m2025-06-24T18:10:19.086161Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:10:19.942345Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:20.953231Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:21.958715Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:22.962764Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:23.150700Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Sealed batch 46 with blocks from 564 to 575
+[2m2025-06-24T18:10:23.973474Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:24.247938Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:24.249936Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 576 with hash 0x320c45ef5cc1b612fcd4a2f939e94e05414e7e805094cb54d84d363f687bd487
+[2m2025-06-24T18:10:24.982918Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:25.992167Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:27.001370Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:28.012007Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:29.022305Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:29.184316Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:29.186418Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 577 with hash 0x93b928f93835d69ac5d7ffdbce43d7fa013617c707dff3506041a2d377abd3a9
+[2m2025-06-24T18:10:30.032804Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:31.042895Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:32.053289Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:33.066804Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:34.072718Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:34.205728Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:34.207619Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 578 with hash 0x46797ba50d580d77b955dbe1b746cfc2db0bb33608c60d7753d2f704f66fd8d9
+[2m2025-06-24T18:10:35.082399Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:36.088209Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:37.093064Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:38.100018Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:39.107104Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:39.227272Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 579 with hash 0x9292a418ce4261abeb36087a2d7c989677f2fff7cdfb1545c1b62033632477c5
+[2m2025-06-24T18:10:40.116450Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:41.126215Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:42.134768Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:43.141379Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:44.150681Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:44.248417Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:44.251269Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 580 with hash 0xdc4e9942f5135a3b93a4d26cb0b93924de88a6aab9559fc0eee4ce2740ff9ba6
+[2m2025-06-24T18:10:45.159723Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:46.168412Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:47.177030Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:48.185965Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:49.085302Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:10:49.191580Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:49.273152Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:49.275531Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 581 with hash 0x604b4f19de322125e2ad4758395ed38ecb03b6802ae6c23ff7c3075cd1178489
+[2m2025-06-24T18:10:50.198074Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:51.203661Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:52.210911Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:53.218900Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:53.793570Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:10:53.795671Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 582 with hash 0x3947474f4d96aa6f1e352fba6fcaeaa99ae086242fa21a5367456d6351e41f8a
+[2m2025-06-24T18:10:54.227472Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:55.252024Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:56.261487Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:57.269832Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:58.276465Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:10:58.817933Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 583 with hash 0x028e2c54b1666a754dd8b5b187406ed10dfc74218497f77994a3d3b6d0a077df
+[2m2025-06-24T18:10:59.284019Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:00.292984Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:01.302315Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:02.311516Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:03.317735Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:03.839846Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:03.841714Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 584 with hash 0x1b9dce481d6b5af2313606d3acf6f06e5d05bd65e6ffe8fb0854f606d83ae34b
+[2m2025-06-24T18:11:04.326364Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:05.333968Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:06.343573Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:07.352416Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:08.361087Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:08.862209Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:08.864687Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 585 with hash 0xb45b36cb5066545a9ac29b09777473fa59213497d663bd880849aecf1c96ea48
+[2m2025-06-24T18:11:09.367435Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:10.376746Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:11.385026Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:12.394884Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:13.404970Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:13.889263Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:13.891348Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 586 with hash 0x8e98ec92483383d40627db6efd75a54efa43ecb93c55d3525a9423012373c889
+[2m2025-06-24T18:11:14.415570Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:15.424861Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:16.435389Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:17.445529Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:18.455979Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:18.914742Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:18.917286Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 587 with hash 0xe12efca097e80db674418a1a11dd6aae1b8f7b99d2a46dd285761a6c326736e7
+[2m2025-06-24T18:11:19.085393Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:11:19.466477Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:20.476870Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:21.487861Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:22.498270Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:23.508974Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:23.938201Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:23.940659Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 588 with hash 0xecb8b76cc71a03ff097fcf8cfdcc5739c21a4904e4f706e0ee3bf359f66cc476
+[2m2025-06-24T18:11:24.519654Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:25.526106Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:26.532179Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:27.041228Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Sealed batch 47 with blocks from 576 to 588
+[2m2025-06-24T18:11:27.542271Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:28.552166Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:29.126614Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:29.128802Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 589 with hash 0xed4f62dbcd840d14fbd115e873795e2aec5abb89e94a4275b08b8cc313dc2ef5
+[2m2025-06-24T18:11:29.560880Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:30.570532Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:31.581273Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:32.591055Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:33.601080Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:34.077675Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:34.080053Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 590 with hash 0x288c65cfebba02bd5ff9a50bbd34aefa0593bdffa54de1bdbf61a4b0029cbe2b
+[2m2025-06-24T18:11:34.610436Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:35.619171Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:36.623935Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:37.631114Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:38.639556Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:39.098335Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:39.100767Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 591 with hash 0x7090d181af5250f7a392b428f758f8e72b28e1ecb1ab000ff36be278e4f8f991
+[2m2025-06-24T18:11:39.649030Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:40.658055Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:41.666977Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:42.675695Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:43.682171Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:44.122687Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:44.124756Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 592 with hash 0x877afae64458b15b5d54fdd7a79d6b1d21b95493e8d86497e0c01ada51c6b519
+[2m2025-06-24T18:11:44.690761Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:45.700456Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:46.709214Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:47.717807Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:48.726076Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:49.085291Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:11:49.085314Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-24T18:11:49.085433Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-24T18:11:49.147555Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:49.149741Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 593 with hash 0x4f92257e8ca4ed5c14bd1b4c17207f91fb2efb85615ba9a6a304374c29b3e8ab
+[2m2025-06-24T18:11:49.734618Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:50.742188Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:51.750632Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:52.758663Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:53.767594Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:54.170172Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:54.172516Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 594 with hash 0x7ac0f323a708281b1abd26d05586b70d4715a500f5d345ad0b831d412bdacc53
+[2m2025-06-24T18:11:54.776158Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:55.785135Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:56.793126Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:57.802537Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:58.811447Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:11:59.194675Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:11:59.196960Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 595 with hash 0x0e128d491538d4d68ca7392705b280233ca89bc1c9def1888bb8879c735eda15
+[2m2025-06-24T18:11:59.820251Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:00.829498Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:01.838773Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:02.847417Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:03.856225Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:04.217088Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:04.219699Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 596 with hash 0x6ebd3507dabc3891850be6f4765a1086074c20c451bdaefbdebd1e40ec14a1e0
+[2m2025-06-24T18:12:04.864991Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:05.873155Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:06.882682Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:07.891393Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:08.897964Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:09.239170Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:09.243651Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 597 with hash 0x84af867b7d12a603184235f88a701dd8796842f45e251fba08893e4ba3d170e4
+[2m2025-06-24T18:12:09.906498Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:10.915248Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:11.924102Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:12.930284Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:13.937100Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:14.260956Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:14.262611Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 598 with hash 0xa30fa59b9361cff057e5a93c02c68cd812e3c1bff989d608815409fa203c853c
+[2m2025-06-24T18:12:14.946563Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:15.955323Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:16.964079Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:17.973518Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:18.982997Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:19.084215Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:12:19.285494Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:19.288004Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 599 with hash 0x98b28f416a39b3d8f550c520cc01600ca0b1abaa0b4a1e4dbbfdbf1965faf13a
+[2m2025-06-24T18:12:19.992475Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:21.000830Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:22.007982Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:23.016662Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:24.025393Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:24.307525Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:24.309911Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 600 with hash 0xe6b488866766c85536397ff3015564f08e33ddb6dbe49c089ee2ff3d0c9673c0
+[2m2025-06-24T18:12:25.034195Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:26.040809Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:27.049118Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:28.057800Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:29.064113Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:29.331253Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:29.333220Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 601 with hash 0xf3952365437da5021e85fce60232f9ef28a40d660dd75db5ea11efa38a088b4b
+[2m2025-06-24T18:12:29.916848Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Sealed batch 48 with blocks from 589 to 601
+[2m2025-06-24T18:12:30.067106Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:31.073201Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:32.078078Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:33.084684Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:34.024989Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:34.026686Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 602 with hash 0x43c46c0ec52323cc471f75332e1f55bb194e9f14c34c2815f88a46eb3b24c39e
+[2m2025-06-24T18:12:34.091797Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:35.099922Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:36.111858Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:37.122935Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:38.129490Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:38.958339Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:38.959911Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 603 with hash 0xf8e8d2c60bfb4169598a953c34e4423ab8c6f4bd2475919bb719cb9fb2fad47a
+[2m2025-06-24T18:12:39.139534Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:40.144614Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:41.155200Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:42.162232Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:43.172349Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:43.982136Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 604 with hash 0x5d6daefe9cebe8587d05a062fe6b3a4d4d499f4289f1db901576356e2f763483
+[2m2025-06-24T18:12:44.180334Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:45.186952Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:46.197717Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:47.207343Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:48.217839Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:49.004398Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:49.006581Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 605 with hash 0x63b7dd8a0c4e3723b62aa3fd83c4fbdb2c879744ff534e08fd3bf98f8638075e
+[2m2025-06-24T18:12:49.083646Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:12:49.228347Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:50.236895Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:51.247854Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:52.258597Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:53.267833Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:54.025319Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:54.027816Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 606 with hash 0xe83323e21a2e8f9bfe10ecdf1e651c6bfab18435470dfd111b38a48f875d18a3
+[2m2025-06-24T18:12:54.277580Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:55.286053Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:56.295599Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:57.305460Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:58.314154Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:12:59.051137Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:12:59.053481Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 607 with hash 0x204aef6a962dd156ab5beea644d81ed64afca4ed5e3bdcba51ae5e9a35100cdc
+[2m2025-06-24T18:12:59.323762Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:00.332147Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:01.341317Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:02.349312Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:03.361256Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:04.074602Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:04.076446Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 608 with hash 0xdac664c3e41f9e447bec33769baffdd1c583dd0b01c998e798fab0edf0727a2c
+[2m2025-06-24T18:13:04.368829Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:05.375283Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:06.383488Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:07.391409Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:08.400902Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:09.098390Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 609 with hash 0x152db3b503e4f96e02b3ecee4beeed0e1df67604b092c76f172bdd78012eb138
+[2m2025-06-24T18:13:09.409409Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:10.417933Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:11.426478Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:12.434362Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:13.444911Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:14.120780Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 610 with hash 0x4d98d3220632162d8007f8c8beb497666fbfbe7cdae0c5b4dcdc7ea6c0693126
+[2m2025-06-24T18:13:14.450538Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:15.457216Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:16.463118Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:17.471267Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:18.478303Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:19.083512Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:13:19.142250Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:19.143999Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 611 with hash 0x55542dc54c88ec8bce24164b77bd5803c7f96b78f1922af2e147ec93e2a674c9
+[2m2025-06-24T18:13:19.485885Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:20.491697Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:21.498189Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:22.507481Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:23.516232Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:24.163974Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:24.166196Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 612 with hash 0x7f1b7499fe21ddcc085dcc6424fd4a17761c7abc92933f8b6c788e9e18b36e2c
+[2m2025-06-24T18:13:24.525706Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:25.531442Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:26.541418Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:27.550949Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:28.556716Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:29.188775Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:29.190619Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 613 with hash 0x15c846af52b2cd107b3faf45fe83fe3caacf36f12ebfe2f93c3025280c1b298f
+[2m2025-06-24T18:13:29.565029Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:30.572465Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:31.577434Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:32.584130Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:32.787103Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Sealed batch 49 with blocks from 602 to 613
+[2m2025-06-24T18:13:33.593828Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:34.361412Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 614 with hash 0x479179af3727dcd5909a31c0530552914e3df6b108b42044fb523d2021f0fc87
+[2m2025-06-24T18:13:34.598709Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:35.606851Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:36.612262Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:37.620510Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:38.628581Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:39.314841Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:39.316437Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 615 with hash 0xfafbdf868d9ac8755cc861debdf1cd16cd3d3eae0f7afbb6a90386c7b60d8686
+[2m2025-06-24T18:13:39.636705Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:40.644730Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:41.652774Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:42.662379Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:43.670734Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:44.679673Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:44.839876Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:44.841866Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 616 with hash 0x0920317a10577b692838fd72c2a103348030e067dec95b69dcdc8ade69b1c952
+[2m2025-06-24T18:13:45.686525Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:46.692808Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:47.698990Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:48.708483Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:49.083371Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:13:49.363026Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 617 with hash 0x81f5bc9dc67abf2e9d47896676defd57389ec16bdf1fb6978c9779c8d2024fa7
+[2m2025-06-24T18:13:49.717509Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:50.723531Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:51.732787Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:52.741041Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:53.746900Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:54.385183Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:54.386752Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 618 with hash 0x83907e582940c109ccb6ed38310617b5587b338c1659466f33f3035296ec1dd9
+[2m2025-06-24T18:13:54.753407Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:55.762000Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:56.767159Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:57.775370Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:58.780663Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:13:59.408062Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:13:59.410558Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 619 with hash 0xa6f631d367634497d299c5bae7c83c2064ee61cd142b9c7449ff8f0473c21fe6
+[2m2025-06-24T18:13:59.787470Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:00.793456Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:01.801008Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:02.810850Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:03.819732Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:04.432021Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:14:04.434296Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 620 with hash 0x9e84af0381da242051cd267cf5bf5d11c3c28ef223a5217f657016303961f3f2
+[2m2025-06-24T18:14:04.828968Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:05.838774Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:06.848934Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:07.857215Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:08.866211Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:09.457687Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:14:09.459339Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 621 with hash 0x945a7fb2969f4cf636a36fd262a46ddbdafc2994e2f5dead4d3d41146b4fb6c0
+[2m2025-06-24T18:14:09.875548Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:10.883455Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:11.891923Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:12.899954Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:13.908877Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:14.917362Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:14.980094Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:14:14.981774Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 622 with hash 0x8086c4ca1111383c24ef837c041d76812b2a548fcad87139f5b6d93b1f011dc4
+[2m2025-06-24T18:14:15.923796Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:16.933407Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:17.943263Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:18.950551Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:19.082910Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 1
+[2m2025-06-24T18:14:19.505037Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 623 with hash 0x714231cae9edcb1cfddf58a995c1e3cd89915ad251fcd7c111ed55cc31955c83
+[2m2025-06-24T18:14:19.960070Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:20.967882Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:21.975565Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:22.984253Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:23.992464Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:24.523864Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:14:24.525767Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 624 with hash 0xc91196eb55f85725923506d831f30eb88ceb1dd93df0945153cd48b01919e600
+[2m2025-06-24T18:14:25.000513Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:26.007171Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:27.013920Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:28.021253Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:29.029725Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:29.548079Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:14:29.550160Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 625 with hash 0x0a60e481815d2c88e7aa987fc2619cde3f86c45d1373a0ebb9c7f7d11da20ad4
+[2m2025-06-24T18:14:30.037574Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:31.045356Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:32.051783Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:33.063612Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:34.068196Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:34.569365Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 626 with hash 0x8be2f82d64e922b0851611eadf73f282f44f83c83980271936cdae0757ba9977
+[2m2025-06-24T18:14:35.074842Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:36.082719Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:36.142586Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Sealed batch 50 with blocks from 614 to 626
+[2m2025-06-24T18:14:37.089332Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:38.096980Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:39.104072Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:39.222234Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRIC] BLOCK EXECUTION THROUGHPUT: 0.00 Ggas/s TIME SPENT: 1 ms. #Txs: 0.
+[2m2025-06-24T18:14:39.224428Z[0m [32m INFO[0m [2methrex_p2p::rlpx::connection[0m[2m:[0m Added new block 627 with hash 0x39ec7d1c23b8caff41773a3b69a94c689a5aa6768105a84f8e664ca2d08041e2
+[2m2025-06-24T18:14:40.112228Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.
+[2m2025-06-24T18:14:41.121085Z[0m [32m INFO[0m [2methrex_l2::based::state_updater[0m[2m:[0m Node is up to date and following the lead sequencer.

@@ -5,7 +5,6 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::{H256, types::Transaction};
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -261,8 +260,7 @@ impl PooledTransactions {
             if tx.tx_type() as u8 != expected_type {
                 return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
-            // remove the code from the encoding (-4)
-            if tx.encode_to_vec().len() - 4 != expected_size {
+            if tx.encode_canonical_to_vec().len() != expected_size {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
         }
