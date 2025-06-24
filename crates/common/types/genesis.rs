@@ -4,13 +4,18 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::{BufReader, Error},
+    path::Path,
+};
+use tracing::warn;
 
 use super::{
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
-    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
-    INITIAL_BASE_FEE,
+    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
+    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
+use crate::constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH};
 
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -42,6 +47,42 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GenesisError {
+    #[error("Failed to decode genesis file: {0}")]
+    Decode(#[from] serde_json::Error),
+    #[error("Fork not supported. Only post-merge networks are supported.")]
+    InvalidFork(),
+    #[error("Failed to open genesis file: {0}")]
+    File(#[from] Error),
+}
+
+impl TryFrom<&Path> for Genesis {
+    type Error = GenesisError;
+
+    fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
+        let genesis_file = std::fs::File::open(genesis_file_path)?;
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
+
+        // Try to derive if the genesis file is PoS
+        // Different genesis files have different configurations
+        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
+        if genesis.config.terminal_total_difficulty != Some(0)
+            && genesis.config.merge_netsplit_block != Some(0)
+            && genesis.config.shanghai_time != Some(0)
+            && genesis.config.cancun_time != Some(0)
+            && genesis.config.prague_time != Some(0)
+        {
+            // Hive has a minimalistic genesis file, which is not supported
+            // return Err(GenesisError::InvalidFork());
+            warn!("Invalid fork, only post-merge networks are supported.");
+        }
+
+        Ok(genesis)
+    }
 }
 
 #[allow(unused)]
@@ -292,7 +333,7 @@ impl ChainConfig {
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
@@ -351,6 +392,7 @@ impl Genesis {
                 .config
                 .is_prague_activated(self.timestamp)
                 .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
+            ..Default::default()
         }
     }
 
@@ -372,7 +414,6 @@ impl Genesis {
         Trie::compute_hash_from_unsorted_iter(iter)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;

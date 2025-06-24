@@ -3,16 +3,16 @@ use crate::{
         deserialize_access_lists, deserialize_authorization_lists,
         deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe,
         deserialize_hex_bytes, deserialize_hex_bytes_vec, deserialize_post,
-        deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
-        deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
-        deserialize_u64_safe, deserialize_u64_vec_safe,
+        deserialize_transaction_expected_exception, deserialize_u64_safe, deserialize_u64_vec_safe,
+        deserialize_u256_optional_safe, deserialize_u256_safe,
+        deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
     },
     report::TestVector,
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Fork, Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
+    types::{Fork, Genesis, GenesisAccount, TxKind},
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -165,6 +165,7 @@ pub enum TransactionExpectedException {
     GasLimitPriceProductOverflow,
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
+    Other, //TODO: Implement exceptions
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -193,8 +194,8 @@ pub struct EFTestPreValue {
     pub balance: U256,
     #[serde(deserialize_with = "deserialize_hex_bytes")]
     pub code: Bytes,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
-    pub nonce: U256,
+    #[serde(deserialize_with = "deserialize_u64_safe")]
+    pub nonce: u64,
     #[serde(deserialize_with = "deserialize_u256_valued_hashmap_safe")]
     pub storage: HashMap<U256, U256>,
 }
@@ -205,7 +206,7 @@ impl From<&EFTestPreValue> for GenesisAccount {
             code: value.code.clone(),
             storage: value.storage.clone(),
             balance: value.balance,
-            nonce: value.nonce.as_u64(),
+            nonce: value.nonce,
         }
     }
 }
@@ -243,8 +244,8 @@ pub struct EFTestRawTransaction {
     pub gas_limit: Vec<u64>,
     #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
     pub gas_price: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
-    pub nonce: U256,
+    #[serde(deserialize_with = "deserialize_u64_safe")]
+    pub nonce: u64,
     pub secret_key: H256,
     pub sender: Address,
     pub to: TxKind,
@@ -270,8 +271,8 @@ pub struct EFTestTransaction {
     pub data: Bytes,
     pub gas_limit: u64,
     pub gas_price: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
-    pub nonce: U256,
+    #[serde(deserialize_with = "deserialize_u64_safe")]
+    pub nonce: u64,
     pub secret_key: H256,
     pub sender: Address,
     pub to: TxKind,

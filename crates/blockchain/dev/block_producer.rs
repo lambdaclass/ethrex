@@ -39,12 +39,12 @@ pub async fn start_block_producer(
             .await
         {
             Ok(response) => {
-                tracing::debug!("ForkChoiceV3 response: {response:?}");
+                tracing::debug!("engine_forkchoiceUpdatedV3 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_forkchoiceUpdateV3 with PayloadAttributes: {error}"
+                    "Failed to produce block: error sending engine_forkchoiceUpdatedV3 with PayloadAttributes: {error}"
                 );
                 tries += 1;
                 continue;
@@ -53,22 +53,22 @@ pub async fn start_block_producer(
         let payload_id = fork_choice_response
             .payload_id
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
-        let execution_payload_response = match engine_client.engine_get_payload_v3(payload_id).await
+        let execution_payload_response = match engine_client.engine_get_payload_v4(payload_id).await
         {
             Ok(response) => {
-                tracing::debug!("GetPayloadV3 response: {response:?}");
+                tracing::debug!("engine_getPayloadV4 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_getPayloadV3: {error}"
+                    "Failed to produce block: error sending engine_getPayloadV4: {error}"
                 );
                 tries += 1;
                 continue;
             }
         };
         let payload_status = match engine_client
-            .engine_new_payload_v3(
+            .engine_new_payload_v4(
                 execution_payload_response.execution_payload,
                 execution_payload_response
                     .blobs_bundle
@@ -89,12 +89,12 @@ pub async fn start_block_producer(
             .await
         {
             Ok(response) => {
-                tracing::debug!("NewPayloadV3 response: {response:?}");
+                tracing::debug!("engine_newPayloadV4 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_newPayloadV3: {error}"
+                    "Failed to produce block: error sending engine_newPayloadV4: {error}"
                 );
                 tries += 1;
                 continue;
@@ -104,7 +104,9 @@ pub async fn start_block_producer(
         {
             latest_valid_hash
         } else {
-            tracing::error!("Failed to produce block: latest_valid_hash is None in PayloadStatus: {payload_status:?}");
+            tracing::error!(
+                "Failed to produce block: latest_valid_hash is None in PayloadStatus: {payload_status:?}"
+            );
             tries += 1;
             continue;
         };

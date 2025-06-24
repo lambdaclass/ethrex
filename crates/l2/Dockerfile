@@ -1,4 +1,4 @@
-FROM rust:1.82 AS chef
+FROM rust:1.87 AS chef
 
 RUN apt-get update && apt-get install -y \
 	build-essential \
@@ -22,7 +22,7 @@ COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --features l2
+RUN cargo build --release --features "l2,rollup_storage_libmdbx"
 
 FROM ubuntu:24.04
 ENV CI_ETHREX_WORKDIR=$CI_ETHREX_WORKDIR

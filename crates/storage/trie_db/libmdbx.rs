@@ -1,4 +1,4 @@
-use ethrex_trie::error::TrieError;
+use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, Table};
 use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
@@ -11,7 +11,7 @@ use ethrex_trie::TrieDB;
 
 impl<T> LibmdbxTrieDB<T>
 where
-    T: Table<Key = Vec<u8>, Value = Vec<u8>>,
+    T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -23,20 +23,14 @@ where
 
 impl<T> TrieDB for LibmdbxTrieDB<T>
 where
-    T: Table<Key = Vec<u8>, Value = Vec<u8>>,
+    T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
         txn.get::<T>(key).map_err(TrieError::DbError)
     }
 
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
-        txn.commit().map_err(TrieError::DbError)
-    }
-
-    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
             txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
@@ -48,11 +42,12 @@ where
 #[cfg(test)]
 mod test {
     use super::LibmdbxTrieDB;
-    use crate::trie_db::test_utils::libmdbx::{new_db, TestNodes};
+    use crate::trie_db::test_utils::libmdbx::{TestNodes, new_db};
+    use ethrex_trie::NodeHash;
     use ethrex_trie::Trie;
     use ethrex_trie::TrieDB;
     use libmdbx::{
-        orm::{table, Database},
+        orm::{Database, table},
         table_info,
     };
     use std::sync::Arc;
@@ -62,24 +57,25 @@ mod test {
     fn simple_addition() {
         table!(
             /// NodeHash to Node table
-            ( Nodes )  Vec<u8> => Vec<u8>
+            ( Nodes )  NodeHash => Vec<u8>
         );
         let inner_db = new_db::<Nodes>();
+        let key = NodeHash::from_encoded_raw(b"hello");
         let db = LibmdbxTrieDB::<Nodes>::new(inner_db);
-        assert_eq!(db.get("hello".into()).unwrap(), None);
-        db.put("hello".into(), "value".into()).unwrap();
-        assert_eq!(db.get("hello".into()).unwrap(), Some("value".into()));
+        assert_eq!(db.get(key).unwrap(), None);
+        db.put(key, "value".into()).unwrap();
+        assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
     #[test]
     fn different_tables() {
         table!(
             /// vec to vec
-            ( TableA ) Vec<u8> => Vec<u8>
+            ( TableA ) NodeHash => Vec<u8>
         );
         table!(
             /// vec to vec
-            ( TableB ) Vec<u8> => Vec<u8>
+            ( TableB ) NodeHash => Vec<u8>
         );
         let tables = [table_info!(TableA), table_info!(TableB)]
             .into_iter()
@@ -88,8 +84,9 @@ mod test {
         let inner_db = Arc::new(Database::create(None, &tables).unwrap());
         let db_a = LibmdbxTrieDB::<TableA>::new(inner_db.clone());
         let db_b = LibmdbxTrieDB::<TableB>::new(inner_db.clone());
-        db_a.put("hello".into(), "value".into()).unwrap();
-        assert_eq!(db_b.get("hello".into()).unwrap(), None);
+        let key = NodeHash::from_encoded_raw(b"hello");
+        db_a.put(key, "value".into()).unwrap();
+        assert_eq!(db_b.get(key).unwrap(), None);
     }
 
     #[test]

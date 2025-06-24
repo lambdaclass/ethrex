@@ -1,7 +1,7 @@
 [package]
 name = "ethrex-common"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -31,9 +31,13 @@ rayon = "1.5"
 [dev-dependencies]
 hex-literal.workspace = true
 
+
 [features]
 default = []
 c-kzg = ["dep:c-kzg"]
 
 [lib]
 path = "./common.rs"
+
+[lints.clippy] 
+unwrap_used = "deny"

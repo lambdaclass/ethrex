@@ -7,11 +7,11 @@
 
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
+use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
 use std::array;
 use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, channel},
     task::JoinSet,
     time::Instant,
 };
@@ -21,14 +21,18 @@ use tracing::{debug, info, warn};
 use crate::sync::seconds_to_readable;
 
 use super::{
-    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
-    SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+    MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
+    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, SyncError,
 };
-
 /// The storage root used to indicate that the storage to be rebuilt is not complete
 /// This will tell the rebuilder to skip storage root validations for this trie
 /// The storage should be queued for rebuilding by the sender
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
+
+/// Max storages to rebuild in parallel
+const MAX_PARALLEL_REBUILDS: usize = 15;
+
+const MAX_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
@@ -164,11 +168,13 @@ async fn rebuild_state_trie_segment(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<(H256, H256), SyncError> {
-    let mut state_trie = store.open_state_trie(root);
+    let mut state_trie = store.open_state_trie(root)?;
+    let mut snapshot_reads_since_last_commit = 0;
     loop {
         if cancel_token.is_cancelled() {
             break;
         }
+        snapshot_reads_since_last_commit += 1;
         let mut batch = store.read_account_snapshot(start)?;
         // Remove out of bounds elements
         batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
@@ -182,7 +188,10 @@ async fn rebuild_state_trie_segment(
         for (hash, account) in batch.iter() {
             state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
         }
-        root = state_trie.hash()?;
+        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+            snapshot_reads_since_last_commit = 0;
+            state_trie.hash()?;
+        }
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
             let state_sync_complete = store
@@ -196,6 +205,7 @@ async fn rebuild_state_trie_segment(
             break;
         }
     }
+    root = state_trie.hash()?;
     Ok((root, start))
 }
 
@@ -243,11 +253,13 @@ async fn rebuild_storage_trie_in_background(
         // Spawn tasks to rebuild current storages
         let rebuild_start = Instant::now();
         let mut rebuild_tasks = JoinSet::new();
-        for _ in 0..MAX_PARALLEL_FETCHES {
+        for _ in 0..MAX_PARALLEL_REBUILDS {
             if pending_storages.is_empty() {
                 break;
             }
-            let (account_hash, expected_root) = pending_storages.pop().unwrap();
+            let (account_hash, expected_root) = pending_storages
+                .pop()
+                .expect("Unreachable code, pending_storages can't be empty in this point");
             let store = store.clone();
             rebuild_tasks.spawn(rebuild_storage_trie(
                 account_hash,
@@ -275,9 +287,12 @@ async fn rebuild_storage_trie(
     store: Store,
 ) -> Result<(), SyncError> {
     let mut start = H256::zero();
-    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
+    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let mut snapshot_reads_since_last_commit = 0;
     loop {
+        snapshot_reads_since_last_commit += 1;
         let batch = store.read_storage_snapshot(account_hash, start).await?;
+
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {
@@ -287,7 +302,10 @@ async fn rebuild_storage_trie(
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
-        storage_trie.hash()?;
+        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+            snapshot_reads_since_last_commit = 0;
+            storage_trie.hash()?;
+        }
 
         // Return if we have no more snapshot values to process for this storage
         if unfilled_batch {

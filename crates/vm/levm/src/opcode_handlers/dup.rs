@@ -1,6 +1,5 @@
 use crate::{
-    call_frame::CallFrame,
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -10,17 +9,14 @@ use crate::{
 
 impl<'a> VM<'a> {
     // DUP operation
-    pub fn op_dup(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-        depth: usize,
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_dup(&mut self, depth: usize) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         // Increase the consumed gas
         current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
 
         // Ensure the stack has enough elements to duplicate
         if current_call_frame.stack.len() < depth {
-            return Err(VMError::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow.into());
         }
 
         // Get the value at the specified depth
@@ -29,7 +25,7 @@ impl<'a> VM<'a> {
                 .stack
                 .len()
                 .checked_sub(depth)
-                .ok_or(VMError::StackUnderflow)?,
+                .ok_or(ExceptionalHalt::StackUnderflow)?,
         )?;
 
         // Push the duplicated value onto the stack

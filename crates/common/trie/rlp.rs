@@ -8,6 +8,7 @@ use ethrex_rlp::{
 };
 
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
+use crate::{NodeHash, node::NodeRef};
 
 enum NodeType {
     Branch = 0,
@@ -16,7 +17,7 @@ enum NodeType {
 }
 
 impl NodeType {
-    fn from_u8(val: u8) -> Option<Self> {
+    const fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(Self::Branch),
             1 => Some(Self::Extension),
@@ -30,7 +31,13 @@ impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         // TODO: choices encoded as vec due to conflicting trait impls for [T;N] & [u8;N], check if we can fix this later
         Encoder::new(buf)
-            .encode_field(&self.choices.to_vec())
+            .encode_field(
+                &self
+                    .choices
+                    .iter()
+                    .map(|x| x.compute_hash())
+                    .collect::<Vec<_>>(),
+            )
             .encode_field(&self.value)
             .finish()
     }
@@ -40,7 +47,7 @@ impl RLPEncode for ExtensionNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
             .encode_field(&self.prefix)
-            .encode_field(&self.child)
+            .encode_field(&self.child.compute_hash())
             .finish()
     }
 }
@@ -59,7 +66,8 @@ impl RLPDecode for BranchNode {
         const CHOICES_LEN_ERROR_MSG: &str =
             "Error decoding field 'choices' of type [H256;16]: Invalid Length";
         let decoder = Decoder::new(rlp)?;
-        let (choices, decoder) = decoder.decode_field::<Vec<_>>("choices")?;
+        let (choices, decoder) = decoder.decode_field::<Vec<NodeHash>>("choices")?;
+        let choices = choices.into_iter().map(NodeRef::Hash).collect::<Vec<_>>();
         let choices = choices
             .try_into()
             .map_err(|_| RLPDecodeError::Custom(CHOICES_LEN_ERROR_MSG.to_string()))?;
@@ -73,7 +81,13 @@ impl RLPDecode for ExtensionNode {
         let decoder = Decoder::new(rlp)?;
         let (prefix, decoder) = decoder.decode_field("prefix")?;
         let (child, decoder) = decoder.decode_field("child")?;
-        Ok((Self { prefix, child }, decoder.finish()?))
+        Ok((
+            Self {
+                prefix,
+                child: NodeRef::Hash(child),
+            },
+            decoder.finish()?,
+        ))
     }
 }
 
@@ -109,12 +123,13 @@ impl RLPDecode for Node {
         let rlp = &rlp[1..];
         match node_type {
             NodeType::Branch => {
-                BranchNode::decode_unfinished(rlp).map(|(node, rem)| (Node::Branch(node), rem))
+                BranchNode::decode_unfinished(rlp).map(|(node, rem)| (node.into(), rem))
             }
-            NodeType::Extension => ExtensionNode::decode_unfinished(rlp)
-                .map(|(node, rem)| (Node::Extension(node), rem)),
+            NodeType::Extension => {
+                ExtensionNode::decode_unfinished(rlp).map(|(node, rem)| (node.into(), rem))
+            }
             NodeType::Leaf => {
-                LeafNode::decode_unfinished(rlp).map(|(node, rem)| (Node::Leaf(node), rem))
+                LeafNode::decode_unfinished(rlp).map(|(node, rem)| (node.into(), rem))
             }
         }
     }

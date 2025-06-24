@@ -1,6 +1,6 @@
 # ethrex
 
-Ethereum Rust Execution L1 and L2 client.
+Minimalist, stable, modular and fast implementation of the Ethereum protocol in Rust.
 
 [![Telegram Chat][tg-badge]][tg-url]
 [![license](https://img.shields.io/github/license/lambdaclass/ethrex)](/LICENSE)
@@ -13,7 +13,7 @@ Ethereum Rust Execution L1 and L2 client.
 This client supports running in two different modes:
 
 - As a regular Ethereum execution client
-- As a ZK-Rollup, where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security.
+- As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
 
 We call the first one ethrex L1 and the second one ethrex L2.
 
@@ -34,6 +34,62 @@ Read more about our engineering philosophy [here](https://blog.lambdaclass.com/l
 - Have few abstractions. Do not generalize until you absolutely need it. Repeating code two or three times can be fine.
 - Prioritize code readability and maintainability over premature optimizations.
 - Avoid concurrency split all over the codebase. Concurrency adds complexity. Only use where strictly necessary.
+
+## 🗺️ Roadmap
+
+This project is under active development. Over the next **two months**, our **primary objective is to finalize and audit the first version of the stack**.
+This means every component — from L1 syncing to L2 bridging and prover integration — must meet stability, performance, and security standards.
+
+The roadmap below outlines the remaining work required to achieve this milestone, organized into three major areas: **L2**, **DevOps & Performance**, and **L1**.
+
+---
+
+### L2 Roadmap
+
+| Feature                     | Description                                                                                                                                                                                                                          | Status       |
+|----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| Native Bridge              | Secure and trust-minimized ERC-20 bridge between Ethereum L1 and L2 using canonical messaging and smart contracts.                                                                                                                   | In Progress  |
+| Based Rollup               | Launch the rollup as a based permissionless rollup. Leverages Ethereum for sequencing and DA. For more information check [ethrex roadmap for becoming based](https://hackmd.io/TCa-bQisToW46enF58_3Vw?view)                                                          | In Progress    |
+| Aligned Integration        | Optimize integration with Aligned’s aggregation mode.                                                                                                                                                                              | In Progress |
+| Risc0 Support              | Integrate RISC Zero as an alternative zkVM to SP1, enabling configurable proving backends.                                                                                                                                                    | In Progress     |
+| Battle-Test the Prover     |                                                               Ensure the prover (e.g., SP1, Risc0) is robust, correct, and performant under production-level  conditions.                                                                                 | In Progress    |
+| One-Click L2 Deployment    | Deploy a fully operational rollup with a single command. Includes TDX, Prover, integrated Grafana metrics, alerting system, block explorer, bridge hub, backups and default configuration for rapid developer spin-up.                        | In Progress |
+| Shared Bridge              | Direct bridging between multiple L2s to improve UX and avoid L1 costs.                                                                                                                                                           | Planned      |
+| Custom Native Token        | Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.                                                                                                      | Planned  |
+| Validiums & DACs           | Enhance Validium mode with Data Availability Committees.                                                                                                                                       | Planned      |
+| Gas & Fees   | Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.                                                                                                                                                | Planned  |
+
+---
+
+### DevOps & Performance
+
+| Initiative                   | Description                                                                                                                                                                                    | Status       |
+|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| Performance Benchmarking    | Continuous `ggas/s` measurement, client comparison, and reproducible load tests.                                                                                                               | In Progress|
+| DB Optimizations            | Snapshots, background trie commits, parallel Merkle root calculation, and exploratory DB design.                                                                                                | In Progress |
+| EVM Profiling               | Identify and optimize execution bottlenecks in the VM.                                                                                                                                          | In Progress  |
+| Deployment & Dev Experience | One-command L2 launch, localnet spam testing, and L1 syncing on any network.                                                                                                                    | In Progress |
+
+---
+
+### L1 Roadmap
+
+| Feature                  | Description                                                                                                                                                    | Status       |
+|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| P2P Improvements         | Use [spawned](https://github.com/lambdaclass/spawned) to improve peer discovery, sync reliability, and connection handling.                                   | In Progress  |
+| Chain Syncing      | Verify the execution of all blocks across all chains. For Proof-of-Stake (PoS) chains (Holesky, Hoodi), verify all blocks since genesis. For chains with a pre-Merge genesis (Sepolia, Mainnet), verify all blocks after the Merge.  | In Progress |
+| Snap Sync   | Improve Snap Sync implementation to make it more reliable and efficient. | Planned  |
+| Client Stability | Increase client resilience to adverse scenarios and network disruptions. Improve observability and logging. | Planned |
+
+## Documentation
+
+We have markdown documentation under [`docs/`](./docs/), rendered using mdbook.
+You can render and serve it locally by running `make docs-serve`, after installing it [as explained in their documentation](https://rust-lang.github.io/mdBook/guide/installation.html), or with `cargo install mdbook`.
+We also use some `mdbook` preprocessors and backends for additional features, which can be installed running `make docs-deps`, or manually:
+
+- [`mdbook-alerts` preprocessor](https://github.com/lambdalisue/rs-mdbook-alerts) for custom markdown syntax. Needs to be installed with `cargo install mdbook-alerts`.
+- [`mdbook-mermaid` preprocessor](https://github.com/badboy/mdbook-mermaid) for mermaid diagrams. Needs to be installed with `cargo install mdbook-mermaid`.
+- [`mdbook-linkcheck` backend](https://github.com/Michael-F-Bryan/mdbook-linkcheck) that checks for broken links. This one is optional, and can be installed with `cargo install mdbook-linkcheck`.
 
 # ethrex L1
 
@@ -114,7 +170,7 @@ make test CRATE="ethrex-blockchain"
 
 #### Load tests
 
-More information in the [load test documentation](cmd/load_test/README.md).
+More information in the [load test documentation](tooling/load_test/README.md).
 
 #### Hive Tests
 
@@ -133,7 +189,7 @@ asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 
 And uncommenting the golang line in the asdf `.tool-versions` file:
 ```
-rust 1.82.0
+rust 1.87.0
 golang 1.23.2
 ```
 
@@ -194,7 +250,9 @@ Usage: ethrex [OPTIONS] [COMMAND]
 Commands:
   removedb  Remove the database
   import    Import blocks to the database
-  help      Print this message or the help of the given subcommand(s)
+  export    Export blocks in the current chain into a file in rlp encoding
+  compute-state-root  Compute the state root from a genesis file
+  help                Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -205,11 +263,15 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
+
+          [env: ETHREX_NETWORK=]
+          [default: mainnet]
 
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
 
+          [env: ETHREX_DATADIR=]
           [default: ethrex]
 
       --force
@@ -219,7 +281,11 @@ Node options:
           [default: 0.0.0.0]
 
       --metrics.port <PROMETHEUS_METRICS_PORT>
+          [env: ETHREX_METRICS_PORT=]
           [default: 9090]
+
+      --metrics
+          Enable metrics collection and exposition
 
       --dev
           If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
@@ -227,7 +293,8 @@ Node options:
       --evm <EVM_BACKEND>
           Has to be `levm` or `revm`
 
-          [default: revm]
+          [env: ETHREX_EVM=]
+          [default: levm]
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
@@ -266,11 +333,13 @@ RPC options:
       --http.addr <ADDRESS>
           Listening address for the http rpc server.
 
+          [env: ETHREX_HTTP_ADDR=]
           [default: localhost]
 
       --http.port <PORT>
           Listening port for the http rpc server.
 
+          [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
       --authrpc.addr <ADDRESS>
@@ -290,14 +359,65 @@ RPC options:
 ```
 <!-- END_CLI_HELP -->
 
+### Syncing with Holesky
+
+#### Step 1: Set up a jwt secret for both clients
+
+As an example, we put the secret in a `secrets` directory in the home folder.
+
+```bash
+mkdir -p ~/secrets
+openssl rand -hex 32 | tr -d "\n" | tee ~/secrets/jwt.hex
+```
+
+We will pass this new file’s path as an argument for both clients.
+
+#### Step 2: Launch Ethrex
+
+Pass holesky as a network and the jwt secret we set in the previous step.
+This will launch the node in full sync mode, in order to test out snap sync you can add the flag `--syncmode snap`.
+
+```bash
+cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network holesky --authrpc.jwtsecret ~/secrets/jwt.hex
+```
+
+#### Step 3: Set up a Consensus Node
+
+For this quick tutorial we will be using lighthouse, but you can learn how to install and run any consensus node by reading their documentation.
+
+You can choose your preferred installation method from [lighthouse's installation guide](https://lighthouse-book.sigmaprime.io/installation.html) and then run the following command to launch the node and sync it from a public endpoint
+
+```bash
+lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io
+```
+
+When using lighthouse directly from its repository, replace `lighthouse bn` with `cargo run --bin lighthouse -- bn`
+
+Aside from holesky, these steps can also be used to connect to other supported networks by replacing the `--network` argument by another supported network and looking up a checkpoint sync endpoint for that network [here](https://eth-clients.github.io/checkpoint-sync-endpoints/)
+
+If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the `--bootnodes` flag
+
+Once the node is up and running you will be able to see logs indicating the start of each sync cycle along with from which block hash to which block hash we are syncing. You will also get regular logs with the completion rate and estimated finish time for state sync and state rebuild processes during snap sync. This will look something like this:
+
+```bash
+INFO ethrex_p2p::sync: Syncing from current head 0xb5f7…bde4 to sync_head 0xce96…fa5e
+INFO ethrex_p2p::sync::state_sync: Downloading state trie, completion rate: 68%, estimated time to finish: 1h20m14s
+INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated time to finish: 1h5m45s
+```
+
+If you want to restart the sync from the very start you can do so by wiping the database using the following command:
+```bash
+cargo run --bin ethrex -- removedb
+```
+
 # ethrex L2
 
 In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.
 
 The main differences between this mode and regular ethrex are:
 
-- There is no consensus, the node is turned into a sequencer that proposes blocks for the network.
-- Block execution is proven using a RISC-V zkVM and its proofs are sent to L1 for verification.
+- In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the network. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.
+- Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.
 - A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.
 - Two new types of transactions are included: deposits (native token mints) and withdrawals.
 
@@ -314,7 +434,7 @@ At a high level, the following new parts are added to the node:
 
 - [Rust (explained in L1 requirements section above)](#build)
 - [Docker](https://docs.docker.com/engine/install/) (with [Docker Compose](https://docs.docker.com/compose/install/))
-- [The Solidity Compiler](https://docs.soliditylang.org/en/latest/installing-solidity.html) (solc)
+- [The Solidity Compiler](https://docs.soliditylang.org/en/latest/installing-solidity.html) (solc v0.8.29)
 
 ## How to run
 
@@ -325,7 +445,6 @@ At a high level, the following new parts are added to the node:
 >
 > 1. Make sure you are inside the `crates/l2` directory.
 > 2. Make sure the Docker daemon is running.
-> 3. Make sure you have created a `sequencer_config.toml` file following the `sequencer_config_example.toml` file.
 
 ```
 make init
@@ -356,7 +475,6 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 ## ethrex L2 Docs
 
 - [ethrex L2 Docs](./crates/l2/docs/README.md)
-- [ethrex L2 CLI Docs](./cmd/ethrex_l2/README.md)
 
 
 ## 📚 References and acknowledgements

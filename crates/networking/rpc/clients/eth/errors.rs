@@ -9,7 +9,7 @@ pub enum EthClientError {
     #[error("eth_gasPrice request error: {0}")]
     GetGasPriceError(#[from] GetGasPriceError),
     #[error("eth_estimateGas request error: {0}")]
-    EstimateGasPriceError(#[from] EstimateGasPriceError),
+    EstimateGasError(#[from] EstimateGasError),
     #[error("eth_sendRawTransaction request error: {0}")]
     SendRawTransactionError(#[from] SendRawTransactionError),
     #[error("eth_call request error: {0}")]
@@ -34,6 +34,10 @@ pub enum EthClientError {
     GetCodeError(#[from] GetCodeError),
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
+    #[error("ethrex_getWithdrawalProof request error: {0}")]
+    GetWithdrawalProofError(#[from] GetWithdrawalProofError),
+    #[error("eth_maxPriorityFeePerGas request error: {0}")]
+    GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
     #[error("Unreachable nonce")]
     UnrecheableNonce,
     #[error("Error: {0}")]
@@ -44,6 +48,10 @@ pub enum EthClientError {
     TimeoutError,
     #[error("Internal Error. This is most likely a bug: {0}")]
     InternalError(String),
+    #[error("Parse Url Error. {0}")]
+    ParseUrlError(String),
+    #[error("Failed to sign payload: {0}")]
+    FailedToSignPayload(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,7 +67,7 @@ pub enum GetGasPriceError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EstimateGasPriceError {
+pub enum EstimateGasError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
@@ -208,4 +216,28 @@ pub enum CalldataEncodeError {
     WrongArgumentLength(String),
     #[error("Internal Calldata encoding error. This is most likely a bug")]
     InternalError,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetWithdrawalProofError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetMaxPriorityFeeError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }

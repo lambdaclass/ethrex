@@ -4,29 +4,28 @@ use crate::{
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, EFTestTransaction},
 };
-use ethrex_common::{types::Genesis, H256, U256};
-use ethrex_levm::{db::CacheDB, vm::GeneralizedDatabase};
+use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_common::{H256, U256, types::Genesis};
+use ethrex_levm::db::{CacheDB, gen_db::GeneralizedDatabase};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
-    backends::revm::db::{evm_state, EvmState},
-    StoreWrapper,
+    DynVmDatabase,
+    backends::revm::db::{EvmState, evm_state},
 };
-use spinoff::Spinner;
 
 /// Loads initial state, used for REVM as it contains EvmState.
-pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
+pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
     let genesis = Genesis::from(test);
 
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    (
-        evm_state(
-            storage.clone(),
-            genesis.get_block().header.compute_block_hash(),
-        ),
-        genesis.get_block().header.compute_block_hash(),
-    )
+    let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+        storage.clone(),
+        genesis.get_block().hash(),
+    ));
+
+    (evm_state(vm_db), genesis.get_block().hash(), storage)
 }
 
 /// Loads initial state, function for LEVM as it does not require EvmState
@@ -36,30 +35,11 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let block_hash = genesis.get_block().header.compute_block_hash();
+    let block_hash = genesis.get_block().hash();
 
-    let store = StoreWrapper {
-        store: storage,
-        block_hash,
-    };
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
 
     GeneralizedDatabase::new(Arc::new(store), CacheDB::new())
-}
-
-pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
-    if !spinner_enabled {
-        println!("{}", text);
-    } else {
-        spinner.update_text(text);
-    }
-}
-
-pub fn spinner_success_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
-    if !spinner_enabled {
-        println!("{}", text);
-    } else {
-        spinner.success(&text);
-    }
 }
 
 // If gas price is not provided, calculate it with current base fee and priority fee

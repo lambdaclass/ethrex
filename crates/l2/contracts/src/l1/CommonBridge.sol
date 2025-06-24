@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity =0.8.29;
 
-import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import "../../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
-contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
+contract CommonBridge is
+    ICommonBridge,
+    Initializable,
+    UUPSUpgradeable,
+    Ownable2StepUpgradeable,
+    ReentrancyGuardUpgradeable
+{
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping (a merkle root) for the hash
     /// of the L2 transaction that requested the withdrawal.
@@ -18,13 +26,14 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     mapping(bytes32 => bool) public claimedWithdrawals;
 
     /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
-    /// @dev The key is the L2 block number where the logs were emitted.
+    /// @dev The key is the L2 batch number where the logs were emitted.
     /// @dev The value is the merkle root of the logs.
-    /// @dev If there exist a merkle root for a given block number it means
-    /// that the logs were published on L1, and that that block was committed.
-    mapping(uint256 => bytes32) public blockWithdrawalsLogs;
+    /// @dev If there exist a merkle root for a given batch number it means
+    /// that the logs were published on L1, and that that batch was committed.
+    mapping(uint256 => bytes32) public batchWithdrawalLogsMerkleRoots;
 
-    bytes32[] public depositLogs;
+    /// @notice Array of hashed pending deposit logs.
+    bytes32[] public pendingDepositLogs;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -44,10 +53,15 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address owner) Ownable(owner) {}
-
-    /// @inheritdoc ICommonBridge
-    function initialize(address onChainProposer) public nonReentrant {
+    /// @notice Initializes the contract.
+    /// @dev This method is called only once after the contract is deployed.
+    /// @dev It sets the OnChainProposer address.
+    /// @param owner the address of the owner who can perform upgrades.
+    /// @param onChainProposer the address of the OnChainProposer contract.
+    function initialize(
+        address owner,
+        address onChainProposer
+    ) public initializer {
         require(
             ON_CHAIN_PROPOSER == address(0),
             "CommonBridge: contract already initialized"
@@ -64,41 +78,33 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
         lastFetchedL1Block = block.number;
         depositId = 0;
+
+        OwnableUpgradeable.__Ownable_init(owner);
+        ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
 
     /// @inheritdoc ICommonBridge
-    function getDepositLogs() public view returns (bytes32[] memory) {
-        return depositLogs;
+    function getPendingDepositLogs() public view returns (bytes32[] memory) {
+        return pendingDepositLogs;
     }
 
     function _deposit(DepositValues memory depositValues) private {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
 
         bytes32 l2MintTxHash = keccak256(
-            abi.encodePacked(
-                msg.sender,
-                depositValues.to,
-                depositValues.recipient,
-                msg.value,
-                depositValues.gasLimit,
-                depositId,
-                depositValues.data
+            bytes.concat(
+                bytes20(depositValues.to),
+                bytes32(msg.value),
+                bytes32(depositId),
+                bytes20(depositValues.recipient),
+                bytes20(msg.sender),
+                bytes32(depositValues.gasLimit),
+                bytes32(keccak256(depositValues.data))
             )
         );
 
-        depositLogs.push(
-            keccak256(
-                bytes.concat(
-                    bytes20(depositValues.to),
-                    bytes32(msg.value),
-                    bytes32(depositId),
-                    bytes20(depositValues.recipient),
-                    bytes20(msg.sender),
-                    bytes32(depositValues.gasLimit),
-                    bytes32(keccak256(depositValues.data))
-                )
-            )
-        );
+        pendingDepositLogs.push(l2MintTxHash);
+
         emit DepositInitiated(
             msg.value,
             depositValues.to,
@@ -128,18 +134,18 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ICommonBridge
-    function getDepositLogsVersionedHash(
+    function getPendingDepositLogsVersionedHash(
         uint16 number
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= depositLogs.length,
+            uint256(number) <= pendingDepositLogs.length,
             "CommonBridge: number is greater than the length of depositLogs (get)"
         );
 
         bytes memory logs;
         for (uint i = 0; i < number; i++) {
-            logs = bytes.concat(logs, depositLogs[i]);
+            logs = bytes.concat(logs, pendingDepositLogs[i]);
         }
 
         return
@@ -148,35 +154,45 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ICommonBridge
-    function removeDepositLogs(uint16 number) public onlyOnChainProposer {
+    function removePendingDepositLogs(
+        uint16 number
+    ) public onlyOnChainProposer {
         require(
-            number <= depositLogs.length,
+            number <= pendingDepositLogs.length,
             "CommonBridge: number is greater than the length of depositLogs (remove)"
         );
 
-        for (uint i = 0; i < depositLogs.length - number; i++) {
-            depositLogs[i] = depositLogs[i + number];
+        for (uint i = 0; i < pendingDepositLogs.length - number; i++) {
+            pendingDepositLogs[i] = pendingDepositLogs[i + number];
         }
 
         for (uint _i = 0; _i < number; _i++) {
-            depositLogs.pop();
+            pendingDepositLogs.pop();
         }
     }
 
     /// @inheritdoc ICommonBridge
+    function getWithdrawalLogsMerkleRoot(
+        uint256 blockNumber
+    ) public view returns (bytes32) {
+        return batchWithdrawalLogsMerkleRoots[blockNumber];
+    }
+
+    /// @inheritdoc ICommonBridge
     function publishWithdrawals(
-        uint256 withdrawalLogsBlockNumber,
+        uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) public onlyOnChainProposer {
         require(
-            blockWithdrawalsLogs[withdrawalLogsBlockNumber] == bytes32(0),
+            batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] ==
+                bytes32(0),
             "CommonBridge: withdrawal logs already published"
         );
-        blockWithdrawalsLogs[
-            withdrawalLogsBlockNumber
+        batchWithdrawalLogsMerkleRoots[
+            withdrawalLogsBatchNumber
         ] = withdrawalsLogsMerkleRoot;
         emit WithdrawalsPublished(
-            withdrawalLogsBlockNumber,
+            withdrawalLogsBatchNumber,
             withdrawalsLogsMerkleRoot
         );
     }
@@ -185,18 +201,18 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     function claimWithdrawal(
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
-        uint256 withdrawalBlockNumber,
+        uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
         require(
-            blockWithdrawalsLogs[withdrawalBlockNumber] != bytes32(0),
-            "CommonBridge: the block that emitted the withdrawal logs was not committed"
+            batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
+            "CommonBridge: the batch that emitted the withdrawal logs was not committed"
         );
         require(
-            withdrawalBlockNumber <=
-                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBlock(),
-            "CommonBridge: the block that emitted the withdrawal logs was not verified"
+            withdrawalBatchNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
+            "CommonBridge: the batch that emitted the withdrawal logs was not verified"
         );
         require(
             claimedWithdrawals[l2WithdrawalTxHash] == false,
@@ -206,7 +222,7 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             _verifyWithdrawProof(
                 l2WithdrawalTxHash,
                 claimedAmount,
-                withdrawalBlockNumber,
+                withdrawalBatchNumber,
                 withdrawalLogIndex,
                 withdrawalProof
             ),
@@ -225,7 +241,7 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     function _verifyWithdrawProof(
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
-        uint256 withdrawalBlockNumber,
+        uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
@@ -244,6 +260,14 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             }
             withdrawalLogIndex /= 2;
         }
-        return withdrawalLeaf == blockWithdrawalsLogs[withdrawalBlockNumber];
+        return
+            withdrawalLeaf ==
+            batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber];
     }
+
+    /// @notice Allow owner to upgrade the contract.
+    /// @param newImplementation the address of the new implementation
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
 }

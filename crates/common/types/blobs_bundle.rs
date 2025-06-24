@@ -1,15 +1,14 @@
-#[cfg(feature = "c-kzg")]
-use lazy_static::lazy_static;
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{
-    types::{constants::VERSIONED_HASH_VERSION_KZG, transaction::EIP4844Transaction},
-    Bytes, H256,
-};
+use crate::{Bytes, H256, types::constants::VERSIONED_HASH_VERSION_KZG};
 
 #[cfg(feature = "c-kzg")]
-use c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings};
+use {
+    crate::types::transaction::EIP4844Transaction,
+    c_kzg::{KzgCommitment, KzgProof, KzgSettings, ethereum_kzg_settings},
+    lazy_static::lazy_static,
+};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -76,7 +75,7 @@ pub fn bytes_from_blob(blob: Bytes) -> [u8; SAFE_BYTES_PER_BLOB] {
     buf
 }
 
-fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
+pub fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
     use k256::sha2::Digest;
     let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
@@ -84,7 +83,9 @@ fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
 }
 
 #[cfg(feature = "c-kzg")]
-fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), BlobsBundleError> {
+pub fn blob_to_kzg_commitment_and_proof(
+    blob: &Blob,
+) -> Result<(Commitment, Proof), BlobsBundleError> {
     let blob: c_kzg::Blob = (*blob).into();
 
     let commitment = KzgCommitment::blob_to_kzg_commitment(&blob, &KZG_SETTINGS)
@@ -242,8 +243,8 @@ pub enum BlobsBundleError {
 mod tests {
     use super::*;
     use crate::{
-        types::{blobs_bundle, transaction::EIP4844Transaction},
         Address, Bytes, U256,
+        types::{blobs_bundle, transaction::EIP4844Transaction},
     };
     mod shared {
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
@@ -255,6 +256,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "c-kzg")]
     fn transaction_with_valid_blobs_should_pass() {
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
@@ -282,7 +284,9 @@ mod tests {
 
         assert!(matches!(blobs_bundle.validate(&tx), Ok(())));
     }
+
     #[test]
+    #[cfg(feature = "c-kzg")]
     fn transaction_with_invalid_proofs_should_fail() {
         // blob data taken from: https://etherscan.io/tx/0x02a623925c05c540a7633ffa4eb78474df826497faa81035c4168695656801a2#blobs, but with 0 size blobs
         let blobs_bundle = BlobsBundle {
@@ -333,6 +337,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "c-kzg")]
     fn transaction_with_incorrect_blobs_should_fail() {
         // blob data taken from: https://etherscan.io/tx/0x02a623925c05c540a7633ffa4eb78474df826497faa81035c4168695656801a2#blobs
         let blobs_bundle = BlobsBundle {

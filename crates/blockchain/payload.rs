@@ -1,44 +1,43 @@
 use std::{
-    cmp::{max, Ordering},
+    cmp::{Ordering, max},
     collections::HashMap,
     ops::Div,
     time::Instant,
 };
 
 use ethrex_common::{
-    constants::GAS_PER_BLOB,
+    Address, Bloom, Bytes, H256, U256,
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
+        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, bloom_from_logs,
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests},
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
-        DEFAULT_REQUESTS_HASH,
+        requests::{EncodedRequests, compute_requests_hash},
     },
-    Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{
-    EvmError, {Evm, EvmEngine},
-};
+use ethrex_vm::{Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{Store, error::StoreError};
 
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxStatus, MetricsTxType};
 
 use crate::{
+    Blockchain,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
-    Blockchain,
+    vm::StoreVmDatabase,
 };
 
+use thiserror::Error;
 use tracing::{debug, error};
 
 pub struct BuildPayloadArgs {
@@ -49,11 +48,18 @@ pub struct BuildPayloadArgs {
     pub withdrawals: Option<Vec<Withdrawal>>,
     pub beacon_root: Option<H256>,
     pub version: u8,
+    pub elasticity_multiplier: u64,
+}
+
+#[derive(Debug, Error)]
+pub enum BuildPayloadArgsError {
+    #[error("Payload hashed has wrong size")]
+    FailedToConvertPayload,
 }
 
 impl BuildPayloadArgs {
     /// Computes an 8-byte identifier by hashing the components of the payload arguments.
-    pub fn id(&self) -> u64 {
+    pub fn id(&self) -> Result<u64, BuildPayloadArgsError> {
         let mut hasher = Keccak256::new();
         hasher.update(self.parent);
         hasher.update(self.timestamp.to_be_bytes());
@@ -67,7 +73,9 @@ impl BuildPayloadArgs {
         }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
-        u64::from_be_bytes(res.try_into().unwrap())
+        Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
+            BuildPayloadArgsError::FailedToConvertPayload
+        })?))
     }
 }
 
@@ -111,6 +119,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             parent_block.gas_limit,
             parent_block.gas_used,
             parent_block.base_fee_per_gas.unwrap_or_default(),
+            args.elasticity_multiplier,
         ),
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)
@@ -125,6 +134,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
+        ..Default::default()
     };
 
     let body = BlockBody {
@@ -159,8 +169,9 @@ pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
     limit
 }
 
-pub struct PayloadBuildContext<'a> {
-    pub payload: &'a mut Block,
+#[derive(Clone)]
+pub struct PayloadBuildContext {
+    pub payload: Block,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Vec<EncodedRequests>,
@@ -173,13 +184,11 @@ pub struct PayloadBuildContext<'a> {
     pub account_updates: Vec<AccountUpdate>,
 }
 
-impl<'a> PayloadBuildContext<'a> {
-    fn new(
-        payload: &'a mut Block,
-        evm_engine: EvmEngine,
-        storage: &Store,
-    ) -> Result<Self, EvmError> {
-        let config = storage.get_chain_config()?;
+impl PayloadBuildContext {
+    pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
+        let config = storage
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -187,7 +196,9 @@ impl<'a> PayloadBuildContext<'a> {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
-        let vm = Evm::new(evm_engine, storage.clone(), payload.header.parent_hash);
+
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm = Evm::new(evm_engine, vm_db);
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -205,17 +216,19 @@ impl<'a> PayloadBuildContext<'a> {
     }
 }
 
-impl<'a> PayloadBuildContext<'a> {
+impl PayloadBuildContext {
     fn parent_hash(&self) -> BlockHash {
         self.payload.header.parent_hash
     }
 
-    fn block_number(&self) -> BlockNumber {
+    pub fn block_number(&self) -> BlockNumber {
         self.payload.header.number
     }
 
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        Ok(self.store.get_chain_config()?)
+        self.store
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
@@ -229,9 +242,10 @@ pub struct PayloadBuildResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<EncodedRequests>,
     pub account_updates: Vec<AccountUpdate>,
+    pub payload: Block,
 }
 
-impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
+impl From<PayloadBuildContext> for PayloadBuildResult {
     fn from(value: PayloadBuildContext) -> Self {
         let PayloadBuildContext {
             blobs_bundle,
@@ -239,6 +253,7 @@ impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
             requests,
             receipts,
             account_updates,
+            payload,
             ..
         } = value;
 
@@ -248,20 +263,19 @@ impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
             requests,
             receipts,
             account_updates,
+            payload,
         }
     }
 }
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub async fn build_payload(
-        &self,
-        payload: &mut Block,
-    ) -> Result<PayloadBuildResult, ChainError> {
+    pub async fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
+        let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
         let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
 
         #[cfg(not(feature = "l2"))]
@@ -272,22 +286,25 @@ impl Blockchain {
         self.finalize_payload(&mut context).await?;
 
         let interval = Instant::now().duration_since(since).as_millis();
-        tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
+        tracing::info!(
+            "[METRIC] BUILDING PAYLOAD TOOK: {interval} ms, base fee {}",
+            base_fee
+        );
         if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
                 tracing::info!(
-                "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
-            );
+                    "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
+                );
             }
         }
 
         Ok(context.into())
     }
 
-    fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         let binding = Vec::new();
         let withdrawals = context
             .payload
@@ -295,10 +312,7 @@ impl Blockchain {
             .withdrawals
             .as_ref()
             .unwrap_or(&binding);
-        context
-            .vm
-            .process_withdrawals(withdrawals, &context.payload.header)
-            .map_err(EvmError::from)
+        context.vm.process_withdrawals(withdrawals)
     }
 
     // This function applies system level operations:
@@ -313,7 +327,7 @@ impl Blockchain {
 
     /// Fetches suitable transactions from the mempool
     /// Returns two transaction queues, one for plain and one for blob txs
-    fn fetch_mempool_transactions(
+    pub fn fetch_mempool_transactions(
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
@@ -398,7 +412,7 @@ impl Blockchain {
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
             let tx_hash = head_tx.tx.compute_hash();
 
-            // Check wether the tx is replay-protected
+            // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
                 // Ignore replay protected tx & all txs from the sender
                 // Pull transaction from the mempool
@@ -407,11 +421,6 @@ impl Blockchain {
                 self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
                 continue;
             }
-
-            // Increment the total transaction counter
-            // CHECK: do we want it here to count every processed transaction
-            // or we want it before the return?
-            metrics!(METRICS_TX.inc_tx());
 
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
@@ -455,7 +464,7 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => self.apply_plain_transaction(head, context),
+            _ => apply_plain_transaction(head, context),
         }
     }
 
@@ -483,29 +492,13 @@ impl Blockchain {
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction
-        let receipt = self.apply_plain_transaction(head, context)?;
+        let receipt = apply_plain_transaction(head, context)?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
             Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
-    }
-
-    /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
-    fn apply_plain_transaction(
-        &self,
-        head: &HeadTransaction,
-        context: &mut PayloadBuildContext,
-    ) -> Result<Receipt, ChainError> {
-        let (report, gas_used) = context.vm.execute_tx(
-            &head.tx,
-            &context.payload.header,
-            &mut context.remaining_gas,
-            head.tx.sender(),
-        )?;
-        context.block_value += U256::from(gas_used) * head.tip;
-        Ok(report)
     }
 
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -526,32 +519,58 @@ impl Blockchain {
         Ok(())
     }
 
-    async fn finalize_payload(
+    pub async fn finalize_payload(
         &self,
-        context: &mut PayloadBuildContext<'_>,
+        context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
-        let chain_config = &context.store.get_chain_config()?;
-        let fork = chain_config.fork(context.payload.header.timestamp);
-        let account_updates = context.vm.get_state_transitions(fork)?;
+        let account_updates = context.vm.get_state_transitions()?;
 
-        context.payload.header.state_root = context
-            .store
-            .apply_account_updates(context.parent_hash(), &account_updates)
+        let ret_acount_updates_list = self
+            .storage
+            .apply_account_updates_batch(context.parent_hash(), &account_updates)
             .await?
-            .unwrap_or_default();
+            .ok_or(ChainError::ParentStateNotFound)?;
+
+        let state_root = ret_acount_updates_list.state_trie_hash;
+
+        context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
         context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
+
+        let mut logs = vec![];
+        for receipt in context.receipts.iter().cloned() {
+            for log in receipt.logs {
+                logs.push(log);
+            }
+        }
+
+        context.payload.header.logs_bloom = bloom_from_logs(&logs);
         Ok(())
     }
 }
 
+/// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
+pub fn apply_plain_transaction(
+    head: &HeadTransaction,
+    context: &mut PayloadBuildContext,
+) -> Result<Receipt, ChainError> {
+    let (report, gas_used) = context.vm.execute_tx(
+        &head.tx,
+        &context.payload.header,
+        &mut context.remaining_gas,
+        head.tx.sender(),
+    )?;
+    context.block_value += U256::from(gas_used) * head.tip;
+    Ok(report)
+}
+
 /// A struct representing suitable mempool transactions waiting to be included in a block
 // TODO: Consider using VecDequeue instead of Vec
-struct TransactionQueue {
+pub struct TransactionQueue {
     // The first transaction for each account along with its tip, sorted by highest tip
     heads: Vec<HeadTransaction>,
     // The remaining txs grouped by account and sorted by nonce
@@ -561,9 +580,9 @@ struct TransactionQueue {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct HeadTransaction {
-    tx: MempoolTransaction,
-    tip: u64,
+pub struct HeadTransaction {
+    pub tx: MempoolTransaction,
+    pub tip: u64,
 }
 
 impl std::ops::Deref for HeadTransaction {
@@ -576,7 +595,7 @@ impl std::ops::Deref for HeadTransaction {
 
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
-        val.tx.into()
+        val.tx.transaction().clone()
     }
 }
 
@@ -586,7 +605,7 @@ impl TransactionQueue {
         mut txs: HashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
-        let mut heads = Vec::new();
+        let mut heads = Vec::with_capacity(100);
         for (_, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
@@ -611,24 +630,24 @@ impl TransactionQueue {
     }
 
     /// Remove all transactions from the queue
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.heads.clear();
         self.txs.clear();
     }
 
     /// Returns true if there are no more transactions in the queue
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.heads.is_empty()
     }
 
     /// Returns the head transaction with the highest tip
     /// If there is more than one transaction with the highest tip, return the one with the lowest timestamp
-    fn peek(&self) -> Option<HeadTransaction> {
+    pub fn peek(&self) -> Option<HeadTransaction> {
         self.heads.first().cloned()
     }
 
     /// Removes current head transaction and all transactions from the given sender
-    fn pop(&mut self) {
+    pub fn pop(&mut self) {
         if !self.is_empty() {
             let sender = self.heads.remove(0).tx.sender();
             self.txs.remove(&sender);
@@ -637,7 +656,7 @@ impl TransactionQueue {
 
     /// Remove the top transaction
     /// Add a tx from the same sender to the head transactions
-    fn shift(&mut self) -> Result<(), ChainError> {
+    pub fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
         if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head

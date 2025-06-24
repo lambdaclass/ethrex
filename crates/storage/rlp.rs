@@ -3,10 +3,10 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{
-        payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
-    },
     H256,
+    types::{
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt, payload::PayloadBundle,
+    },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::Nibbles;
@@ -55,8 +55,8 @@ impl<T: RLPEncode> From<T> for Rlp<T> {
 }
 
 impl<T: RLPDecode> Rlp<T> {
-    pub fn to(&self) -> T {
-        T::decode(&self.0).unwrap()
+    pub fn to(&self) -> Result<T, ethrex_rlp::error::RLPDecodeError> {
+        T::decode(&self.0)
     }
 }
 

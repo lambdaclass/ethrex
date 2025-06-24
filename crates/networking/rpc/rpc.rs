@@ -1,5 +1,6 @@
 use crate::authentication::authenticate;
 use crate::engine::{
+    ExchangeCapabilitiesRequest,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -7,8 +8,8 @@ use crate::engine::{
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
-    ExchangeCapabilitiesRequest,
 };
+use crate::eth::block::ExecutionWitness;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -23,6 +24,7 @@ use crate::eth::{
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
     gas_price::GasPrice,
+    gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
@@ -30,25 +32,23 @@ use crate::eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
     RpcSuccessResponse,
 };
 use crate::{admin, net};
-use crate::{eth, web3};
-#[cfg(feature = "based")]
-use crate::{EngineClient, EthClient};
+use crate::{eth, mempool};
 use axum::extract::State;
-use axum::{routing::post, Json, Router};
+use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
     TypedHeader,
+    headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-#[cfg(feature = "based")]
-use ethrex_common::Public;
+use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -62,7 +62,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -71,11 +71,9 @@ cfg_if::cfg_if! {
         use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
+        use ethrex_storage_rollup::StoreRollup;
     }
 }
-
-#[cfg(feature = "based")]
-use crate::based::versioned_message::SignedMessage;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -88,21 +86,25 @@ enum RpcRequestWrapper {
 pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
-    pub jwt_secret: Bytes,
-    pub local_p2p_node: Node,
-    pub local_node_record: NodeRecord,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
-    #[cfg(feature = "based")]
-    pub gateway_eth_client: EthClient,
-    #[cfg(feature = "based")]
-    pub gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")]
-    pub gateway_pubkey: Public,
+    pub peer_handler: PeerHandler,
+    pub node_data: NodeData,
+    pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     #[cfg(feature = "l2")]
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
     pub sponsor_pk: SecretKey,
+    #[cfg(feature = "l2")]
+    pub rollup_store: StoreRollup,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeData {
+    pub jwt_secret: Bytes,
+    pub local_p2p_node: Node,
+    pub local_node_record: NodeRecord,
+    pub client_version: String,
 }
 
 pub trait RpcHandler: Sized {
@@ -111,18 +113,6 @@ pub trait RpcHandler: Sized {
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
         request.handle(context).await
-    }
-
-    /// Relay the request to the gateway client, if the request fails, fallback to the local node
-    /// The default implementation of this method is to call `RpcHandler::call` method because
-    /// not all requests need to be relayed to the gateway client, and the only ones that have to
-    /// must override this method.
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        Self::call(req, context).await
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
@@ -146,33 +136,34 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
-    #[cfg(feature = "based")] gateway_eth_client: EthClient,
-    #[cfg(feature = "based")] gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")] gateway_pubkey: Public,
+    peer_handler: PeerHandler,
+    client_version: String,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
-) {
+    #[cfg(feature = "l2")] rollup_store: StoreRollup,
+) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let service_context = RpcApiContext {
         storage,
         blockchain,
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
-        #[cfg(feature = "based")]
-        gateway_eth_client,
-        #[cfg(feature = "based")]
-        gateway_auth_client,
-        #[cfg(feature = "based")]
-        gateway_pubkey,
+        peer_handler,
+        node_data: NodeData {
+            jwt_secret,
+            local_p2p_node,
+            local_node_record,
+            client_version,
+        },
+        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
         sponsor_pk,
+        #[cfg(feature = "l2")]
+        rollup_store,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -197,13 +188,15 @@ pub async fn start_api(
         .route("/", post(handle_http_request))
         .layer(cors)
         .with_state(service_context.clone());
-    let http_listener = TcpListener::bind(http_addr).await.unwrap();
+    let http_listener = TcpListener::bind(http_addr)
+        .await
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    if cfg!(any(feature = "l2", feature = "based")) {
+    if cfg!(feature = "l2") {
         info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
         let _ = tokio::try_join!(http_server)
@@ -214,7 +207,9 @@ pub async fn start_api(
         let authrpc_router = Router::new()
             .route("/", post(authrpc_handler))
             .with_state(service_context);
-        let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
+        let authrpc_listener = TcpListener::bind(authrpc_addr)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
@@ -223,6 +218,7 @@ pub async fn start_api(
         let _ = tokio::try_join!(authrpc_server, http_server)
             .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
     }
+    Ok(())
 }
 
 async fn shutdown_signal() {
@@ -234,48 +230,56 @@ async fn shutdown_signal() {
 async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
     let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
-            rpc_response(request.id, res)
+            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Ok(RpcRequestWrapper::Multiple(requests)) => {
             let mut responses = Vec::new();
             for req in requests {
                 let res = map_http_requests(&req, service_context.clone()).await;
-                responses.push(rpc_response(req.id, res));
+                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
             }
-            serde_json::to_value(responses).unwrap()
+            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Err(_) => rpc_response(
             RpcRequestId::String("".to_string()),
             Err(RpcErr::BadParams("Invalid request body".to_string())),
-        ),
+        )
+        .map_err(|_| StatusCode::BAD_REQUEST)?,
     };
-    Json(res)
+    Ok(Json(res))
 }
 
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
     let req: RpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
         Err(_) => {
-            return Json(rpc_response(
-                RpcRequestId::String("".to_string()),
-                Err(RpcErr::BadParams("Invalid request body".to_string())),
+            return Ok(Json(
+                rpc_response(
+                    RpcRequestId::String("".to_string()),
+                    Err(RpcErr::BadParams("Invalid request body".to_string())),
+                )
+                .map_err(|_| StatusCode::BAD_REQUEST)?,
             ));
         }
     };
-    match authenticate(&service_context.jwt_secret, auth_header) {
-        Err(error) => Json(rpc_response(req.id, Err(error))),
+    match authenticate(&service_context.node_data.jwt_secret, auth_header) {
+        Err(error) => Ok(Json(
+            rpc_response(req.id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
+        )),
         Ok(()) => {
             // Proceed with the request
             let res = map_authrpc_requests(&req, service_context).await;
-            Json(rpc_response(req.id, res))
+            Ok(Json(
+                rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
+            ))
         }
     }
 }
@@ -288,11 +292,10 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
-        #[cfg(feature = "based")]
-        Ok(RpcNamespace::Based) => map_based_requests(req, context),
         Err(rpc_err) => Err(rpc_err),
         #[cfg(feature = "l2")]
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
@@ -352,15 +355,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getFilterChanges" => {
             FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
         }
-        "eth_sendRawTransaction" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    SendRawTransactionRequest::call(req, context).await
-                }
-            }
-        }
+        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,
         "eth_gasPrice" => GasPrice::call(req, context).await,
         "eth_maxPriorityFeePerGas" => {
@@ -376,6 +371,9 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_executionWitness" => ExecutionWitness::call(req, context).await,
+        "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
+        "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -388,40 +386,16 @@ pub async fn map_engine_requests(
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
-        "engine_forkchoiceUpdatedV3" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    ForkChoiceUpdatedV3::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    ForkChoiceUpdatedV3::call(req, context).await
-                }
-            }
-        }
+        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
         "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
-        "engine_newPayloadV3" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    NewPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    NewPayloadV3Request::call(req, context).await
-                }
-            }
-        }
+        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
-        "engine_getPayloadV3" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    GetPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    GetPayloadV3Request::call(req, context).await
-                }
-            }
-        }
+        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
         "engine_getPayloadV1" => GetPayloadV1Request::call(req, context).await,
         "engine_getPayloadBodiesByHashV1" => {
@@ -436,18 +410,15 @@ pub async fn map_engine_requests(
 
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(
-            context.storage,
-            context.local_p2p_node,
-            context.local_node_record,
-        ),
+        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
+        "admin_peers" => admin::peers(&context),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.storage),
+        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -455,35 +426,41 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_peerCount" => net::peer_count(req, contex),
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
 }
 
-#[cfg(feature = "based")]
-pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_mempool_requests(
+    req: &RpcRequest,
+    contex: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "based_env" => SignedMessage::call_env(req, context),
-        "based_newFrag" => SignedMessage::call_new_frag(req, context),
-        "based_sealFrag" => SignedMessage::call_seal_frag(req, context),
-        unknown_based_method => Err(RpcErr::MethodNotFound(unknown_based_method.to_owned())),
+        // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
+        "txpool_content" => mempool::content(contex).await,
+        "txpool_status" => mempool::status(contex).await,
+        unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
 
 #[cfg(feature = "l2")]
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    use crate::l2::withdrawal::GetWithdrawalProof;
+
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
+        "ethrex_getWithdrawalProof" => GetWithdrawalProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }
     }
 }
 
-fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Value
+fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Result<Value, RpcErr>
 where
     E: Into<RpcErrorMetadata>,
 {
-    match res {
+    Ok(match res {
         Ok(result) => serde_json::to_value(RpcSuccessResponse {
             id,
             jsonrpc: "2.0".to_string(),
@@ -494,31 +471,22 @@ where
             jsonrpc: "2.0".to_string(),
             error: error.into(),
         }),
-    }
-    .unwrap()
+    }?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
-    use ethrex_blockchain::Blockchain;
+    use crate::utils::test_utils::default_context_with_storage;
     use ethrex_common::{
-        types::{ChainConfig, Genesis},
         H160,
+        types::{ChainConfig, Genesis},
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
     use std::fs::File;
     use std::io::BufReader;
     use std::str::FromStr;
-
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
-    #[cfg(feature = "l2")]
-    use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -530,36 +498,18 @@ mod tests {
     async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
-        let local_p2p_node = example_p2p_node();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
             .await
             .unwrap();
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage: storage.clone(),
-            blockchain,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
-        let enr_url = context.local_node_record.enr_url().unwrap();
+        let context = default_context_with_storage(storage).await;
+        let local_p2p_node = context.node_data.local_p2p_node.clone();
+
+        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
-        let rpc_response = rpc_response(request.id, result);
+        let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
@@ -570,9 +520,9 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
+                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/0.1.0/rust1.82",
+                "name": "ethrex/test",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -607,8 +557,8 @@ mod tests {
                     }
                 },
             }
-        }).to_string();
-        let expected_response = to_rpc_response_success_value(&json);
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 
@@ -629,91 +579,19 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let genesis = read_execution_api_genesis_file();
         storage
             .add_initial_state(genesis)
             .await
             .expect("Failed to add genesis block to DB");
-        let local_p2p_node = example_p2p_node();
         // Process request
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let context = default_context_with_storage(storage).await;
         let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result);
+        let response = rpc_response(request.id, result).unwrap();
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
         );
         assert_eq!(response.to_string(), expected_response.to_string());
-    }
-
-    #[tokio::test]
-    async fn create_access_list_create() {
-        // Create Request
-        // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-contract.io
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","gas":"0xea60","gasPrice":"0x44103f2","input":"0x010203040506","nonce":"0x0","to":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df"},"0x00"]}"#;
-        let request: RpcRequest = serde_json::from_str(body).unwrap();
-        // Setup initial storage
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let genesis = read_execution_api_genesis_file();
-        storage
-            .add_initial_state(genesis)
-            .await
-            .expect("Failed to add genesis block to DB");
-        let local_p2p_node = example_p2p_node();
-        // Process request
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
-        let result = map_http_requests(&request, context).await;
-        let response =
-            serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result))
-                .expect("Request failed");
-        let expected_response_string = r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[{"address":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000","0x13a08e3cd39a1bc7bf9103f63f83273cced2beada9f723945176d6b983c65bd2"]}],"gasUsed":"0xca3c"}}"#;
-        let expected_response =
-            serde_json::from_str::<RpcSuccessResponse>(expected_response_string).unwrap();
-        // Due to the scope of this test, we don't have the full state up to date which can cause variantions in gas used due to the difference in the blockchain state
-        // So we will skip checking the gas_used and only check that the access list is correct
-        // The gas_used will be checked when running the hive test framework
-        assert_eq!(
-            response.result["accessList"],
-            expected_response.result["accessList"]
-        )
     }
 
     fn example_chain_config() -> ChainConfig {
@@ -752,35 +630,15 @@ mod tests {
             .set_chain_config(&example_chain_config())
             .await
             .unwrap();
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let chain_id = storage
             .get_chain_config()
             .expect("failed to get chain_id")
             .chain_id
             .to_string();
-        let local_p2p_node = example_p2p_node();
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let context = default_context_with_storage(storage).await;
         // Process request
         let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result);
+        let response = rpc_response(request.id, result).unwrap();
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
         let expected_response = to_rpc_response_success_value(&expected_response_string);

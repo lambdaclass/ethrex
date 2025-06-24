@@ -4,14 +4,14 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
-use secp256k1::{ecdsa::RecoveryId, Message, SecretKey};
-use serde::{ser::SerializeStruct, Serialize};
+use secp256k1::{Message, SecretKey, ecdsa::RecoveryId};
+use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{get_rlp_bytes_item_payload, is_encoded_as_bytes, RLPDecode},
+    decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
     encode::{PayloadRLPEncode, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -276,16 +276,19 @@ impl From<TxType> for u8 {
 }
 
 pub trait Signable {
-    fn sign(&self, private_key: &SecretKey) -> Self
+    /// Both sign and sign_in_place return error when the payload hash calculated that has to
+    /// be signed is not exactly 32 bytes long. Currently it's an unreachable error
+    /// since the payload is hashed with the keccak algorithm which produces a 32 byte hash.
+    fn sign(&self, private_key: &SecretKey) -> Result<Self, secp256k1::Error>
     where
         Self: Sized,
         Self: Clone,
     {
         let mut signable = self.clone();
-        signable.sign_inplace(private_key);
-        signable
+        signable.sign_inplace(private_key)?;
+        Ok(signable)
     }
-    fn sign_inplace(&mut self, private_key: &SecretKey);
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error>;
 }
 
 impl Transaction {
@@ -880,21 +883,21 @@ impl RLPDecode for PrivilegedL2Transaction {
 }
 
 impl Signable for Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         match self {
             Transaction::LegacyTransaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP2930Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP7702Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::PrivilegedL2Transaction(_) => (), // Privileged Transactions are not signed
+            Transaction::PrivilegedL2Transaction(_) => Ok(()), // Privileged Transactions are not signed
         }
     }
 }
 
 impl Signable for LegacyTransaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
-        let data = Message::from_digest_slice(&keccak(self.encode_payload_to_vec()).0).unwrap();
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
+        let data = Message::from_digest_slice(&keccak(self.encode_payload_to_vec()).0)?;
 
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&data, private_key)
@@ -908,11 +911,12 @@ impl Signable for LegacyTransaction {
         self.r = U256::from_big_endian(&r);
         self.s = U256::from_big_endian(&s);
         self.v = U256::from(recovery_id.to_i32());
+        Ok(())
     }
 }
 
 impl Signable for EIP1559Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP1559 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -921,12 +925,12 @@ impl Signable for EIP1559Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
 impl Signable for EIP2930Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP2930 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -935,12 +939,12 @@ impl Signable for EIP2930Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
 impl Signable for EIP4844Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP4844 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -949,12 +953,12 @@ impl Signable for EIP4844Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
 impl Signable for EIP7702Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP7702 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -963,7 +967,7 @@ impl Signable for EIP7702Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
@@ -973,8 +977,8 @@ fn sing_inplace(
     signature_r: &mut U256,
     signature_s: &mut U256,
     signature_y_parity: &mut bool,
-) {
-    let data = Message::from_digest_slice(&keccak(payload).0).unwrap();
+) -> Result<(), secp256k1::Error> {
+    let data = Message::from_digest_slice(&keccak(payload).0)?;
 
     let (recovery_id, signature) = secp256k1::SECP256K1
         .sign_ecdsa_recoverable(&data, private_key)
@@ -990,10 +994,11 @@ fn sing_inplace(
     *signature_r = U256::from_big_endian(&r);
     *signature_s = U256::from_big_endian(&s);
     *signature_y_parity = parity;
+    Ok(())
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Address {
+    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1106,7 +1111,7 @@ impl Transaction {
                     &Bytes::from(buf),
                 )
             }
-            Transaction::PrivilegedL2Transaction(tx) => tx.from,
+            Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
         }
     }
 
@@ -1176,24 +1181,25 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> AccessList {
+    pub fn access_list(&self) -> &AccessList {
+        static EMPTY_ACCESS_LIST: AccessList = Vec::new();
         match self {
-            Transaction::LegacyTransaction(_tx) => Vec::new(),
-            Transaction::EIP2930Transaction(tx) => tx.access_list.clone(),
-            Transaction::EIP1559Transaction(tx) => tx.access_list.clone(),
-            Transaction::EIP4844Transaction(tx) => tx.access_list.clone(),
-            Transaction::EIP7702Transaction(tx) => tx.access_list.clone(),
-            Transaction::PrivilegedL2Transaction(tx) => tx.access_list.clone(),
+            Transaction::LegacyTransaction(_tx) => &EMPTY_ACCESS_LIST,
+            Transaction::EIP2930Transaction(tx) => &tx.access_list,
+            Transaction::EIP1559Transaction(tx) => &tx.access_list,
+            Transaction::EIP4844Transaction(tx) => &tx.access_list,
+            Transaction::EIP7702Transaction(tx) => &tx.access_list,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.access_list,
         }
     }
 
-    pub fn authorization_list(&self) -> Option<AuthorizationList> {
+    pub fn authorization_list(&self) -> Option<&AuthorizationList> {
         match self {
             Transaction::LegacyTransaction(_) => None,
             Transaction::EIP2930Transaction(_) => None,
             Transaction::EIP1559Transaction(_) => None,
             Transaction::EIP4844Transaction(_) => None,
-            Transaction::EIP7702Transaction(tx) => Some(tx.authorization_list.clone()),
+            Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
         }
     }
@@ -1253,6 +1259,10 @@ impl Transaction {
         }
     }
 
+    pub fn is_privileged(&self) -> bool {
+        matches!(self, Transaction::PrivilegedL2Transaction(_))
+    }
+
     pub fn max_fee_per_gas(&self) -> Option<u64> {
         match self {
             Transaction::LegacyTransaction(_tx) => None,
@@ -1265,6 +1275,9 @@ impl Transaction {
     }
 
     pub fn compute_hash(&self) -> H256 {
+        if let Transaction::PrivilegedL2Transaction(tx) = self {
+            return tx.get_deposit_hash().unwrap_or_default();
+        }
         keccak_hash::keccak(self.encode_canonical_to_vec())
     }
 
@@ -1298,30 +1311,28 @@ impl Transaction {
     }
 }
 
-fn recover_address(
+pub fn recover_address(
     signature_r: &U256,
     signature_s: &U256,
     signature_y_parity: bool,
     message: &Bytes,
-) -> Address {
+) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes,
-        RecoveryId::from_i32(signature_y_parity as i32).unwrap(), // cannot fail
-    )
-    .unwrap();
+        RecoveryId::from_i32(signature_y_parity as i32)?, // cannot fail
+    )?;
     // Hash message
     let msg_digest: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
         .finalize()
         .into();
     // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&Message::from_digest(msg_digest), &signature)
-        .unwrap();
+    let public =
+        secp256k1::SECP256K1.recover_ecdsa(&Message::from_digest(msg_digest), &signature)?;
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-    Address::from_slice(&hash[12..])
+    Ok(Address::from_slice(&hash[12..]))
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
@@ -1496,6 +1507,29 @@ mod canonic_encoding {
             self.encode_canonical(&mut buf);
             buf
         }
+
+        pub fn compute_hash(&self) -> H256 {
+            match self {
+                P2PTransaction::LegacyTransaction(t) => {
+                    Transaction::LegacyTransaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP2930Transaction(t) => {
+                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP1559Transaction(t) => {
+                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
+                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
+                }
+                P2PTransaction::EIP7702Transaction(t) => {
+                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::PrivilegedL2Transaction(t) => {
+                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
+                }
+            }
+        }
     }
 }
 
@@ -1503,8 +1537,8 @@ mod canonic_encoding {
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
-    use serde::de::Error;
     use serde::Deserialize;
+    use serde::{Deserializer, de::Error};
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
@@ -2159,8 +2193,6 @@ mod serde_impl {
         pub gas: Option<u64>,
         #[serde(default)]
         pub value: U256,
-        #[serde(default, with = "crate::serde_utils::bytes", alias = "data")]
-        pub input: Bytes,
         #[serde(default, with = "crate::serde_utils::u64::hex_str")]
         pub gas_price: u64,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2178,6 +2210,44 @@ mod serde_impl {
         pub blobs: Vec<Bytes>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub chain_id: Option<u64>,
+        // rename is needed here so we dont attempt to deserialize the `input` field rather than the remainder of the fields
+        #[serde(
+            flatten,
+            rename = "input_or_data",
+            deserialize_with = "deserialize_input",
+            serialize_with = "crates::serde_utils::bytes::serialize"
+        )]
+        pub input: Bytes,
+    }
+    /// Custom deserialization function to parse either `data` or `input` fields, or both as long as they have the same value
+    pub fn deserialize_input<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // The input field can be named either input or data
+        // In case we have both fields both should be named the same
+        let variables = HashMap::<String, Value>::deserialize(deserializer)?;
+        let data = variables.get("data");
+        let input = variables.get("input");
+        let value = match (data, input) {
+            // This replaces `default` attribute for this custom implementation
+            (None, None) => return Ok(Bytes::new()),
+            (None, Some(val)) => val,
+            (Some(val), None) => val,
+            (Some(val_a), Some(val_b)) => {
+                if val_a == val_b {
+                    val_a
+                } else {
+                    return Err(D::Error::custom(
+                        "Transaction has both `data` and `input` fields with different values",
+                    ));
+                }
+            }
+        };
+        let value = String::deserialize(value).map_err(D::Error::custom)?;
+        let bytes = hex::decode(value.trim_start_matches("0x"))
+            .map_err(|e| D::Error::custom(e.to_string()))?;
+        Ok(Bytes::from(bytes))
     }
 
     impl From<EIP1559Transaction> for GenericTransaction {
@@ -2188,7 +2258,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2215,7 +2285,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2242,7 +2312,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2275,7 +2345,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2299,6 +2369,7 @@ mod mempool {
     use super::*;
     use std::{
         cmp::Ordering,
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -2307,7 +2378,7 @@ mod mempool {
         // Unix timestamp (in microseconds) created once the transaction reached the MemPool
         timestamp: u128,
         sender: Address,
-        inner: Transaction,
+        inner: Arc<Transaction>,
     }
 
     impl MempoolTransaction {
@@ -2318,7 +2389,7 @@ mod mempool {
                     .expect("Invalid system time")
                     .as_micros(),
                 sender,
-                inner: tx,
+                inner: Arc::new(tx),
             }
         }
         pub fn time(&self) -> u128 {
@@ -2328,13 +2399,17 @@ mod mempool {
         pub fn sender(&self) -> Address {
             self.sender
         }
+
+        pub fn transaction(&self) -> &Transaction {
+            &self.inner
+        }
     }
 
     impl RLPEncode for MempoolTransaction {
         fn encode(&self, buf: &mut dyn bytes::BufMut) {
             Encoder::new(buf)
                 .encode_field(&self.timestamp)
-                .encode_field(&self.inner)
+                .encode_field(&*self.inner)
                 .finish();
         }
     }
@@ -2349,7 +2424,7 @@ mod mempool {
                 Self {
                     timestamp,
                     sender,
-                    inner,
+                    inner: Arc::new(inner),
                 },
                 decoder.finish()?,
             ))
@@ -2361,12 +2436,6 @@ mod mempool {
 
         fn deref(&self) -> &Self::Target {
             &self.inner
-        }
-    }
-
-    impl From<MempoolTransaction> for Transaction {
-        fn from(val: MempoolTransaction) -> Self {
-            val.inner
         }
     }
 
@@ -2392,7 +2461,7 @@ mod tests {
 
     use super::*;
     use crate::types::{
-        compute_receipts_root, compute_transactions_root, AuthorizationTuple, BlockBody, Receipt,
+        AuthorizationTuple, BlockBody, Receipt, compute_receipts_root, compute_transactions_root,
     };
     use ethereum_types::H160;
     use hex_literal::hex;
@@ -2580,7 +2649,7 @@ mod tests {
             "from":"0x6177843db3138ae69679A54b95cf345ED759450d",
             "gas":"0x5208",
             "value":"0x01",
-            "input":"0x",
+            "input":"0x010203040506",
             "gasPrice":"0x07",
             "accessList": [
                 {
@@ -2601,7 +2670,60 @@ mod tests {
             ),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::new(),
+            input: Bytes::from(hex::decode("010203040506").unwrap()),
+            gas_price: 7,
+            max_priority_fee_per_gas: Default::default(),
+            max_fee_per_gas: Default::default(),
+            max_fee_per_blob_gas: Default::default(),
+            access_list: vec![AccessListEntry {
+                address: Address::from_slice(
+                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
+                ),
+                storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
+            }],
+            blob_versioned_hashes: Default::default(),
+            blobs: Default::default(),
+            chain_id: Default::default(),
+            authorization_list: None,
+        };
+        assert_eq!(
+            deserialized_generic_transaction,
+            serde_json::from_str(generic_transaction).unwrap()
+        )
+    }
+
+    #[test]
+    fn deserialize_generic_transaction_with_data_and_input_fields() {
+        let generic_transaction = r#"{
+            "type":"0x01",
+            "nonce":"0x02",
+            "to":"",
+            "from":"0x6177843db3138ae69679A54b95cf345ED759450d",
+            "gas":"0x5208",
+            "value":"0x01",
+            "input":"0x010203040506",
+            "data":"0x010203040506",
+            "gasPrice":"0x07",
+            "accessList": [
+                {
+                    "address": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                    "storageKeys": [
+                        "0x000000000000000000000000000000000000000000000000000000000000000c",
+                        "0x000000000000000000000000000000000000000000000000000000000000200b"
+                    ]
+                }
+            ]
+        }"#;
+        let deserialized_generic_transaction = GenericTransaction {
+            r#type: TxType::EIP2930,
+            nonce: Some(2),
+            to: TxKind::Create,
+            from: Address::from_slice(
+                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+            ),
+            gas: Some(0x5208),
+            value: U256::from(1),
+            input: Bytes::from(hex::decode("010203040506").unwrap()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),

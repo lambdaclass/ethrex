@@ -1,31 +1,28 @@
 #!/bin/bash
+set -e
 
-# This script sends 171 * <iterations> transactions to a test account, per defined private key
-# then polls the account balance until the expected balance has been reached
-# and then kills the process. It also measures the elapsed time of the test and
-# outputs it to Github Action's outputs.
-iterations=3500
-value=1
-account=0x33c6b73432B3aeA0C1725E415CC40D04908B85fd
-end_val=$((171 * $iterations * $value))
+# This script runs a load test and then kills the node under test. The load test sends a
+# transaction from each rich account to a random one, so we can check their nonce to
+# determine that the load test finished.
+#
+# Usage:
+# ./flamegraph_watcher.sh
+# Requires a PROGRAM variable to be set (e.g. ethrex). This $PROGRAM will be killed when the
+# load test finishes. Must be run from the context of the repo root.
 
+# TODO(#2486): Move this to a cached build outside.
+echo "Building load test"
+cargo build --release --manifest-path ./tooling/load_test/Cargo.toml
+
+echo "Starting load test"
 start_time=$(date +%s)
-ethrex_l2 test load --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
-
-output=$(ethrex_l2 info -b -a $account --wei 2>&1)
-echo "balance: $output"
-while [[ $output -lt $end_val ]]; do
-    sleep 2
-    output=$(ethrex_l2 info -b -a $account --wei 2>&1)
-    echo "balance: $output"
-done
+RUST_BACKTRACE=1 ./target/release/load_test -k ./test_data/private_keys.txt -t eth-transfers -N 1000 -n http://localhost:1729 -w 1
 end_time=$(date +%s)
-elapsed=$((end_time - start_time))
 
+elapsed=$((end_time - start_time))
 minutes=$((elapsed / 60))
 seconds=$((elapsed % 60))
-output=$(ethrex_l2 info -b -a $account --wei 2>&1)
-echo "Balance of $output reached in $minutes min $seconds s, killing process"
+echo "All load test transactions included in $minutes min $seconds s, killing node process."
 
 echo killing "$PROGRAM"
 sudo pkill "$PROGRAM"

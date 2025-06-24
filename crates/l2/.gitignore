@@ -1,10 +1,8 @@
 .env*
 
-# Ignore all config files that doesn't end with _example.toml
-configs/config.toml
-configs/prover_client_config.toml
-configs/sequencer_config.toml
-
 store/
 
 solc_out
+
+# qpl-tool temp files
+out/

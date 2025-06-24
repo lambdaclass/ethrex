@@ -6,9 +6,8 @@ permissions:
   id-token: write
 
 on:
-  # re-enable this when fixing the workflow
-  # push:
-  #   branches: ["main"]
+  push:
+    branches: ["main"]
   workflow_dispatch:
 
 env:
@@ -26,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Cache Extra Binaries
         id: cache-binaries
@@ -88,7 +87,7 @@ jobs:
       - name: Download EF Tests
         run: |
           if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
-            cd crates/vm/levm
+            cd cmd/ef_tests/state
             make download-evm-ef-tests
           fi
 
@@ -168,7 +167,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -182,13 +181,6 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-extra-binaries
-
-      - name: Cache ethrex_l2
-        id: cache-ethrex-l2
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
         run: |
@@ -236,30 +228,18 @@ jobs:
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
-      - name: Install ethrex_l2 cli
-        run: |
-          if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
-            echo "$HOME/.cargo/bin/ethrex_l2" already found
-          else
-            cargo install --force --path cmd/ethrex_l2
-          fi
-          ethrex_l2 config create default --default
-          ethrex_l2 config set default
-
       # By default ethrex uses revm as evm backend.
       - id: generate-flamegraph-ethrex
         name: Generate Flamegraph data for Ethrex
         shell: bash
         run: |
           rm -rf target/release/ethrex
+          cargo build --release --bin ethrex --features dev
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin ethrex --features dev -- --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
-          while [ ! -x "./target/release/ethrex" ]; do
-            echo "Waiting for ethrex binary to be ready..."
-            sleep 2
-          done
+          --bin ethrex --release --features dev -- \
+          --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --http.port 1729 &
           sleep 10
-          echo "Compilation finished. Executing load test..."
+          echo "Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
           echo "Load test finished"
 
@@ -293,12 +273,13 @@ jobs:
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
 
+      # We need a reth version that requires a rustc version <= 1.87.0
       - name: Checkout reth
         uses: actions/checkout@v4
         with:
           repository: paradigmxyz/reth
           path: "reth"
-          ref: main
+          ref: b2ead06d1d0804101de0d1eb3a070e08d8eab857
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -315,13 +296,6 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-extra-binaries
-
-      - name: Cache ethrex_l2
-        id: cache-ethrex-l2
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
         run: |
@@ -369,16 +343,6 @@ jobs:
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
-      - name: Install ethrex_l2 cli
-        run: |
-          if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
-            echo "$HOME/.cargo/bin/ethrex_l2" already found
-          else
-            cargo install --force --path cmd/ethrex_l2
-          fi
-          ethrex_l2 config create default --default
-          ethrex_l2 config set default
-
       - id: generate-flamegraph-reth
         name: Build and test reth
         shell: bash
@@ -386,18 +350,15 @@ jobs:
         run: |
           cd ./reth
           rm -rf target/profiling/reth
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin reth --profile profiling -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
+          cargo build --bin reth --profile profiling
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" --bin reth --profile profiling -- \
+          node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
           --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
           --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
-          --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 >/dev/null &
-          while [ ! -x "./target/profiling/reth" ]; do
-            echo "Waiting for reth binary to be ready..."
-            sleep 10
-          done
+          --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 &
           sleep 30
           echo "Executing load test..."
-          bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
+          (cd /home/runner/work/ethrex/ethrex; ./.github/scripts/flamegraph_watcher.sh)
           echo "Load test finished"
 
       - name: Generate SVG
@@ -468,6 +429,9 @@ jobs:
           cp -r flamegraph_ethrex.svg flamegraphs/
           cp -r flamegraph_reth.svg flamegraphs/
 
+          # Fix flamegraphs width
+          sed -i 's|frames.attributes.width.value = |// |' flamegraphs/flamegraph_*.svg
+
           # ETHREX HTML
           sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" templates/index.html
           sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" templates/index.html
@@ -503,3 +467,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./flamegraphs
           destination_dir: flamegraphs
+          keep_files: true

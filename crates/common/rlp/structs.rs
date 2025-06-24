@@ -1,6 +1,6 @@
 use super::{
-    decode::{decode_rlp_item, get_item_with_prefix, RLPDecode},
-    encode::{encode_length, RLPEncode},
+    decode::{RLPDecode, decode_rlp_item, get_item_with_prefix},
+    encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
 };
 use bytes::BufMut;
@@ -95,7 +95,7 @@ impl<'a> Decoder<'a> {
 
     /// Finishes encoding the struct and returns the remaining bytes after the item.
     /// If the item's payload is not empty, returns an error.
-    pub fn finish(self) -> Result<&'a [u8], RLPDecodeError> {
+    pub const fn finish(self) -> Result<&'a [u8], RLPDecodeError> {
         if self.payload.is_empty() {
             Ok(self.remaining)
         } else {
@@ -104,13 +104,13 @@ impl<'a> Decoder<'a> {
     }
 
     /// Returns true if the decoder has finished decoding the given input
-    pub fn is_done(&self) -> bool {
+    pub const fn is_done(&self) -> bool {
         self.payload.is_empty()
     }
 
     /// Same as [`finish`](Self::finish), but discards the item's remaining payload
     /// instead of failing.
-    pub fn finish_unchecked(self) -> &'a [u8] {
+    pub const fn finish_unchecked(self) -> &'a [u8] {
         self.remaining
     }
 }

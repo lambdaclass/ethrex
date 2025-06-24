@@ -1,11 +1,8 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{
-    error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash, state::TrieState,
-    ValueRLP,
-};
+use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
 
-use super::{ExtensionNode, Node};
+use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -16,7 +13,7 @@ pub struct LeafNode {
 
 impl LeafNode {
     /// Creates a new leaf node and stores the given (path, value) pair
-    pub fn new(partial: Nibbles, value: ValueRLP) -> Self {
+    pub const fn new(partial: Nibbles, value: ValueRLP) -> Self {
         Self { partial, value }
     }
 
@@ -30,12 +27,7 @@ impl LeafNode {
     }
 
     /// Stores the received value and returns the new root of the subtrie previously consisting of self
-    pub fn insert(
-        mut self,
-        state: &mut TrieState,
-        path: Nibbles,
-        value: ValueRLP,
-    ) -> Result<Node, TrieError> {
+    pub fn insert(mut self, path: Nibbles, value: ValueOrHash) -> Result<Node, TrieError> {
         /* Possible flow paths:
             Leaf { SelfValue } -> Leaf { Value }
             Leaf { SelfValue } -> Extension { Branch { [Self,...] Value } }
@@ -44,7 +36,14 @@ impl LeafNode {
         */
         // If the path matches the stored path, update the value and return self
         if self.partial == path {
-            self.value = value;
+            match value {
+                ValueOrHash::Value(value) => self.value = value,
+                ValueOrHash::Hash(_) => {
+                    return Err(TrieError::Verify(
+                        "attempt to override proof node with external hash".to_string(),
+                    ));
+                }
+            }
             Ok(self.into())
         } else {
             let match_index = path.count_prefix(&self.partial);
@@ -56,25 +55,39 @@ impl LeafNode {
                 // Create a new leaf node and store the value in it
                 // Create a new branch node with the leaf as a child and store self's value
                 // Branch { [ Leaf { Value } , ... ], SelfValue}
-                let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                BranchNode::new_with_value(Box::new(choices), self.value)
+                choices[new_leaf_choice_idx] = match value {
+                    ValueOrHash::Value(value) => {
+                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
+                    }
+                    ValueOrHash::Hash(hash) => hash.into(),
+                };
+                BranchNode::new_with_value(choices, self.value)
             } else if new_leaf_choice_idx == 16 {
                 // Create a branch node with self as a child and store the value in the branch node
                 // Branch { [Self,...], Value }
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[self_choice_idx] = self.clone().insert_self(state)?;
-                BranchNode::new_with_value(Box::new(choices), value)
+                choices[self_choice_idx] = Node::from(self).into();
+                BranchNode::new_with_value(
+                    choices,
+                    match value {
+                        ValueOrHash::Value(value) => value,
+                        ValueOrHash::Hash(_) => todo!("handle override case (error?)"),
+                    },
+                )
             } else {
                 // Create a new leaf node and store the path and value in it
                 // Create a new branch node with the leaf and self as children
                 // Branch { [ Leaf { Path, Value }, Self, ... ], None, None}
-                let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                choices[self_choice_idx] = self.clone().insert_self(state)?;
-                BranchNode::new(Box::new(choices))
+                choices[new_leaf_choice_idx] = match value {
+                    ValueOrHash::Value(value) => {
+                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
+                    }
+                    ValueOrHash::Hash(hash) => hash.into(),
+                };
+                choices[self_choice_idx] = Node::from(self).into();
+                BranchNode::new(choices)
             };
 
             let final_node = if match_index == 0 {
@@ -82,7 +95,7 @@ impl LeafNode {
             } else {
                 // Create an extension node with the branch node as child
                 // Extension { BranchNode }
-                ExtensionNode::new(path.slice(0, match_index), branch_node.insert_self(state)?)
+                ExtensionNode::new(path.slice(0, match_index), Node::from(branch_node).into())
                     .into()
             };
 
@@ -101,7 +114,7 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw())
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node
@@ -112,14 +125,6 @@ impl LeafNode {
             .encode_bytes(&self.value)
             .finish();
         buf
-    }
-
-    /// Inserts the node into the state and returns its hash
-    /// Receives the offset that needs to be traversed to reach the leaf node from the canonical root, used to compute the node hash
-    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
-        Ok(hash)
     }
 
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long
@@ -135,7 +140,7 @@ impl LeafNode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{pmt_node, Trie};
+    use crate::{Trie, pmt_node};
 
     #[test]
     fn new() {
@@ -166,13 +171,12 @@ mod test {
 
     #[test]
     fn insert_replace() {
-        let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
         let node = node
-            .insert(&mut trie.state, Nibbles::from_bytes(&[0x12]), vec![0x13])
+            .insert(Nibbles::from_bytes(&[0x12]), vec![0x13].into())
             .unwrap();
         let node = match node {
             Node::Leaf(x) => x,
@@ -184,25 +188,23 @@ mod test {
 
     #[test]
     fn insert_branch() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
         let path = Nibbles::from_bytes(&[0x22]);
         let value = vec![0x23];
-        let node = node
-            .insert(&mut trie.state, path.clone(), value.clone())
-            .unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
         let node = match node {
             Node::Branch(x) => x,
             _ => panic!("expected a branch node"),
         };
-        assert_eq!(node.get(&trie.state, path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
     }
 
     #[test]
     fn insert_extension_branch() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
@@ -210,17 +212,15 @@ mod test {
         let path = Nibbles::from_bytes(&[0x13]);
         let value = vec![0x15];
 
-        let node = node
-            .insert(&mut trie.state, path.clone(), value.clone())
-            .unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
-        assert_eq!(node.get(&trie.state, path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
     }
 
     #[test]
     fn insert_extension_branch_value_self() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
@@ -228,17 +228,15 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12, 0x34]);
         let value = vec![0x17];
 
-        let node = node
-            .insert(&mut trie.state, path.clone(), value.clone())
-            .unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
-        assert_eq!(node.get(&trie.state, path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
     }
 
     #[test]
     fn insert_extension_branch_value_other() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             leaf { vec![1, 2, 3, 4, 16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
@@ -246,12 +244,10 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12]);
         let value = vec![0x17];
 
-        let node = node
-            .insert(&mut trie.state, path.clone(), value.clone())
-            .unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
-        assert_eq!(node.get(&trie.state, path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
     }
 
     // An insertion that returns branch [value=(x)] -> leaf (y) is not possible because of the path
@@ -293,7 +289,9 @@ mod test {
         let node_hash_ref = node.compute_hash();
         assert_eq!(
             node_hash_ref.as_ref(),
-            &[0xCB, 0x84, 0x20, 0x6B, 0x65, 0x79, 0x85, 0x76, 0x61, 0x6C, 0x75, 0x65],
+            &[
+                0xCB, 0x84, 0x20, 0x6B, 0x65, 0x79, 0x85, 0x76, 0x61, 0x6C, 0x75, 0x65
+            ],
         );
     }
 

@@ -6,6 +6,16 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::{message::Message, p2p::DisconnectReason};
 
+#[derive(Debug, Error)]
+pub enum CryptographyError {
+    #[error("Invalid key: {0}")]
+    InvalidKey(String),
+    #[error("Invalid generated secret: {0}")]
+    InvalidGeneratedSecret(String),
+    #[error("Couldn't get keys from shared secret: {0}")]
+    CouldNotGetKeyFromSecret(String),
+}
+
 // TODO improve errors
 #[derive(Debug, Error)]
 pub(crate) enum RLPxError {
@@ -49,6 +59,12 @@ pub(crate) enum RLPxError {
     MempoolError(#[from] MempoolError),
     #[error("Io Error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Failed to decode message due to invalid frame: {0}")]
+    InvalidMessageFrame(String),
+    #[error("Incompatible Protocol")]
+    IncompatibleProtocol,
+    #[error("Invalid block range")]
+    InvalidBlockRange,
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly

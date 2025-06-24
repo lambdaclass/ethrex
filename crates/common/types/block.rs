@@ -1,11 +1,13 @@
 use super::{
-    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
+    INITIAL_BASE_FEE,
 };
 use crate::{
-    constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
-    types::{Receipt, Transaction},
     Address, H256, U256,
+    constants::{
+        DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
+    },
+    types::{Receipt, Transaction},
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
@@ -17,40 +19,28 @@ use ethrex_rlp::{
 };
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
-use std::cmp::{max, Ordering};
+use std::cmp::{Ordering, max};
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
-use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
 
-lazy_static! {
-    pub static ref DEFAULT_OMMERS_HASH: H256 = H256::from_slice(&hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap()); // = Keccak256(RLP([])) as of EIP-3675
-    pub static ref DEFAULT_REQUESTS_HASH: H256 = H256::from_slice(&hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap()); // = Sha256([])) as of EIP-7685
-}
 #[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
-    #[serde(skip)]
-    hash: OnceCell<BlockHash>,
 }
 
 impl Block {
     pub fn new(header: BlockHeader, body: BlockBody) -> Block {
-        Block {
-            header,
-            body,
-            hash: OnceCell::new(),
-        }
+        Block { header, body }
     }
 
     pub fn hash(&self) -> BlockHash {
-        *self.hash.get_or_init(|| self.header.compute_block_hash())
+        self.header.hash()
     }
 }
 
@@ -87,6 +77,8 @@ impl RLPDecode for Block {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
+    #[serde(skip)]
+    pub hash: OnceCell<BlockHash>,
     pub parent_hash: H256,
     #[serde(rename = "sha3Uncles")]
     pub ommers_hash: H256, // ommer = uncle
@@ -188,6 +180,7 @@ impl RLPDecode for BlockHeader {
 
         Ok((
             BlockHeader {
+                hash: OnceCell::new(),
                 parent_hash,
                 ommers_hash,
                 coinbase,
@@ -234,13 +227,18 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(&self) -> Vec<(&Transaction, Address)> {
+    pub fn get_transactions_with_sender(
+        &self,
+    ) -> Result<Vec<(&Transaction, Address)>, secp256k1::Error> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
-            .par_iter()
-            .map(|tx| (tx, tx.sender()))
-            .collect()
+            .iter()
+            .map(|tx| {
+                let t = (tx, tx.sender()?);
+                Ok(t)
+            })
+            .collect::<Result<Vec<(&Transaction, Address)>, secp256k1::Error>>()
     }
 }
 
@@ -258,7 +256,7 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner()));
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
@@ -299,10 +297,14 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    pub fn compute_block_hash(&self) -> H256 {
+    fn compute_block_hash(&self) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
+    }
+
+    pub fn hash(&self) -> H256 {
+        *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }
 
@@ -432,6 +434,7 @@ pub fn calculate_base_fee_per_gas(
     parent_gas_limit: u64,
     parent_gas_used: u64,
     parent_base_fee_per_gas: u64,
+    elasticity_multiplier: u64,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -439,7 +442,7 @@ pub fn calculate_base_fee_per_gas(
         return None;
     }
 
-    let parent_gas_target = parent_gas_limit / ELASTICITY_MULTIPLIER;
+    let parent_gas_target = parent_gas_limit / elasticity_multiplier;
 
     Some(match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => parent_base_fee_per_gas,
@@ -509,10 +512,21 @@ pub enum InvalidBlockHeaderError {
     RequestsHashPresent,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidBlockBodyError {
+    #[error("Withdrawals root does not match")]
+    WithdrawalsRootNotMatch,
+    #[error("Transactions root does not match")]
+    TransactionsRootNotMatch,
+    #[error("Ommers is not empty")]
+    OmmersIsNotEmpty,
+}
+
 /// Validates that the header fields are correct in reference to the parent_header
 pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    elasticity_multiplier: u64,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
@@ -523,6 +537,7 @@ pub fn validate_block_header(
         parent_header.gas_limit,
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        elasticity_multiplier,
     ) {
         base_fee
     } else {
@@ -557,8 +572,42 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
-    if header.parent_hash != parent_header.compute_block_hash() {
+    if header.parent_hash != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
+    }
+
+    Ok(())
+}
+
+/// Validates that the body matches with the header
+pub fn validate_block_body(block: &Block) -> Result<(), InvalidBlockBodyError> {
+    // Validates that:
+    //  - Transactions root and withdrawals root matches with the header
+    //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
+    let computed_tx_root = compute_transactions_root(&block.body.transactions);
+
+    if block.header.transactions_root != computed_tx_root {
+        return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
+    }
+
+    if !block.body.ommers.is_empty() {
+        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
+    }
+
+    match (block.header.withdrawals_root, &block.body.withdrawals) {
+        (Some(withdrawals_root), Some(withdrawals)) => {
+            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
+            if withdrawals_root != computed_withdrawals_root {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (Some(withdrawals_root), None) => {
+            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (None, None) => {}
+        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
     Ok(())
@@ -646,7 +695,10 @@ fn validate_excess_blob_gas(
             )
         })
         .unwrap_or_default();
-    if header.excess_blob_gas.unwrap() != expected_excess_blob_gas {
+    if header
+        .excess_blob_gas
+        .is_none_or(|header_excess_blob_gas| header_excess_blob_gas != expected_excess_blob_gas)
+    {
         return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
     }
     Ok(())
@@ -659,17 +711,14 @@ pub fn calc_excess_blob_gas(
 ) -> u64 {
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
     let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    if excess_blob_gas < target_blob_gas_per_block {
-        0
-    } else {
-        excess_blob_gas - target_blob_gas_per_block
-    }
+    excess_blob_gas.saturating_sub(target_blob_gas_per_block)
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::types::EMPTY_KECCACK_HASH;
+    use crate::constants::EMPTY_KECCACK_HASH;
+    use crate::types::ELASTICITY_MULTIPLIER;
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -743,6 +792,7 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
         let block = BlockHeader {
             parent_hash: H256::from_str(
@@ -786,8 +836,9 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
     }
 
     #[test]
@@ -796,7 +847,7 @@ mod test {
             "0x01f8d68330182404842daf517a830186a08080b880c1597f3c842558e64df52c3e0f0973067577c030c0c6578dbb2eef63155a21106fd4426057527f296b2ecdfabc81e34ffc82e89dec20f6b7c41fa1969d3c3bc44262c86f08b5b76077527fb7ece918787c50c878052c30a8b1d4abc07331e6d14b8ded52bbc58a6e9992b76097527f0110937c38cc13b914f201fc09dc6f7a80c001a09930cb92b4a27dce971c697a8c47fa34c98d076abc7b36e1239d6abcfc7c8403a041b35118447fe77c38c0b3a92a2dd3ecba4a9e4b35cc6534cd787f56c0cf2e21",
             "0xf86e81fa843127403882f61894db8d964741c53e55df9c2d4e9414c6c96482874e870aa87bee538000808360306ca03aa421df67a101c45ff9cb06ce28f518a5d8d8dbb76a79361280071909650a27a05a447ff053c4ae601cfe81859b58d5603f2d0a73481c50f348089032feb0b073",
             "0x02f8ef83301824048413f157f8842daf517a830186a094000000000000000000000000000000000000000080b8807a0a600060a0553db8600060c855c77fb29ecd7661d8aefe101a0db652a728af0fded622ff55d019b545d03a7532932a60ad52604260cd5360bf60ce53609460cf53603e60d05360f560d153bc596000609e55600060c6556000601f556000609155535660556057536055605853606e60595360e7605a5360d0605b5360eb60c080a03acb03b1fc20507bc66210f7e18ff5af65038fb22c626ae488ad9513d9b6debca05d38459e9d2a221eb345b0c2761b719b313d062ff1ea3d10cf5b8762c44385a6",
-            "0x01f8ea8330182402842daf517a830186a094000000000000000000000000000000000000000080b880bdb30d976000604e557145600060a155d67fe7e473caf6e33cba341136268fc1189ba07837ef8a266570289ff53afc43436260c7527f333dfe837f4838f6053e5e46e4151aeec28f356ec39a2db9769f36ec92e3e3f660e7527f0b261608674300d4621eff679096a6ed786591aca69f2b22a3ea6949621daade610107527f3cc080a01f3f906540fb56b0576c51b3ffa86df213fd1f407378c9441cfdd9d5f3c1df3da035691b16c053b68ec74683ae020293cbc6a47ac773dc8defb96cb680c576e5a3"
+            "0x01f8ea8330182402842daf517a830186a094000000000000000000000000000000000000000080b880bdb30d976000604e557145600060a155d67fe7e473caf6e33cba341136268fc1189ba07837ef8a266570289ff53afc43436260c7527f333dfe837f4838f6053e5e46e4151aeec28f356ec39a2db9769f36ec92e3e3f660e7527f0b261608674300d4621eff679096a6ed786591aca69f2b22a3ea6949621daade610107527f3cc080a01f3f906540fb56b0576c51b3ffa86df213fd1f407378c9441cfdd9d5f3c1df3da035691b16c053b68ec74683ae020293cbc6a47ac773dc8defb96cb680c576e5a3",
         ];
         let transactions: Vec<Transaction> = encoded_transactions
             .iter()

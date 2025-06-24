@@ -2,15 +2,24 @@ use std::{collections::HashMap, path::Path};
 
 use crate::{
     network::Network,
-    types::{BlockWithRLP, TestUnit},
+    types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
-use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
-use ethrex_common::types::{
-    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
+use ethrex_blockchain::{
+    Blockchain,
+    error::{ChainError, InvalidBlockError},
+    fork_choice::apply_fork_choice,
+};
+use ethrex_common::{
+    constants::EMPTY_KECCACK_HASH,
+    types::{
+        Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
+        InvalidBlockHeaderError,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
+use ethrex_vm::{EvmEngine, EvmError};
+use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -61,54 +70,155 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
             Err(error) => {
                 assert!(
                     expects_exception,
-                    "Transaction execution unexpectedly failed on test: {}, with error {}",
+                    "Transaction execution unexpectedly failed on test: {}, with error {:?}",
                     test_key, error
                 );
-                return;
+                let expected_exception = block_fixture.expect_exception.clone().unwrap();
+                assert!(
+                    exception_is_expected(expected_exception.clone(), &error),
+                    "Returned exception {:?} does not match expected {:?}",
+                    error,
+                    expected_exception,
+                );
+                break;
             }
             Ok(_) => {
                 assert!(
                     !expects_exception,
-                    "Expected transaction execution to fail in test: {} with error: {}",
+                    "Expected transaction execution to fail in test: {} with error: {:?}",
                     test_key,
-                    block_fixture.expect_exception.clone().unwrap()
+                    block_fixture.expect_exception.clone()
                 );
                 apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
     }
-    check_poststate_against_db(test_key, test, &store).await
+    check_poststate_against_db(test_key, test, &store).await;
+    if evm == EvmEngine::LEVM {
+        re_run_stateless(blockchain, test, test_key).await;
+    }
 }
 
+fn exception_is_expected(
+    expected_exceptions: Vec<BlockChainExpectedException>,
+    returned_error: &ChainError,
+) -> bool {
+    expected_exceptions.iter().any(|exception| {
+        if let (
+            BlockChainExpectedException::TxtException(expected_error_msg),
+            ChainError::EvmError(EvmError::Transaction(error_msg)),
+        ) = (exception, returned_error)
+        {
+            return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
+                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase());
+        }
+        matches!(
+            (exception, &returned_error),
+            (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::IncorrectBlobGasUsed
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::BlobGasUsedMismatch)
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::BlobGasUsedAboveLimit
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::InvalidHeader(
+                    InvalidBlockHeaderError::GasUsedGreaterThanGasLimit
+                ))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::IncorrectExcessBlobGas
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::InvalidHeader(
+                    InvalidBlockHeaderError::ExcessBlobGasIncorrect
+                ))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::IncorrectBlockFormat
+                ),
+                ChainError::InvalidBlock(_)
+            ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::InvalidRequest),
+                ChainError::InvalidBlock(InvalidBlockError::RequestsHashMismatch)
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::SystemContractEmpty
+                ),
+                ChainError::EvmError(EvmError::SystemContractEmpty(_))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::SystemContractCallFailed
+                ),
+                ChainError::EvmError(EvmError::SystemContractCallFailed(_))
+            ) | (
+                BlockChainExpectedException::Other,
+                _ //TODO: Decide whether to support more specific errors.
+            ),
+        )
+    })
+}
+
+fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> bool {
+    matches!(
+        (msg, expected_msg.as_str()),
+        (
+            "reject transactions from senders with deployed code",
+            "Sender account shouldn't be a contract"
+        ) | (
+            "call gas cost exceeds the gas limit",
+            "Intrinsic gas too low"
+        ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
+            | ("empty blobs", "Type 3 transaction without blobs")
+            | (
+                "blob versioned hashes not supported",
+                "Type 3 transactions are not supported before the Cancun fork"
+            )
+            | ("blob version not supported", "Invalid blob versioned hash")
+            | (
+                "gas price is less than basefee",
+                "Insufficient max fee per gas"
+            )
+            | (
+                "blob gas price is greater than max fee per blob gas",
+                "Insufficient max fee per blob gas"
+            )
+            | (
+                "priority fee is greater than max fee",
+                "Priority fee is greater than max fee per gas"
+            )
+            | ("create initcode size limit", "Initcode size exceeded")
+    ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
+}
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    let decoding_exception_cases = [
-        "BlockException.RLP_",
-        // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
-        // have the "to" field set to null (create).
-        // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
-        // transaction is validated. This would imply allowing the "to" field of the
-        // EIP-7702 transaction to be null and validating it on the `prepare_execution` LEVM hook.
-        //
-        // Instead, this approach is taken, which allows for the exception to be thrown on
-        // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
-        // "to" field to be an Address
-        // For more information, please read:
-        // - https://eips.ethereum.org/EIPS/eip-7702
-        // - https://github.com/lambdaclass/ethrex/pull/2425
-        //
-        // There is another test which validates the same exact thing, but for an EIP-4844 tx.
-        // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
-        // caught.
-        "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
-    ];
+    // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
+    // have the "to" field set to null (create).
+    // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
+    // transaction is validated. This would imply allowing the "to" field of the
+    // EIP-7702 transaction to be null and validating it on the `prepare_execution` LEVM hook.
+    //
+    // Instead, this approach is taken, which allows for the exception to be thrown on
+    // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
+    // "to" field to be an Address
+    // For more information, please read:
+    // - https://eips.ethereum.org/EIPS/eip-7702
+    // - https://github.com/lambdaclass/ethrex/pull/2425
+    //
+    // There is another test which validates the same exact thing, but for an EIP-4844 tx.
+    // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
+    // caught.
 
-    let expects_rlp_exception = decoding_exception_cases.iter().any(|&case| {
-        block_fixture
-            .expect_exception
-            .as_ref()
-            .map_or(false, |s| s.starts_with(case))
-    });
+    // Decoding_exception_cases = [
+    // "BlockException.RLP_",
+    // "TransactionException.TYPE_4_TX_CONTRACT_CREATION", ];
+
+    let expects_rlp_exception = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::RLPException));
 
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
@@ -145,7 +255,7 @@ pub async fn build_store_for_test(test: &TestUnit) -> Store {
 fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
     let block_number = test.genesis_block_header.number.low_u64();
     let db_block_header = db.get_block_header(block_number).unwrap().unwrap();
-    let computed_genesis_block_hash = db_block_header.compute_block_hash();
+    let computed_genesis_block_hash = db_block_header.hash();
     // Check genesis block hash
     assert_eq!(test.genesis_block_header.hash, computed_genesis_block_hash);
     // Check genesis state root
@@ -177,16 +287,19 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         );
         // Check code
         let code_hash = expected_account.info.code_hash;
-        let db_account_code = db
-            .get_account_code(code_hash)
-            .expect("Failed to read from DB")
-            .unwrap_or_else(|| {
-                panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
-            });
-        assert_eq!(
-            db_account_code, expected_account.code,
-            "Mismatched account code for code hash {code_hash} test:{test_key}"
-        );
+        if code_hash != *EMPTY_KECCACK_HASH {
+            // We don't want to get account code if there's no code.
+            let db_account_code = db
+                .get_account_code(code_hash)
+                .expect("Failed to read from DB")
+                .unwrap_or_else(|| {
+                    panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
+                });
+            assert_eq!(
+                db_account_code, expected_account.code,
+                "Mismatched account code for code hash {code_hash} test:{test_key}"
+            );
+        }
         // Check storage
         for (key, value) in expected_account.storage {
             let db_storage_value = db
@@ -208,7 +321,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         .get_block_header(last_block_number)
         .unwrap()
         .unwrap()
-        .compute_block_hash();
+        .hash();
     assert_eq!(
         test.lastblockhash, last_block_hash,
         "Last block number does not match"
@@ -217,4 +330,49 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     let last_block = db.get_block_header(last_block_number).unwrap();
     assert!(last_block.is_some(), "Block hash is not stored in db");
     // State root was alredy validated by `add_block``
+}
+
+async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &str) {
+    let blocks = test
+        .blocks
+        .iter()
+        .map(|block_fixture| block_fixture.block().unwrap().clone().into())
+        .collect::<Vec<CoreBlock>>();
+
+    let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
+
+    let witness = blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .unwrap_or_else(|_| {
+            use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+            if test_should_fail {
+                ExecutionWitnessResult {
+                    state_trie_nodes: Some(Vec::new()),
+                    storage_trie_nodes: Some(HashMap::new()),
+                    ..Default::default()
+                }
+            } else {
+                panic!("Failed to create witness for a test that should not fail")
+            }
+        });
+
+    let program_input = ProgramInput {
+        blocks,
+        db: witness,
+        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
+        ..Default::default()
+    };
+
+    if let Err(e) = ethrex_prover_lib::execute(program_input) {
+        assert!(
+            test_should_fail,
+            "Expected test: {test_key} to succeed but failed with {e}"
+        )
+    } else {
+        assert!(
+            !test_should_fail,
+            "Expected test: {test_key} to fail but succeeded"
+        )
+    }
 }

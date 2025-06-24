@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity =0.8.29;
 
 /// @title Interface for the CommonBridge contract.
 /// @author LambdaClass
@@ -32,11 +32,10 @@ interface ICommonBridge {
 
     /// @notice L2 withdrawals have been published on L1.
     /// @dev Event emitted when the L2 withdrawals are published on L1.
-    /// @param withdrawalLogsBlockNumber the block number in L2 where the
-    /// withdrawal logs were emitted.
+    /// @param withdrawalLogsBatchNumber the batch number where the withdrawal logs were emitted.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs.
     event WithdrawalsPublished(
-        uint256 indexed withdrawalLogsBlockNumber,
+        uint256 indexed withdrawalLogsBatchNumber,
         bytes32 indexed withdrawalsLogsMerkleRoot
     );
 
@@ -58,16 +57,10 @@ interface ICommonBridge {
         bytes data;
     }
 
-    /// @notice Method to retrieve all the deposit logs hashes.
-    /// @dev This method is used by the L2 L1_Watcher to get the remaining
-    /// deposit logs to be processed.
-    function getDepositLogs() external view returns (bytes32[] memory);
-
-    /// @notice Initializes the contract.
-    /// @dev This method is called only once after the contract is deployed.
-    /// @dev It sets the OnChainProposer address.
-    /// @param onChainProposer the address of the OnChainProposer contract.
-    function initialize(address onChainProposer) external;
+    /// @notice Method to retrieve all the pending deposit logs hashes.
+    /// @dev This method is used by the L2 L1_Watcher to get the pending deposit
+    /// logs to be processed.
+    function getPendingDepositLogs() external view returns (bytes32[] memory);
 
     /// @notice Method that starts an L2 ETH deposit process.
     /// @dev The deposit process starts here by emitting a DepositInitiated
@@ -76,36 +69,46 @@ interface ICommonBridge {
     /// @param depositValues the values needed to create the deposit.
     function deposit(DepositValues calldata depositValues) external payable;
 
-    /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.
-    /// @param number of deposit logs to retrieve the versioned hash.
-    function getDepositLogsVersionedHash(
+    /// @notice Method to retrieve the versioned hash of the first `number`
+    /// pending deposit logs.
+    /// @param number of pending deposit logs to retrieve the versioned hash.
+    function getPendingDepositLogsVersionedHash(
         uint16 number
     ) external view returns (bytes32);
 
-    /// @notice Remove deposit from depositLogs queue.
-    /// @dev This method is used by the L2 OnChainOperator to remove the deposit
-    /// logs from the queue after the deposit is verified.
-    /// @param number of deposit logs to remove.
+    /// @notice Remove pending deposit from the pendingDepositLogs queue.
+    /// @dev This method is used by the L2 OnChainOperator to remove the pending
+    /// deposit logs from the queue after the deposit is verified.
+    /// @param number of pending deposit logs to remove.
     /// As deposits are processed in order, we don't need to specify
-    /// the deposit logs to remove, only the number of them.
-    function removeDepositLogs(uint16 number) external;
+    /// the pending deposit logs to remove, only the number of them.
+    function removePendingDepositLogs(uint16 number) external;
+
+    /// @notice Method to retrieve the merkle root of the withdrawal logs of a
+    /// given block.
+    /// @dev This method is used by the L2 OnChainOperator at the verify stage.
+    /// @param blockNumber the block number in L2 where the withdrawal logs were
+    /// emitted.
+    /// @return the merkle root of the withdrawal logs of the given block.
+    function getWithdrawalLogsMerkleRoot(
+        uint256 blockNumber
+    ) external view returns (bytes32);
 
     /// @notice Publishes the L2 withdrawals on L1.
     /// @dev This method is used by the L2 OnChainOperator to publish the L2
-    /// withdrawals when an L2 block is committed.
-    /// @param withdrawalLogsBlockNumber the block number in L2 where the
-    /// withdrawal logs were emitted.
+    /// withdrawals when an L2 batch is committed.
+    /// @param withdrawalLogsBatchNumber the batch number in L2 where the withdrawal logs were emitted.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs.
     function publishWithdrawals(
-        uint256 withdrawalLogsBlockNumber,
+        uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) external;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:
-    /// - The l2WithdrawalBlockNumber was committed. If the given block was not
+    /// - The l2WithdrawalBatchNumber was committed. If the given batch was not
     /// committed, this means that the withdrawal was not published on L1.
-    /// - The l2WithdrawalBlockNumber was verified. If the given block was not
+    /// - The l2WithdrawalBatchNumber was verified. If the given batch was not
     /// verified, this means that the withdrawal claim was not enabled.
     /// - The withdrawal was not claimed yet. This is to avoid double claims.
     /// - The withdrawal proof is valid. This is, there exists a merkle path
@@ -121,12 +124,12 @@ interface ICommonBridge {
     /// This is the index of the withdraw transaction relative to the block's
     /// withdrawal transctions.
     /// A pseudocode would be [tx if tx is withdrawx for tx in block.txs()].index(leaf_tx).
-    /// @param l2WithdrawalBlockNumber the block number where the withdrawal log
+    /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawal(
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
-        uint256 l2WithdrawalBlockNumber,
+        uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;

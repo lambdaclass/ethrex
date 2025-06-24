@@ -1,8 +1,8 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use super::utils::node_hash_to_fixed_size;
-use ethrex_trie::error::TrieError;
 use ethrex_trie::TrieDB;
+use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, DupSort, Encodable};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
@@ -37,23 +37,13 @@ where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
         txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
             .map_err(TrieError::DbError)
     }
 
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        txn.upsert::<T>(
-            (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
-            value,
-        )
-        .map_err(TrieError::DbError)?;
-        txn.commit().map_err(TrieError::DbError)
-    }
-
-    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
             txn.upsert::<T>(
@@ -82,9 +72,10 @@ mod test {
     fn simple_addition() {
         let inner_db = new_db::<Nodes>();
         let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
-        assert_eq!(db.get("hello".into()).unwrap(), None);
-        db.put("hello".into(), "value".into()).unwrap();
-        assert_eq!(db.get("hello".into()).unwrap(), Some("value".into()));
+        let key = NodeHash::from_encoded_raw(b"hello");
+        assert_eq!(db.get(key).unwrap(), None);
+        db.put(key, "value".into()).unwrap();
+        assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
     #[test]
@@ -92,9 +83,10 @@ mod test {
         let inner_db = new_db::<Nodes>();
         let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32]);
         let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32]);
-        db_a.put("hello".into(), "hello!".into()).unwrap();
-        db_b.put("hello".into(), "go away!".into()).unwrap();
-        assert_eq!(db_a.get("hello".into()).unwrap(), Some("hello!".into()));
-        assert_eq!(db_b.get("hello".into()).unwrap(), Some("go away!".into()));
+        let key = NodeHash::from_encoded_raw(b"hello");
+        db_a.put(key, "hello!".into()).unwrap();
+        db_b.put(key, "go away!".into()).unwrap();
+        assert_eq!(db_a.get(key).unwrap(), Some("hello!".into()));
+        assert_eq!(db_b.get(key).unwrap(), Some("go away!".into()));
     }
 }

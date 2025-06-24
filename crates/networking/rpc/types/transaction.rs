@@ -1,10 +1,10 @@
+use crate::utils::RpcErr;
 use ethrex_common::{
-    serde_utils,
+    Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
         LegacyTransaction, PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
     },
-    Address, H256,
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
@@ -15,33 +15,33 @@ use serde::{Deserialize, Serialize};
 pub struct RpcTransaction {
     #[serde(flatten)]
     pub tx: Transaction,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    block_number: BlockNumber,
+    #[serde(with = "serde_utils::u64::hex_str_opt")]
+    block_number: Option<BlockNumber>,
     block_hash: BlockHash,
     from: Address,
     pub hash: H256,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    transaction_index: u64,
+    #[serde(with = "serde_utils::u64::hex_str_opt")]
+    transaction_index: Option<u64>,
 }
 
 impl RpcTransaction {
     pub fn build(
         tx: Transaction,
-        block_number: BlockNumber,
+        block_number: Option<BlockNumber>,
         block_hash: BlockHash,
-        transaction_index: usize,
-    ) -> Self {
-        let from = tx.sender();
+        transaction_index: Option<usize>,
+    ) -> Result<Self, RpcErr> {
+        let from = tx.sender()?;
         let hash = tx.compute_hash();
-        let transaction_index = transaction_index as u64;
-        RpcTransaction {
+        let transaction_index = transaction_index.map(|n| n as u64);
+        Ok(RpcTransaction {
             tx,
             block_number,
             block_hash,
             from,
             hash,
             transaction_index,
-        }
+        })
     }
 }
 

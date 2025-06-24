@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
+use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
 use ethrex_rlp::{
-    constants::RLP_NULL,
     decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
@@ -15,19 +15,7 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use lazy_static::lazy_static;
-
-lazy_static! {
-    // Keccak256(""), represents the code hash for an account without code
-    pub static ref EMPTY_KECCACK_HASH: H256 = H256::from_slice(&hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470").unwrap());
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
-            Keccak256::new()
-                .chain_update([RLP_NULL])
-                .finalize()
-                .as_slice(),
-        );
-}
+use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
 
 #[allow(unused)]
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +154,43 @@ impl From<&GenesisAccount> for AccountState {
             storage_root: compute_storage_root(&value.storage),
             code_hash: code_hash(&value.code),
         }
+    }
+}
+
+impl Account {
+    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
+        Self {
+            info: AccountInfo {
+                balance,
+                code_hash: keccak(code.as_ref()).0.into(),
+                nonce,
+            },
+            code,
+            storage,
+        }
+    }
+
+    pub fn has_nonce(&self) -> bool {
+        self.info.nonce != 0
+    }
+
+    pub fn has_code(&self) -> bool {
+        self.info.code_hash != *EMPTY_KECCACK_HASH
+    }
+
+    pub fn has_code_or_nonce(&self) -> bool {
+        self.has_code() || self.has_nonce()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.info.balance.is_zero()
+            && self.info.nonce == 0
+            && self.info.code_hash == *EMPTY_KECCACK_HASH
+    }
+
+    pub fn set_code(&mut self, code: Bytes) {
+        self.info.code_hash = keccak(code.as_ref()).0.into();
+        self.code = code;
     }
 }
 

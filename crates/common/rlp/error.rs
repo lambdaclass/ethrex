@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 // TODO: improve errors
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum RLPDecodeError {
     #[error("InvalidLength")]
     InvalidLength,
@@ -15,6 +15,8 @@ pub enum RLPDecodeError {
     UnexpectedString,
     #[error("InvalidCompression")]
     InvalidCompression(#[from] snap::Error),
+    #[error("IncompatibleProtocol")]
+    IncompatibleProtocol,
     #[error("{0}")]
     Custom(String),
 }

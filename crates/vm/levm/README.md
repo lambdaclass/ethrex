@@ -10,13 +10,6 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 | Cancun         | ✅     |
 | Shanghai       | ✅     |
 | Paris (Merge)  | ✅     |
-| London         | ✅     |
-| Berlin         | ✅     |
-| Istanbul       | ✅     |
-| Constantinople | ✅     |
-| Byzantium      | ✅     |
-| Homestead      | ✅     |
-| Frontier       | ✅     |
 
 ## Roadmap
 
@@ -24,10 +17,9 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 | --- | ------------------------------- | ------ |
 | 1   | Support Merge->Cancun forks     | ✅     |
 | 2   | Integrate `ethrex L1` <> `levm` | 🏗️     |
-| 3   | Support pre Merge forks         | 🏗     |
-| 4   | Support Pectra upgrade          | 🏗️     |
-| 5   | Integrate `ethrex L2` <> `levm` | ❌     |
-| 6   | Performance                     | 🏗️     |
+| 3   | Support Pectra upgrade          | 🏗️     |
+| 4   | Integrate `ethrex L2` <> `levm` | ❌     |
+| 5   | Performance                     | 🏗️     |
 
 ### Milestone 1: Support Merge->Cancun forks
 
@@ -53,21 +45,7 @@ Nowadays `ethrex L1` uses `revm` as the backend VM. We will replace `revm` with 
 | We switch which EVM `ethrex` uses using a `--vm` CLI flag                                                                                                            | ✅     |
 | We have a `EVM` trait or similar to standardize the VM interface. This trait should be implemented by `levm` and `revm`                                              | 🏗     |
 
-### Milestone 3: Support pre Merge forks
-
-This extends our current implementation so we support all the forks from Frontier to Merge.
-
-| Task Description                  | Status |
-| --------------------------------- | ------ |
-| Make London EF tests pass         | ✅     |
-| Make Berlin EF tests pass         | ✅     |
-| Make Istanbul EF tests pass       | 🏗     |
-| Make Constantinople EF tests pass | 🏗     |
-| Make Byzantium EF tests pass      | 🏗     |
-| Make Homestead EF tests pass      | 🏗     |
-| Make Frontier EF tests pass       | 🏗     |
-
-### Milestone 4: Support Pectra upgrade
+### Milestone 3: Support Pectra upgrade
 
 > [!NOTE]
 > This milestone can be started after we finish milestone 1, and can be done in parallel with milestones 2, 3, and 5 (speaking in terms of the current priorities).
@@ -89,12 +67,12 @@ There are a lot of EIPs schedule to include in this upgrade but for `levm` we'll
 | Implement EIP-7691        | ✅️     |
 | Implement EIP-7702        | ✅️     |
 | Implement EIP-7840        | ✅️     |
-| Make Prague EF tests pass | 🏗     |
+| Make Prague EF tests pass | ✅️     |
 
-### Milestone 5: Integrate `ethrex L2` <> `levm`
+### Milestone 4: Integrate `ethrex L2` <> `levm`
 
 > [!NOTE]
-> This milestone can be started after we finish milestone 2, and can be done in parallel with milestones 3, and 4. It is placed at this point in the roadmap because of the current priorities.
+> This milestone can be started after we finish milestone 2, and can be done in parallel with milestone 3. It is placed at this point in the roadmap because of the current priorities.
 
 Once we support all the forks from Merge to Cancun and fully integrate `ethrex L1` with `levm`, we can start integrating with `ethrex L2`.
 
@@ -109,10 +87,10 @@ We'll also have to refactor (and probably re-write) some precompiles implementat
 | The L2 integration test pass                                              | ❌     |
 | The prover tests pass                                                     | ❌     |
 
-### Milestone 6: Performance
+### Milestone 5: Performance
 
 > [!NOTE]
-> This milestone can be started after we finish milestone 1, and can be done in parallel with milestones 2, 3, 4, and 5. It is placed at this point in the roadmap because of the current priorities.
+> This milestone can be started after we finish milestone 1, and can be done in parallel with milestones 2, 3, and 4. It is placed at this point in the roadmap because of the current priorities.
 
 This is improving the performance of the VM.
 
@@ -134,25 +112,23 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 > [!NOTE]
 > This is updated as of this README's last update. For the most up-to-date status, please run the tests locally.
 
-**Total**: 11322/14408 (78.58%)
+**Total**: 18909/18909 (100.00%)
 
-**Prague**: 2373/2373 (100.00%)
-**Cancun**: 3579/3579 (100.00%)
-**Shanghai**: 221/221 (100.00%)
-**Byzantium**: 1795/2330 (77.04%)
-**Berlin**: 2/35 (5.71%)
-**Constantinople**: 1689/2439 (69.25%)
-**Paris**: 62/62 (100.00%)
-**Homestead**: 612/1324 (46.22%)
-**Istanbul**: 34/35 (97.14%)
-**London**: 39/39 (100.00%)
-**Frontier**: 149/742 (20.08%)
+**Prague** 5201/5201 (100.00%)
+**Cancun**: 7608/7608 (100.00%)
+**Shanghai**: 3214/3214 (100.00%)
+**Paris**: 2886/2886 (100.00%)
 
-### How to run EF tests locally
+
+### How to run EF tests 
 
 ```
 make download-evm-ef-tests run-evm-ef-tests QUIET=true
 ```
+
+For more information on running EF state tests go [here](../../../cmd/ef_tests/state/README.md).
+
+For running EF blockchain tests go [here](../../../cmd/ef_tests/blockchain/README.md).
 
 ## Benchmarks
 
@@ -229,9 +205,15 @@ make run-hive-debug-levm
 
 ## Performance metrics
 
+To run either flamegraph or samply on the EF tests you have to download the tests first:
+
+```Shell
+make download-state-tests
+```
+
 ### To run Flamegraph on the Ethereum Foundation tests
 
-First install Flamegraph
+First install Flamegraph 
 
 ```Shell
 cargo install flamegraph

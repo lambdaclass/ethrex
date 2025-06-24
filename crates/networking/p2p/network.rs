@@ -1,22 +1,19 @@
 use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::p2p::Capability;
+use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
-use crate::types::Node;
+use crate::types::{Node, NodeRecord};
 use crate::{
-    discv4::{
-        helpers::current_unix_time,
-        server::{DiscoveryError, Discv4Server},
-    },
-    rlpx::utils::log_peer_error,
+    discv4::server::{DiscoveryError, Discv4Server},
+    rlpx::utils::log_peer_debug,
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::H512;
+use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
+    elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
 };
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -32,9 +29,8 @@ use tracing::{debug, error, info};
 // we should bump this limit.
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
 
-pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
-    let local_node_id = node_id_from_signing_key(&signer);
-    Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
+pub fn peer_table(node_id: H256) -> Arc<Mutex<KademliaTable>> {
+    Arc::new(Mutex::new(KademliaTable::new(node_id)))
 }
 
 #[derive(Debug)]
@@ -51,36 +47,52 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: RLPxConnBroadcastSender,
     pub local_node: Node,
-    pub enr_seq: u64,
+    pub local_node_record: Arc<Mutex<NodeRecord>>,
+    pub client_version: String,
 }
 
-pub async fn start_network(
-    local_node: Node,
-    tracker: TaskTracker,
-    bootnodes: Vec<Node>,
-    signer: SigningKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
-    storage: Store,
-    blockchain: Arc<Blockchain>,
-) -> Result<(), NetworkError> {
-    let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
-        tokio::task::Id,
-        Arc<RLPxMessage>,
-    )>(MAX_MESSAGES_TO_BROADCAST);
+impl P2PContext {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        local_node: Node,
+        local_node_record: Arc<Mutex<NodeRecord>>,
+        tracker: TaskTracker,
+        signer: SigningKey,
+        peer_table: Arc<Mutex<KademliaTable>>,
+        storage: Store,
+        blockchain: Arc<Blockchain>,
+        client_version: String,
+    ) -> Self {
+        let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
+            tokio::task::Id,
+            Arc<RLPxMessage>,
+        )>(MAX_MESSAGES_TO_BROADCAST);
 
-    let context = P2PContext {
-        local_node,
-        // Note we are passing the current timestamp as the sequence number
-        // This is because we are not storing our local_node updates in the db
-        // see #1756
-        enr_seq: current_unix_time(),
-        tracker,
-        signer,
-        table: peer_table,
-        storage,
-        blockchain,
-        broadcast: channel_broadcast_send_end,
-    };
+        P2PContext {
+            local_node,
+            local_node_record,
+            tracker,
+            signer,
+            table: peer_table,
+            storage,
+            blockchain,
+            broadcast: channel_broadcast_send_end,
+            client_version,
+        }
+    }
+
+    pub async fn set_fork_id(&self) -> Result<(), String> {
+        if let Ok(fork_id) = self.storage.get_fork_id().await {
+            self.local_node_record
+                .lock()
+                .await
+                .set_fork_id(&fork_id, &self.signer)?
+        }
+        Ok(())
+    }
+}
+
+pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
     let discovery = Discv4Server::try_new(context.clone())
         .await
         .map_err(NetworkError::DiscoveryStart)?;
@@ -136,7 +148,7 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
     let table = context.table.clone();
     match handshake::as_receiver(context, peer_addr, stream).await {
-        Ok(mut conn) => conn.start(table).await,
+        Ok(mut conn) => conn.start(table, true).await,
         Err(e) => {
             debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
@@ -148,17 +160,17 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
         Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            context.table.lock().await.replace_peer(node.node_id);
+            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
+            context.table.lock().await.replace_peer(node.node_id());
             return;
         }
     };
     let table = context.table.clone();
-    match handshake::as_initiator(context, node, stream).await {
-        Ok(mut conn) => conn.start(table).await,
+    match handshake::as_initiator(context, node.clone(), stream).await {
+        Ok(mut conn) => conn.start(table, false).await,
         Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            table.lock().await.replace_peer(node.node_id);
+            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
+            table.lock().await.replace_peer(node.node_id());
         }
     };
 }
@@ -167,7 +179,7 @@ async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, io::Error> {
     TcpSocket::new_v4()?.connect(addr).await
 }
 
-pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
+pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
     let public_key = PublicKey::from(signer.verifying_key());
     let encoded = public_key.to_encoded_point(false);
     H512::from_slice(&encoded.as_bytes()[1..])
@@ -190,10 +202,14 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             .iter()
             .filter(|peer| -> bool {
                 peer.channels.as_ref().is_some()
-                    && peer.supported_capabilities.contains(&Capability::Snap)
+                    && SUPPORTED_SNAP_CAPABILITIES
+                        .iter()
+                        .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
+        info!(
+            "Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}"
+        );
         interval.tick().await;
     }
 }

@@ -5,18 +5,22 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{tx_fields::*, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind},
     H256, U256,
+    types::{
+        AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
+        tx_fields::*,
+    },
 };
 use ethrex_levm::{
+    EVMConfig, Environment,
+    db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{EVMConfig, GeneralizedDatabase, VM},
-    Environment,
+    tracing::LevmCallTracer,
+    vm::VM,
 };
-use ethrex_storage::AccountUpdate;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
-use std::collections::HashMap;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -52,7 +56,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                     levm_cache,
                 )) => {
                     ef_test_report_fork.register_post_state_validation_failure(
-                        transaction_report,
+                        *transaction_report,
                         reason,
                         *vector,
                         levm_cache,
@@ -76,6 +80,11 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                         "This case should not happen".to_owned(),
                     )));
                 }
+                Err(EFTestRunnerError::TestsFailed) => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
+                }
             }
         }
         ef_test_report.register_fork_result(*fork, ef_test_report_fork);
@@ -89,37 +98,19 @@ pub async fn run_ef_test_tx(
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     let mut db = utils::load_initial_state_levm(test).await;
-    let mut levm = match prepare_vm_for_tx(vector, test, fork, &mut db) {
-        Ok(levm) => levm,
-        Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
-            let post = test
-                .post
-                .forks
-                .get(fork)
-                .unwrap()
-                .iter()
-                .find(|post| {
-                    post.indexes.get("data").unwrap().as_usize() == vector.0
-                        && post.indexes.get("gas").unwrap().as_usize() == vector.1
-                        && post.indexes.get("value").unwrap().as_usize() == vector.2
-                })
-                .unwrap();
-            if post.expect_exception.as_ref().is_some_and(|exceptions| {
-                exceptions
-                    .iter()
-                    .any(|e| matches!(e, TransactionExpectedException::Type4TxContractCreation))
-            }) {
-                return Ok(());
-            }
-            return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
-                "error in tx type 4 being a create type, not  found in expected exceptions"
-                    .to_string(),
-            ));
+    let vm_creation_result = prepare_vm_for_tx(vector, test, fork, &mut db);
+    // For handling edge case in which there's a create in a Type 4 Transaction, that sadly is detected before actual execution of the vm, when building the "Transaction" for creating a new instance of vm.
+    let levm_execution_result = match vm_creation_result {
+        Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => Err(VMError::TxValidation(
+            TxValidationError::Type4TxContractCreation,
+        )),
+        Err(error) => return Err(error),
+        Ok(mut levm) => {
+            ensure_pre_state(&levm, test)?;
+            levm.execute()
         }
-        Err(e) => return Err(e),
     };
-    ensure_pre_state(&levm, test)?;
-    let levm_execution_result = levm.execute();
+
     ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
     Ok(())
 }
@@ -181,10 +172,9 @@ pub fn prepare_vm_for_tx<'a>(
         }),
     };
 
-    VM::new(
+    Ok(VM::new(
         Environment {
             origin: test_tx.sender,
-            refunded_gas: 0,
             gas_limit: test_tx.gas_limit,
             config,
             block_number: test.env.current_number,
@@ -201,44 +191,42 @@ pub fn prepare_vm_for_tx<'a>(
             tx_max_priority_fee_per_gas: test_tx.max_priority_fee_per_gas,
             tx_max_fee_per_gas: test_tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: test_tx.max_fee_per_blob_gas,
-            tx_nonce: test_tx.nonce.try_into().map_err(|_| {
-                EFTestRunnerError::VMInitializationFailed("Nonce to large".to_string())
-            })?,
+            tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
-            transient_storage: HashMap::new(),
+            is_privileged: false,
         },
         db,
         &tx,
-    )
-    .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))
+        LevmCallTracer::disabled(),
+    ))
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account_info(*address).map_err(|e| {
+        let account = world_state.get_account(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
                 "Failed to get account info when ensuring pre state: {}",
                 e
             )))
         })?;
         ensure_pre_state_condition(
-            account.nonce == pre_value.nonce.as_u64(),
+            account.info.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.nonce, account.nonce
+                address, pre_value.nonce, account.info.nonce
             ),
         )?;
         ensure_pre_state_condition(
-            account.balance == pre_value.balance,
+            account.info.balance == pre_value.balance,
             format!(
                 "Balance mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.balance, account.balance
+                address, pre_value.balance, account.info.balance
             ),
         )?;
         for (k, v) in &pre_value.storage {
             let storage_slot = world_state
-                .get_storage_slot(*address, H256::from_slice(&k.to_big_endian()))
+                .get_storage_value(*address, H256::from_slice(&k.to_big_endian()))
                 .unwrap();
             ensure_pre_state_condition(
                 &storage_slot == v,
@@ -249,12 +237,12 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            keccak(account.bytecode.clone()) == keccak(pre_value.code.as_ref()),
+            account.info.code_hash == keccak(pre_value.code.as_ref()),
             format!(
                 "Code hash mismatch for account {:#x}: expected {}, got {}",
                 address,
                 keccak(pre_value.code.as_ref()),
-                keccak(account.bytecode)
+                account.info.code_hash
             ),
         )?;
     }
@@ -327,6 +315,9 @@ fn exception_is_expected(
             ) | (
                 TransactionExpectedException::Type4TxContractCreation,
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
+            ) | (
+                TransactionExpectedException::Other,
+                VMError::TxValidation(_) //TODO: Decide whether to support more specific errors, I think this is enough.
             )
         )
     })
@@ -339,54 +330,55 @@ pub async fn ensure_post_state(
     fork: &Fork,
     db: &mut GeneralizedDatabase,
 ) -> Result<(), EFTestRunnerError> {
+    let cache = db.current_accounts_state.clone();
     match levm_execution_result {
         Ok(execution_report) => {
             match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exceptions) => {
-                    // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
-                    // Here I use a match bc if there is no second position I just print the first one.
-                    let error_reason = match expected_exceptions.get(1) {
-                        Some(second_exception) => {
-                            format!(
-                                "Expected exception: {:?} or {:?}",
-                                expected_exceptions.first().unwrap(),
-                                second_exception
-                            )
-                        }
-                        None => {
-                            format!(
-                                "Expected exception: {:?}",
-                                expected_exceptions.first().unwrap()
-                            )
-                        }
-                    };
+                    let error_reason = format!("Expected exception: {:?}", expected_exceptions);
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        execution_report.clone(),
+                        Box::new(execution_report.clone()),
                         error_reason,
-                        db.cache.clone(),
+                        cache,
                     ));
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let levm_account_updates =
-                        backends::levm::LEVM::get_state_transitions(db, *fork).map_err(|_| {
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
+                        .map_err(|_| {
                             InternalError::Custom(
                                 "Error at LEVM::get_state_transitions in ensure_post_state()"
                                     .to_owned(),
                             )
                         })?;
-                    let pos_state_root = post_state_root(&levm_account_updates, test).await;
-                    let expected_post_state_root_hash =
-                        test.post.vector_post_value(vector, *fork).hash;
-                    if expected_post_state_root_hash != pos_state_root {
-                        let error_reason = format!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
+                    let vector_post_value = test.post.vector_post_value(vector, *fork);
+
+                    // 1. Compare the post-state root hash with the expected post-state root hash
+                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            execution_report.clone(),
-                            error_reason,
-                            db.cache.clone(),
+                            Box::new(execution_report.clone()),
+                            "Post-state root mismatch".to_string(),
+                            cache,
+                        ));
+                    }
+
+                    // 2. Compare keccak of logs with test's expected logs hash.
+
+                    // Do keccak of the RLP of logs
+                    let keccak_logs = {
+                        let logs = execution_report.logs.clone();
+                        let mut encoded_logs = Vec::new();
+                        logs.encode(&mut encoded_logs);
+                        keccak(encoded_logs)
+                    };
+
+                    if keccak_logs != vector_post_value.logs {
+                        return Err(EFTestRunnerError::FailedToEnsurePostState(
+                            Box::new(execution_report.clone()),
+                            "Logs mismatch".to_string(),
+                            cache,
                         ));
                     }
                 }
@@ -396,28 +388,13 @@ pub async fn ensure_post_state(
             match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was unsuccessful and an exception was expected.
                 Some(expected_exceptions) => {
-                    // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
-                    // So in exception_is_expected we find out if the obtained error matches one of the expected
                     if !exception_is_expected(expected_exceptions.clone(), err.clone()) {
-                        let error_reason = match expected_exceptions.get(1) {
-                            Some(second_exception) => {
-                                format!(
-                                    "Returned exception is not the expected: Returned {:?} but expected {:?} or {:?}",
-                                    err,
-                                    expected_exceptions.first().unwrap(),
-                                    second_exception
-                                )
-                            }
-                            None => {
-                                format!(
-                                    "Returned exception is not the expected: Returned {:?} but expected {:?}",
-                                    err,
-                                    expected_exceptions.first().unwrap()
-                                )
-                            }
-                        };
+                        let error_reason = format!(
+                            "Returned exception {:?} does not match expected {:?}",
+                            err, expected_exceptions
+                        );
                         return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
-                            format!("Post-state condition failed: {error_reason}"),
+                            error_reason,
                         ));
                     }
                 }
@@ -432,12 +409,11 @@ pub async fn ensure_post_state(
 }
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (initial_state, block_hash) = utils::load_initial_state(test).await;
-    initial_state
-        .database()
-        .unwrap()
-        .apply_account_updates(block_hash, account_updates)
+    let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+    let ret_account_updates_batch = store
+        .apply_account_updates_batch(block_hash, account_updates)
         .await
         .unwrap()
-        .unwrap()
+        .unwrap();
+    ret_account_updates_batch.state_trie_hash
 }

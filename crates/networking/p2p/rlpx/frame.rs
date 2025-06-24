@@ -5,8 +5,8 @@ use super::{
     utils::ecdh_xchng,
 };
 use aes::{
-    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
     Aes256Enc,
+    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
 };
 use bytes::{Buf, BytesMut};
 use ethrex_common::{H128, H256};
@@ -32,9 +32,14 @@ impl RLPxCodec {
         local_state: &LocalState,
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
-    ) -> Self {
-        let ephemeral_key_secret =
-            ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key);
+    ) -> Result<Self, RLPxError> {
+        let ephemeral_key_secret = ecdh_xchng(
+            &local_state.ephemeral_key,
+            &remote_state.ephemeral_key,
+        )
+        .map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated ephemeral key secret: {error}"))
+        })?;
 
         // shared-secret = keccak256(ephemeral-key || keccak256(nonce || initiator-nonce))
         let shared_secret =
@@ -57,13 +62,13 @@ impl RLPxCodec {
 
         let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
         let egress_aes = ingress_aes.clone();
-        Self {
+        Ok(Self {
             mac_key,
             ingress_mac,
             egress_mac,
             ingress_aes,
             egress_aes,
-        }
+        })
     }
 }
 
@@ -113,9 +118,11 @@ impl Decoder for RLPxCodec {
                 .map_err(|_| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
         );
 
-        // TODO: replace these assert_eq! by actual errors
-        // https://github.com/lambdaclass/ethrex/issues/1748
-        assert_eq!(header_mac, expected_header_mac.0);
+        if header_mac != expected_header_mac.0 {
+            return Err(RLPxError::InvalidMessageFrame(
+                "Mismatched header mac".to_string(),
+            ));
+        }
 
         let header_text = header_ciphertext;
         // Use temporary value as it can be discarded if the buffer does not contain yet the full message
@@ -175,9 +182,11 @@ impl Decoder for RLPxCodec {
             .try_into()
             .map_err(|_| RLPxError::CryptographyError("Invalid frame mac".to_owned()))?;
 
-        // TODO: replace these assert_eq! by actual errors
-        // https://github.com/lambdaclass/ethrex/issues/1748
-        assert_eq!(frame_mac, expected_frame_mac);
+        if frame_mac != expected_frame_mac {
+            return Err(RLPxError::InvalidMessageFrame(
+                "Mismatched frame mac".to_string(),
+            ));
+        }
 
         // decrypt frame
         self.ingress_aes.apply_keystream(frame_ciphertext);
@@ -195,10 +204,7 @@ impl Decoder for RLPxCodec {
                 if buf.is_empty() {
                     Ok(None)
                 } else {
-                    Err(
-                        std::io::Error::new(std::io::ErrorKind::Other, "bytes remaining on stream")
-                            .into(),
-                    )
+                    Err(std::io::Error::other("bytes remaining on stream").into())
                 }
             }
         }

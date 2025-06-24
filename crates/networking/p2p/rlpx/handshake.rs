@@ -6,12 +6,15 @@ use crate::{
         connection::{LocalState, RLPxConnection, RemoteState},
         error::RLPxError,
         frame::RLPxCodec,
-        utils::{ecdh_xchng, id2pubkey, kdf, log_peer_debug, pubkey2id, sha256, sha256_hmac},
+        utils::{
+            compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
+            sha256_hmac,
+        },
     },
     types::Node,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
-use ethrex_common::{Signature, H128, H256, H512};
+use ethrex_common::{H128, H256, H512, Signature};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -19,9 +22,9 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use k256::{
+    PublicKey, SecretKey,
     ecdsa::{self, RecoveryId, SigningKey, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
-    PublicKey, SecretKey,
 };
 use rand::Rng;
 use sha3::{Digest, Keccak256};
@@ -41,16 +44,16 @@ where
     S: AsyncRead + AsyncWrite + std::marker::Unpin,
 {
     let remote_state = receive_auth(&context.signer, &mut stream).await?;
-    let local_state = send_ack(remote_state.node_id, &mut stream).await?;
+    let local_state = send_ack(remote_state.public_key, &mut stream).await?;
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-    let node = Node {
-        ip: peer_addr.ip(),
-        udp_port: peer_addr.port(),
-        tcp_port: peer_addr.port(),
-        node_id: remote_state.node_id,
-    };
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    let node = Node::new(
+        peer_addr.ip(),
+        peer_addr.port(),
+        peer_addr.port(),
+        remote_state.public_key,
+    );
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
     log_peer_debug(&node, "Completed handshake as receiver!");
     Ok(RLPxConnection::new(
         context.signer,
@@ -59,6 +62,7 @@ where
         codec,
         context.storage,
         context.blockchain,
+        context.client_version,
         context.broadcast,
     ))
 }
@@ -71,13 +75,13 @@ pub(crate) async fn as_initiator<S>(
 where
     S: AsyncRead + AsyncWrite + std::marker::Unpin,
 {
-    let local_state = send_auth(&context.signer, node.node_id, &mut stream).await?;
-    let remote_state = receive_ack(&context.signer, node.node_id, &mut stream).await?;
+    let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
+    let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
     // Local node is initator
     // keccak256(nonce || initiator-nonce)
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
     log_peer_debug(&node, "Completed handshake as initiator!");
     Ok(RLPxConnection::new(
         context.signer,
@@ -86,17 +90,18 @@ where
         codec,
         context.storage,
         context.blockchain,
+        context.client_version,
         context.broadcast,
     ))
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     signer: &SigningKey,
-    remote_node_id: H512,
+    remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, RLPxError> {
     let secret_key: SecretKey = signer.clone().into();
-    let peer_pk = id2pubkey(remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+    let peer_pk = compress_pubkey(remote_public_key).ok_or(RLPxError::InvalidPeerId())?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
@@ -112,10 +117,10 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
 }
 
 async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
-    remote_node_id: H512,
+    remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, RLPxError> {
-    let peer_pk = id2pubkey(remote_node_id).ok_or(RLPxError::InvalidPeerId())?;
+    let peer_pk = compress_pubkey(remote_public_key).ok_or(RLPxError::InvalidPeerId())?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::random(&mut rand::thread_rng());
@@ -146,7 +151,7 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
 
     Ok(RemoteState {
-        node_id: auth.node_id,
+        public_key: auth.public_key,
         nonce: auth.nonce,
         ephemeral_key: remote_ephemeral_key,
         init_message: msg_bytes.to_owned(),
@@ -155,7 +160,7 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
 
 async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     signer: &SigningKey,
-    remote_node_id: H512,
+    remote_public_key: H512,
     stream: S,
 ) -> Result<RemoteState, RLPxError> {
     let secret_key: SecretKey = signer.clone().into();
@@ -172,7 +177,7 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
         .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
 
     Ok(RemoteState {
-        node_id: remote_node_id,
+        public_key: remote_public_key,
         nonce: ack.nonce,
         ephemeral_key: remote_ephemeral_key,
         init_message: msg_bytes.to_owned(),
@@ -210,10 +215,12 @@ fn encode_auth_message(
     remote_static_pubkey: &PublicKey,
     local_ephemeral_key: &SecretKey,
 ) -> Result<Vec<u8>, RLPxError> {
-    let node_id = pubkey2id(&static_key.public_key());
+    let public_key = decompress_pubkey(&static_key.public_key());
 
     // Derive a shared secret from the static keys.
-    let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey);
+    let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey).map_err(|error| {
+        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+    })?;
 
     // Create the signature included in the message.
     let signature = sign_shared_secret(
@@ -223,7 +230,7 @@ fn encode_auth_message(
     )?;
 
     // Compose the auth message.
-    let auth = AuthMessage::new(signature, node_id, local_nonce);
+    let auth = AuthMessage::new(signature, public_key, local_nonce);
 
     // RLP-encode the message.
     let encoded_auth_msg = auth.encode_to_vec();
@@ -243,8 +250,10 @@ fn decode_auth_message(
     let (auth, _padding) = AuthMessage::decode_unfinished(&payload)?;
 
     // Derive a shared secret from the static keys.
-    let peer_pk = id2pubkey(auth.node_id).ok_or(RLPxError::InvalidPeerId())?;
-    let static_shared_secret = ecdh_xchng(static_key, &peer_pk);
+    let peer_pk = compress_pubkey(auth.public_key).ok_or(RLPxError::InvalidPeerId())?;
+    let static_shared_secret = ecdh_xchng(static_key, &peer_pk).map_err(|error| {
+        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+    })?;
     let remote_ephemeral_key =
         retrieve_remote_ephemeral_key(static_shared_secret.into(), auth.nonce, auth.signature)?;
     Ok((auth, remote_ephemeral_key))
@@ -257,7 +266,10 @@ fn encode_ack_message(
     remote_static_pubkey: &PublicKey,
 ) -> Result<Vec<u8>, RLPxError> {
     // Compose the ack message.
-    let ack_msg = AckMessage::new(pubkey2id(&local_ephemeral_key.public_key()), local_nonce);
+    let ack_msg = AckMessage::new(
+        decompress_pubkey(&local_ephemeral_key.public_key()),
+        local_nonce,
+    );
 
     // RLP-encode the message.
     let encoded_ack_msg = ack_msg.encode_to_vec();
@@ -291,16 +303,22 @@ fn decrypt_message(
     let (c, d) = rest.split_at(rest.len() - 32);
 
     // Derive the message shared secret.
-    let shared_secret = ecdh_xchng(static_key, &PublicKey::from_sec1_bytes(pk)?);
+    let shared_secret =
+        ecdh_xchng(static_key, &PublicKey::from_sec1_bytes(pk)?).map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated shared secret: {error}"))
+        })?;
 
     // Derive the AES and MAC keys from the message shared secret.
     let mut buf = [0; 32];
-    kdf(&shared_secret, &mut buf);
+    kdf(&shared_secret, &mut buf).map_err(|error| {
+        RLPxError::CryptographyError(format!("Couldn't get keys from shared secret: {error}"))
+    })?;
     let aes_key = &buf[..16];
     let mac_key = sha256(&buf[16..]);
 
     // Verify the MAC.
-    let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data);
+    let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
     if d != expected_d {
         return Err(RLPxError::HandshakeError(String::from("Invalid MAC")));
     }
@@ -338,11 +356,15 @@ fn encrypt_message(
     let message_secret_key = SecretKey::random(&mut rng);
 
     // Derive a shared secret for this message.
-    let message_secret = ecdh_xchng(&message_secret_key, remote_static_pubkey);
+    let message_secret =
+        ecdh_xchng(&message_secret_key, remote_static_pubkey).map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated message secret:  {error}"))
+        })?;
 
     // Derive the AES and MAC keys from the message secret.
     let mut secret_keys = [0; 32];
-    kdf(&message_secret, &mut secret_keys);
+    kdf(&message_secret, &mut secret_keys)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
     let aes_key = &secret_keys[..16];
     let mac_key = sha256(&secret_keys[16..]);
 
@@ -354,7 +376,8 @@ fn encrypt_message(
 
     // Use the MAC secret to compute the MAC.
     let r_public_key = message_secret_key.public_key().to_encoded_point(false);
-    let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes);
+    let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
 
     // Return the message
     Ok([
@@ -399,8 +422,8 @@ pub(crate) struct AuthMessage {
     /// The signature of the message.
     /// The signed data is `static-shared-secret ^ initiator-nonce`.
     pub signature: Signature,
-    /// The node ID of the initiator.
-    pub node_id: H512,
+    /// The uncompressed node public key of the initiator.
+    pub public_key: H512,
     /// The nonce generated by the initiator.
     pub nonce: H256,
     /// The version of RLPx used by the sender.
@@ -409,10 +432,10 @@ pub(crate) struct AuthMessage {
 }
 
 impl AuthMessage {
-    pub fn new(signature: Signature, node_id: H512, nonce: H256) -> Self {
+    pub fn new(signature: Signature, public_key: H512, nonce: H256) -> Self {
         Self {
             signature,
-            node_id,
+            public_key,
             nonce,
             version: 5,
         }
@@ -423,7 +446,7 @@ impl RLPEncode for AuthMessage {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
             .encode_field(&self.signature)
-            .encode_field(&self.node_id)
+            .encode_field(&self.public_key)
             .encode_field(&self.nonce)
             .encode_field(&self.version)
             .finish()
@@ -435,14 +458,14 @@ impl RLPDecode for AuthMessage {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (signature, decoder) = decoder.decode_field("signature")?;
-        let (node_id, decoder) = decoder.decode_field("node_id")?;
+        let (public_key, decoder) = decoder.decode_field("public_key")?;
         let (nonce, decoder) = decoder.decode_field("nonce")?;
         let (version, decoder) = decoder.decode_field("version")?;
 
         let rest = decoder.finish_unchecked();
         let this = Self {
             signature,
-            node_id,
+            public_key,
             nonce,
             version,
         };
@@ -471,7 +494,7 @@ impl AckMessage {
     }
 
     pub fn get_ephemeral_pubkey(&self) -> Option<PublicKey> {
-        id2pubkey(self.ephemeral_pubkey)
+        compress_pubkey(self.ephemeral_pubkey)
     }
 }
 
@@ -511,13 +534,15 @@ mod tests {
     use hex_literal::hex;
     use k256::SecretKey;
 
-    use crate::rlpx::{handshake::decode_ack_message, utils::pubkey2id};
+    use crate::rlpx::{handshake::decode_ack_message, utils::decompress_pubkey};
 
     #[test]
     fn test_ack_decoding() {
         // This is the Ack₂ message from EIP-8.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-8.md
-        let msg = hex!("01ea0451958701280a56482929d3b0757da8f7fbe5286784beead59d95089c217c9b917788989470b0e330cc6e4fb383c0340ed85fab836ec9fb8a49672712aeabbdfd1e837c1ff4cace34311cd7f4de05d59279e3524ab26ef753a0095637ac88f2b499b9914b5f64e143eae548a1066e14cd2f4bd7f814c4652f11b254f8a2d0191e2f5546fae6055694aed14d906df79ad3b407d94692694e259191cde171ad542fc588fa2b7333313d82a9f887332f1dfc36cea03f831cb9a23fea05b33deb999e85489e645f6aab1872475d488d7bd6c7c120caf28dbfc5d6833888155ed69d34dbdc39c1f299be1057810f34fbe754d021bfca14dc989753d61c413d261934e1a9c67ee060a25eefb54e81a4d14baff922180c395d3f998d70f46f6b58306f969627ae364497e73fc27f6d17ae45a413d322cb8814276be6ddd13b885b201b943213656cde498fa0e9ddc8e0b8f8a53824fbd82254f3e2c17e8eaea009c38b4aa0a3f306e8797db43c25d68e86f262e564086f59a2fc60511c42abfb3057c247a8a8fe4fb3ccbadde17514b7ac8000cdb6a912778426260c47f38919a91f25f4b5ffb455d6aaaf150f7e5529c100ce62d6d92826a71778d809bdf60232ae21ce8a437eca8223f45ac37f6487452ce626f549b3b5fdee26afd2072e4bc75833c2464c805246155289f4");
+        let msg = hex!(
+            "01ea0451958701280a56482929d3b0757da8f7fbe5286784beead59d95089c217c9b917788989470b0e330cc6e4fb383c0340ed85fab836ec9fb8a49672712aeabbdfd1e837c1ff4cace34311cd7f4de05d59279e3524ab26ef753a0095637ac88f2b499b9914b5f64e143eae548a1066e14cd2f4bd7f814c4652f11b254f8a2d0191e2f5546fae6055694aed14d906df79ad3b407d94692694e259191cde171ad542fc588fa2b7333313d82a9f887332f1dfc36cea03f831cb9a23fea05b33deb999e85489e645f6aab1872475d488d7bd6c7c120caf28dbfc5d6833888155ed69d34dbdc39c1f299be1057810f34fbe754d021bfca14dc989753d61c413d261934e1a9c67ee060a25eefb54e81a4d14baff922180c395d3f998d70f46f6b58306f969627ae364497e73fc27f6d17ae45a413d322cb8814276be6ddd13b885b201b943213656cde498fa0e9ddc8e0b8f8a53824fbd82254f3e2c17e8eaea009c38b4aa0a3f306e8797db43c25d68e86f262e564086f59a2fc60511c42abfb3057c247a8a8fe4fb3ccbadde17514b7ac8000cdb6a912778426260c47f38919a91f25f4b5ffb455d6aaaf150f7e5529c100ce62d6d92826a71778d809bdf60232ae21ce8a437eca8223f45ac37f6487452ce626f549b3b5fdee26afd2072e4bc75833c2464c805246155289f4"
+        );
         let static_key_a = SecretKey::from_slice(&hex!(
             "49a7b37aa6f6645917e7b807e9d1c00d4fa71f18343b0d4122a4d2df64dd6fee"
         ))
@@ -526,7 +551,7 @@ mod tests {
         let expected_nonce_b =
             H256::from_str("559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd")
                 .unwrap();
-        let expected_ephemeral_key_b = pubkey2id(
+        let expected_ephemeral_key_b = decompress_pubkey(
             &SecretKey::from_slice(&hex!(
                 "e238eb8e04fee6511ab04c6dd3c89ce097b11f25d584863ac2b6d5b35b1847e4"
             ))

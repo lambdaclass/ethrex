@@ -1,74 +1,109 @@
-use bytes::BufMut;
-use ethrex_common::H512;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
-};
-use k256::PublicKey;
-
-use crate::rlpx::utils::{id2pubkey, snappy_decompress};
-
 use super::{
     message::RLPxMessage,
-    utils::{pubkey2id, snappy_compress},
+    utils::{decompress_pubkey, snappy_compress},
 };
+use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
+use bytes::BufMut;
+use ethrex_common::H512;
+use ethrex_rlp::structs::{Decoder, Encoder};
+use ethrex_rlp::{
+    decode::{RLPDecode, decode_rlp_item},
+    encode::RLPEncode,
+    error::{RLPDecodeError, RLPEncodeError},
+};
+use k256::PublicKey;
+use serde::Serialize;
+
+pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
+pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Capability {
-    P2p,
-    Eth,
-    Snap,
-    UnsupportedCapability(String),
+pub struct Capability {
+    pub protocol: &'static str,
+    pub version: u8,
+}
+
+impl Capability {
+    pub const fn eth(version: u8) -> Self {
+        Capability {
+            protocol: "eth",
+            version,
+        }
+    }
+
+    pub const fn p2p(version: u8) -> Self {
+        Capability {
+            protocol: "p2p",
+            version,
+        }
+    }
+
+    pub const fn snap(version: u8) -> Self {
+        Capability {
+            protocol: "snap",
+            version,
+        }
+    }
 }
 
 impl RLPEncode for Capability {
     fn encode(&self, buf: &mut dyn BufMut) {
-        match self {
-            Self::P2p => "p2p".encode(buf),
-            Self::Eth => "eth".encode(buf),
-            Self::Snap => "snap".encode(buf),
-            Self::UnsupportedCapability(name) => name.encode(buf),
-        }
+        Encoder::new(buf)
+            .encode_field(&self.protocol)
+            .encode_field(&self.version)
+            .finish();
     }
 }
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (cap_string, rest) = String::decode_unfinished(rlp)?;
-        match cap_string.as_str() {
-            "p2p" => Ok((Capability::P2p, rest)),
-            "eth" => Ok((Capability::Eth, rest)),
-            "snap" => Ok((Capability::Snap, rest)),
-            other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
+        let (protocol, rest) = String::decode_unfinished(&rlp[1..])?;
+        let (version, rest) = u8::decode_unfinished(rest)?;
+        match protocol.as_str() {
+            "eth" => Ok((Capability::eth(version), rest)),
+            "p2p" => Ok((Capability::p2p(version), rest)),
+            "snap" => Ok((Capability::snap(version), rest)),
+            _ => Err(RLPDecodeError::MalformedData),
         }
+    }
+}
+
+impl Serialize for Capability {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{}/{}", self.protocol, self.version))
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct HelloMessage {
-    pub(crate) capabilities: Vec<(Capability, u8)>,
+    pub(crate) capabilities: Vec<Capability>,
     pub(crate) node_id: PublicKey,
+    pub(crate) client_id: String,
 }
 
 impl HelloMessage {
-    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey) -> Self {
+    pub fn new(capabilities: Vec<Capability>, node_id: PublicKey, client_id: String) -> Self {
         Self {
             capabilities,
             node_id,
+            client_id,
         }
     }
 }
 
 impl RLPxMessage for HelloMessage {
+    const CODE: u8 = 0x00;
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         Encoder::new(&mut buf)
             .encode_field(&5_u8) // protocolVersion
-            .encode_field(&"Ethrex/0.1.0") // clientId
+            .encode_field(&self.client_id) // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
-            .encode_field(&pubkey2id(&self.node_id)) // nodeKey
+            .encode_field(&decompress_pubkey(&self.node_id)) // nodeKey
             .finish();
         Ok(())
     }
@@ -80,12 +115,10 @@ impl RLPxMessage for HelloMessage {
 
         assert_eq!(protocol_version, 5, "only protocol version 5 is supported");
 
-        let (_client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
-        // TODO: store client id for debugging purposes
+        let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
-        let (capabilities, decoder): (Vec<(Capability, u8)>, _) =
-            decoder.decode_field("capabilities")?;
+        let (capabilities, decoder): (Vec<Capability>, _) = decoder.decode_field("capabilities")?;
 
         // This field should be ignored
         let (_listen_port, decoder): (u16, _) = decoder.decode_field("listenPort")?;
@@ -97,7 +130,8 @@ impl RLPxMessage for HelloMessage {
 
         Ok(Self::new(
             capabilities,
-            id2pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            compress_pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            client_id,
         ))
     }
 }
@@ -195,6 +229,7 @@ impl DisconnectMessage {
 }
 
 impl RLPxMessage for DisconnectMessage {
+    const CODE: u8 = 0x01;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Disconnect msg_data is reason or none
@@ -237,13 +272,8 @@ impl RLPxMessage for DisconnectMessage {
 #[derive(Debug)]
 pub(crate) struct PingMessage {}
 
-impl PingMessage {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
 impl RLPxMessage for PingMessage {
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Ping msg_data is only []
@@ -254,26 +284,22 @@ impl RLPxMessage for PingMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode ping message: data is empty list [] but it is snappy compressed
+        // decode ping message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Ping msg_data should be &[]");
-        Ok(Self::new())
+        assert_eq!(payload, empty, "Ping payload should be &[]");
+        assert_eq!(remaining, empty, "Ping remaining should be &[]");
+        Ok(Self {})
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct PongMessage {}
 
-impl PongMessage {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
 impl RLPxMessage for PongMessage {
+    const CODE: u8 = 0x03;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Pong msg_data is only []
@@ -284,12 +310,13 @@ impl RLPxMessage for PongMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode pong message: data is empty list [] but it is snappy compressed
+        // decode pong message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Pong msg_data should be &[]");
-        Ok(Self::new())
+        assert_eq!(payload, empty, "Pong payload should be &[]");
+        assert_eq!(remaining, empty, "Pong remaining should be &[]");
+        Ok(Self {})
     }
 }

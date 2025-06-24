@@ -4,8 +4,9 @@ use super::{
 };
 use bytes::{BufMut, Bytes};
 use ethrex_common::{
-    types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     H256, U256,
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    types::AccountState,
 };
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -81,6 +82,7 @@ pub(crate) struct TrieNodes {
 }
 
 impl RLPxMessage for GetAccountRange {
+    const CODE: u8 = 0x00;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -117,6 +119,7 @@ impl RLPxMessage for GetAccountRange {
 }
 
 impl RLPxMessage for AccountRange {
+    const CODE: u8 = 0x01;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -147,6 +150,7 @@ impl RLPxMessage for AccountRange {
 }
 
 impl RLPxMessage for GetStorageRanges {
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -174,9 +178,11 @@ impl RLPxMessage for GetStorageRanges {
             .then(|| H256::from_slice(&starting_hash))
             .unwrap_or_default();
         let (limit_hash, decoder): (Bytes, _) = decoder.decode_field("limitHash")?;
-        let limit_hash = (!limit_hash.is_empty())
-            .then(|| H256::from_slice(&limit_hash))
-            .unwrap_or(H256([0xFF; 32]));
+        let limit_hash = if !limit_hash.is_empty() {
+            H256::from_slice(&limit_hash)
+        } else {
+            H256([0xFF; 32])
+        };
         let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
         decoder.finish()?;
 
@@ -192,6 +198,7 @@ impl RLPxMessage for GetStorageRanges {
 }
 
 impl RLPxMessage for StorageRanges {
+    const CODE: u8 = 0x03;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -218,6 +225,7 @@ impl RLPxMessage for StorageRanges {
 }
 
 impl RLPxMessage for GetByteCodes {
+    const CODE: u8 = 0x04;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -244,6 +252,7 @@ impl RLPxMessage for GetByteCodes {
 }
 
 impl RLPxMessage for ByteCodes {
+    const CODE: u8 = 0x05;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -268,6 +277,7 @@ impl RLPxMessage for ByteCodes {
 }
 
 impl RLPxMessage for GetTrieNodes {
+    const CODE: u8 = 0x06;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -301,6 +311,7 @@ impl RLPxMessage for GetTrieNodes {
 }
 
 impl RLPxMessage for TrieNodes {
+    const CODE: u8 = 0x07;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)

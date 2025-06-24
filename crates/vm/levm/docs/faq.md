@@ -43,3 +43,33 @@ Some context: It is not important what this operand does. The only thing that ma
 
 
 This pattern is fairly common and is useful to keep in mind, especially when dealing with operands that deal with offsets and indexes.
+
+
+## External vs Internal Transactions
+
+- External transactions are initiated by EOAs (Externally Owned Accounts). These are user-triggered and are the only way to start activity on-chain (e.g., sending ETH, calling a contract).
+- Internal transactions are not real transactions in the blockchain data. They are contract-to-contract calls triggered during the execution of external transactions, using opcodes like CALL, DELEGATECALL, CREATE, etc. They’re not recorded in the transaction pool.
+
+
+## CacheDB vs. Cold and Warm Addresses
+
+This topic often causes confusion. The presence of an address in the cache does not mean it is **warm** — these are two separate concepts.
+
+**Cold & Warm:**
+- An address is **cold** if it has not been accessed yet during the current transaction.
+- An address is **warm** if it has already been accessed in the current transaction, this could be through a call to that account, by being in the [access list](https://eips.ethereum.org/EIPS/eip-2930), etc.
+Accessing a **cold** address incurs higher gas costs than accessing a **warm** address.
+
+**CacheDB:**
+- The `CacheDB` is a structure that is persisted between transactions and keeps track of changes that are eventually going to be committed to the Database.
+
+So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a transaction that never accessed that account the address will still be **cold** and therefore the gas cost will be higher than if it was **warm**.
+
+## Errors
+
+These are the kinds of errors:
+- `InternalErorr`: These are errors that break execution, they shouldn't ever happen. For example, an underflow when substracting two values and we know for sure the first one is greater than the second.
+  - `DatabaseError`: Subcategory of `InternalError`, this error is only used within the `Database` trait that the LEVM crate exposes. This should be returned when there's an unexpected error when trying to read from the database.
+- `TxValidation`: These are thrown if the transaction doesn't pass the required validations, like the sender having enough value to pay for the transaction gas fees, or that the transaction nonce should match with sender's nonce. These errors **INVALIDATE** the transaction, they shouldn't make any changes to the state.
+- `ExceptionalHalt`: Any error that's contemplated in the EVM and is expected to happen, like Out-of-Gas and Stack Overflow. These errors cause the current executing context to **Revert** consuming all context gas left. Some examples include a Stack Overflow and when bytecode contains an Invalid Opcode.
+- `RevertOpcode`: Triggered by Revert Opcode, it behaves like an `ExceptionalHalt` except this one doesn't consume the gas left.

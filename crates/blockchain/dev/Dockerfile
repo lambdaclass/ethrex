@@ -1,4 +1,4 @@
-FROM rust:1.82 AS chef
+FROM rust:1.87 AS chef
 
 RUN apt-get update && apt-get install -y \
 	build-essential \
@@ -22,7 +22,7 @@ COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --features "dev,metrics"
+RUN cargo build --release --features "dev"
 
 FROM ubuntu:24.04
 WORKDIR /usr/local/bin

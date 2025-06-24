@@ -1,0 +1,43 @@
+[package]
+name = "quote-gen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+configfs-tsm = "0.0.1"
+tokio = { version = "1.41.1", features = ["full"] }
+keccak-hash = "0.11"
+hex = "0.4"
+zerocopy = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+kzg-rs = "0.2.6"
+
+ethrex-common = { path = "../../../common", default-features = false }
+ethrex-storage = { path = "../../../storage", default-features = false }
+ethrex-rlp = { path = "../../../common/rlp" }
+ethrex-vm = { path = "../../../vm", default-features = false }
+ethrex-blockchain = { path = "../../../blockchain", default-features = false }
+ethrex-rpc = { path = "../../../networking/rpc", default-features = false }
+zkvm_interface = { path = "../../prover/zkvm/interface", default-features = false }
+ethrex-sdk = { path = "../../sdk", default-features = false }
+ethrex-l2 = { path = "../..", default-features = false }
+ethrex-l2-common = { path = "../../common", default-features = false }
+
+secp256k1 = { version = "0.29.1", default-features = false, features = [
+  "global-context",
+  "recovery",
+  "rand",
+  "std"
+]}
+
+[workspace]
+
+[features]
+default = ["l2"]
+l2 = [
+  "ethrex-vm/l2",
+  "zkvm_interface/l2",
+  "ethrex-blockchain/l2",
+  "ethrex-l2/l2",
+] 

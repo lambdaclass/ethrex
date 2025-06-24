@@ -1,5 +1,3 @@
-use crate::eth::fee_calculator::estimate_gas_tip;
-
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use serde_json::Value;
@@ -18,12 +16,12 @@ impl RpcHandler for MaxPriorityFee {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let estimated_gas_tip = estimate_gas_tip(&context.storage).await?;
-
-        let gas_tip = match estimated_gas_tip {
-            Some(gas_tip) => gas_tip,
-            None => return Ok(serde_json::Value::Null),
-        };
+        let gas_tip = context
+            .gas_tip_estimator
+            .lock()
+            .await
+            .estimate_gas_tip(&context.storage)
+            .await?;
 
         let gas_as_hex = format!("0x{:x}", gas_tip);
         Ok(serde_json::Value::String(gas_as_hex))
@@ -32,50 +30,23 @@ impl RpcHandler for MaxPriorityFee {
 
 #[cfg(test)]
 mod tests {
-    use super::MaxPriorityFee;
+    use super::*;
     use crate::eth::test_utils::{
-        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, setup_store,
-        BASE_PRICE_IN_WEI,
+        BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
+        setup_store,
     };
 
-    use crate::utils::test_utils::example_local_node_record;
+    use crate::utils::test_utils::default_context_with_storage;
     use crate::{
-        rpc::{map_http_requests, RpcApiContext, RpcHandler},
-        utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
+        rpc::{RpcApiContext, RpcHandler, map_http_requests},
+        utils::{RpcRequest, parse_json_hex, test_utils::example_p2p_node},
     };
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
-    use ethrex_blockchain::Blockchain;
-    use ethrex_p2p::sync_manager::SyncManager;
-    #[cfg(feature = "l2")]
-    use secp256k1::{rand, SecretKey};
-    use serde_json::{json, Value};
-    use std::sync::Arc;
+    use ethrex_common::types::MIN_GAS_TIP;
+    use serde_json::json;
 
     async fn default_context() -> RpcApiContext {
         let storage = setup_store().await;
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        RpcApiContext {
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        }
+        default_context_with_storage(storage).await
     }
 
     #[tokio::test]
@@ -120,7 +91,8 @@ mod tests {
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context).await.unwrap();
-        assert_eq!(response, Value::Null);
+        let parsed_result = parse_json_hex(&response).unwrap();
+        assert_eq!(parsed_result, MIN_GAS_TIP);
     }
     #[tokio::test]
     async fn test_with_no_blocks_but_genesis() {
@@ -128,7 +100,8 @@ mod tests {
         let gas_price = MaxPriorityFee {};
 
         let response = gas_price.handle(context).await.unwrap();
-        assert_eq!(response, Value::Null);
+        let parsed_result = parse_json_hex(&response).unwrap();
+        assert_eq!(parsed_result, MIN_GAS_TIP);
     }
     #[tokio::test]
     async fn request_smoke_test() {
@@ -141,7 +114,7 @@ mod tests {
         let expected_response = json!("0x3b9aca00");
         let request: RpcRequest = serde_json::from_value(raw_json).expect("Test json is not valid");
         let mut context = default_context().await;
-        context.local_p2p_node = example_p2p_node();
+        context.node_data.local_p2p_node = example_p2p_node();
 
         add_eip1559_tx_blocks(&context.storage, 100, 3).await;
 

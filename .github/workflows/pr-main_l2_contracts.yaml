@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
-      - "crates/l2/contracts/**"
+      - "crates/l2/**"
       - ".github/workflows/pr-main_l2_contracts.yaml"
 
 concurrency:
@@ -21,9 +21,11 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.87.0
       - name: Install solc
         uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
       - name: Caching
         uses: Swatinem/rust-cache@v2
       - name: Run test of deployer.rs

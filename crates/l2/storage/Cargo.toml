@@ -1,0 +1,40 @@
+[package]
+name = "ethrex-storage-rollup"
+version.workspace = true
+edition.workspace = true
+
+
+[dependencies]
+ethrex-common.workspace = true
+ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
+ethereum-types.workspace = true
+
+async-trait.workspace = true
+anyhow = "1.0.86"
+tracing.workspace = true
+libmdbx = { workspace = true, optional = true }
+redb = { workspace = true, optional = true }
+# NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
+# We only need the runtime for the blocking databases to spawn blocking tasks
+tokio = { version = "1.41.1", optional = true, default-features = false, features = [
+    "rt",
+] }
+
+[features]
+default = []
+libmdbx = ["dep:libmdbx", "dep:tokio"]
+redb = ["dep:redb", "dep:tokio"]
+l2 = []
+
+[lib]
+name = "ethrex_storage_rollup"
+path = "src/lib.rs"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+as_conversions = "deny"
+unnecessary_cast = "warn"
+panic = "deny"

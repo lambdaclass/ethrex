@@ -14,11 +14,11 @@ use tracing::error;
 use crate::rpc::RpcHandler;
 use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
-    utils::{parse_json_hex, RpcErr, RpcRequest},
+    utils::{RpcErr, RpcRequest, parse_json_hex},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::logs::{fetch_logs_with_filter, LogsFilter};
+use super::logs::{LogsFilter, fetch_logs_with_filter};
 
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
@@ -250,7 +250,6 @@ impl FilterChangesRequest {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_blockchain::Blockchain;
     use std::{
         collections::HashMap,
         sync::{Arc, Mutex},
@@ -263,24 +262,14 @@ mod tests {
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
-        rpc::{map_http_requests, RpcApiContext, FILTER_DURATION},
-        utils::test_utils::{self, example_local_node_record, start_test_api},
+        rpc::{FILTER_DURATION, map_http_requests},
+        utils::test_utils::{self, default_context_with_storage, start_test_api},
     };
-    use crate::{
-        types::block_identifier::BlockIdentifier,
-        utils::{test_utils::example_p2p_node, RpcRequest},
-    };
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
+    use crate::{types::block_identifier::BlockIdentifier, utils::RpcRequest};
     use ethrex_common::types::Genesis;
-    use ethrex_p2p::sync_manager::SyncManager;
     use ethrex_storage::{EngineType, Store};
-    #[cfg(feature = "l2")]
-    use secp256k1::{rand, SecretKey};
 
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use test_utils::TEST_GENESIS;
 
     #[tokio::test]
@@ -443,26 +432,9 @@ mod tests {
     ) -> u64 {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: filters_pointer.clone(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = filters_pointer.clone();
+
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
@@ -516,33 +488,16 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            jwt_secret: Default::default(),
-            active_filters: active_filters.clone(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = active_filters.clone();
 
         map_http_requests(&uninstall_filter_req, context)
             .await
             .unwrap();
 
         assert!(
-            active_filters.clone().lock().unwrap().len() == 0,
+            active_filters.clone().lock().unwrap().is_empty(),
             "Expected filter map to be empty after request"
         );
     }
@@ -553,26 +508,9 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: active_filters.clone(),
-            jwt_secret: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = active_filters.clone();
+
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
             "jsonrpc":"2.0",
