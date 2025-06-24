@@ -22,6 +22,11 @@ impl VMError {
     pub fn should_propagate(&self) -> bool {
         matches!(self, VMError::Internal(_))
     }
+
+    /// Error triggered by revert opcode. This error doesn't consume all gas left in context.
+    pub fn is_revert_opcode(&self) -> bool {
+        matches!(self, VMError::RevertOpcode)
+    }
 }
 
 impl From<DatabaseError> for VMError {
@@ -194,6 +199,19 @@ pub struct ExecutionReport {
 }
 
 impl ExecutionReport {
+    pub fn is_success(&self) -> bool {
+        matches!(self.result, TxResult::Success)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextResult {
+    pub result: TxResult,
+    pub gas_used: u64,
+    pub output: Bytes,
+}
+
+impl ContextResult {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }
