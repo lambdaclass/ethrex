@@ -7,7 +7,7 @@ use ethrex::{
     },
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
-use ethrex_p2p::network::peer_table;
+use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]
@@ -17,7 +17,7 @@ use tokio::{
     signal::unix::{SignalKind, signal},
     sync::Mutex,
 };
-use tokio_util::task::TaskTracker;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::info;
 
 #[cfg(feature = "l2")]
@@ -44,6 +44,22 @@ async fn set_sync_block(store: &Store) {
             .await
             .expect("Failed to set latest canonical block");
     }
+}
+
+async fn server_shutdown(
+    data_dir: String,
+    cancel_token: &CancellationToken,
+    peer_table: Arc<Mutex<KademliaTable>>,
+    local_node_record: Arc<Mutex<NodeRecord>>,
+) {
+    info!("Server shut down started...");
+    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    info!("Storing config at {:?}...", node_config_path);
+    cancel_token.cancel();
+    let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+    store_node_config_file(node_config, node_config_path).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    info!("Server shutting down!");
 }
 
 #[tokio::main]
@@ -137,24 +153,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            info!("Server shut down started...");
-            let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-            info!("Storing config at {:?}...", node_config_path);
-            cancel_token.cancel();
-            let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-            store_node_config_file(node_config, node_config_path).await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            info!("Server shutting down!");
+            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
         _ = signal_terminate.recv() => {
-            info!("Server shut down started...");
-            let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-            info!("Storing config at {:?}...", node_config_path);
-            cancel_token.cancel();
-            let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-            store_node_config_file(node_config, node_config_path).await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            info!("Server shutting down!");
+            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
     }
 
