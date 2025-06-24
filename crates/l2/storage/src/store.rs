@@ -303,7 +303,7 @@ impl Store {
     pub async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+    ) -> Result<Option<Vec<AccountUpdate>>, RollupStoreError> {
         self.engine
             .get_account_updates_by_block_number(block_number)
             .await
@@ -314,7 +314,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
         account_updates: Vec<AccountUpdate>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.engine
             .store_account_updates_by_block_number(block_number, account_updates)
             .await

@@ -286,7 +286,7 @@ impl StoreEngineRollup for Store {
             .await?
             .map(|s| bincode::deserialize(&s))
             .transpose()
-            .map_err(StoreError::from)
+            .map_err(RollupStoreError::from)
     }
 
     async fn store_account_updates_by_block_number(

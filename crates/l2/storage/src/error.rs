@@ -56,4 +56,6 @@ pub enum RollupStoreError {
     MempoolWriteLock(String),
     #[error("Failed to lock mempool for reading")]
     MempoolReadLock(String),
+    #[error("Bincode (de)serialization error: {0}")]
+    BincodeError(#[from] bincode::Error),
 }

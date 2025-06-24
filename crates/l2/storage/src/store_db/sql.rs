@@ -4,7 +4,7 @@ use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
 };
 
 use libsql::{
@@ -22,12 +22,13 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 9] = [
+const DB_SCHEMA: [&str; 10] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE account_updates (block_number INT PRIMARY KEY, updates BLOB)",
     "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, deposits INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
@@ -380,6 +381,42 @@ impl StoreEngineRollup for SQLStore {
         Ok(())
     }
 
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT * FROM account_updates WHERE block_number = ?1",
+                vec![block_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 1)?;
+            return Ok(Some(bincode::deserialize(&vec)?));
+        }
+        Ok(None)
+    }
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&account_updates)?;
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM account_updates WHERE block_number = ?1",
+                vec![block_number].into_params()?,
+            ),
+            (
+                "INSERT INTO account_updates VALUES (?1, ?2)",
+                (block_number, serialized).into_params()?,
+            ),
+        ])
+        .await
+    }
+
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.execute_in_tx(vec![
             (
@@ -421,6 +458,7 @@ mod tests {
             "deposits",
             "state_roots",
             "blob_bundles",
+            "account_updates",
             "operation_count",
             "latest_sent",
         ];
@@ -452,6 +490,8 @@ mod tests {
                 ("blob_bundles", "batch") => "INT",
                 ("blob_bundles", "idx") => "INT",
                 ("blob_bundles", "blob_bundle") => "BLOB",
+                ("account_updates", "block_number") => "INT",
+                ("account_updates", "updates") => "BLOB",
                 ("operation_count", "_id") => "INT",
                 ("operation_count", "transactions") => "INT",
                 ("operation_count", "deposits") => "INT",

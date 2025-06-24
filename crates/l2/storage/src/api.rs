@@ -112,6 +112,6 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         block_number: BlockNumber,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), RollupStoreError>;
-    
+
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 }

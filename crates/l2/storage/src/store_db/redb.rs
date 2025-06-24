@@ -311,33 +311,12 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
-        self.read(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number)
-            .await?
-            .map(|s| bincode::deserialize(&s.value()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
-    async fn store_account_updates_by_block_number(
-        &self,
-        block_number: BlockNumber,
-        account_updates: Vec<AccountUpdate>,
-    ) -> Result<(), StoreError> {
-        let serialized = bincode::serialize(&account_updates)?;
-        self.write(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number, serialized)
-            .await
-    }
-
-    async fn get_account_updates_by_block_number(
-        &self,
-        block_number: BlockNumber,
     ) -> Result<Option<Vec<AccountUpdate>>, RollupStoreError> {
         self.read(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number)
             .await?
             .map(|s| bincode::deserialize(&s.value()))
             .transpose()
-            .map_err(StoreError::from)
+            .map_err(RollupStoreError::from)
     }
 
     async fn store_account_updates_by_block_number(
