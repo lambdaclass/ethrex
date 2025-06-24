@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750787894850,
+  "lastUpdate": 1750790092620,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1224,6 +1224,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00871989983397897,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bda9db7998463a96786587f71e73a5a0415e7d02",
+          "message": "refactor(l2): implement Metrics Gatherer using spawned library  (#3037)\n\n**Motivation**\n\n[spawned](https://github.com/lambdaclass/spawned) goal is to simplify\nconcurrency implementations and decouple any runtime implementation from\nthe code.\nOn this PR we aim to replace the Metrics Gatherer with a spawned\nimplementation to learn if this approach is beneficial.\n\n**Description**\n\nReplaces Metrics Gatherer task spawn with a series of spawned gen_server\nimplementation.\n\n---------\n\nCo-authored-by: Esteban Dimitroff Hodi <esteban.dimitroff@lambdaclass.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-24T16:30:04Z",
+          "tree_id": "e250d6362a643f862666a67ea40b2118218cb1af",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bda9db7998463a96786587f71e73a5a0415e7d02"
+        },
+        "date": 1750790092150,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008773306792873052,
             "unit": "Mgas/s"
           }
         ]
