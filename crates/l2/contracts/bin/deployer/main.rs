@@ -461,7 +461,6 @@ fn deploy_tdx_contracts(
         .env("ON_CHAIN_PROPOSER", format!("{:#x}", on_chain_proposer))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .spawn()
         .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn make: {err}")))?
         .wait()
@@ -479,21 +478,15 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
-    let vk_string = read_to_string(path).unwrap_or_else(|_| {
+fn read_vk(path: &str) -> Bytes {
+    std::fs::read(path)
+    .unwrap_or_else(|_| {
         warn!(
             ?path,
             "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
         );
-        "0x00".to_string()
-    });
-    hex::decode(vk_string.trim_start_matches("0x"))
-        .map_err(|err| {
-            DeployerError::DecodingError(format!(
-                "failed to parse vk ({vk_string}) from hex: {err}"
-            ))
-        })
-        .map(Bytes::from)
+        vec![0u8; 32]
+    }).into()
 }
 
 async fn initialize_contracts(
@@ -511,8 +504,8 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = read_vk(&opts.sp1_vk_path)?;
-    let risc0_vk = read_vk(&opts.risc0_vk_path)?;
+    let sp1_vk = read_vk(&opts.sp1_vk_path);
+    let risc0_vk = read_vk(&opts.risc0_vk_path);
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
