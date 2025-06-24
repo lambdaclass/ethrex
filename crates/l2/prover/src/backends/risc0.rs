@@ -67,10 +67,7 @@ fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
     // bytes calldata seal,
     // bytes32 imageId,
     // bytes journal
-    let calldata = vec![
-        Value::Bytes(seal.into()),
-        Value::Bytes(journal.into()),
-    ];
+    let calldata = vec![Value::Bytes(seal.into()), Value::Bytes(journal.into())];
 
     Ok(ProofCalldata {
         prover_type: ProverType::RISC0,

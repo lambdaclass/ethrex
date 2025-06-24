@@ -26,6 +26,22 @@ pub enum ChainError {
     Custom(String),
 }
 
+#[cfg(feature = "metrics")]
+impl ChainError {
+    pub fn to_metric(&self) -> &str {
+        match self {
+            ChainError::InvalidBlock(_) => "invalid_block",
+            ChainError::ParentNotFound => "parent_not_found",
+            ChainError::ParentStateNotFound => "parent_state_not_found",
+            ChainError::StoreError(_) => "store_error",
+            ChainError::EvmError(_) => "evm_error",
+            ChainError::InvalidTransaction(_) => "invalid_transaction",
+            ChainError::WitnessGeneration(_) => "witness_generation",
+            ChainError::Custom(_) => "custom_error",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum InvalidBlockError {
     #[error("Requests hash does not match the one in the header after executing")]
@@ -84,6 +100,14 @@ pub enum MempoolError {
     NotEnoughBalance,
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
+    #[error("Invalid pooled TxType, expected: {0}")]
+    InvalidPooledTxType(u8),
+    #[error("Invalid pooled transaction size, differs from expected")]
+    InvalidPooledTxSize,
+    #[error("Requested pooled transaction was not received")]
+    RequestedPooledTxNotFound,
+    #[error("Transaction sender is invalid {0}")]
+    InvalidTxSender(#[from] secp256k1::Error),
 }
 
 #[derive(Debug)]

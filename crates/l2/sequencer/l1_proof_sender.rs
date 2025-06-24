@@ -11,9 +11,9 @@ use tracing::{debug, error, info};
 
 use super::{
     configs::AlignedConfig,
-    errors::SequencerError,
     utils::{get_latest_sent_batch, random_duration, send_verify_tx},
 };
+
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
@@ -31,8 +31,7 @@ use aligned_sdk::{
 // TODO: Remove this import once it's no longer required by the SDK.
 use ethers::signers::{Signer, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
@@ -134,8 +133,7 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)?;
-        Ok(())
+            .map_err(ProofSenderError::GenServerError)
     }
 }
 
@@ -144,7 +142,7 @@ impl GenServer for L1ProofSender {
     type OutMsg = OutMessage;
     type State = L1ProofSenderState;
 
-    type Error = SequencerError;
+    type Error = ProofSenderError;
 
     fn new() -> Self {
         Self {}

@@ -124,10 +124,17 @@ impl ExecutionWitnessResult {
             let state = encoded_state
                 .map(|encoded| AccountState::decode(&encoded))
                 .unwrap_or_else(|| Ok(AccountState::default()))
-                .expect("failed to get account state");
+                .expect("Failed to get account state");
 
             if state.storage_root == *EMPTY_TRIE_HASH {
-                storage_tries.insert(*addr, Trie::from_nodes(None, nodes).unwrap());
+                storage_tries.insert(
+                    *addr,
+                    Trie::from_nodes(None, nodes).map_err(|e| {
+                        ExecutionWitnessError::RebuildTrie(format!(
+                            "Failed to build storage trie {e}"
+                        ))
+                    })?,
+                );
                 continue;
             }
 

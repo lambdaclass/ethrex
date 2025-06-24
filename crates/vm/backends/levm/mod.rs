@@ -50,7 +50,9 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender() {
+        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db)?;
 
             cumulative_gas_used += report.gas_used;
@@ -190,10 +192,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.cache.iter() {
+        for (address, new_state_account) in db.current_accounts_state.iter() {
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
-                db.immutable_cache
+                db.initial_accounts_state
                     .get(address)
                     .ok_or(EvmError::Custom(format!(
                         "Failed to get account {address} from immutable cache",
@@ -237,7 +239,9 @@ impl LEVM {
             };
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            let removed = new_state_account.is_empty();
+            // If the account was already empty then this is not an update
+            let was_empty = initial_state_account.is_empty();
+            let removed = new_state_account.is_empty() && !was_empty;
 
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated
@@ -254,8 +258,8 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
-        db.cache.clear();
-        db.immutable_cache.clear();
+        db.current_accounts_state.clear();
+        db.initial_accounts_state.clear();
         Ok(account_updates)
     }
 
@@ -275,7 +279,7 @@ impl LEVM {
                 .clone(); // Not a big deal cloning here because it's an EOA.
 
             account.info.balance += increment.into();
-            db.cache.insert(address, account);
+            db.current_accounts_state.insert(address, account);
         }
         Ok(())
     }
@@ -431,8 +435,11 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-    let system_account_backup = db.cache.get(&system_address).cloned();
-    let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
+    let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
+    let coinbase_backup = db
+        .current_accounts_state
+        .get(&block_header.coinbase)
+        .cloned();
     let env = Environment {
         origin: system_address,
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
@@ -462,17 +469,19 @@ pub fn generic_system_contract_levm(
     let report = vm.execute().map_err(EvmError::from)?;
 
     if let Some(system_account) = system_account_backup {
-        db.cache.insert(system_address, system_account);
+        db.current_accounts_state
+            .insert(system_address, system_account);
     } else {
         // If the system account was not in the cache, we need to remove it
-        db.cache.remove(&system_address);
+        db.current_accounts_state.remove(&system_address);
     }
 
     if let Some(coinbase_account) = coinbase_backup {
-        db.cache.insert(block_header.coinbase, coinbase_account);
+        db.current_accounts_state
+            .insert(block_header.coinbase, coinbase_account);
     } else {
         // If the coinbase account was not in the cache, we need to remove it
-        db.cache.remove(&block_header.coinbase);
+        db.current_accounts_state.remove(&block_header.coinbase);
     }
 
     Ok(report)
