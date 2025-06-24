@@ -22,6 +22,7 @@ On L1:
 
 1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
 2. The user submits a withdrawal proof when calling `claimWithdrawal` on the L1 `CommonBridge`.
+   The proof can be obtained by calling `ethrex_getWithdrawalProof` in any L2 node, after the batch containing the withdrawal transaction was committed in the L1.
 3. The bridge asserts the proof is valid.
 4. The bridge sends the locked funds specified in the `L1Message` to the user.
 
@@ -81,6 +82,7 @@ On L1:
 
 1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
 2. The user submits a withdrawal proof when calling `claimWithdrawalERC20` on the L1 `CommonBridge`.
+   The proof can be obtained by calling `ethrex_getWithdrawalProof` in any L2 node, after the batch containing the withdrawal transaction was committed in the L1.
 3. The bridge asserts the proof is valid and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.
 4. The bridge transfers the locked tokens specified in the `L1Message` to the user and discounts the transferred amount from the L1 and L2 token pair in the mapping.
 
