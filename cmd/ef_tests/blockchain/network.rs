@@ -85,7 +85,15 @@ impl Network {
             Network::Cancun => &CANCUN_CONFIG,
             Network::CancunToPragueAtTime15k => &CANCUN_TO_PRAGUE_AT_15K_CONFIG,
             Network::Prague => &PRAGUE_CONFIG,
-            _ => panic!("Ethrex doesn't support pre-Merge forks"),
+            Network::Frontier
+            | Network::Homestead
+            | Network::ConstantinopleFix
+            | Network::Istanbul
+            | Network::Byzantium
+            | Network::London
+            | Network::Berlin => {
+                panic!("Ethrex doesn't support pre-Merge forks: {:?}", self)
+            }
         }
     }
 }
