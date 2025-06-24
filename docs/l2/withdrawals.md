@@ -137,7 +137,7 @@ First, we need to understand the generic mechanism behind it:
 
 ### L1Message
 
-To allow generic L2->L1 messages, a system contract is added which allows sending arbitary data. This data is emitted as `L1Message` events, which nodes automatically extract from blocks.
+To allow generic L2->L1 messages, a system contract is added which allows sending arbitrary data. This data is emitted as `L1Message` events, which nodes automatically extract from blocks.
 
 ```rust
 struct L1Message {
