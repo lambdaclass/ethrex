@@ -7,7 +7,7 @@ use bytes::BufMut;
 use ethrex_common::H512;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{
-    decode::RLPDecode,
+    decode::{RLPDecode, decode_rlp_item},
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
 };
@@ -284,12 +284,13 @@ impl RLPxMessage for PingMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode ping message: data is empty list [] but it is snappy compressed
+        // decode ping message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Ping msg_data should be &[]");
+        assert_eq!(payload, empty, "Ping payload should be &[]");
+        assert_eq!(remaining, empty, "Ping remaining should be &[]");
         Ok(Self {})
     }
 }
@@ -309,12 +310,13 @@ impl RLPxMessage for PongMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode pong message: data is empty list [] but it is snappy compressed
+        // decode pong message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Pong msg_data should be &[]");
+        assert_eq!(payload, empty, "Pong payload should be &[]");
+        assert_eq!(remaining, empty, "Pong remaining should be &[]");
         Ok(Self {})
     }
 }

@@ -1,10 +1,10 @@
 use bls12_381::{
-    hash_to_curve::MapToCurve, multi_miller_loop, Fp, Fp2, G1Affine, G1Projective, G2Affine,
-    G2Prepared, G2Projective, Gt, Scalar,
+    Fp, Fp2, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
+    hash_to_curve::MapToCurve, multi_miller_loop,
 };
 
 use bytes::Bytes;
-use ethrex_common::{serde_utils::bool, types::Fork, Address, H160, H256, U256};
+use ethrex_common::{Address, H160, H256, U256, serde_utils::bool, types::Fork};
 use keccak_hash::keccak256;
 use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
@@ -14,7 +14,7 @@ use lambdaworks_math::{
             curves::bn_254::{
                 curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
                 field_extension::{
-                    BN254FieldModulus, Degree12ExtensionField, Degree2ExtensionField,
+                    BN254FieldModulus, Degree2ExtensionField, Degree12ExtensionField,
                 },
                 pairing::BN254AtePairing,
                 twist::BN254TwistCurve,
@@ -30,13 +30,16 @@ use lambdaworks_math::{
     traits::ByteConversion,
     unsigned_integer::element,
 };
-use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
 #[cfg(feature = "l2")]
 use p256::{
-    ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
-    elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField, Curve},
     EncodedPoint, FieldElement as P256FieldElement, NistP256,
+    ecdsa::{Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier},
+    elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
+};
+use secp256k1::{
+    Message,
+    ecdsa::{RecoverableSignature, RecoveryId},
 };
 
 // Secp256r1 curve parameters
@@ -62,11 +65,11 @@ use std::ops::Mul;
 use crate::gas_cost::P256VERIFY_COST;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
-    errors::{InternalError, PrecompileError, VMError},
+    errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
-        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
-        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
+        BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
+        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
         G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };
@@ -261,7 +264,7 @@ pub fn execute_precompile(
         }
         #[cfg(feature = "l2")]
         address if address == P256VERIFY_ADDRESS => p_256_verify(calldata, gas_limit, gas_used)?,
-        _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
+        _ => return Err(InternalError::InvalidPrecompileAddress.into()),
     };
 
     Ok(result)
@@ -278,7 +281,7 @@ fn increase_precompile_consumed_gas(
         .ok_or(PrecompileError::GasConsumedOverflow)?;
 
     if *gas_used > gas_limit {
-        return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
+        return Err(PrecompileError::NotEnoughGas.into());
     }
 
     Ok(())
@@ -305,42 +308,43 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
     let calldata = fill_with_zeros(calldata, 128);
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
-    let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
-    let Ok(message) = Message::parse_slice(hash) else {
+    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let Ok(message) = Message::from_digest_slice(hash) else {
         return Ok(Bytes::new());
     };
 
-    let v = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::SlicingError)?);
+    let v = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
 
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
     if !(v == U256::from(27) || v == U256::from(28)) {
         return Ok(Bytes::new());
     }
 
-    let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let Ok(recovery_id) = RecoveryId::parse_rpc(v) else {
+    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
+    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
+    let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
         return Ok(Bytes::new());
     };
 
     // signature is made up of the parameters r and s
-    let sig = calldata.get(64..128).ok_or(InternalError::SlicingError)?;
-    let Ok(signature) = Signature::parse_standard_slice(sig) else {
+    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
+    let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
         return Ok(Bytes::new());
     };
 
     // Recover the address using secp256k1
-    let Ok(public_key) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+    let Ok(public_key) = signature.recover(&message) else {
         return Ok(Bytes::new());
     };
 
-    let mut public_key = public_key.serialize();
+    let mut public_key = public_key.serialize_uncompressed();
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
     keccak256(&mut public_key[1..65]);
 
     // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
     let mut output = vec![0u8; 12];
-    output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::SlicingError)?);
+    output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::Slicing)?);
 
     Ok(Bytes::from(output.to_vec()))
 }
@@ -418,17 +422,15 @@ pub fn modexp(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<By
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let base_limit = base_size
-        .checked_add(96)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+    let base_limit = base_size.checked_add(96).ok_or(InternalError::Overflow)?;
 
     let exponent_limit = exponent_size
         .checked_add(base_limit)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        .ok_or(InternalError::Overflow)?;
 
     let modulus_limit = modulus_size
         .checked_add(exponent_limit)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
     let base = BigUint::from_bytes_be(&b);
@@ -496,10 +498,10 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
     if result.len() < m_size {
         let size_diff = m_size
             .checked_sub(result.len())
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?;
+            .ok_or(InternalError::Underflow)?;
         padded_result
             .get_mut(size_diff..)
-            .ok_or(InternalError::SlicingError)?
+            .ok_or(InternalError::Slicing)?
             .copy_from_slice(result);
 
         Ok(padded_result.into())
@@ -651,14 +653,14 @@ type FirstPointCoordinates = (
 
 /// Parses first point coordinates and makes verification of invalid infinite
 fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = input_data.get(..32).ok_or(InternalError::SlicingError)?;
-    let first_point_y = input_data.get(32..64).ok_or(InternalError::SlicingError)?;
+    let first_point_x = input_data.get(..32).ok_or(InternalError::Slicing)?;
+    let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (U256::from_big_endian(first_point_x) == U256::zero())
         ^ (U256::from_big_endian(first_point_y) == U256::zero())
     {
-        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        return Err(PrecompileError::DefaultError.into());
     }
 
     let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
@@ -679,28 +681,24 @@ fn parse_second_point_coordinates(
     ),
     VMError,
 > {
-    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::SlicingError)?;
-    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::SlicingError)?;
+    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::Slicing)?;
+    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
         ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
     {
-        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        return Err(PrecompileError::DefaultError.into());
     }
 
-    let second_point_y_first_part = input_data
-        .get(160..192)
-        .ok_or(InternalError::SlicingError)?;
-    let second_point_y_second_part = input_data
-        .get(128..160)
-        .ok_or(InternalError::SlicingError)?;
+    let second_point_y_first_part = input_data.get(160..192).ok_or(InternalError::Slicing)?;
+    let second_point_y_second_part = input_data.get(128..160).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
         ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
     {
-        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        return Err(PrecompileError::DefaultError.into());
     }
 
     // Check if the second point belongs to the curve (this happens if it's lower than the prime)
@@ -709,7 +707,7 @@ fn parse_second_point_coordinates(
         || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
         || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
     {
-        return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+        return Err(PrecompileError::DefaultError.into());
     }
 
     let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
@@ -751,12 +749,12 @@ fn handle_pairing_from_coordinates(
                 second_point_y.clone(),
             ) {
                 if !p2.is_in_subgroup() {
-                    Err(VMError::PrecompileError(PrecompileError::DefaultError))
+                    Err(PrecompileError::DefaultError.into())
                 } else {
                     Ok(true)
                 }
             } else {
-                Err(VMError::PrecompileError(PrecompileError::DefaultError))
+                Err(PrecompileError::DefaultError.into())
             }
         }
         (false, true) => {
@@ -764,7 +762,7 @@ fn handle_pairing_from_coordinates(
             if BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
                 .is_err()
             {
-                Err(VMError::PrecompileError(PrecompileError::DefaultError))
+                Err(PrecompileError::DefaultError.into())
             } else {
                 Ok(true)
             }
@@ -778,7 +776,7 @@ fn handle_pairing_from_coordinates(
                 BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
                     .map_err(|_| PrecompileError::DefaultError)?;
             if !second_point.is_in_subgroup() {
-                return Err(VMError::PrecompileError(PrecompileError::DefaultError));
+                return Err(PrecompileError::DefaultError.into());
             }
 
             // Get the result of the pairing and affect the mul value with it
@@ -792,7 +790,7 @@ fn handle_pairing_from_coordinates(
 pub fn ecpairing(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     let inputs_amount = calldata.len() / 192;
@@ -806,14 +804,14 @@ pub fn ecpairing(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
         // Define the input indexes and slice calldata to get the input data
         let input_start = input_index
             .checked_mul(192)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let input_end = input_start
             .checked_add(192)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         let input_data = calldata
             .get(input_start..input_end)
-            .ok_or(InternalError::SlicingError)?;
+            .ok_or(InternalError::Slicing)?;
 
         let (first_point_x, first_point_y) = parse_first_point_coordinates(input_data)?;
 
@@ -958,10 +956,10 @@ fn blake2f_compress_f(
 
     // XOR the two halves, put the results in the output slice
     for (i, pos) in output.iter_mut().enumerate() {
-        *pos = h.get(i).ok_or(InternalError::SlicingError)?
-            ^ v.get(i).ok_or(InternalError::SlicingError)?
+        *pos = h.get(i).ok_or(InternalError::Slicing)?
+            ^ v.get(i).ok_or(InternalError::Slicing)?
             ^ v.get(i.overflowing_add(8).0)
-                .ok_or(InternalError::SlicingError)?;
+                .ok_or(InternalError::Slicing)?;
     }
 
     Ok(output)
@@ -982,7 +980,7 @@ fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Resu
     Ok(u64::from_le_bytes(
         calldata
             .get(index_start..index_end)
-            .ok_or(InternalError::SlicingError)?
+            .ok_or(InternalError::Slicing)?
             .try_into()
             .map_err(|_| PrecompileError::ParsingInputError)?,
     ))
@@ -995,7 +993,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     for i in 0..8_usize {
         let data_read = read_bytes_from_offset(calldata, 4, i)?;
 
-        let read_slice = h.get_mut(i).ok_or(InternalError::SlicingError)?;
+        let read_slice = h.get_mut(i).ok_or(InternalError::Slicing)?;
         *read_slice = data_read;
     }
 
@@ -1003,7 +1001,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     for i in 0..16_usize {
         let data_read = read_bytes_from_offset(calldata, 68, i)?;
 
-        let read_slice = m.get_mut(i).ok_or(InternalError::SlicingError)?;
+        let read_slice = m.get_mut(i).ok_or(InternalError::Slicing)?;
         *read_slice = data_read;
     }
 
@@ -1011,7 +1009,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     for i in 0..2_usize {
         let data_read = read_bytes_from_offset(calldata, 196, i)?;
 
-        let read_slice = t.get_mut(i).ok_or(InternalError::SlicingError)?;
+        let read_slice = t.get_mut(i).ok_or(InternalError::Slicing)?;
         *read_slice = data_read;
     }
 
@@ -1021,24 +1019,24 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != 213 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::SlicingError)?);
+    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::Slicing)?);
 
     let rounds: usize = rounds
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let gas_cost =
-        u64::try_from(rounds).map_err(|_| InternalError::ConversionError)? * BLAKE2F_ROUND_COST;
+        u64::try_from(rounds).map_err(|_| InternalError::TypeConversion)? * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
 
     let (h, m, t) = parse_slice_arguments(calldata)?;
 
-    let f = calldata.get(212).ok_or(InternalError::SlicingError)?;
+    let f = calldata.get(212).ok_or(InternalError::Slicing)?;
     if *f != 0 && *f != 1 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
     let f = *f == 1;
 
@@ -1083,7 +1081,7 @@ fn verify_kzg_proof(
         &proof_bytes,
         &settings,
     )
-    .map_err(|_| VMError::PrecompileError(PrecompileError::EvaluationError))
+    .map_err(|_| PrecompileError::EvaluationError.into())
 }
 
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
@@ -1102,7 +1100,7 @@ fn point_evaluation(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != 192 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // Consume gas
@@ -1144,12 +1142,12 @@ fn point_evaluation(
 
     // This checks if the commitment is equal to the versioned hash
     if kzg_commitment_to_versioned_hash(&commitment) != H256::from(versioned_hash) {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // This verifies the proof from a point (x, y) and a commitment
     if !verify_kzg_proof(&commitment, &x, &y, &proof).unwrap_or(false) {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // The first 32 bytes consist of the number of field elements in the blob, and the
@@ -1162,12 +1160,12 @@ fn point_evaluation(
 pub fn bls12_g1add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     // Two inputs of 128 bytes are required
     if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
     increase_precompile_consumed_gas(gas_limit, BLS12_381_G1ADD_COST, gas_used)
-        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
+        .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     let first_g1_point = parse_g1_point(calldata.get(0..128), true)?;
     let second_g1_point = parse_g1_point(calldata.get(128..256), true)?;
@@ -1189,7 +1187,7 @@ pub fn bls12_g1add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
 
 pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
@@ -1204,13 +1202,13 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     for i in 0..k {
         let point_offset = i
             .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let scalar_offset = point_offset
             .checked_add(128)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let pair_end = scalar_offset
             .checked_add(32)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         let point = parse_g1_point(calldata.get(point_offset..scalar_offset), false)?;
         let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
@@ -1226,7 +1224,7 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     let result_bytes = G1Affine::from(result).to_uncompressed();
     let (x_bytes, y_bytes) = result_bytes
         .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
-        .ok_or(InternalError::SlicingError)?;
+        .ok_or(InternalError::Slicing)?;
     output[16..64].copy_from_slice(x_bytes);
     output[80..128].copy_from_slice(y_bytes);
 
@@ -1235,12 +1233,12 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
 
 pub fn bls12_g2add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
     increase_precompile_consumed_gas(gas_limit, BLS12_381_G2ADD_COST, gas_used)
-        .map_err(|_| VMError::PrecompileError(PrecompileError::NotEnoughGas))?;
+        .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     let first_g2_point = parse_g2_point(calldata.get(0..256), true)?;
     let second_g2_point = parse_g2_point(calldata.get(256..512), true)?;
@@ -1266,7 +1264,7 @@ pub fn bls12_g2add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
 
 pub fn bls12_g2msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     let k = calldata.len() / BLS12_381_G2_MSM_PAIR_LENGTH;
@@ -1277,13 +1275,13 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     for i in 0..k {
         let point_offset = i
             .checked_mul(BLS12_381_G2_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let scalar_offset = point_offset
             .checked_add(256)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let pair_end = scalar_offset
             .checked_add(32)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         let point = parse_g2_point(calldata.get(point_offset..scalar_offset), false)?;
         let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
@@ -1315,7 +1313,7 @@ pub fn bls12_pairing_check(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
@@ -1327,13 +1325,13 @@ pub fn bls12_pairing_check(
     for i in 0..k {
         let g1_point_offset = i
             .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let g2_point_offset = g1_point_offset
             .checked_add(128)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let pair_end = g2_point_offset
             .checked_add(256)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         // The check for the subgroup is required
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
@@ -1371,7 +1369,7 @@ pub fn bls12_map_fp_to_g1(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP_VALID_INPUT_LENGTH {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
@@ -1380,7 +1378,9 @@ pub fn bls12_map_fp_to_g1(
     let coordinate_bytes = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
     let fp = Fp::from_bytes(&coordinate_bytes)
         .into_option()
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+        .ok_or(ExceptionalHalt::Precompile(
+            PrecompileError::ParsingInputError,
+        ))?;
 
     // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
     // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
@@ -1406,7 +1406,7 @@ pub fn bls12_map_fp2_tp_g2(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP2_VALID_INPUT_LENGTH {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
@@ -1419,10 +1419,14 @@ pub fn bls12_map_fp2_tp_g2(
     )?;
     let fp_0 = Fp::from_bytes(&c0)
         .into_option()
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+        .ok_or(ExceptionalHalt::Precompile(
+            PrecompileError::ParsingInputError,
+        ))?;
     let fp_1 = Fp::from_bytes(&c1)
         .into_option()
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+        .ok_or(ExceptionalHalt::Precompile(
+            PrecompileError::ParsingInputError,
+        ))?;
     if fp_0 == Fp::zero() && fp_1 == Fp::zero() {
         return Ok(Bytes::copy_from_slice(&FP2_ZERO_MAPPED_TO_G2));
     }
@@ -1452,25 +1456,29 @@ pub fn bls12_map_fp2_tp_g2(
 
 fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VMError> {
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
-    let padded_coordinate =
-        coordinate_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let padded_coordinate = coordinate_raw_bytes.ok_or(ExceptionalHalt::Precompile(
+        PrecompileError::ParsingInputError,
+    ))?;
     if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
-        return Err(VMError::PrecompileError(PrecompileError::ParsingInputError));
+        return Err(PrecompileError::ParsingInputError.into());
     }
     let unpadded_coordinate = padded_coordinate
         .get(16..64)
-        .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+        .ok_or(ExceptionalHalt::Precompile(
+            PrecompileError::ParsingInputError,
+        ))?;
     unpadded_coordinate
         .try_into()
-        .map_err(|_| VMError::PrecompileError(PrecompileError::ParsingInputError))
+        .map_err(|_| PrecompileError::ParsingInputError.into())
 }
 
 fn parse_g1_point(
     point_raw_bytes: Option<&[u8]>,
     unchecked: bool,
 ) -> Result<G1Projective, VMError> {
-    let point_bytes =
-        point_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let point_bytes = point_raw_bytes.ok_or(ExceptionalHalt::Precompile(
+        PrecompileError::ParsingInputError,
+    ))?;
     let x = parse_coordinate(point_bytes.get(0..64))?;
     let y = parse_coordinate(point_bytes.get(64..128))?;
 
@@ -1481,27 +1489,30 @@ fn parse_g1_point(
         let g1_bytes: [u8; 96] = [x, y]
             .concat()
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
             // note that there is no subgroup check for the G1 addition precompile
             let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
                 .into_option()
-                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+                .ok_or(ExceptionalHalt::Precompile(
+                    PrecompileError::ParsingInputError,
+                ))?;
 
             // We still need to check if the point is on the curve
             if !bool::from(g1_affine.is_on_curve()) {
-                return Err(VMError::PrecompileError(
+                return Err(ExceptionalHalt::Precompile(
                     PrecompileError::BLS12381G1PointNotInCurve,
-                ));
+                )
+                .into());
             }
 
             G1Projective::from(g1_affine)
         } else {
             let g1_affine = G1Affine::from_uncompressed(&g1_bytes)
                 .into_option()
-                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+                .ok_or(PrecompileError::ParsingInputError)?;
 
             G1Projective::from(g1_affine)
         }
@@ -1513,8 +1524,9 @@ fn parse_g2_point(
     point_raw_bytes: Option<&[u8]>,
     unchecked: bool,
 ) -> Result<G2Projective, VMError> {
-    let point_bytes =
-        point_raw_bytes.ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+    let point_bytes = point_raw_bytes.ok_or(ExceptionalHalt::Precompile(
+        PrecompileError::ParsingInputError,
+    ))?;
     let x_0 = parse_coordinate(point_bytes.get(0..64))?;
     let x_1 = parse_coordinate(point_bytes.get(64..128))?;
     let y_0 = parse_coordinate(point_bytes.get(128..192))?;
@@ -1533,27 +1545,30 @@ fn parse_g2_point(
         let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
             .concat()
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
             // note that there is no subgroup check for the G1 addition precompile
             let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
                 .into_option()
-                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+                .ok_or(ExceptionalHalt::Precompile(
+                    PrecompileError::ParsingInputError,
+                ))?;
 
             // We still need to check if the point is on the curve
             if !bool::from(g2_affine.is_on_curve()) {
-                return Err(VMError::PrecompileError(
+                return Err(ExceptionalHalt::Precompile(
                     PrecompileError::BLS12381G2PointNotInCurve,
-                ));
+                )
+                .into());
             }
 
             G2Projective::from(g2_affine)
         } else {
             let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
                 .into_option()
-                .ok_or(VMError::PrecompileError(PrecompileError::ParsingInputError))?;
+                .ok_or(PrecompileError::ParsingInputError)?;
 
             G2Projective::from(g2_affine)
         }
@@ -1569,15 +1584,13 @@ fn add_padded_coordinate(
     // https://eips.ethereum.org/EIPS/eip-2537
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     result.extend_from_slice(&sixteen_zeroes);
-    result.extend_from_slice(
-        coordinate_raw_bytes.ok_or(VMError::Internal(InternalError::SlicingError))?,
-    );
+    result.extend_from_slice(coordinate_raw_bytes.ok_or(InternalError::Slicing)?);
     Ok(())
 }
 
 fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     let scalar_bytes: [u8; 32] = scalar_raw_bytes
-        .ok_or(InternalError::SlicingError)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
@@ -1589,7 +1602,7 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
         if let Some(value) = scalar_le.get_mut(j) {
             *value = u64::from_be_bytes(bytes);
         } else {
-            return Err(VMError::Internal(InternalError::SlicingError));
+            return Err(InternalError::Slicing.into());
         }
     }
     scalar_le.reverse();
@@ -1643,8 +1656,8 @@ pub fn p_256_verify(
     };
 
     // Build signature
-    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::SlicingError)?;
-    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::SlicingError)?;
+    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::Slicing)?;
+    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::Slicing)?;
 
     let Ok(signature) = P256Signature::from_scalars(r, s) else {
         return Ok(Bytes::new());
@@ -1684,7 +1697,7 @@ fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bo
     let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
 
     let (Some(x), Some(y)) = (x, y) else {
-        return Err(VMError::Internal(InternalError::SlicingError));
+        return Err(InternalError::Slicing.into());
     };
 
     // Curve equation: `y² = x³ + ax + b`

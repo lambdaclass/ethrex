@@ -4,17 +4,21 @@ use std::{
     sync::Arc,
 };
 
-use ethrex_common::{types::BlockNumber, H256};
+use ethrex_common::{
+    H256,
+    types::{AccountUpdate, Blob, BlockNumber},
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
-    orm::{Database, Table},
-    table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions,
+    DatabaseOptions, Mode, PageSize, RW, ReadWriteOptions,
+    orm::{Database, Table, Transaction},
+    table, table_info,
 };
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, OperationsCountRLP, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, MessageHashesRLP, OperationsCountRLP, Rlp},
 };
 
 pub struct Store {
@@ -63,9 +67,14 @@ const DB_PAGE_SIZE: usize = 4096;
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
     let tables = [
         table_info!(BatchesByBlockNumber),
-        table_info!(WithdrawalHashesByBatch),
+        table_info!(MessageHashesByBatch),
         table_info!(BlockNumbersByBatch),
         table_info!(OperationsCount),
+        table_info!(BlobsBundles),
+        table_info!(StateRoots),
+        table_info!(DepositLogsHash),
+        table_info!(LastSentBatchProof),
+        table_info!(AccountUpdatesByBlockNumber),
     ]
     .into_iter()
     .collect();
@@ -106,22 +115,22 @@ impl StoreEngineRollup for Store {
             .await
     }
 
-    async fn get_withdrawal_hashes_by_batch(
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
         Ok(self
-            .read::<WithdrawalHashesByBatch>(batch_number)
+            .read::<MessageHashesByBatch>(batch_number)
             .await?
             .map(|w| w.to()))
     }
 
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawals: Vec<H256>,
+        messages: Vec<H256>,
     ) -> Result<(), StoreError> {
-        self.write::<WithdrawalHashesByBatch>(batch_number, withdrawals.into())
+        self.write::<MessageHashesByBatch>(batch_number, messages.into())
             .await
     }
 
@@ -147,6 +156,66 @@ impl StoreEngineRollup for Store {
         .await
     }
 
+    async fn store_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.write::<DepositLogsHash>(
+            batch_number,
+            Rlp::from_bytes(deposit_logs_hash.encode_to_vec()),
+        )
+        .await
+    }
+
+    async fn get_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read::<DepositLogsHash>(batch_number)
+            .await?
+            .map(|hash| hash.to()))
+    }
+
+    async fn store_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_root: H256,
+    ) -> Result<(), StoreError> {
+        self.write::<StateRoots>(batch_number, Rlp::from_bytes(state_root.encode_to_vec()))
+            .await
+    }
+
+    async fn get_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read::<StateRoots>(batch_number)
+            .await?
+            .map(|hash| hash.to()))
+    }
+
+    async fn store_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+        blob_bundles: Vec<Blob>,
+    ) -> Result<(), StoreError> {
+        self.write::<BlobsBundles>(batch_number, blob_bundles.into())
+            .await
+    }
+
+    async fn get_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<Blob>>, StoreError> {
+        Ok(self
+            .read::<BlobsBundles>(batch_number)
+            .await?
+            .map(|blobs| blobs.to()))
+    }
+
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         let exists = self
             .read::<BlockNumbersByBatch>(*batch_number)
@@ -159,21 +228,21 @@ impl StoreEngineRollup for Store {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), StoreError> {
-        let (transaction_count, withdrawals_count, deposits_count) = {
+        let (transaction_count, messages_count, deposits_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
                 current_operations[1] + deposits_inc,
-                current_operations[2] + withdrawals_inc,
+                current_operations[2] + messages_inc,
             )
         };
 
         self.write::<OperationsCount>(
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, withdrawals_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
             ),
         )
         .await
@@ -193,6 +262,69 @@ impl StoreEngineRollup for Store {
             _ => Ok([0, 0, 0]),
         }
     }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        self.read::<LastSentBatchProof>(0)
+            .await
+            .map(|v| v.unwrap_or(0))
+    }
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.write::<LastSentBatchProof>(0, batch_number).await
+    }
+
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+        self.read::<AccountUpdatesByBlockNumber>(block_number)
+            .await?
+            .map(|s| bincode::deserialize(&s))
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError> {
+        let serialized = bincode::serialize(&account_updates)?;
+        self.write::<AccountUpdatesByBlockNumber>(block_number, serialized)
+            .await
+    }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
+            return Ok(());
+        };
+        let last_kept_block = *kept_blocks.iter().max().unwrap_or(&0);
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        delete_starting_at::<BatchesByBlockNumber>(&txn, last_kept_block + 1)?;
+        delete_starting_at::<MessageHashesByBatch>(&txn, batch_number + 1)?;
+        delete_starting_at::<BlockNumbersByBatch>(&txn, batch_number + 1)?;
+        delete_starting_at::<DepositLogsHash>(&txn, batch_number + 1)?;
+        delete_starting_at::<StateRoots>(&txn, batch_number + 1)?;
+        delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
+        txn.commit().map_err(StoreError::LibmdbxError)?;
+        Ok(())
+    }
+}
+
+/// Deletes keys above key, assuming they are contiguous
+fn delete_starting_at<T: Table<Key = u64>>(
+    txn: &Transaction<RW>,
+    mut key: u64,
+) -> Result<(), StoreError> {
+    while let Some(val) = txn.get::<T>(key).map_err(StoreError::LibmdbxError)? {
+        txn.delete::<T>(key, Some(val))
+            .map_err(StoreError::LibmdbxError)?;
+        key += 1;
+    }
+    Ok(())
 }
 
 table!(
@@ -201,8 +333,8 @@ table!(
 );
 
 table!(
-    /// Withdrawals by batch number
-    ( WithdrawalHashesByBatch ) u64 => WithdrawalHashesRLP
+    /// messages by batch number
+    ( MessageHashesByBatch ) u64 => MessageHashesRLP
 );
 
 table!(
@@ -211,6 +343,31 @@ table!(
 );
 
 table!(
-    /// Transaction, deposits, withdrawals count
+    /// Transaction, deposits, messages count
     ( OperationsCount ) u64 => OperationsCountRLP
+);
+
+table!(
+    /// Blobs bundles by batch number
+    ( BlobsBundles ) u64 => Rlp<Vec<Blob>>
+);
+
+table!(
+    /// State roots by batch number
+    ( StateRoots ) u64 => Rlp<H256>
+);
+
+table!(
+    /// Deposit logs hash by batch number
+    ( DepositLogsHash ) u64 => Rlp<H256>
+);
+
+table!(
+    /// Last sent batch proof
+    ( LastSentBatchProof ) u64 => u64
+);
+
+table!(
+    /// List of serialized account updates by block number
+    ( AccountUpdatesByBlockNumber ) BlockNumber => Vec<u8>
 );

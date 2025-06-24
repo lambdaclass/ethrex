@@ -1,15 +1,13 @@
 use crate::{
     cli::Options,
-    networks,
-    utils::{
-        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
-        read_node_config_file,
-    },
+    networks::{self, Network, PublicNetwork},
+    utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::{public_key_from_signing_key, P2PContext},
+    network::{P2PContext, public_key_from_signing_key},
     peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -22,7 +20,6 @@ use rand::rngs::OsRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
-    future::IntoFuture,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -30,7 +27,7 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
-use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
+use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 #[cfg(feature = "l2")]
 use crate::l2::L2Options;
@@ -38,7 +35,6 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-    secp256k1::SecretKey,
 };
 
 pub fn init_tracing(opts: &Options) {
@@ -64,9 +60,20 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub async fn init_store(data_dir: &str, network: &str) -> Store {
+/// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
+pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
+    let store = open_store(data_dir);
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to create genesis block");
+    store
+}
+
+/// Opens a Pre-exsisting Store or creates a new one
+pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
-    let store = if path.ends_with("memory") {
+    if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
@@ -80,13 +87,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
             }
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
-    };
-    let genesis = read_genesis_file(network);
-    store
-        .add_initial_state(genesis.clone())
-        .await
-        .expect("Failed to create genesis block");
-    store
+    }
 }
 
 #[cfg(feature = "l2")]
@@ -152,11 +153,10 @@ pub async fn init_rpc_api(
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(l2_opts),
+        l2_opts.sponsor_private_key,
         #[cfg(feature = "l2")]
         rollup_store,
-    )
-    .into_future();
+    );
 
     tracker.spawn(rpc_api);
 }
@@ -165,7 +165,7 @@ pub async fn init_rpc_api(
 #[allow(dead_code)]
 pub async fn init_network(
     opts: &Options,
-    network: &str,
+    network: &Network,
     data_dir: &str,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
@@ -237,51 +237,32 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
     }
 }
 
-pub fn get_network(opts: &Options) -> String {
-    let mut network = opts
-        .network
-        .clone()
-        .expect("--network is required and it was not provided");
-
-    // Set preset genesis from known networks
-    if network == "holesky" {
-        network = String::from(networks::HOLESKY_GENESIS_PATH);
-    }
-    if network == "sepolia" {
-        network = String::from(networks::SEPOLIA_GENESIS_PATH);
-    }
-    if network == "hoodi" {
-        network = String::from(networks::HOODI_GENESIS_PATH);
-    }
-    if network == "mainnet" {
-        network = String::from(networks::MAINNET_GENESIS_PATH);
-    }
-
-    network
+pub fn get_network(opts: &Options) -> Network {
+    opts.network.clone()
 }
 
 #[allow(dead_code)]
-pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    if network == networks::HOLESKY_GENESIS_PATH {
-        info!("Adding holesky preset bootnodes");
-        bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
-    }
-
-    if network == networks::SEPOLIA_GENESIS_PATH {
-        info!("Adding sepolia preset bootnodes");
-        bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-    }
-
-    if network == networks::HOODI_GENESIS_PATH {
-        info!("Adding hoodi preset bootnodes");
-        bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-    }
-
-    if network == networks::MAINNET_GENESIS_PATH {
-        info!("Adding mainnet preset bootnodes");
-        bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
+    match network {
+        Network::PublicNetwork(PublicNetwork::Holesky) => {
+            info!("Adding holesky preset bootnodes");
+            bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Hoodi) => {
+            info!("Addig hoodi preset bootnodes");
+            bootnodes.extend(networks::HOODI_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Mainnet) => {
+            info!("Adding mainnet preset bootnodes");
+            bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Sepolia) => {
+            info!("Adding sepolia preset bootnodes");
+            bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
+        }
+        _ => {}
     }
 
     if bootnodes.is_empty() {
@@ -303,7 +284,7 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
 pub fn get_signer(data_dir: &str) -> SigningKey {
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = Path::new(data_dir).join("node.key");
-    let signer = match fs::read(key_path.clone()) {
+    match fs::read(key_path.clone()) {
         Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
             info!(
@@ -318,8 +299,7 @@ pub fn get_signer(data_dir: &str) -> SigningKey {
                 .expect("Newly created signer could not be saved to disk.");
             signer
         }
-    };
-    signer
+    }
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
@@ -403,12 +383,4 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
     }
     addresses
-}
-
-#[cfg(feature = "l2")]
-pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
-    if let Some(pk) = opts.sponsor_private_key {
-        return pk;
-    }
-    opts.sequencer_opts.watcher_opts.l2_proposer_private_key
 }

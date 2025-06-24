@@ -1,15 +1,15 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_common::{
-    types::{Account, AccountUpdate, Fork},
     Address, H256,
+    types::{Account, AccountUpdate, Fork},
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_vm::EvmError;
 use itertools::Itertools;
 use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
-use spinoff::{spinners::Dots, Color, Spinner};
+use spinoff::{Color, Spinner, spinners::Dots};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
@@ -329,9 +329,12 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
         writeln!(f)?;
-        writeln!(f, "Failed tests:")?;
+        writeln!(f, "Passed tests:")?;
         writeln!(f)?;
         writeln!(f, "{}", test_dir_summary_for_shell(&self.0))?;
+        writeln!(f)?;
+        writeln!(f, "Failed tests:")?;
+        writeln!(f)?;
         for report in self.0.iter() {
             if report.passed() {
                 continue;
@@ -380,6 +383,22 @@ impl Display for EFTestsReport {
                                     levm_gas_refunded.abs_diff(*revm_gas_refunded)
                                 )?;
                             }
+                            if let Some((levm_logs, revm_logs)) = &execution_report.logs_mismatch {
+                                writeln!(f, "\t\t\tLogs mismatch:")?;
+                                writeln!(f, "\t\t\t\tLevm Logs: ")?;
+                                let levm_log_report = levm_logs.iter().map(|log| format!(
+                                            "\t\t\t\t Log {{ address: {:#x}, topic: {:?}, data: {:#x} }} \n",
+                                            log.address, log.topics, log.data
+                                        ))
+                                        .fold(String::new(), |acc, arg| acc + arg.as_str());
+                                writeln!(f, "{}", levm_log_report)?;
+                                writeln!(f, "\t\t\t\tRevm Logs: ")?;
+                                let revm_log_report = revm_logs
+                                    .iter()
+                                    .map(|log| format!("\t\t\t\t {:?} \n", log))
+                                    .fold(String::new(), |acc, arg| acc + arg.as_str());
+                                writeln!(f, "{}", revm_log_report)?;
+                            }
                             if let Some((levm_result, revm_error)) =
                                 &execution_report.re_runner_error
                             {
@@ -396,10 +415,16 @@ impl Display for EFTestsReport {
                         {
                             writeln!(f, "\t\t\t{}", &account_update.to_string())?;
                         } else {
-                            writeln!(f, "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
+                            writeln!(
+                                f,
+                                "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage."
+                            )?;
                         }
                     } else {
-                        writeln!(f, "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
+                        writeln!(
+                            f,
+                            "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage."
+                        )?;
                     }
                     writeln!(f)?;
                 }
@@ -504,7 +529,11 @@ impl EFTestReportForkResult {
     ) {
         self.failed_vectors.insert(
             failed_vector,
-            EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason, levm_cache),
+            EFTestRunnerError::FailedToEnsurePostState(
+                Box::new(transaction_report),
+                reason,
+                levm_cache,
+            ),
         );
     }
 
@@ -755,6 +784,7 @@ pub struct TestReRunExecutionReport {
     pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
     pub gas_used_mismatch: Option<(u64, u64)>,
     pub gas_refunded_mismatch: Option<(u64, u64)>,
+    pub logs_mismatch: Option<(Vec<ethrex_common::types::Log>, Vec<revm::primitives::Log>)>,
     pub re_runner_error: Option<(TxResult, String)>,
 }
 
@@ -822,6 +852,25 @@ impl TestReRunReport {
             })
             .or_insert(TestReRunExecutionReport {
                 gas_refunded_mismatch: value,
+                ..Default::default()
+            });
+    }
+
+    pub fn register_logs_mismatch(
+        &mut self,
+        vector: TestVector,
+        levm_logs: Vec<ethrex_common::types::Log>,
+        revm_logs: Vec<revm::primitives::Log>,
+        fork: Fork,
+    ) {
+        let value = Some((levm_logs, revm_logs));
+        self.execution_report
+            .entry((vector, fork))
+            .and_modify(|report| {
+                report.logs_mismatch = value.clone();
+            })
+            .or_insert(TestReRunExecutionReport {
+                logs_mismatch: value,
                 ..Default::default()
             });
     }

@@ -1,16 +1,13 @@
 use crate::{
     constants::STACK_LIMIT,
-    errors::{InternalError, OutOfGasError, VMError},
+    errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
     utils::{get_valid_jump_destinations, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{
-    types::{Account, Log},
-    Address, U256,
-};
+use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
 use std::collections::{HashMap, HashSet};
 
@@ -21,13 +18,13 @@ pub struct Stack {
 }
 
 impl Stack {
-    pub fn pop(&mut self) -> Result<U256, VMError> {
-        self.stack.pop().ok_or(VMError::StackUnderflow)
+    pub fn pop(&mut self) -> Result<U256, ExceptionalHalt> {
+        self.stack.pop().ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn push(&mut self, value: U256) -> Result<(), VMError> {
+    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
         if self.stack.len() >= STACK_LIMIT {
-            return Err(VMError::StackOverflow);
+            return Err(ExceptionalHalt::StackOverflow);
         }
         self.stack.push(value);
         Ok(())
@@ -41,13 +38,13 @@ impl Stack {
         self.stack.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Result<&U256, VMError> {
-        self.stack.get(index).ok_or(VMError::StackUnderflow)
+    pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
+        self.stack.get(index).ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), VMError> {
+    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), ExceptionalHalt> {
         if a >= self.stack.len() || b >= self.stack.len() {
-            return Err(VMError::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow);
         }
         self.stack.swap(a, b);
         Ok(())
@@ -86,13 +83,12 @@ pub struct CallFrame {
     pub sub_return_data: Bytes,
     /// Indicates if current context is static (if it is, it can't alter state)
     pub is_static: bool,
-    pub logs: Vec<Log>,
     /// Call stack current depth
     pub depth: usize,
     /// Set of valid jump destinations (where a JUMP or JUMPI can jump to)
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
-    pub create_op_called: bool,
+    pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
     /// Return data offset
@@ -114,6 +110,13 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
     }
+
+    pub fn extend(&mut self, other: CallFrameBackup) {
+        self.original_account_storage_slots
+            .extend(other.original_account_storage_slots);
+        self.original_accounts_info
+            .extend(other.original_accounts_info);
+    }
 }
 
 impl CallFrame {
@@ -129,7 +132,7 @@ impl CallFrame {
         gas_limit: u64,
         depth: usize,
         should_transfer_value: bool,
-        create_op_called: bool,
+        is_create: bool,
         ret_offset: U256,
         ret_size: usize,
     ) -> Self {
@@ -146,7 +149,7 @@ impl CallFrame {
             depth,
             valid_jump_destinations,
             should_transfer_value,
-            create_op_called,
+            is_create,
             ret_offset,
             ret_size,
             ..Default::default()
@@ -154,17 +157,15 @@ impl CallFrame {
     }
 
     pub fn next_opcode(&self) -> Opcode {
-        match self.bytecode.get(self.pc).copied().map(Opcode::from) {
-            Some(opcode) => opcode,
-            None => Opcode::STOP,
-        }
+        self.bytecode
+            .get(self.pc)
+            .copied()
+            .map(Opcode::from)
+            .unwrap_or(Opcode::STOP)
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.pc = self
-            .pc
-            .checked_add(count)
-            .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
+        self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
@@ -173,16 +174,15 @@ impl CallFrame {
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
-    pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), VMError> {
-        let potential_consumed_gas = self
+    pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
+        self.gas_used = self
             .gas_used
             .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        if potential_consumed_gas > self.gas_limit {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
+            .ok_or(ExceptionalHalt::OutOfGas)?;
 
-        self.gas_used = potential_consumed_gas;
+        if self.gas_used > self.gas_limit {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
 
         Ok(())
     }
@@ -195,22 +195,16 @@ impl CallFrame {
 }
 
 impl<'a> VM<'a> {
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
-        self.call_frames.last_mut().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
+    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
+        self.call_frames.last_mut().ok_or(InternalError::CallFrame)
     }
 
-    pub fn current_call_frame(&self) -> Result<&CallFrame, VMError> {
-        self.call_frames.last().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
+    pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
+        self.call_frames.last().ok_or(InternalError::CallFrame)
     }
 
-    pub fn pop_call_frame(&mut self) -> Result<CallFrame, VMError> {
-        self.call_frames.pop().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
+    pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
+        self.call_frames.pop().ok_or(InternalError::CallFrame)
     }
 
     pub fn is_initial_call_frame(&self) -> bool {

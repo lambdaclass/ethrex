@@ -1,33 +1,48 @@
+use crate::based::block_fetcher::BlockFetcherError;
+use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
+use ethrex_l2_common::deposits::DepositError;
+use ethrex_l2_common::l1_messages::L1MessagingError;
+use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
-use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
+use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
-use ethrex_trie::TrieError;
-use ethrex_vm::EvmError;
+use ethrex_vm::{EvmError, ProverDBError};
+use spawned_concurrency::GenServerError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SequencerError {
     #[error("Failed to start L1Watcher: {0}")]
     L1WatcherError(#[from] L1WatcherError),
-    #[error("Failed to start ProverServer: {0}")]
-    ProverServerError(#[from] ProverServerError),
+    #[error("Failed to start ProofCoordinator: {0}")]
+    ProofCoordinatorError(#[from] ProofCoordinatorError),
     #[error("Failed to start BlockProducer: {0}")]
     BlockProducerError(#[from] BlockProducerError),
     #[error("Failed to start Committer: {0}")]
     CommitterError(#[from] CommitterError),
     #[error("Failed to start ProofSender: {0}")]
     ProofSenderError(#[from] ProofSenderError),
+    #[error("Failed to start ProofVerifier: {0}")]
+    ProofVerifierError(#[from] ProofVerifierError),
     #[error("Failed to start MetricsGatherer: {0}")]
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to start StateUpdater: {0}")]
+    StateUpdaterError(#[from] StateUpdaterError),
+    #[error("Failed to start BlockFetcher: {0}")]
+    BlockFetcherError(#[from] BlockFetcherError),
+    #[error("Failed to access Store: {0}")]
+    FailedAccessingStore(#[from] StoreError),
+    #[error("Failed to resolve network")]
+    AlignedNetworkError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -44,40 +59,54 @@ pub enum L1WatcherError {
     FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
     Custom(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProverServerError {
-    #[error("ProverServer connection failed: {0}")]
+pub enum ProofCoordinatorError {
+    #[error("ProofCoordinator connection failed: {0}")]
     ConnectionError(#[from] std::io::Error),
-    #[error("ProverServer failed because of an EthClient error: {0}")]
+    #[error("ProofCoordinator failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("ProverServer failed to send transaction: {0}")]
+    #[error("ProofCoordinator failed to send transaction: {0}")]
     FailedToVerifyProofOnChain(String),
-    #[error("ProverServer failed to access Store: {0}")]
+    #[error("ProofCoordinator failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
-    #[error("ProverServer failed to retrieve block from storaga, data is None.")]
+    #[error("ProofCoordinator failed to retrieve block from storaga, data is None.")]
     StorageDataIsNone,
-    #[error("ProverServer failed to create ProverInputs: {0}")]
+    #[error("ProofCoordinator failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
-    #[error("ProverServer JoinError: {0}")]
+    #[error("ProofCoordinator failed to create ExecutionWitness: {0}")]
+    FailedToCreateExecutionWitness(#[from] ChainError),
+    #[error("ProofCoordinator JoinError: {0}")]
     JoinError(#[from] JoinError),
-    #[error("ProverServer failed: {0}")]
+    #[error("ProofCoordinator failed: {0}")]
     Custom(String),
-    #[error("ProverServer failed to write to TcpStream: {0}")]
+    #[error("ProofCoordinator failed to write to TcpStream: {0}")]
     WriteError(String),
-    #[error("ProverServer failed to get data from Store: {0}")]
+    #[error("ProofCoordinator failed to get data from Store: {0}")]
     ItemNotFoundInStore(String),
-    #[error("ProverServer encountered a SaveStateError: {0}")]
+    #[error("ProofCoordinator encountered a SaveStateError: {0}")]
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
-    #[error("ProverServer failed when (de)serializing JSON: {0}")]
+    #[error("ProofCoordinator failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("ProofCoordinator encountered a StateDiffError")]
+    StateDiffError(#[from] StateDiffError),
+    #[error("ProofCoordinator encountered a ExecutionCacheError")]
+    ExecutionCacheError(#[from] ExecutionCacheError),
+    #[error("ProofCoordinator encountered a BlobsBundleError: {0}")]
+    BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
+    #[error("ProofCoordinator failed failed because of a ProverDB error: {0}")]
+    ProverDBError(#[from] ProverDBError),
+    #[error("Missing blob for batch {0}")]
+    MissingBlob(u64),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -94,6 +123,30 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
+    #[error("Proof Sender failed because of a store error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("Proof Sender failed to estimate Aligned fee: {0}")]
+    AlignedFeeEstimateError(String),
+    #[error("Proof Sender failed to get nonce from batcher: {0}")]
+    AlignedGetNonceError(String),
+    #[error("Proof Sender failed to submit proof: {0}")]
+    AlignedSubmitProofError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProofVerifierError {
+    #[error("Failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
+    #[error("ProofVerifier failed to parse beacon url")]
+    ParseBeaconUrl(String),
+    #[error("Failed with a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -104,6 +157,8 @@ pub enum BlockProducerError {
     ChainError(#[from] ChainError),
     #[error("Block Producer failed because of a EvmError error: {0}")]
     EvmError(#[from] EvmError),
+    #[error("Block Producer failed because of a ProverDB error: {0}")]
+    ProverDBError(#[from] ProverDBError),
     #[error("Block Producer failed because of a InvalidForkChoice error: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Block Producer failed to produce block: {0}")]
@@ -130,6 +185,8 @@ pub enum BlockProducerError {
     FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -172,6 +229,12 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
+    #[error("Deposit error: {0}")]
+    DepositError(#[from] DepositError),
+    #[error("L1Message error: {0}")]
+    L1MessageError(#[from] L1MessagingError),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -180,34 +243,12 @@ pub enum BlobEstimationError {
     OverflowError,
     #[error("Failed to calculate blob gas due to invalid parameters")]
     CalculationError,
-    #[error("Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges")]
+    #[error(
+        "Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges"
+    )]
     NonFiniteResult,
     #[error("{0}")]
     FakeExponentialError(#[from] FakeExponentialError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum StateDiffError {
-    #[error("StateDiff failed to deserialize: {0}")]
-    FailedToDeserializeStateDiff(String),
-    #[error("StateDiff failed to serialize: {0}")]
-    FailedToSerializeStateDiff(String),
-    #[error("StateDiff invalid account state diff type: {0}")]
-    InvalidAccountStateDiffType(u8),
-    #[error("StateDiff unsupported version: {0}")]
-    UnsupportedVersion(u8),
-    #[error("Both bytecode and bytecode hash are set")]
-    BytecodeAndBytecodeHashSet,
-    #[error("Empty account diff")]
-    EmptyAccountDiff,
-    #[error("The length of the vector is too big to fit in u16: {0}")]
-    LengthTooBig(#[from] core::num::TryFromIntError),
-    #[error("DB Error: {0}")]
-    DbError(#[from] TrieError),
-    #[error("Store Error: {0}")]
-    StoreError(#[from] StoreError),
-    #[error("New nonce is lower than the previous one")]
-    FailedToCalculateNonce,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -218,6 +259,8 @@ pub enum MetricsGathererError {
     EthClientError(#[from] EthClientError),
     #[error("MetricsGatherer: {0}")]
     TryInto(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -226,4 +269,10 @@ pub enum ExecutionCacheError {
     Io(#[from] std::io::Error),
     #[error("Failed (de)serializing result: {0}")]
     Bincode(#[from] bincode::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectionHandlerError {
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }

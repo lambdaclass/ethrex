@@ -27,7 +27,7 @@ impl ForkId {
         head_timestamp: u64,
         head_block_number: u64,
     ) -> Self {
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
         let (block_number_based_forks, timestamp_based_forks) =
             chain_config.gather_forks(genesis_header);
 
@@ -65,7 +65,7 @@ impl ForkId {
         chain_config: ChainConfig,
         genesis_header: BlockHeader,
     ) -> bool {
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
         let (block_number_based_forks, timestamp_based_forks) =
             chain_config.gather_forks(genesis_header);
 

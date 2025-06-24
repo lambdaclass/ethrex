@@ -1,15 +1,18 @@
+// TODO: Remove this after `l2` feature is gone.
+#![allow(dead_code)]
+
 #[cfg(feature = "redb")]
 use std::any::type_name;
 use std::{fmt::Debug, marker::PhantomData};
 
-use ethrex_common::{types::BlockNumber, H256};
+use ethrex_common::{H256, types::BlockNumber};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 #[cfg(feature = "redb")]
 use redb::TypeName;
 
-pub type WithdrawalHashesRLP = Rlp<Vec<H256>>;
+pub type MessageHashesRLP = Rlp<Vec<H256>>;
 pub type BlockNumbersRLP = Rlp<Vec<BlockNumber>>;
 pub type OperationsCountRLP = Rlp<Vec<u64>>;
 

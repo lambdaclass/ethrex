@@ -22,6 +22,8 @@ jobs:
           lfs: true
       - name: Checkout LFS objects
         run: git lfs checkout
+      - name: Update package lists
+        run: sudo apt-get update
       - name: Install gnuplot
         run: sudo apt-get install -y gnuplot
       - name: Run benchmark
@@ -31,7 +33,7 @@ jobs:
         with:
           tool: "cargo"
           output-file-path: cmd/ethrex/output.txt
-          benchmark-data-dir-path: "."
+          benchmark-data-dir-path: "benchmarks"
           # Access token to deploy GitHub Pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically

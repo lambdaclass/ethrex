@@ -2,12 +2,12 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{validate_block_body, AccountState, Block, BlockBody, BlockHeader, Receipt},
     H256, U256,
+    types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
-use ethrex_trie::{verify_range, Node};
+use ethrex_trie::{Node, verify_range};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -16,9 +16,9 @@ use crate::{
         connection::server::CastMessage,
         eth::{
             blocks::{
-                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
+                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
             },
-            receipts::{GetReceipts, Receipts},
+            receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
@@ -30,7 +30,7 @@ use crate::{
     snap::encodable_to_proof,
 };
 use tracing::{debug, info, warn};
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
@@ -66,6 +66,29 @@ impl PeerHandler {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         PeerHandler::new(dummy_peer_table)
     }
+
+    /// Helper method to record successful peer response
+    async fn record_peer_success(&self, peer_id: H256) {
+        if let Ok(mut table) = self.peer_table.try_lock() {
+            table.reward_peer(peer_id);
+        }
+    }
+
+    /// Helper method to record failed peer response
+    async fn record_peer_failure(&self, peer_id: H256) {
+        if let Ok(mut table) = self.peer_table.try_lock() {
+            table.penalize_peer(peer_id);
+        }
+    }
+
+    /// Helper method to record critical peer failure
+    /// This is used when the peer returns invalid data or is otherwise unreliable
+    async fn record_peer_critical_failure(&self, peer_id: H256) {
+        if let Ok(mut table) = self.peer_table.try_lock() {
+            table.critically_penalize_peer(peer_id);
+        }
+    }
+
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
@@ -91,12 +114,11 @@ impl PeerHandler {
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    ///   TODO: (#2926) We can remove the hashes return when making .hash publick in the headers
     pub async fn request_block_headers(
         &self,
         start: H256,
         order: BlockRequestOrder,
-    ) -> Option<(Vec<BlockHeader>, Vec<H256>)> {
+    ) -> Option<Vec<BlockHeader>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
@@ -115,6 +137,7 @@ impl PeerHandler {
                 .cast(CastMessage::BackendMessage(request))
                 .await
             {
+                self.record_peer_failure(peer_id).await;
                 debug!("Failed to send message to peer: {err:?}");
                 continue;
             }
@@ -124,7 +147,7 @@ impl PeerHandler {
                         Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
                             if id == request_id =>
                         {
-                            return Some(block_headers)
+                            return Some(block_headers);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -137,18 +160,18 @@ impl PeerHandler {
             .flatten()
             .and_then(|headers| (!headers.is_empty()).then_some(headers))
             {
-                let block_hashes = block_headers
-                    .iter()
-                    .map(|header| header.compute_block_hash())
-                    .collect::<Vec<_>>();
-
-                if are_block_headers_chained(&block_headers, &block_hashes) {
-                    return Some((block_headers, block_hashes));
+                if are_block_headers_chained(&block_headers, &order) {
+                    self.record_peer_success(peer_id).await;
+                    return Some(block_headers);
                 } else {
-                    warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
-                    self.remove_peer(peer_id).await;
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                    );
+                    self.record_peer_critical_failure(peer_id).await;
                 }
             }
+            warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -176,6 +199,7 @@ impl PeerHandler {
             .cast(CastMessage::BackendMessage(request))
             .await
         {
+            self.record_peer_failure(peer_id).await;
             debug!("Failed to send message to peer: {err:?}");
             return None;
         }
@@ -185,11 +209,11 @@ impl PeerHandler {
                     Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
                         if id == request_id =>
                     {
-                        return Some(block_bodies)
+                        return Some(block_bodies);
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
                     Some(_) => continue,
-                    None => return None, // Retry request
+                    None => return None,
                 }
             }
         })
@@ -200,8 +224,12 @@ impl PeerHandler {
             // Check that the response is not empty and does not contain more bodies than the ones requested
             (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
         }) {
+            self.record_peer_success(peer_id).await;
             return Some((block_bodies, peer_id));
         }
+
+        warn!("[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}...");
+        self.record_peer_failure(peer_id).await;
         None
     }
 
@@ -262,8 +290,10 @@ impl PeerHandler {
                 .iter()
                 .find_map(|block| validate_block_body(block).err())
             {
-                warn!("Invalid block body error {e}, discarding peer {peer_id} and retrying...");
-                self.remove_peer(peer_id).await;
+                warn!(
+                    "[SYNCING] Invalid block body error {e}, discarding peer {peer_id} and retrying..."
+                );
+                self.record_peer_critical_failure(peer_id).await;
                 continue; // Retry on validation failure
             }
 
@@ -299,10 +329,11 @@ impl PeerHandler {
             if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(Receipts { id, receipts }))
-                            if id == request_id =>
-                        {
-                            return Some(receipts)
+                        Some(RLPxMessage::Receipts(receipts)) => {
+                            if receipts.get_id() == request_id {
+                                return Some(receipts.get_receipts());
+                            }
+                            return None;
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -429,7 +460,7 @@ impl PeerHandler {
                         Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
                             if id == request_id =>
                         {
-                            return Some(codes)
+                            return Some(codes);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -490,7 +521,7 @@ impl PeerHandler {
                         Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
                             if id == request_id =>
                         {
-                            return Some((slots, proof))
+                            return Some((slots, proof));
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -595,7 +626,7 @@ impl PeerHandler {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
                             if id == request_id =>
                         {
-                            return Some(nodes)
+                            return Some(nodes);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -673,7 +704,7 @@ impl PeerHandler {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
                             if id == request_id =>
                         {
-                            return Some(nodes)
+                            return Some(nodes);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -744,7 +775,7 @@ impl PeerHandler {
                         Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
                             if id == request_id =>
                         {
-                            return Some((slots, proof))
+                            return Some((slots, proof));
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -804,10 +835,9 @@ impl PeerHandler {
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header
 /// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader], block_hashes: &[H256]) -> bool {
-    block_headers
-        .iter()
-        .skip(1) // Skip the first, since we know the current head is valid
-        .zip(block_hashes.iter())
-        .all(|(current_header, previous_hash)| current_header.parent_hash == *previous_hash)
+fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
+    block_headers.windows(2).all(|headers| match order {
+        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
+        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
+    })
 }

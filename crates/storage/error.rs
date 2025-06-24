@@ -23,7 +23,7 @@ pub enum StoreError {
     RedbCommitError(#[from] CommitError),
     #[cfg(feature = "redb")]
     #[error("Redb Transaction error: {0}")]
-    RedbTransactionError(#[from] TransactionError),
+    RedbTransactionError(#[from] Box<TransactionError>),
     #[error("Redb Database error: {0}")]
     #[cfg(feature = "redb")]
     RedbDatabaseError(#[from] DatabaseError),
@@ -50,4 +50,8 @@ pub enum StoreError {
     MempoolWriteLock(String),
     #[error("Failed to lock mempool for reading")]
     MempoolReadLock(String),
+    #[error("Bincode (de)serialization error: {0}")]
+    BincodeError(#[from] bincode::Error),
+    #[error("Failed to lock database for writing")]
+    LockError,
 }

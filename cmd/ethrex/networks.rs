@@ -1,3 +1,9 @@
+use std::{
+    fmt::{self},
+    path::{Path, PathBuf},
+};
+
+use ethrex_common::types::{Genesis, GenesisError};
 use ethrex_p2p::types::Node;
 use lazy_static::lazy_static;
 
@@ -30,4 +36,67 @@ lazy_static! {
         std::fs::File::open(MAINNET_BOOTNODES_PATH).expect("Failed to open mainnet bootnodes file")
     )
     .expect("Failed to parse mainnet bootnodes file");
+}
+#[derive(Debug, Clone)]
+pub enum Network {
+    PublicNetwork(PublicNetwork),
+    GenesisPath(PathBuf),
+}
+#[derive(Debug, Clone)]
+pub enum PublicNetwork {
+    Hoodi,
+    Holesky,
+    Sepolia,
+    Mainnet,
+}
+
+impl From<&str> for Network {
+    fn from(value: &str) -> Self {
+        match value {
+            "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
+            "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
+            "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
+            "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            s => Network::GenesisPath(PathBuf::from(s)),
+        }
+    }
+}
+
+impl From<PathBuf> for Network {
+    fn from(value: PathBuf) -> Self {
+        Network::GenesisPath(value)
+    }
+}
+
+impl Default for Network {
+    fn default() -> Self {
+        Network::PublicNetwork(PublicNetwork::Mainnet)
+    }
+}
+
+impl fmt::Display for Network {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Network::PublicNetwork(PublicNetwork::Holesky) => write!(f, "holesky"),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
+            Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::GenesisPath(path_buf) => write!(f, "{:?}", path_buf),
+        }
+    }
+}
+
+impl Network {
+    pub fn get_genesis_path(&self) -> &Path {
+        match self {
+            Network::PublicNetwork(PublicNetwork::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => Path::new(HOODI_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetwork::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
+            Network::GenesisPath(s) => s,
+        }
+    }
+    pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
+        Genesis::try_from(self.get_genesis_path())
+    }
 }

@@ -1,19 +1,19 @@
-FROM rust:1.82 AS chef
+FROM rust:1.87 AS chef
 
 RUN apt-get update && apt-get install -y \
-	build-essential \
-	libclang-dev \
-	libc6 \
-	libssl-dev \
-	ca-certificates \
-	&& rm -rf /var/lib/apt/lists/*
+    build-essential \
+    libclang-dev \
+    libc6 \
+    libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
 WORKDIR /ethrex
 
 FROM chef AS planner
 COPY crates ./crates
-COPY tools ./tools
+COPY tooling ./tooling
 COPY cmd ./cmd
 COPY Cargo.* .
 # Determine the crates that need to be built from dependencies

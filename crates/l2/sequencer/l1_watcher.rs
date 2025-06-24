@@ -1,21 +1,21 @@
-use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
+use super::utils::random_duration;
+use crate::based::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
+use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{types::Transaction, H160};
+use ethrex_common::{H160, types::Transaction};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{eth_sender::Overrides, EthClient},
+    clients::eth::{EthClient, eth_sender::Overrides},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
-
 use super::utils::random_duration;
-
 use spawned_concurrency::tasks::{
     send_after, CallResponse, CastResponse, GenServer, GenServerHandle,
 };
@@ -31,6 +31,7 @@ pub struct L1WatcherState {
     pub last_block_fetched: U256,
     pub check_interval: u64,
     pub l1_block_delay: u64,
+    pub sequencer_state: SequencerState,
 }
 
 impl L1WatcherState {
@@ -39,6 +40,7 @@ impl L1WatcherState {
         blockchain: Arc<Blockchain>,
         eth_config: &EthConfig,
         watcher_config: &L1WatcherConfig,
+        sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         let l2_client = EthClient::new("http://localhost:1729")?;
@@ -53,6 +55,7 @@ impl L1WatcherState {
             last_block_fetched,
             check_interval: watcher_config.check_interval_ms,
             l1_block_delay: watcher_config.watcher_block_delay,
+            sequencer_state,
         })
     }
 }
@@ -72,13 +75,20 @@ pub enum OutMessage {
 pub struct L1Watcher;
 
 impl L1Watcher {
-    pub async fn spawn(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerConfig) {
-        match L1WatcherState::new(store.clone(), blockchain.clone(), &cfg.eth, &cfg.l1_watcher) {
-            Ok(state) => {
-                let _ = L1Watcher::start(state);
-            }
-            Err(error) => error!("L1 Watcher Error: {}", error),
-        };
+    pub async fn spawn(
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+    ) -> Result<(), L1WatcherError> {
+        let state = L1WatcherState::new(
+            store,
+            blockchain,
+            &cfg.eth,
+            &cfg.l1_watcher,
+            sequencer_state,
+        )?;
+        L1Watcher::start(state);
     }
 }
 
@@ -99,7 +109,7 @@ impl GenServer for L1Watcher {
         state: Self::State,
     ) -> Result<Self::State, Self::Error> {
         // Perform the check and suscribe a periodic Watch.
-        let _ = handle.clone().cast(InMessage::Watch).await;
+        handle.clone().cast(Self::CastMsg::Watch).await.map_err(Self::Error::GenServerError)?;
         Ok(state)
     }
 
@@ -120,27 +130,34 @@ impl GenServer for L1Watcher {
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Watch => {
+                if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
+                    watch(&mut state).await;
+                }
                 let check_interval = random_duration(state.check_interval);
                 send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
-                match get_logs(&mut state).await {
-                    Ok(logs) => {
-                        // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-                        if !logs.is_empty() {
-                            if let Err(err) = process_logs(&state, logs).await {
-                                error!("L1 Watcher Error: {}", err)
-                            };
-                        };
-                    }
-                    Err(err) => error!("L1 Watcher Error: {}", err),
-                };
-
                 CastResponse::NoReply(state)
             }
         }
     }
 }
 
-pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
+async fn watch(state: &mut L1WatcherState) {
+    let Ok(logs) = get_deposit_logs(state)
+        .await
+        .inspect_err(|err| error!("L1 Watcher Error: {err}"))
+    else {
+        return;
+    };
+
+    // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+    if !logs.is_empty() {
+        let _ = process_deposit_logs(state, logs)
+            .await
+            .inspect_err(|err| error!("L1 Watcher Error: {}", err));
+    };
+}
+
+pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
     if state.last_block_fetched.is_zero() {
         state.last_block_fetched = state
             .eth_client
@@ -160,9 +177,9 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
     };
 
     debug!(
-            "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
-            state.l1_block_delay,
-        );
+        "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
+        state.l1_block_delay,
+    );
 
     // last_block_fetched could be greater than latest_block_to_check:
     // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed
@@ -185,7 +202,8 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
     // Matches the event DepositInitiated from ICommonBridge.sol
     let topic =
         keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
-    let logs = match state
+
+    let logs = state
         .eth_client
         .get_logs(
             state.last_block_fetched + 1,
@@ -194,15 +212,12 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
             topic,
         )
         .await
-    {
-        Ok(logs) => logs,
-        Err(error) => {
+        .inspect_err(|error| {
             // We may get an error if the RPC doesn't has the logs for the requested
             // block interval. For example, Light Nodes.
             warn!("Error when getting logs from L1: {}", error);
-            vec![]
-        }
-    };
+        })
+        .unwrap_or_default();
 
     debug!("Logs: {:#?}", logs);
 
@@ -213,7 +228,7 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
     Ok(logs)
 }
 
-pub async fn process_logs(
+pub async fn process_deposit_logs(
     state: &L1WatcherState,
     logs: Vec<RpcLog>,
 ) -> Result<Vec<H256>, L1WatcherError> {
@@ -274,21 +289,18 @@ pub async fn process_logs(
             )
             .await?;
 
-        match state
+        let Ok(hash) = state
             .blockchain
             .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
             .await
-        {
-            Ok(hash) => {
-                info!("Mint transaction added to mempool {hash:#x}",);
-                deposit_txs.push(hash);
-            }
-            Err(e) => {
-                warn!("Failed to add mint transaction to the mempool: {e:#?}");
-                // TODO: Figure out if we want to continue or not
-                continue;
-            }
-        }
+            .inspect_err(|e| warn!("Failed to add mint transaction to the mempool: {e:#?}"))
+        else {
+            // TODO: Figure out if we want to continue or not
+            continue;
+        };
+
+        info!("Mint transaction added to mempool {hash:#x}",);
+        deposit_txs.push(hash);
     }
 
     Ok(deposit_txs)

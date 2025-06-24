@@ -1,5 +1,3 @@
-use crate::eth::fee_calculator::estimate_gas_tip;
-
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use serde_json::Value;
@@ -18,12 +16,12 @@ impl RpcHandler for MaxPriorityFee {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let estimated_gas_tip = estimate_gas_tip(&context.storage).await?;
-
-        let gas_tip = match estimated_gas_tip {
-            Some(gas_tip) => gas_tip,
-            None => return Ok(serde_json::Value::Null),
-        };
+        let gas_tip = context
+            .gas_tip_estimator
+            .lock()
+            .await
+            .estimate_gas_tip(&context.storage)
+            .await?;
 
         let gas_as_hex = format!("0x{:x}", gas_tip);
         Ok(serde_json::Value::String(gas_as_hex))
@@ -32,18 +30,19 @@ impl RpcHandler for MaxPriorityFee {
 
 #[cfg(test)]
 mod tests {
-    use super::MaxPriorityFee;
+    use super::*;
     use crate::eth::test_utils::{
-        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, setup_store,
-        BASE_PRICE_IN_WEI,
+        BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
+        setup_store,
     };
 
     use crate::utils::test_utils::default_context_with_storage;
     use crate::{
-        rpc::{map_http_requests, RpcApiContext, RpcHandler},
-        utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
+        rpc::{RpcApiContext, RpcHandler, map_http_requests},
+        utils::{RpcRequest, parse_json_hex, test_utils::example_p2p_node},
     };
-    use serde_json::{json, Value};
+    use ethrex_common::types::MIN_GAS_TIP;
+    use serde_json::json;
 
     async fn default_context() -> RpcApiContext {
         let storage = setup_store().await;
@@ -92,7 +91,8 @@ mod tests {
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context).await.unwrap();
-        assert_eq!(response, Value::Null);
+        let parsed_result = parse_json_hex(&response).unwrap();
+        assert_eq!(parsed_result, MIN_GAS_TIP);
     }
     #[tokio::test]
     async fn test_with_no_blocks_but_genesis() {
@@ -100,7 +100,8 @@ mod tests {
         let gas_price = MaxPriorityFee {};
 
         let response = gas_price.handle(context).await.unwrap();
-        assert_eq!(response, Value::Null);
+        let parsed_result = parse_json_hex(&response).unwrap();
+        assert_eq!(parsed_result, MIN_GAS_TIP);
     }
     #[tokio::test]
     async fn request_smoke_test() {

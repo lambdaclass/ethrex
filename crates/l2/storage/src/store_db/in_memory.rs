@@ -4,7 +4,10 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use ethrex_common::{types::BlockNumber, H256};
+use ethrex_common::{
+    H256,
+    types::{AccountUpdate, Blob, BlockNumber},
+};
 use ethrex_storage::error::StoreError;
 
 use crate::api::StoreEngineRollup;
@@ -16,12 +19,22 @@ pub struct Store(Arc<Mutex<StoreInner>>);
 struct StoreInner {
     /// Map of batches by block numbers
     batches_by_block: HashMap<BlockNumber, u64>,
-    /// Map of withdrawals hashes by batch numbers
-    withdrawal_hashes_by_batch: HashMap<u64, Vec<H256>>,
+    /// Map of message hashes by batch numbers
+    message_hashes_by_batch: HashMap<u64, Vec<H256>>,
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
-    /// Metrics for transaction, deposits and withdrawals count
+    /// Map of batch number to deposit logs hash
+    deposit_logs_hashes: HashMap<u64, H256>,
+    /// Map of batch number to state root
+    state_roots: HashMap<u64, H256>,
+    /// Map of batch number to blob
+    blobs: HashMap<u64, Vec<Blob>>,
+    /// Lastest sent batch proof
+    lastest_sent_batch_proof: u64,
+    /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
+    /// Map of block number to account updates
+    account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
 }
 
 impl Store {
@@ -55,25 +68,25 @@ impl StoreEngineRollup for Store {
         Ok(())
     }
 
-    async fn get_withdrawal_hashes_by_batch(
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
         Ok(self
             .inner()?
-            .withdrawal_hashes_by_batch
+            .message_hashes_by_batch
             .get(&batch_number)
             .cloned())
     }
 
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawals: Vec<H256>,
+        messages: Vec<H256>,
     ) -> Result<(), StoreError> {
         self.inner()?
-            .withdrawal_hashes_by_batch
-            .insert(batch_number, withdrawals);
+            .message_hashes_by_batch
+            .insert(batch_number, messages);
         Ok(())
     }
 
@@ -102,6 +115,60 @@ impl StoreEngineRollup for Store {
         Ok(block_numbers)
     }
 
+    async fn store_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.inner()?
+            .deposit_logs_hashes
+            .insert(batch_number, deposit_logs_hash);
+        Ok(())
+    }
+
+    async fn get_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .inner()?
+            .deposit_logs_hashes
+            .get(&batch_number)
+            .cloned())
+    }
+
+    async fn store_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_root: H256,
+    ) -> Result<(), StoreError> {
+        self.inner()?.state_roots.insert(batch_number, state_root);
+        Ok(())
+    }
+
+    async fn get_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self.inner()?.state_roots.get(&batch_number).cloned())
+    }
+
+    async fn store_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_diff: Vec<Blob>,
+    ) -> Result<(), StoreError> {
+        self.inner()?.blobs.insert(batch_number, state_diff);
+        Ok(())
+    }
+
+    async fn get_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<Blob>>, StoreError> {
+        Ok(self.inner()?.blobs.get(&batch_number).cloned())
+    }
+
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         Ok(self
             .inner()?
@@ -113,17 +180,67 @@ impl StoreEngineRollup for Store {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), StoreError> {
         let mut values = self.inner()?.operations_counts;
         values[0] += transaction_inc;
         values[1] += deposits_inc;
-        values[2] += withdrawals_inc;
+        values[2] += messages_inc;
         Ok(())
     }
 
     async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
         Ok(self.inner()?.operations_counts)
+    }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        Ok(self.inner()?.lastest_sent_batch_proof)
+    }
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.inner()?.lastest_sent_batch_proof = batch_number;
+        Ok(())
+    }
+
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+        Ok(self
+            .inner()?
+            .account_updates_by_block_number
+            .get(&block_number)
+            .cloned())
+    }
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError> {
+        self.inner()?
+            .account_updates_by_block_number
+            .insert(block_number, account_updates);
+        Ok(())
+    }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        store
+            .batches_by_block
+            .retain(|_, batch| *batch <= batch_number);
+        store
+            .message_hashes_by_batch
+            .retain(|batch, _| *batch <= batch_number);
+        store
+            .block_numbers_by_batch
+            .retain(|batch, _| *batch <= batch_number);
+        store
+            .deposit_logs_hashes
+            .retain(|batch, _| *batch <= batch_number);
+        store.state_roots.retain(|batch, _| *batch <= batch_number);
+        store.blobs.retain(|batch, _| *batch <= batch_number);
+        Ok(())
     }
 }
 

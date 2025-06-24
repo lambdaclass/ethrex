@@ -2,6 +2,17 @@
 
 ## Perf
 
+### 2025-06-20
+
+- Use a lookup table for opcode parsing [#3253](https://github.com/lambdaclass/ethrex/pull/3253)
+- Use specialized PUSH1 and PUSH2 implementations [#3262](https://github.com/lambdaclass/ethrex/pull/3262)
+
+### 2025-05-27
+
+- Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
+
+- Refactor Patricia Merkle Trie to avoid rehashing the entire path on every insert [2687](https://github.com/lambdaclass/ethrex/pull/2687)
+
 ### 2025-05-22
 
 - Add immutable cache to LEVM that stores in memory data read from the Database so that getting account doesn't need to consult the Database again. [2829](https://github.com/lambdaclass/ethrex/pull/2829)
@@ -37,7 +48,7 @@
 #### 2025-04-03
 
 - Fix a bug where RLP encoding was being done twice: [#2353](https://github.com/lambdaclass/ethrex/pull/2353), check
-  the report under perf_report for more information.
+  the report under `docs/perf_reports` for more information.
 
 #### 2025-04-01
 

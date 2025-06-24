@@ -25,66 +25,25 @@ jobs:
       - name: RISC-V SP1 toolchain install
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.7
+          ~/.sp1/bin/sp1up --version 5.0.0
       - name: Check sp1
         run: |
-            cargo check -p ethrex-prover -F sp1
-            cargo check -p ethrex-prover-bench -F sp1
+          cargo check -r -p ethrex-prover -F sp1
+          cargo check -r -p ethrex-replay -F sp1
       - name: Clippy sp1
         run: |
-            cargo clippy -p ethrex-prover --all-targets -F sp1
+          cargo clippy -r -p ethrex-prover --all-targets -F sp1
       - name: Check exec
         run: |
-            cargo check -p ethrex-prover
+          cargo check -p ethrex-prover
       - name: Clippy exec
         run: |
-            cargo clippy -p ethrex-prover --all-targets
+          cargo clippy -p ethrex-prover --all-targets
       - name: Check tdx
         run: |
-            cd crates/l2/tee/quote-gen
-            cargo check
+          cd crates/l2/tee/quote-gen
+          cargo check
       - name: Clippy tdx
         run: |
-            cd crates/l2/tee/quote-gen
-            cargo clippy --all-targets
-
-  test:
-    # "Test" is a required check, don't change the name
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-      - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.82.0
-      # TODO(#1974): Restore these steps once we fix risc0
-      # Use cargo-risczero v1.2.0
-      # The risc0-zkvm crate should match this version
-      # - name: RISC-V RISC0 toolchain install
-      #   run: |
-      #     curl -L https://risczero.com/install | bash
-      #     ~/.risc0/bin/rzup install
-      #     ~/.risc0/bin/rzup install cargo-risczero 1.2.0
-      #     ~/.risc0/bin/rzup default cargo-risczero 1.2.0
-      # - name: Build prover and RISC0's zkVM
-      #   run: |
-      #     cd crates/l2/prover
-      #     cargo build --release --features build_risc0
-      # - name: Test Prover Execution
-      #   run: |
-      #     cd crates/l2/prover
-      #     RUST_LOG=info make perf-risc0
-      - name: RISC-V SP1 toolchain install
-        run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.7
-      - name: Build prover and SP1's zkVM
-        run: |
-          cd crates/l2/prover
-          cargo build --release --features sp1
-      - name: Test Prover Execution
-        run: |
-          cd crates/l2/prover
-          RUST_LOG=info make perf-sp1
+          cd crates/l2/tee/quote-gen
+          cargo clippy --all-targets

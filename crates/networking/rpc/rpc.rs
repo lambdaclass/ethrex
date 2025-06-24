@@ -1,5 +1,6 @@
 use crate::authentication::authenticate;
 use crate::engine::{
+    ExchangeCapabilitiesRequest,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -7,8 +8,8 @@ use crate::engine::{
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
-    ExchangeCapabilitiesRequest,
 };
+use crate::eth::block::ExecutionWitness;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -23,6 +24,7 @@ use crate::eth::{
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
     gas_price::GasPrice,
+    gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
@@ -30,6 +32,7 @@ use crate::eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -38,10 +41,10 @@ use crate::utils::{
 use crate::{admin, net};
 use crate::{eth, mempool};
 use axum::extract::State;
-use axum::{routing::post, Json, Router};
+use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
     TypedHeader,
+    headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -59,7 +62,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -87,6 +90,7 @@ pub struct RpcApiContext {
     pub syncer: Arc<SyncManager>,
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
+    pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     #[cfg(feature = "l2")]
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
@@ -137,7 +141,7 @@ pub async fn start_api(
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
-) {
+) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
@@ -153,6 +157,7 @@ pub async fn start_api(
             local_node_record,
             client_version,
         },
+        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
@@ -183,7 +188,9 @@ pub async fn start_api(
         .route("/", post(handle_http_request))
         .layer(cors)
         .with_state(service_context.clone());
-    let http_listener = TcpListener::bind(http_addr).await.unwrap();
+    let http_listener = TcpListener::bind(http_addr)
+        .await
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
@@ -200,7 +207,9 @@ pub async fn start_api(
         let authrpc_router = Router::new()
             .route("/", post(authrpc_handler))
             .with_state(service_context);
-        let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
+        let authrpc_listener = TcpListener::bind(authrpc_addr)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
@@ -209,6 +218,7 @@ pub async fn start_api(
         let _ = tokio::try_join!(authrpc_server, http_server)
             .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
     }
+    Ok(())
 }
 
 async fn shutdown_signal() {
@@ -220,48 +230,56 @@ async fn shutdown_signal() {
 async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
     let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
-            rpc_response(request.id, res)
+            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Ok(RpcRequestWrapper::Multiple(requests)) => {
             let mut responses = Vec::new();
             for req in requests {
                 let res = map_http_requests(&req, service_context.clone()).await;
-                responses.push(rpc_response(req.id, res));
+                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
             }
-            serde_json::to_value(responses).unwrap()
+            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Err(_) => rpc_response(
             RpcRequestId::String("".to_string()),
             Err(RpcErr::BadParams("Invalid request body".to_string())),
-        ),
+        )
+        .map_err(|_| StatusCode::BAD_REQUEST)?,
     };
-    Json(res)
+    Ok(Json(res))
 }
 
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
     let req: RpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
         Err(_) => {
-            return Json(rpc_response(
-                RpcRequestId::String("".to_string()),
-                Err(RpcErr::BadParams("Invalid request body".to_string())),
+            return Ok(Json(
+                rpc_response(
+                    RpcRequestId::String("".to_string()),
+                    Err(RpcErr::BadParams("Invalid request body".to_string())),
+                )
+                .map_err(|_| StatusCode::BAD_REQUEST)?,
             ));
         }
     };
     match authenticate(&service_context.node_data.jwt_secret, auth_header) {
-        Err(error) => Json(rpc_response(req.id, Err(error))),
+        Err(error) => Ok(Json(
+            rpc_response(req.id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
+        )),
         Ok(()) => {
             // Proceed with the request
             let res = map_authrpc_requests(&req, service_context).await;
-            Json(rpc_response(req.id, res))
+            Ok(Json(
+                rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
+            ))
         }
     }
 }
@@ -353,6 +371,9 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_executionWitness" => ExecutionWitness::call(req, context).await,
+        "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
+        "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -417,28 +438,29 @@ pub async fn map_mempool_requests(
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
         "txpool_content" => mempool::content(contex).await,
+        "txpool_status" => mempool::status(contex).await,
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
 
 #[cfg(feature = "l2")]
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    use crate::l2::withdrawal::GetWithdrawalProof;
+    use crate::l2::l1_message::GetL1MessageProof;
 
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
-        "ethrex_getWithdrawalProof" => GetWithdrawalProof::call(req, context).await,
+        "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }
     }
 }
 
-fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Value
+fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Result<Value, RpcErr>
 where
     E: Into<RpcErrorMetadata>,
 {
-    match res {
+    Ok(match res {
         Ok(result) => serde_json::to_value(RpcSuccessResponse {
             id,
             jsonrpc: "2.0".to_string(),
@@ -449,8 +471,7 @@ where
             jsonrpc: "2.0".to_string(),
             error: error.into(),
         }),
-    }
-    .unwrap()
+    }?)
 }
 
 #[cfg(test)]
@@ -458,8 +479,8 @@ mod tests {
     use super::*;
     use crate::utils::test_utils::default_context_with_storage;
     use ethrex_common::{
-        types::{ChainConfig, Genesis},
         H160,
+        types::{ChainConfig, Genesis},
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
@@ -488,7 +509,7 @@ mod tests {
 
         let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
-        let rpc_response = rpc_response(request.id, result);
+        let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
@@ -566,7 +587,7 @@ mod tests {
         // Process request
         let context = default_context_with_storage(storage).await;
         let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result);
+        let response = rpc_response(request.id, result).unwrap();
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
         );
@@ -617,7 +638,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         // Process request
         let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result);
+        let response = rpc_response(request.id, result).unwrap();
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
         let expected_response = to_rpc_response_success_value(&expected_response_string);

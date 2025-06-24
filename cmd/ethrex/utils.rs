@@ -1,7 +1,7 @@
 use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::Block;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     sync::SyncMode,
@@ -79,11 +79,6 @@ pub fn read_block_file(block_file_path: &str) -> Block {
         .unwrap_or_else(|_| panic!("Failed to read block file with path {}", block_file_path));
     Block::decode(&encoded_block)
         .unwrap_or_else(|_| panic!("Failed to decode block file {}", block_file_path))
-}
-
-pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
-    let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
-    decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
 }
 
 pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {

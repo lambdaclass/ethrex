@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
@@ -26,12 +26,15 @@ use crate::{
     kademlia::{KademliaTable, PeerChannels},
     network::P2PContext,
     rlpx::{
+        connection::{codec::RLPxCodec, handshake},
         error::RLPxError,
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
+            status::StatusMessage,
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
+            update::BlockRangeUpdate,
         },
         message::Message,
         p2p::{
@@ -47,10 +50,9 @@ use crate::{
     types::Node,
 };
 
-use super::{codec::RLPxCodec, handshake};
-
-pub(crate) const PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-pub(crate) const TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PING_INTERVAL: Duration = Duration::from_secs(10);
+const TX_BROADCAST_INTERVAL: Duration = Duration::from_millis(500);
+const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -84,7 +86,9 @@ pub struct Established {
     pub(crate) capabilities: Vec<Capability>,
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
+    pub(crate) last_block_range_update_block: u64,
     pub(crate) broadcasted_txs: HashSet<H256>,
+    pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -135,6 +139,7 @@ pub enum CastMessage {
     BackendMessage(Message),
     SendPing,
     SendNewPooledTxHashes,
+    BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
 }
 
@@ -248,6 +253,13 @@ impl GenServer for RLPxConnection {
             // Periodic Pings repeated events.
             send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
 
+            // Periodic block range update.
+            send_interval(
+                BLOCK_RANGE_UPDATE_INTERVAL,
+                handle.clone(),
+                CastMessage::BlockRangeUpdate,
+            );
+
             spawn_listener(handle.clone(), &established_state.node, stream);
 
             spawn_broadcast_listener(handle.clone(), &mut established_state);
@@ -304,6 +316,13 @@ impl GenServer for RLPxConnection {
                     );
                     let _ = handle_broadcast(&mut established_state, (id, msg)).await;
                 }
+                Self::CastMsg::BlockRangeUpdate => {
+                    log_peer_debug(
+                        &established_state.node,
+                        &format!("Block Range Update"),
+                    );
+                    let _ = handle_block_range_update(&mut established_state).await;
+                }
             }
             // Update the state
             state.0 = InnerState::Established(established_state);
@@ -357,13 +376,37 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
     Ok(())
 }
 
+async fn send_block_range_update(state: &mut Established) -> Result<(), RLPxError> {
+    // BlockRangeUpdate was introduced in eth/69
+    if let Some(eth) = &state.negotiated_eth_capability {
+        if eth.version >= 69 {
+            log_peer_debug(&state.node, "Sending BlockRangeUpdate");
+            let update = BlockRangeUpdate::new(&state.storage).await?;
+            let lastet_block = update.lastest_block;
+            send(state, Message::BlockRangeUpdate(update)).await?;
+            state.last_block_range_update_block = lastet_block - (lastet_block % 32);
+        }
+    }
+    Ok(())
+}
+
+async fn should_send_block_range_update(state: &mut Established) -> Result<bool, RLPxError> {
+    let latest_block = state.storage.get_latest_block_number().await?;
+    if latest_block < state.last_block_range_update_block
+        || latest_block - state.last_block_range_update_block >= 32
+    {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 async fn init_peer_conn<S>(state: &mut Established, stream: &mut S) -> Result<(), RLPxError>
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
     // Sending eth Status if peer supports it
     if let Some(eth) = state.negotiated_eth_capability.clone() {
-        let status = backend::get_status(&state.storage, eth.version).await?;
+        let status = StatusMessage::new(&state.storage, &eth).await?;
         log_peer_debug(&state.node, "Sending status");
         send(state, Message::Status(status)).await?;
         // The next immediate message in the ETH protocol is the
@@ -376,18 +419,18 @@ where
         match msg {
             Message::Status(msg_data) => {
                 log_peer_debug(&state.node, "Received Status");
-                backend::validate_status(msg_data, &state.storage, eth.version).await?
+                backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
                 return Err(RLPxError::HandshakeError(format!(
                     "Peer disconnected due to: {}",
                     disconnect.reason()
-                )))
+                )));
             }
             _ => {
                 return Err(RLPxError::HandshakeError(
                     "Expected a Status message".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -629,14 +672,13 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         Message::Status(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth.version).await?
+                backend::validate_status(msg_data, &state.storage, eth).await?
             };
         }
         Message::GetAccountRange(req) => {
             let response = process_account_range_request(req, state.storage.clone())?;
             send(state, Message::AccountRange(response)).await?
         }
-        // TODO(#1129) Add the transaction to the mempool once received.
         Message::Transactions(txs) if peer_supports_eth => {
             if state.blockchain.is_synced() {
                 let mut valid_txs = vec![];
@@ -647,7 +689,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     }
                     valid_txs.push(tx.clone());
                 }
-                broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
+                if !valid_txs.is_empty() {
+                    broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
+                }
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
@@ -665,19 +709,32 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::BlockBodies(response)).await?;
         }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-            let mut receipts = Vec::new();
-            for hash in block_hashes.iter() {
-                receipts.push(state.storage.get_receipts_for_block(hash)?);
+            if let Some(eth) = &state.negotiated_eth_capability {
+                let mut receipts = Vec::new();
+                for hash in block_hashes.iter() {
+                    receipts.push(state.storage.get_receipts_for_block(hash)?);
+                }
+                let response = Receipts::new(id, receipts, eth)?;
+                send(state, Message::Receipts(response)).await?;
             }
-            let response = Receipts { id, receipts };
-            send(state, Message::Receipts(response)).await?;
+        }
+        Message::BlockRangeUpdate(update) => {
+            if update.earliest_block > update.lastest_block {
+                return Err(RLPxError::InvalidBlockRange);
+            }
+            //TODO implement the logic
+            log_peer_debug(
+                &state.node,
+                &format!(
+                    "Range block update: {} to {}",
+                    update.earliest_block, update.lastest_block
+                ),
+            );
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
             let hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
 
-            //TODO(#1416): Evaluate keeping track of the request-id.
             let request = GetPooledTransactions::new(random(), hashes);
             send(state, Message::GetPooledTransactions(request)).await?;
         }
@@ -687,6 +744,21 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
             if state.blockchain.is_synced() {
+                if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
+                    if let Err(error) = msg.validate_requested(requested).await {
+                        log_peer_warn(
+                            &state.node,
+                            &format!("disconnected from peer. Reason: {}", error),
+                        );
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(RLPxError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    } else {
+                        state.requested_pooled_txs.remove(&msg.id);
+                    }
+                }
                 msg.handle(&state.node, &state.blockchain).await?;
             }
         }
@@ -739,7 +811,7 @@ async fn handle_broadcast(
 ) -> Result<(), RLPxError> {
     if id != tokio::task::id() {
         match broadcasted_msg.as_ref() {
-            Message::Transactions(ref txs) => {
+            Message::Transactions(txs) => {
                 // TODO(#1131): Avoid cloning this vector.
                 let cloned = txs.transactions.clone();
                 let new_msg = Message::Transactions(Transactions {
@@ -755,6 +827,16 @@ async fn handle_broadcast(
         }
     }
     Ok(())
+}
+
+async fn handle_block_range_update(
+    state: &mut Established,
+) -> Result<(), RLPxError> {
+    if should_send_block_range_update(state).await? {
+        send_block_range_update(state).await
+    } else {
+        Ok(())
+    }
 }
 
 fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
