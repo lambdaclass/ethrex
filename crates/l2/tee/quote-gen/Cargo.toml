@@ -11,7 +11,6 @@ hex = "0.4"
 zerocopy = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-kzg-rs.workspace = true
 
 ethrex-common = { path = "../../../common", default-features = false }
 ethrex-storage = { path = "../../../storage", default-features = false }
