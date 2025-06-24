@@ -28,7 +28,6 @@ fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsU
     )?);
 
     let l2_bridge_runtime = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
-    let l2_bridge_runtime = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
 
     genesis.alloc.insert(
         COMMON_BRIDGE_L2_ADDRESS,
