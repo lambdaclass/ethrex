@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750780936403,
+  "lastUpdate": 1750784814701,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1106,6 +1106,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00871025925925926,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b135bebfc1e6d74c3324376def79cffc315a121d",
+          "message": "ci(l1,l2): add 'build block' benchmark to PR checks (#2827)\n\n**Motivation**\n\nMake the \"build block\" benchmark run in the CI.\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-06-24T14:11:42Z",
+          "tree_id": "bf2ab404844a1d0bff5492a42a82bc2839f98c8d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b135bebfc1e6d74c3324376def79cffc315a121d"
+        },
+        "date": 1750784806791,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00878308751393534,
             "unit": "Mgas/s"
           }
         ]
