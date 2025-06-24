@@ -63,18 +63,12 @@ pub fn to_batch_proof(proof: Receipt, _aligned_mode: bool) -> Result<BatchProof,
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
     let seal = encode_seal(&receipt)?;
     let journal = receipt.journal.bytes;
-    let image_id = {
-        let digest: Digest = ZKVM_RISC0_PROGRAM_ID.into();
-        let bytes: [u8; 32] = digest.into();
-        bytes.to_vec()
-    };
 
     // bytes calldata seal,
     // bytes32 imageId,
     // bytes journal
     let calldata = vec![
         Value::Bytes(seal.into()),
-        Value::FixedBytes(image_id.into()),
         Value::Bytes(journal.into()),
     ];
 
