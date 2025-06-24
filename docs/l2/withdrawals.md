@@ -18,9 +18,13 @@ On L2:
 
 4. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
 
+Off-chain:
+
+1. The L1 watcher on each node extracts `L1Message` events, generating a merkle tree with the hashed messages as leaves.
+
 On L1:
 
-1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
+1. A sequencer commits the batch on L1, publishing the merkle tree's root with `publishWithdrawals` on the L1 `CommonBridge`.
 2. The user submits a withdrawal proof when calling `claimWithdrawal` on the L1 `CommonBridge`.
    The proof can be obtained by calling `ethrex_getWithdrawalProof` in any L2 node, after the batch containing the withdrawal transaction was verified in the L1.
 3. The bridge asserts the proof is valid.
@@ -77,6 +81,10 @@ On L2:
     ```
 
 6. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
+
+Off-chain:
+
+1. The L1 watcher on each node extracts `L1Message` events, generating a merkle tree with the hashed messages as leaves.
 
 On L1:
 
