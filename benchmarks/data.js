@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750777914605,
+  "lastUpdate": 1750780812635,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -929,6 +929,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220785440981,
             "range": "± 450845566",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "47d56b55960a27de0f9587a0d38c850b64e1611c",
+          "message": "fix(l2): use aligned sdk latest release (#3200)\n\n**Motivation**\n\nWe are using a specific `aligned-sdk` commit. Now that we've bumped the\nSP1 version to `v5.0.0`, we can use the latest release.\n\n**Description**\n\n- Uses the latest release of the `aligned-sdk`.\n- Refactors `estimate_gas` since some clients don't allow empty\n`blobVersionedHashes`, and our deployer doesn't work with\n`ethereum-package`.\n- Adds a guide on how to run an Aligned dev environment.\n\n## How to test\n\nRead the new section `How to Run Using an Aligned Dev Environment` in\n`docs/l2/aligned_mode.md`.\n\nCloses #3169",
+          "timestamp": "2025-06-24T14:57:38Z",
+          "tree_id": "9f2f1ebe1326e01c794f2f4c11d86b9eeb8b11d0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/47d56b55960a27de0f9587a0d38c850b64e1611c"
+        },
+        "date": 1750780805275,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222641182572,
+            "range": "± 254618972",
             "unit": "ns/iter"
           }
         ]
