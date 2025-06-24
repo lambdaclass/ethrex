@@ -11,9 +11,9 @@ use tracing::{debug, error, info};
 
 use super::{
     configs::AlignedConfig,
-    errors::SequencerError,
     utils::{get_latest_sent_batch, random_duration, send_verify_tx},
 };
+
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
@@ -134,8 +134,7 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)?;
-        Ok(())
+            .map_err(ProofSenderError::GenServerError)
     }
 }
 
@@ -144,7 +143,7 @@ impl GenServer for L1ProofSender {
     type OutMsg = OutMessage;
     type State = L1ProofSenderState;
 
-    type Error = SequencerError;
+    type Error = ProofSenderError;
 
     fn new() -> Self {
         Self {}

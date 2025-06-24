@@ -261,6 +261,8 @@ pub enum MetricsGathererError {
     EthClientError(#[from] EthClientError),
     #[error("MetricsGatherer: {0}")]
     TryInto(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
