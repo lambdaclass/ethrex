@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   test:
-    name: Prove an L1 block with {{ matrix.backend }} backend
+    name: Prove an L1 block with ${{ matrix.backend }} backend
     runs-on: gpu
     strategy:
       fail-fast: true
@@ -55,7 +55,7 @@ jobs:
       - name: Build
         run: |
           cd cmd/ethrex_replay
-          cargo b -r --features "{{ matrix.backend }},gpu"
+          cargo b -r --features "${{ matrix.backend }},gpu"
 
       - name: Run
         env:
@@ -65,7 +65,7 @@ jobs:
         run: |
           cp test_data/rpc_prover/cache_3990967.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-{{ matrix.backend }}-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
+          make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
