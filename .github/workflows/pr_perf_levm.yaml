@@ -97,6 +97,8 @@ jobs:
 
       - name: Run benchmarks
         run: |
+          chmod +x ./main/benchmark
+          chmod +x ./pr/benchmark
           cd crates/vm/levm
           make revm-comparison-ci
           {
