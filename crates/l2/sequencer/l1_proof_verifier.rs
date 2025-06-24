@@ -281,7 +281,7 @@ impl L1ProofVerifier {
 
 fn parse_beacon_urls(beacon_urls: &[Url]) -> Vec<String> {
     beacon_urls
-        .into_iter()
+        .iter()
         .map(|url| {
             url.as_str()
                 .strip_suffix('/')
