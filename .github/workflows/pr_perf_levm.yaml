@@ -97,7 +97,6 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          ls
           cd crates/vm/levm
           make revm-comparison-ci
           {
