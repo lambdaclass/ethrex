@@ -18,13 +18,13 @@ pub struct SQLStore {
 
 impl Debug for SQLStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("data")
+        f.write_str("SQLStore")
     }
 }
 
 const DB_SCHEMA: [&str; 9] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
-    "CREATE TABLE messages (batch INT, idx INT, withdrawal_hash BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
@@ -52,7 +52,7 @@ impl SQLStore {
     async fn init_db(&self) -> Result<(), RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks'",
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name='blocks'",
                 (),
             )
             .await?;
@@ -159,13 +159,13 @@ impl StoreEngineRollup for SQLStore {
     async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawal_hashes: Vec<H256>,
+        message_hashes: Vec<H256>,
     ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
             "DELETE FROM messages WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
-        for (index, hash) in withdrawal_hashes.iter().enumerate() {
+        for (index, hash) in message_hashes.iter().enumerate() {
             let index = u64::try_from(index)
                 .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
@@ -407,3 +407,79 @@ impl StoreEngineRollup for SQLStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_schema_tables() -> anyhow::Result<()> {
+        let store = SQLStore::new(":memory:").await?;
+        let tables = [
+            "blocks",
+            "messages",
+            "deposits",
+            "state_roots",
+            "blob_bundles",
+            "operation_count",
+            "latest_sent",
+        ];
+        let mut attributes = Vec::new();
+        for table in tables {
+            let mut rows = store
+                .query(format!("PRAGMA table_info({table})").as_str(), ())
+                .await?;
+            while let Some(row) = rows.next().await? {
+                // (table, name, type)
+                attributes.push((
+                    table.to_string(),
+                    row.get_str(1)?.to_string(),
+                    row.get_str(2)?.to_string(),
+                ))
+            }
+        }
+        for (table, name, given_type) in attributes {
+            let expected_type = match (table.as_str(), name.as_str()) {
+                ("blocks", "block_number") => "INT",
+                ("blocks", "batch") => "INT",
+                ("messages", "batch") => "INT",
+                ("messages", "idx") => "INT",
+                ("messages", "message_hash") => "BLOB",
+                ("deposits", "batch") => "INT",
+                ("deposits", "deposit_hash") => "BLOB",
+                ("state_roots", "batch") => "INT",
+                ("state_roots", "state_root") => "BLOB",
+                ("blob_bundles", "batch") => "INT",
+                ("blob_bundles", "idx") => "INT",
+                ("blob_bundles", "blob_bundle") => "BLOB",
+                ("operation_count", "_id") => "INT",
+                ("operation_count", "transactions") => "INT",
+                ("operation_count", "deposits") => "INT",
+                ("operation_count", "messages") => "INT",
+                ("latest_sent", "_id") => "INT",
+                ("latest_sent", "batch") => "INT",
+                _ => {
+                    return Err(anyhow::Error::msg(
+                        "unexpected attribute {name} in table {table}",
+                    ));
+                }
+            };
+            assert_eq!(given_type, expected_type);
+        }
+        Ok(())
+    }
+}
+
+/*
+const DB_SCHEMA: [&str; 9] = [
+    "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
+    "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
+    "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
+    "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
+    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, deposits INT, messages INT)",
+    "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
+    "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
+    "INSERT INTO latest_sent VALUES (0, 0)",
+];
+ */

@@ -5,7 +5,7 @@ edition.workspace = true
 
 
 [dependencies]
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, features = ["c-kzg"] }
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
@@ -21,11 +21,11 @@ libsql = { workspace = true, optional = true }
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
 tokio = { version = "1.41.1", optional = true, default-features = false, features = [
-    "rt",
+    "rt", "test-util"
 ] }
 
 [features]
-default = ["sql"]
+default = []
 libmdbx = ["dep:libmdbx", "dep:tokio"]
 redb = ["dep:redb", "dep:tokio"]
 sql = ["dep:libsql", "dep:tokio"]
