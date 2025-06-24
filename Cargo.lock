@@ -4059,6 +4059,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
@@ -4083,6 +4084,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-rlp",
