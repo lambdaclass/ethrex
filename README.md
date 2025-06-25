@@ -21,14 +21,20 @@ You can have your own L2 running just by running both scripts in different termi
 
 ### Starting the L1
 
-After running the install script, you can start the L1 by running the `l1` script that was downloaded.
-This can be done by going to the same directory the install script was run from and executing:
+After running the install script, you can start the L1 by running:
 
 ```sh
-./l1
+ethrex --network genesis-l1-dev.json --dev
 ```
 
-This uses the file `genesis-l1-dev.json` that was also downloaded by the script.
+This uses the file `genesis-l1-dev.json` that was also downloaded by the script, so make sure to be in the directory where the installation script was executed from.
+
+> [!TIP]
+> In case you want to start a new L1, you can remove the data of the old one by executing:
+>
+> ```sh
+> ethrex removedb
+> ```
 
 ## L1 and L2 support
 
