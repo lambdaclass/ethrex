@@ -171,7 +171,7 @@ A list of all the configurable parameters of the network.
 
 - During a sequencing period, other Sequencers can pay a higher price than the winning bid to challenge the Lead Sequencer.
 - This can only happen a configurable number of times per sequencing period.
-- After a successful challenge, the current Lead Sequencer is replaced by the challenging sequencer for the rest of the Sequencing Period and is refunded the portion of its bid corresponding to the remaining sequencing period (i.e. half of its bid if it loses half of its sequencing period).
+- After a successful challenge, the current Lead Sequencer is replaced by the challenging sequencer for the rest of the Sequencing Period and is refunded the portion of its bid corresponding to the remaining sequencing period (e.g. half of its bid if it loses half of its sequencing period).
 
 ### Sequencers registry
 
