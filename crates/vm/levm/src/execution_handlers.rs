@@ -17,7 +17,13 @@ impl<'a> VM<'a> {
         match precompile_result {
             Ok(output) => Ok(ContextResult {
                 result: TxResult::Success,
-                gas_used: self.current_call_frame()?.gas_used,
+                gas_used: {
+                    let callframe = self.current_call_frame()?;
+                    callframe
+                        .gas_limit
+                        .checked_sub(callframe.gas_remaining)
+                        .ok_or(InternalError::Underflow)?
+                },
                 output,
             }),
             Err(error) => {
@@ -154,11 +160,14 @@ impl<'a> VM<'a> {
 
                 // Consume all gas because error was exceptional.
                 let callframe = self.current_call_frame_mut()?;
-                callframe.gas_used = callframe.gas_limit;
+                callframe.gas_remaining = 0;
 
                 return Ok(ContextResult {
                     result: TxResult::Revert(error),
-                    gas_used: callframe.gas_used,
+                    gas_used: callframe
+                        .gas_limit
+                        .checked_sub(callframe.gas_remaining)
+                        .ok_or(InternalError::Underflow)?,
                     output: Bytes::new(),
                 });
             }
@@ -171,7 +180,13 @@ impl<'a> VM<'a> {
 
         Ok(ContextResult {
             result: TxResult::Success,
-            gas_used: self.current_call_frame()?.gas_used,
+            gas_used: {
+                let callframe = self.current_call_frame()?;
+                callframe
+                    .gas_limit
+                    .checked_sub(callframe.gas_remaining)
+                    .ok_or(InternalError::Underflow)?
+            },
             output: std::mem::take(&mut self.current_call_frame_mut()?.output),
         })
     }
@@ -185,12 +200,15 @@ impl<'a> VM<'a> {
 
         // Unless error is caused by Revert Opcode, consume all gas left.
         if !error.is_revert_opcode() {
-            callframe.gas_used = callframe.gas_limit;
+            callframe.gas_remaining = 0;
         }
 
         Ok(ContextResult {
             result: TxResult::Revert(error),
-            gas_used: callframe.gas_used,
+            gas_used: callframe
+                .gas_limit
+                .checked_sub(callframe.gas_remaining)
+                .ok_or(InternalError::Underflow)?,
             output: std::mem::take(&mut callframe.output),
         })
     }
