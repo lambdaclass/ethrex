@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use ethrex_blockchain::payload::TransactionQueue;
 use ethrex_blockchain::{
     Blockchain,
     constants::TX_GAS_COST,
@@ -96,12 +97,6 @@ pub async fn fill_transactions(
     let mut account_diffs = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
-    let max_blob_number_per_block: usize = chain_config
-        .get_fork_blob_schedule(context.payload.header.timestamp)
-        .map(|schedule| schedule.max)
-        .unwrap_or_default()
-        .try_into()
-        .unwrap_or_default();
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
@@ -232,13 +227,17 @@ pub async fn fill_transactions(
 }
 
 // TODO: Once #2857 is implemented, we can completely ignore the blobs pool.
-fn fetch_mempool_transactions(blockchain: Arc<Blockchain>, context: &mut PayloadBuildContext) {
-    let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context);
+fn fetch_mempool_transactions(
+    blockchain: Arc<Blockchain>,
+    context: &mut PayloadBuildContext,
+) -> Result<TransactionQueue, BlockProducerError> {
+    let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     while let Some(blob_tx) = blob_txs.peek() {
         let tx_hash = blob_tx.compute_hash();
         blockchain.remove_transaction_from_pool(&tx_hash)?;
+        blob_txs.pop();
     }
-    plain_txs
+    Ok(plain_txs)
 }
 
 /// Returns the state diffs introduced by the transaction by comparing the call frame backup
