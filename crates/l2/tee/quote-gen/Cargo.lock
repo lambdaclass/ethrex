@@ -2076,6 +2076,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "k256",
+ "secp256k1",
  "sha3",
  "thiserror 2.0.12",
  "tokio",
@@ -2333,6 +2334,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
@@ -2352,6 +2354,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-rlp",

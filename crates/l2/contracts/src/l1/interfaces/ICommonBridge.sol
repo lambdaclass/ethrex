@@ -11,7 +11,6 @@ interface ICommonBridge {
     /// @param amount the amount of tokens being deposited.
     /// @param to the address that will be called in the L2.
     /// @param depositId Id used to differentiate deposits with same amount and recipient.
-    /// @param recipient the address that initiated the deposit and will receive the tokens.
     /// @param from the address that initiated the deposit.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
@@ -23,7 +22,6 @@ interface ICommonBridge {
         uint256 indexed amount,
         address indexed to,
         uint256 indexed depositId,
-        address recipient,
         address from,
         uint256 gasLimit,
         bytes data,
@@ -52,8 +50,8 @@ interface ICommonBridge {
 
     struct DepositValues {
         address to;
-        address recipient;
         uint256 gasLimit;
+        uint256 value;
         bytes data;
     }
 
@@ -67,7 +65,7 @@ interface ICommonBridge {
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
     /// @param depositValues the values needed to create the deposit.
-    function deposit(DepositValues calldata depositValues) external payable;
+    function deposit(DepositValues calldata depositValues) external;
 
     /// @notice Method to retrieve the versioned hash of the first `number`
     /// pending deposit logs.

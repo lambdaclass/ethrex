@@ -986,14 +986,12 @@ impl EthClient {
     pub async fn build_privileged_transaction(
         &self,
         to: Address,
-        recipient: Address,
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
-            recipient,
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
