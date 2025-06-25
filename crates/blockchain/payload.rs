@@ -202,7 +202,9 @@ impl PayloadBuildContext {
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
-            requests: None,
+            requests: config
+                .is_prague_activated(payload.header.timestamp)
+                .then_some(Vec::new()),
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
