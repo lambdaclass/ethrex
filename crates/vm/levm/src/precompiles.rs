@@ -654,9 +654,9 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     }
 
     let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("failed to create bn254 element from bytes"))?;
     let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("failed to create bn254 element from bytes"))?;
 
     Ok((first_point_x, first_point_y))
 }
@@ -704,9 +704,9 @@ fn parse_second_point_coordinates(
     let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
 
     let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("failed to create bn254 twist curve element from bytes"))?;
     let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("failed to create bn254 twist curve element from bytes"))?;
 
     Ok((second_point_x, second_point_y))
 }
