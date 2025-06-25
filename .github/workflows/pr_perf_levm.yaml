@@ -103,12 +103,12 @@ jobs:
           make revm-comparison-ci
 
           for f in Factorial.md FactorialRecursive.md Fibonacci.md ManyHashes.md BubbleSort.md ERC20Transfer.md ERC20Mint.md ERC20Approval.md; do
-            awk -F'|' -v file="$f" '      
+            awk -F'|' -v file="${f%.md}" '      
             /`main_revm_/ {
               main_revm_row = $0;
-              gsub(/±.*/, "", $3);       # Remove ± part
+              gsub(/±.*/, "", $3); # Remove ± part from $3 posicion of the row
               gsub(/[[:space:]]/, "", $3); # Remove spaces
-              main_revm = $3 + 0;             # Convert to number
+              main_revm = $3 + 0; # Convert to number
             }
             /`main_levm_/ {
               main_levm_row = $0;
@@ -130,31 +130,23 @@ jobs:
             }
             END {
               if (main_revm && main_levm && pr_revm && pr_levm) {
-                delta_revm = main_revm - pr_revm;
-                if (delta_revm < 0) delta_revm = -delta_revm;
-                delta_levm = main_levm - pr_levm;
-                if (delta_levm < 0) delta_levm = -delta_levm;
-                if ((delta_revm > 0.5) || (delta_levm > 0.5)) {
+                revm_delta = ((main_revm > pr_revm) ? main_revm - pr_revm : pr_revm - main_revm)/(main_revm + pr_revm);
+                levm_delta = ((main_levm > pr_levm) ? main_levm - pr_levm: pr_levm - main_levm)/(main_levm + pr_levm);
+                error_margin = 0.1;
+                if ((revm_delta > error_margin) || (levm_delta > error_margin)) {
                   printf "#### Benchmark Results: %s \n", file
                   print "| Command | Mean [s] | Min [s] | Max [s] | Relative |"
                   print "|:---|---:|---:|---:|---:|"
-                  if (delta_levm > 0.5) {
-                    print main_revm_row
-                    print main_levm_row
-                    if (delta_revm > 0.5) {
+                  print main_revm_row
+                  print main_levm_row
+                  if (revm_delta > error_margin) {
                       print pr_revm_row
-                    }
-                    print pr_levm_row
-                  } else if (delta_revm > 0.5) {
-                    print main_revm_row
-                    print main_levm_row
-                    if (delta_levm > 0.5) {
+                  }
+                  if (levm_delta > error_margin) {
                       print pr_levm_row
-                    }
-                    print pr_revm_row
                   }
                 }
-              } 
+              }
             }
             ' "$f" >> ../../../result.md
           done
