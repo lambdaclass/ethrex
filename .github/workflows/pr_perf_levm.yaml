@@ -146,6 +146,8 @@ jobs:
                       print pr_levm_row
                   }
                 }
+              } else {
+                print "No results"
               }
             }
             ' "$f" >> ../../../result.md
