@@ -107,7 +107,6 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
   - `make init-prover T=(sp1,risc0) G=true`
 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
-
    1. `cd ethrex/crates/l2`
    2. Create a `.env` file with the following content:
 
