@@ -7,7 +7,7 @@ _Special thanks to [Lorenzo](https://x.com/_eltitan) and [Kubi](https://x.com/ku
 > Feedback is more than welcome.
 
 > [!IMPORTANT]
-> We believe that [Gattaca's model](https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733)—permissionless with preconfs using L1 proposers (either personally or through delegations) as L2 sequencers—is the ideal approach. However, this model cannot achieve permissionlessness until the deterministic lookahead becomes available after Fusaka. In the meantime, we consider the Spire approach, based on a Dutch auction, to be the most suitable for our current needs. It is important to note that Rogue cannot implement a centralized mechanism for offering preconfs, so we have chosen to prioritize a permissionless structure before enabling preconfirmations. This initial approach is **decentralized** and **permissionless** but not **based** yet. Although sequencing rights aren't currently guaranteed to the L1 proposer, there will be incentives for L1 proposers to eventually participate in the L2, moving toward [Justin Drake's definition](https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016).
+> We believe that [Gattaca's model](https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733)—permissionless with preconfs using L1 proposers (either directly or through delegations) as L2 sequencers—is the ideal approach. However, this model cannot achieve permissionlessness until the deterministic lookahead becomes available after Fusaka. In the meantime, we consider the Spire approach, based on a Dutch auction, to be the most suitable for our current needs. It is important to note that Rogue cannot implement a centralized mechanism for offering preconfs, so we have chosen to prioritize a permissionless structure before enabling preconfirmations. This initial approach is **decentralized** and **permissionless** but not **based** yet. Although sequencing rights aren't currently guaranteed to the L1 proposer, there will be incentives for L1 proposers to eventually participate in the L2, moving toward [Justin Drake's definition](https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016).
 
 From the beginning, [ethrex](https://github.com/lambdaclass/ethrex) was conceived not just as an Ethereum L1 client, but also as an L2 (ZK Rollup). This means anyone will be able to use ethrex to deploy an EVM-equivalent, multi-prover (supporting SP1, RISC Zero, and TEEs) based rollup with just one command. We recently wrote a [blog post](https://blog.lambdaclass.com/celebrating-a-year-of-ethrex/) where we expand this idea more in depth.
 
@@ -15,7 +15,9 @@ The purpose of this document is to provide a high-level overview of how ethrex w
 
 ## State of the art
 
-While Ethereum Foundation members are actively discussing and proposing EIPs to integrate based sequencing into Ethereum and efforts to coordinate and standardize various components needed for based rollups- like [FABRIC](https://ethresear.ch/t/fabric-fabric-to-accelerate-based-rollup-infrastructure-connectivity/21640) proposes. The following table offers a high-level comparison of the based sequencing approaches before we present our proposal.
+Members of the Ethereum Foundation are actively discussing and proposing EIPs to integrate based sequencing into the Ethereum network. Efforts are also underway to coordinate and standardize the components required for these based rollups; one such initiative is [FABRIC](https://ethresear.ch/t/fabric-fabric-to-accelerate-based-rollup-infrastructure-connectivity/21640).
+
+The following table provides a high-level comparison of different based sequencing approaches, setting the stage for our own proposal.
 
 > [!NOTE]
 > This table compares the different based rollups in the ecosystem based on their current development state, not their final form.
@@ -33,7 +35,7 @@ Other based rollups not mentioned will be added later.
 
 ## Ethrex proposal for based sequencing
 
-According to Justin Drake's definition of "based", being "based" implies that the L1 proposers are the ones who, at the end of the day, sequence the L2, either personally or by delegating the responsibility to a third party.
+According to Justin Drake's definition of "based", being "based" implies that the L1 proposers are the ones who, at the end of the day, sequence the L2, either directly or by delegating the responsibility to a third party.
 
 However, today, the "based" ecosystem is very immature. Despite the constant efforts of various teams, no stack is fully prepared to meet this definition. Additionally, L1 proposers do not have sufficient economic incentives to be part of the protocol.
 
@@ -47,7 +49,7 @@ Considering this, after researching existing approaches, we concluded that a dec
 
 Ultimately, we aim to align with [Gattaca's model for based sequencing](https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733) and collaborate with [FABRIC](https://ethresear.ch/t/fabric-fabric-to-accelerate-based-rollup-infrastructure-connectivity/21640) efforts to standardize based rollups and helping interoperability.
 
-[Rogue](https://x.com/fede_intern/status/1846035499799978475) and many upcoming rollups will be using this solution from the beginning.
+[Rogue](https://x.com/fede_intern/status/1846035499799978475) and many upcoming rollups will be following this approach.
 
 ## Benefits of our approach
 
@@ -81,7 +83,7 @@ As outlined earlier, sequencing rights for future blocks are allocated through p
 
 During each auction period, a configurable number of tickets are auctioned off. Each ticket grants its holder the right to sequence transactions during one sequencing period within the allocated period. However, at the time of the auction, the specific sequencing period assigned to each ticket remains undetermined. Once the auction period ends, the sequencing periods are randomly assigned (shuffled) among the ticket holders, thereby determining which sequencing period each ticket corresponds to.
 
-Parameters like the amount of tickets auctioned, the duration of the auction periods, the duration of the sequencing periods, the amount of sequencing periods per allocated period, and more, are configurable. This configurability is not merely a feature but a deliberate and essential design choice. The complete list of all configurable parameters can be found under the “Protocol details” section.
+Parameters like the amount of tickets auctioned (i.e. amount of sequencing periods per allocated period), the duration of the auction periods, the duration of the sequencing periods, and more, are configurable. This configurability is not merely a feature but a deliberate and essential design choice. The complete list of all configurable parameters can be found under the “Protocol details” section.
 
 ![Diagram showing leader election process](./img/leader_election_process.png)
 
