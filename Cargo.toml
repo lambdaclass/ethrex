@@ -17,7 +17,6 @@ members = [
   "crates/l2/sdk",
   "crates/l2/storage",
   "crates/networking/p2p",
-  "crates/networking/p2p/l2",
   "crates/networking/rpc",
   "crates/storage",
   "crates/vm",
