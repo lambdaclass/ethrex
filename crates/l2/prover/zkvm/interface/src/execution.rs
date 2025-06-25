@@ -12,22 +12,21 @@ use ethrex_common::{
     H256,
     types::{Block, BlockHeader},
 };
+#[cfg(feature = "l2")]
+use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
-    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
-    blob_from_bytes, kzg_commitment_to_versioned_hash,
+    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
+    kzg_commitment_to_versioned_hash,
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
     deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
+    l1_messages::{L1MessagingError, compute_merkle_root, get_block_l1_messages},
     state_diff::{StateDiff, StateDiffError, prepare_state_diff},
-    withdrawals::{
-        WithdrawalError, compute_withdrawals_merkle_root, get_block_withdrawals,
-        get_withdrawal_hash,
-    },
 };
 #[cfg(feature = "l2")]
 use kzg_rs::{Blob, Bytes48, KzgProof, get_kzg_settings};
@@ -40,15 +39,15 @@ pub enum StatelessExecutionError {
     BlockValidationError(ChainError),
     #[error("Gas validation error: {0}")]
     GasValidationError(ChainError),
-    #[error("Withdrawals validation error: {0}")]
+    #[error("L1Message validation error: {0}")]
     RequestsRootValidationError(ChainError),
     #[error("Receipts validation error: {0}")]
     ReceiptsRootValidationError(ChainError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[cfg(feature = "l2")]
-    #[error("Withdrawal calculation error: {0}")]
-    WithdrawalError(#[from] WithdrawalError),
+    #[error("L1Message calculation error: {0}")]
+    L1MessageError(#[from] L1MessagingError),
     #[cfg(feature = "l2")]
     #[error("Deposit calculation error: {0}")]
     DepositError(#[from] DepositError),
@@ -139,7 +138,7 @@ pub fn stateless_validation_l1(
         initial_state_hash,
         final_state_hash,
         #[cfg(feature = "l2")]
-        withdrawals_merkle_root: H256::zero(),
+        l1messages_merkle_root: H256::zero(),
         #[cfg(feature = "l2")]
         deposit_logs_hash: H256::zero(),
         #[cfg(feature = "l2")]
@@ -167,9 +166,9 @@ pub fn stateless_validation_l2(
         last_block_hash,
     } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
-    let (withdrawals, deposits) = get_batch_withdrawals_and_deposits(blocks, &receipts)?;
-    let (withdrawals_merkle_root, deposit_logs_hash) =
-        compute_withdrawals_and_deposits_digests(&withdrawals, &deposits)?;
+    let (l1messages, deposits) = get_batch_l1messages_and_deposits(blocks, &receipts)?;
+    let (l1messages_merkle_root, deposit_logs_hash) =
+        compute_l1messages_and_deposits_digests(&l1messages, &deposits)?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
@@ -182,7 +181,7 @@ pub fn stateless_validation_l2(
         let state_diff = prepare_state_diff(
             last_block_header,
             &initial_db,
-            &withdrawals,
+            &l1messages,
             &deposits,
             account_updates.values().cloned().collect(),
         )?;
@@ -194,7 +193,7 @@ pub fn stateless_validation_l2(
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
-        withdrawals_merkle_root,
+        l1messages_merkle_root,
         deposit_logs_hash,
         blob_versioned_hash,
         last_block_hash,
@@ -294,7 +293,7 @@ fn execute_stateless(
             .map_err(StatelessExecutionError::GasValidationError)?;
         validate_receipts_root(&block.header, &receipts)
             .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
-        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (withdrawals, deposits and consolidations)
+        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, deposits and consolidations)
         validate_requests_hash(&block.header, &db.chain_config, &result.requests)
             .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         parent_block_header = &block.header;
@@ -326,42 +325,41 @@ fn execute_stateless(
 }
 
 #[cfg(feature = "l2")]
-fn get_batch_withdrawals_and_deposits(
+fn get_batch_l1messages_and_deposits(
     blocks: &[Block],
     receipts: &[Vec<Receipt>],
-) -> Result<(Vec<Transaction>, Vec<PrivilegedL2Transaction>), StatelessExecutionError> {
-    let mut withdrawals = vec![];
+) -> Result<(Vec<L1Message>, Vec<PrivilegedL2Transaction>), StatelessExecutionError> {
+    let mut l1messages = vec![];
     let mut deposits = vec![];
 
     for (block, receipts) in blocks.iter().zip(receipts) {
         let txs = &block.body.transactions;
         deposits.extend(get_block_deposits(txs));
-        withdrawals.extend(get_block_withdrawals(txs, receipts));
+        l1messages.extend(get_block_l1_messages(txs, receipts));
     }
 
-    Ok((withdrawals, deposits))
+    Ok((l1messages, deposits))
 }
 
 #[cfg(feature = "l2")]
-fn compute_withdrawals_and_deposits_digests(
-    withdrawals: &[Transaction],
+fn compute_l1messages_and_deposits_digests(
+    l1messages: &[L1Message],
     deposits: &[PrivilegedL2Transaction],
 ) -> Result<(H256, H256), StatelessExecutionError> {
-    let withdrawal_hashes: Vec<_> = withdrawals
-        .iter()
-        .map(get_withdrawal_hash)
-        .collect::<Result<_, _>>()?;
+    use ethrex_l2_common::l1_messages::get_l1_message_hash;
+
+    let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
     let deposit_hashes: Vec<_> = deposits
         .iter()
         .map(PrivilegedL2Transaction::get_deposit_hash)
         .map(|hash| hash.ok_or(StatelessExecutionError::InvalidDeposit))
         .collect::<Result<_, _>>()?;
 
-    let withdrawals_merkle_root = compute_withdrawals_merkle_root(&withdrawal_hashes)?;
+    let l1message_merkle_root = compute_merkle_root(&message_hashes)?;
     let deposit_logs_hash =
         compute_deposit_logs_hash(deposit_hashes).map_err(StatelessExecutionError::DepositError)?;
 
-    Ok((withdrawals_merkle_root, deposit_logs_hash))
+    Ok((l1message_merkle_root, deposit_logs_hash))
 }
 
 #[cfg(feature = "l2")]

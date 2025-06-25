@@ -28,8 +28,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
 
       - name: Add Rust Cache
@@ -49,7 +50,7 @@ jobs:
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
-    runs-on: larger_runners
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
@@ -62,7 +63,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -77,11 +80,6 @@ jobs:
       - name: Build test
         run: |
           cargo test l2 --no-run --release
-
-      # for some reason the "Start L1 & Deploy contracts" step does not build the ethrex_dev image, used
-      # for the L1. This does not happen on the rest of the jobs. Maybe it has to do with the "larger_runners".
-      - name: Build L1 docker image
-        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -119,7 +117,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -194,7 +194,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
