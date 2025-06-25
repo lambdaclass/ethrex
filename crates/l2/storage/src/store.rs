@@ -14,7 +14,6 @@ use ethrex_common::{
     types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
-use ethrex_storage::error::StoreError;
 use tracing::info;
 
 #[derive(Debug, Clone)]

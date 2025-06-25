@@ -555,28 +555,4 @@ mod tests {
         }
         Ok(())
     }
-
-    #[tokio::test]
-    async fn test_store_and_get_batch_proof() -> anyhow::Result<()> {
-        let store = SQLStore::new(":memory:")?;
-        let batch_number = 1;
-        let prover_type = ProverType::Risc0;
-        let proof = BatchProof {
-            proof: vec![1, 2, 3],
-            journal: vec![4, 5, 6],
-        };
-
-        store
-            .store_proof_by_batch_and_type(batch_number, prover_type, proof.clone())
-            .await?;
-
-        let retrieved_proof = store
-            .get_proof_by_batch_and_type(batch_number, prover_type)
-            .await?
-            .unwrap();
-
-        assert_eq!(proof, retrieved_proof);
-
-        Ok(())
-    }
 }

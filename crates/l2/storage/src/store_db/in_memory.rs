@@ -10,7 +10,6 @@ use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
-use ethrex_storage::error::StoreError;
 
 use crate::api::StoreEngineRollup;
 
