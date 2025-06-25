@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750873704439,
+  "lastUpdate": 1750887750582,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1319,6 +1319,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220022053969,
             "range": "± 586341724",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "leanrafa@gmail.com",
+            "name": "Leandro Ferrigno",
+            "username": "lferrigno"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f673b693b3fcdc1fe4b87fa2abcce8b660cce0a6",
+          "message": "docs(l1,l2): move readme components to documentation in mdbook (#3295)\n\n**Motivation**\n\nThe main idea is to only have a quick introduction to ethrex in the\nreadme, with a quick way to set up a local L1+L2 stack from scratch\n(without even having the repo). The rest should be links to the book.\nThe current readme documentation should be moved to the book.\n\n\nCloses #3289\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-06-25T20:41:54Z",
+          "tree_id": "75b09dedeeaaf00b66d40241c96d6e79b6920788",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f673b693b3fcdc1fe4b87fa2abcce8b660cce0a6"
+        },
+        "date": 1750887740716,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 219117931766,
+            "range": "± 938841928",
             "unit": "ns/iter"
           }
         ]
