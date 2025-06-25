@@ -267,8 +267,8 @@ Feedback is more than welcome.</p>
 </div>
 <div class="table-wrapper"><table><thead><tr><th>Based Rollup</th><th>Protocol</th><th>Sequencer Election</th><th>Proof System</th><th>Preconfs</th><th>Additional Context</th></tr></thead><tbody>
 <tr><td><a href="https://github.com/taikoxyz/taiko-mono">Taiko Alethia (Taiko Labs)</a></td><td>Permissioned</td><td>Fixed Deterministic Lookahead</td><td>Multi-proof (sgxGeth (TEE), and sgxReth (ZK/TEE))</td><td>Yes</td><td>-</td></tr>
-<tr><td><a href="https://github.com/gattaca-com/based-op">Gattaca's Based OP (Gattaca + Lambdaclass)</a></td><td>Permissioned</td><td>Round Robin</td><td>Single Proof (optimistic)</td><td>Yes</td><td>For phase 1, the Sequencer/Gateway is centralized. For phase 2 (current phase) the Sequencer/Gateway is permissioned.</td></tr>
-<tr><td><a href="https://ethereumr1.org/">R1</a></td><td>Permissionless</td><td>Total Anarchy</td><td>Multi-proof (ZK, TEE, Guardian)</td><td>No</td><td>R1 is yet to be specified but planned to be built on top of Surge and Taiko's Stack. They're waiting until Taiko is mature enough to have preconfs</td></tr>
+<tr><td><a href="https://github.com/gattaca-com/based-op">Gattaca's Based OP (Gattaca + Lambdaclass)</a></td><td>Permissioned</td><td>Round Robin</td><td>Single Proof (optimistic)</td><td>Yes</td><td>For phase 1, the Sequencer/Gateway was centralized. For phase 2 (current phase) the Sequencer/Gateway is permissioned.</td></tr>
+<tr><td><a href="https://ethereumr1.org/">R1</a></td><td>Permissionless</td><td>Total Anarchy</td><td>Multi-proof (ZK, TEE, Guardian)</td><td>No</td><td>R1 is yet to be specified but plans are for it to be built on top of Surge and Taiko's Stack. They're waiting until Taiko is mature enough to have preconfs</td></tr>
 <tr><td><a href="https://github.com/NethermindEth/surge">Surge (Nethermind)</a></td><td>Permissionless</td><td>Total Anarchy</td><td>Multi-proof (ZK, TEE, Guardian)</td><td>No</td><td>Surge is built on top of Taiko Alethia but it's tuned enough to be a Stage 2 rollup. Surge is not designed to compete with existing rollups for users or market share. Instead, it serves as a technical showcase, experimentation platform, and reference implementation.</td></tr>
 <tr><td><a href="https://github.com/spire-labs/based-stack">Spire (Spire Labs)</a></td><td>Permissionless</td><td>Dutch Auction</td><td>Single Proof (optimistic)</td><td>Yes</td><td>-</td></tr>
 <tr><td><a href="https://x.com/fede_intern/status/1846035499799978475">Rogue (LambdaClass)</a></td><td>Permissionless</td><td>Dutch Auction</td><td>Multi-Proof (ZK + TEE)</td><td>Not Yet</td><td>We are prioritizing decentralization and permissionlessness at the expense of preconfirmations until the deterministic lookahead is available after Fusaka</td></tr>
@@ -329,7 +329,7 @@ Feedback is more than welcome.</p>
 <li>No one can challenge the lead in the first hour.</li>
 <li>During the second hour, the first auction challenge starts, and multiple Sequencers bid to challenge the lead. Finally, the lead Sequencer is overthrown and the new lead (Sequencer blue) starts sequencing.</li>
 <li>In the third hour a new auction challenge opens and the former lead Sequencer takes back the lead.</li>
-<li>Until the last hour of the sequencing period, the same cycle repeats having many changes of leaders.</li>
+<li>Until the last hour of the sequencing period, the same cycle repeats having many leader changes.</li>
 </ol>
 <p>To ensure L2 liveness in this decentralized protocol, Sequencers must participate in a peer-to-peer (P2P) network. The diagram below illustrates this process:</p>
 <p><img src="./img/l2_p2p_diagram.png" alt="Diagram showing the end-to-end flow of a transaction in the ethrex L2 P2P layer" /></p>
