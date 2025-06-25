@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750888309869,
+  "lastUpdate": 1750890582181,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1349,6 +1349,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 219117931766,
             "range": "± 938841928",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f9b9008d8319607d894bd2410d7e4b0964e62314",
+          "message": "refactor(l1): `SIGTERM` handling (#3288)\n\n**Motivation**\nStopping an L1 Docker container sends a `SIGTERM` to the node process,\nbut since the node doesn't handle this signal, it takes 10 seconds for\nthe `SIGKILL` to force the shutdown.\nSome temporary fixes were introduced to address this issue, but the\ncorrect solution is to handle the `SIGTERM` signal.\n\n\n**Description**\nThis PR adds a `SIGTERM` handler to allow graceful shutdown without the\n10-second delay.\n\nIt also reverts the temporary fixes that were introduced in previous PRs\n(https://github.com/lambdaclass/ethrex/commit/47a1d4c5b23a9ae03839556b92bce3c6dd029f17\nand\nhttps://github.com/lambdaclass/ethrex/commit/67edcaff73624446f2b75c40b385df69aabe4882)\nin favor of this solution.\n\nNote that when the node is syncing, shutdown isn’t immediate, as the\nnode waits for the current batch to complete.\nTo handle this, the `CancellationToken` is propagated and checked before\nprocessing each block, which allows the node to terminate immediately,\nwithout waiting for the whole batch to complete.\n\nCloses #2944\nCloses #3236",
+          "timestamp": "2025-06-25T21:29:38Z",
+          "tree_id": "78e8790824f063020edda3f7bc0be6531f18bd8b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f9b9008d8319607d894bd2410d7e4b0964e62314"
+        },
+        "date": 1750890571535,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 219171300772,
+            "range": "± 583199276",
             "unit": "ns/iter"
           }
         ]
