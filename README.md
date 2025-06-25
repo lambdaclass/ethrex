@@ -16,8 +16,7 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 curl -sSL https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/install.sh | sh
 ```
 
-This installs the `ethrex` binary, and downloads two scripts used for quickly starting a local L1+L2 stack.
-You can have your own L2 running just by running both scripts in different terminals.
+This installs the `ethrex` binary with some additional artifacts needed for this guide.
 
 ### Starting the L1
 
