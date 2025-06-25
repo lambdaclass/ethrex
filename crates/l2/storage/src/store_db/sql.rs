@@ -2,8 +2,8 @@ use std::fmt::Debug;
 
 use crate::{api::StoreEngineRollup, error::StoreError};
 use ethrex_common::{
-    types::{AccountUpdate, Blob, BlockNumber},
     H256,
+    types::{AccountUpdate, Blob, BlockNumber},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 

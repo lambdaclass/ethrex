@@ -149,6 +149,8 @@ pub enum ProofVerifierError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Store error: {0}")]
     StoreError(#[from] StoreError),
+    #[error("Block Producer failed because of a rollup store error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
 }
 
 #[derive(Debug, thiserror::Error)]
