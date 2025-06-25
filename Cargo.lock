@@ -5822,6 +5822,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "l2"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "ethrex-common",
+ "ethrex-p2p",
+ "ethrex-rlp",
+ "ethrex-storage-rollup",
+ "secp256k1",
+]
+
+[[package]]
 name = "lalrpop"
 version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

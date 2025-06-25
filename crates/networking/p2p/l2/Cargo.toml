@@ -1,0 +1,12 @@
+[package]
+name = "l2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ethrex-storage-rollup.workspace = true
+ethrex-p2p.workspace = true
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+secp256k1.workspace = true
+bytes.workspace = true
