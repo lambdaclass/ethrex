@@ -106,7 +106,7 @@ pub async fn fill_transactions(
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
-    let (mut plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
+    let mut txs = fetch_mempool_transactions(blockchain.clone(), context)?;
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -122,23 +122,10 @@ pub async fn fill_transactions(
             debug!("No more StateDiff space to run transactions");
             break;
         };
-        if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block {
-            debug!("No more blob gas to run blob transactions");
-            blob_txs.clear();
-        }
-        // Fetch the next transactions
-        let (head_tx, is_blob) = match (plain_txs.peek(), blob_txs.peek()) {
-            (None, None) => break,
-            (None, Some(tx)) => (tx, true),
-            (Some(tx), None) => (tx, false),
-            (Some(a), Some(b)) if b < a => (b, true),
-            (Some(tx), _) => (tx, false),
-        };
 
-        let txs = if is_blob {
-            &mut blob_txs
-        } else {
-            &mut plain_txs
+        // Fetch the next transactions
+        let Some(head_tx) = txs.peek() else {
+            break;
         };
 
         // Check if we have enough gas to run the transaction
@@ -176,17 +163,6 @@ pub async fn fill_transactions(
                 blockchain.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
-        }
-
-        // Check if the transaction is a blob transaction, which is not supported in L2
-        if matches!(*head_tx, Transaction::EIP4844Transaction(_)) {
-            debug!(
-                "Skipping blob transaction: {} (not supported in L2)",
-                tx_hash
-            );
-            txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
-            continue;
         }
 
         // Execute tx
@@ -253,6 +229,16 @@ pub async fn fill_transactions(
     );
 
     Ok(())
+}
+
+// TODO: once #2857 is implemented, we can totally ignore the blob pools
+fn fetch_mempool_transactions(blockchain: Arc<Blockchain>, context: &mut PayloadBuildContext) {
+    let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context);
+    while let Some(blob_tx) = blob_txs.peek() {
+        let tx_hash = blob_tx.compute_hash();
+        blockchain.remove_transaction_from_pool(&tx_hash)?;
+    }
+    plain_txs
 }
 
 /// Returns the state diffs introduced by the transaction by comparing the call frame backup
