@@ -59,8 +59,8 @@ impl Stack {
 pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
-    /// Keeps track of the gas that's been used in current context
-    pub gas_used: u64,
+    /// Keeps track of the remaining gas in the current context.
+    pub gas_remaining: u64,
     /// Program Counter
     pub pc: usize,
     /// Address of the account that sent the message
@@ -139,6 +139,7 @@ impl CallFrame {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
             gas_limit,
+            gas_remaining: gas_limit,
             msg_sender,
             to,
             code_address,
@@ -175,15 +176,10 @@ impl CallFrame {
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
-        self.gas_used = self
-            .gas_used
-            .checked_add(gas)
+        self.gas_remaining = self
+            .gas_remaining
+            .checked_sub(gas)
             .ok_or(ExceptionalHalt::OutOfGas)?;
-
-        if self.gas_used > self.gas_limit {
-            return Err(ExceptionalHalt::OutOfGas);
-        }
-
         Ok(())
     }
 
