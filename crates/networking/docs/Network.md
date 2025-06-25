@@ -102,7 +102,7 @@ We'll have three nodes: `a`, `b`, and `c`, we'll start `a`, then `b` setting `a`
 
 **node a**:
 ```bash
-cargo run --bin ethrex -- --network test_data/fixtures/genesis/kurtosis.json
+cargo run --bin ethrex -- --network ./fixtures/genesis/kurtosis.json
 ```
 
 We get the `enode` by querying the node_info and using jq:
@@ -119,7 +119,7 @@ curl -s http://localhost:8545 \
 We start a new server passing the enode from node `a` as an argument. Also changing the database dir and the ports is needed to avoid conflicts.
 
 ```bash
-cargo run --bin ethrex -- --network ./test_data/fixtures/genesis/kurtosis.json --bootnodes=`NODE_A_ENODE` \
+cargo run --bin ethrex -- --network ./fixtures/genesis/kurtosis.json --bootnodes=`NODE_A_ENODE` \
 --datadir=ethrex_b --authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=30306
 ```
 
@@ -127,7 +127,7 @@ cargo run --bin ethrex -- --network ./test_data/fixtures/genesis/kurtosis.json -
 Finally, with `node_c` we connect to `node_b`. When the lookup runs, `node_c` should end up connecting to `node_a`:
 
 ```bash
-cargo run --bin ethrex -- --network ./test_data/fixtures/genesis/kurtosis.json --bootnodes=`NODE_B_ENODE` \
+cargo run --bin ethrex -- --network ./fixtures/genesis/kurtosis.json --bootnodes=`NODE_B_ENODE` \
 --datadir=ethrex_c --authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
 ```
 

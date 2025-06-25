@@ -416,10 +416,7 @@ mod tests {
             }
         }
 
-        let path = Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test_data/fixtures"
-        ));
+        let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures"));
 
         let chain_file_path = path.join("blockchain/l2-loadtest.rlp");
         let genesis_file_path = path.join("genesis/perf-ci.json");

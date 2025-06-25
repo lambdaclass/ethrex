@@ -7,7 +7,7 @@ on:
     paths:
       - "crates/l2/tee/**"
       - "crates/l2/contracts/**"
-      - "test_data/**"
+      - "fixtures/**"
       - ".github/workflows/pr-main_l2_tdx.yaml"
 
 concurrency:

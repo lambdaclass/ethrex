@@ -102,7 +102,7 @@ impl ValueFormatter for GasMeasurementFormatter {
 }
 
 fn read_private_keys() -> Vec<SecretKey> {
-    let file = include_str!("../../../test_data/fixtures/keys/private_keys_l1.txt");
+    let file = include_str!("../../../fixtures/keys/private_keys_l1.txt");
     file.lines()
         .map(|line| {
             let line = line.trim().strip_prefix("0x").unwrap();
@@ -132,7 +132,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     if std::fs::exists(&storage_path).unwrap_or(false) {
         std::fs::remove_dir_all(&storage_path).unwrap();
     }
-    let genesis_file = include_bytes!("../../../test_data/fixtures/genesis/l1-dev.json");
+    let genesis_file = include_bytes!("../../../fixtures/genesis/l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let store = Store::new(
         &storage_path.into_path().display().to_string(),

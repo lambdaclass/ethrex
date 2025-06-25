@@ -137,7 +137,7 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
     })
 }
 pub fn main() -> Result<(), String> {
-    let genesis_files = read_dir("../../test_data").unwrap();
+    let genesis_files = read_dir("../../fixtures/genesis").unwrap();
     for file in genesis_files {
         let file = file.unwrap();
         let path = file.path();

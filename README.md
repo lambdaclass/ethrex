@@ -139,7 +139,7 @@ make dev
 ```
 
 - RPC endpoint: localhost:8545
-- Genesis file: ./test_data/fixtures/genesis/l1.json
+- Genesis file: ./fixtures/genesis/l1.json
 
 ### Test
 
@@ -233,7 +233,7 @@ For reference on each individual check see the [assertoor-wiki](https://github.c
 
 Example run:
 ```bash
-cargo run --bin ethrex -- --network test_data/fixtures/genesis/kurtosis.json
+cargo run --bin ethrex -- --network fixtures/genesis/kurtosis.json
 ```
 
 The `network` argument is mandatory, as it defines the parameters of the chain.

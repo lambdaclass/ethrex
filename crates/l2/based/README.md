@@ -134,8 +134,8 @@ In a console with `crates/l2` as the current directory, run the following comman
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-  --genesis-l1-path ../../test_data/fixtures/genesis/l1-dev.json \
-  --genesis-l2-path ../../test_data/fixtures/genesis/l2.json \
+  --genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+  --genesis-l2-path ../../fixtures/genesis/l2.json \
   --contracts-path contracts \
   --sp1.verifier-address 0x00000000000000000000000000000000000000aa \
   --pico.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -145,7 +145,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
   --bridge-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --on-chain-proposer-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --deposit-rich \
-  --private-keys-file-path ../../test_data/fixtures/keys/private_keys_l1.txt \
+  --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
   --deploy-based-contracts \
   --sequencer-registry-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607
 ```
@@ -153,7 +153,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 This command will:
 
 1. Deploy the L1 contracts, including the based contracts `SequencerRegistry`, and a modified `OnChainProposer`.
-2. Deposit funds in the accounts from `../../test_data/fixtures/keys/private_keys_l1.txt`.
+2. Deposit funds in the accounts from `../../fixtures/keys/private_keys_l1.txt`.
 3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address. This means that the node will run in "dev mode" and that the proof verification will not be performed. This is useful for local development and testing, but should not be used in production environments.
 
 > [!NOTE]
@@ -173,7 +173,7 @@ cargo run --release --bin ethrex --features l2 -- l2 init \
   --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --committer.l1-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --network test_data/fixtures/genesis/l2.json \
+  --network fixtures/genesis/l2.json \
   --datadir ethrex_l2 \
   --proof-coordinator.addr 127.0.0.1 \
   --proof-coordinator.port 4566 \
