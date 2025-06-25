@@ -27,7 +27,7 @@ While Ethereum Foundation members are actively discussing and proposing EIPs to 
 | [R1](https://ethereumr1.org/)                                                         | Permissionless | Total Anarchy                 | Multi-proof (ZK, TEE, Guardian)                   | No       | R1 is yet to be specified but planned to be built on top of Surge and Taiko's Stack. They're waiting until Taiko is mature enough to have preconfs                                                                                                                         |
 | [Surge (Nethermind)](https://github.com/NethermindEth/surge)                          | Permissionless | Total Anarchy                 | Multi-proof (ZK, TEE, Guardian)                   | No       | Surge is built on top of Taiko Alethia but it's tuned enough to be a Stage 2 rollup. Surge is not designed to compete with existing rollups for users or market share. Instead, it serves as a technical showcase, experimentation platform, and reference implementation. |
 | [Spire (Spire Labs)](https://github.com/spire-labs/based-stack)                       | Permissionless | Dutch Auction                 | Single Proof (optimistic)                         | Yes      | -                                                                                                                                                                                                                                                                          |
-| [Rogue (LambdaClass)](https://x.com/fede_intern/status/1846035499799978475)           | Permissionless | Dutch Auction                 | Multi-Proof (ZK + TEE)                            | Not Yet  | We are prioritizing decentralization and permissionlessness at the expense of preconfirmations until the deterministic lookahead is available after Fusaka                                                                                                                |
+| [Rogue (LambdaClass)](https://x.com/fede_intern/status/1846035499799978475)           | Permissionless | Dutch Auction                 | Multi-Proof (ZK + TEE)                            | Not Yet  | We are prioritizing decentralization and permissionlessness at the expense of preconfirmations until the deterministic lookahead is available after Fusaka                                                                                                                 |
 
 Other based rollups not mentioned will be added later.
 
@@ -83,7 +83,7 @@ During each auction period, a configurable number of tickets are auctioned off. 
 
 Parameters like the amount of tickets auctioned, the duration of the auction periods, the duration of the sequencing periods, the amount of sequencing periods per allocated period, and more, are configurable. This configurability is not merely a feature but a deliberate and essential design choice. The complete list of all configurable parameters can be found under the “Protocol details” section.
 
-<!-- TODO: Add image -->
+![Diagram showing leader election process](./img/leader_election_process.png)
 
 1. Sequencers individually opt in before auction period `n` ends, providing collateral via an L1 contract. This registration is a one-time process per Sequencer.
 2. During the auction, registered Sequencers bid for sequencing rights for a yet-to-be-revealed sequencing period within the allocated period.
@@ -94,7 +94,7 @@ In each sequencing period, the Lead Sequencer is initially determined through a 
 
 The following example assumes a sequencing period of 1 day, 1 auction challenge per hour with challenge periods of 1 hour.
 
-<!-- TODO: Add image -->
+![Diagram showing how challenges work](./img/challenges_to_leaders.png)
 
 1. Auction winner (Sequencer green) starts as the lead Sequencer of the sequencing period.
 2. No one can challenge the lead in the first hour.
