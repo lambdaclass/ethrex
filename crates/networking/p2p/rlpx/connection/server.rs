@@ -18,7 +18,7 @@ use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_interval,
 };
 use tokio::{
-    net::{TcpSocket, TcpStream},
+    net::TcpStream,
     sync::{Mutex, broadcast, mpsc::Sender},
     task,
 };
@@ -71,7 +71,6 @@ pub struct RLPxConnectionState(pub InnerState);
 pub struct Initiator {
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
-    pub(crate) stream: Arc<TcpStream>,
 }
 
 #[derive(Clone)]
@@ -125,11 +124,10 @@ impl RLPxConnectionState {
         }))
     }
 
-    pub fn new_as_initiator(context: P2PContext, node: &Node, stream: TcpStream) -> Self {
+    pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
         Self(InnerState::Initiator(Initiator {
             context,
             node: node.clone(),
-            stream: Arc::new(stream),
         }))
     }
 }
@@ -176,16 +174,7 @@ impl RLPxConnection {
         context: P2PContext,
         node: &Node,
     ) -> Result<RLPxConnectionHandle, std::io::Error> {
-        let addr = SocketAddr::new(node.ip, node.tcp_port);
-        let stream = match tcp_stream(addr).await {
-            Ok(result) => result,
-            Err(error) => {
-                log_peer_debug(node, &format!("Error creating tcp connection {error}"));
-                context.table.lock().await.replace_peer(node.node_id());
-                return Err(error);
-            }
-        };
-        let state = RLPxConnectionState::new_as_initiator(context, node, stream);
+        let state = RLPxConnectionState::new_as_initiator(context, node);
         Ok(RLPxConnection::start(state.clone()))
     }
 }
@@ -335,10 +324,6 @@ impl GenServer for RLPxConnection {
             CastResponse::NoReply(state)
         }
     }
-}
-
-async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
-    TcpSocket::new_v4()?.connect(addr).await
 }
 
 async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {

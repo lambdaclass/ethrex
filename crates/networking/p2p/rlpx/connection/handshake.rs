@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    net::SocketAddr,
     sync::Arc,
 };
 
@@ -32,7 +33,7 @@ use rand::Rng;
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
+    net::{TcpSocket, TcpStream},
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
@@ -64,14 +65,15 @@ pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
-        InnerState::Initiator(Initiator {
-            context,
-            node,
-            stream,
-        }) => {
-            let mut stream = match Arc::try_unwrap(stream) {
-                Ok(s) => s,
-                Err(_) => return Err(RLPxError::StateError("Cannot use the stream".to_string())),
+        InnerState::Initiator(Initiator { context, node }) => {
+            let addr = SocketAddr::new(node.ip, node.tcp_port);
+            let mut stream = match tcp_stream(addr).await {
+                Ok(result) => result,
+                Err(error) => {
+                    log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
+                    context.table.lock().await.replace_peer(node.node_id());
+                    return Err(error)?;
+                }
             };
             let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
             let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
@@ -134,6 +136,10 @@ pub(crate) async fn perform(
         },
         stream,
     ))
+}
+
+async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
+    TcpSocket::new_v4()?.connect(addr).await
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
