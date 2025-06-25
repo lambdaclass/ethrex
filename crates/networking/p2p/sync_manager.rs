@@ -132,7 +132,7 @@ impl SyncManager {
     }
 
     /// Returns true is the syncer is active
-    fn is_active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         self.syncer.try_lock().is_err()
     }
 
@@ -210,7 +210,7 @@ impl SyncManager {
                     last_batch_number
                         .try_lock()
                         .map(|mut last_batch_number| {
-                            *last_batch_number = new_batch_head + 1;
+                            *last_batch_number = new_batch_head;
                         })
                         .unwrap_or_else(|_| {
                             error!("Failed to update last batch number after sync");

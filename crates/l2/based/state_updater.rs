@@ -210,7 +210,10 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
                 state
                     .sync_manager
                     .sync_to_head(*newest_fcu_head, latest_batch_committed);
-                state.latest_block_fetched = latest_l1_block;
+                if !state.sync_manager.is_active() {
+                    // dbg!("Sync manager is not active, updating latest block fetched.");
+                    state.latest_block_fetched = latest_l1_block;
+                }
                 // state.blockchain.set_synced();
             } else {
                 // warn!("No new BatchCommitted logs found, continuing to sync.");
@@ -277,7 +280,7 @@ fn determine_new_status(
             if is_lead_sequencer && *current_state == SequencerStatus::Syncing {
                 warn!("Node is not up to date but is the lead sequencer, continue syncing.");
             }
-            // info!("Node is not up to date, syncing...");
+            info!("Node is not up to date, syncing...");
             SequencerStatus::Syncing
         }
     }

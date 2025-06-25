@@ -74,7 +74,7 @@ const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration:
 const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 const PERIODIC_BATCH_BROADCAST_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(1000);
+    std::time::Duration::from_millis(300);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(60);

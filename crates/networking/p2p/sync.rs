@@ -145,6 +145,11 @@ impl Syncer {
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
+        #[cfg(feature = "l2")]
+        info!(
+            "Syncing from batch {:?} to batch number {:?}",
+            current_batch_number, new_batch_head
+        );
         let start_time = Instant::now();
         match self
             .sync_cycle(
