@@ -1,11 +1,13 @@
 # [DRAFT] Ethrex roadmap for becoming based
 
+_Special thanks to [Lorenzo](https://x.com/_eltitan) and [Kubi](https://x.com/kubimensah), [George](https://x.com/gd_gattaca), and Louis from [Gattaca](https://x.com/gattacahq), [Jason](https://x.com/jasnoodle) from [Fabric](https://x.com/fabric_ethereum), and [Matthew](https://x.com/mteamisloading) from [Spire Labs](https://x.com/Spire_Labs) for their feedback and suggestions._
+
 > [!NOTE]
-> This document is still under development, and everything stated in it is subject to change.
+> This document is still under development, and everything stated in it is subject to change after feedback and iteration.
 > Feedback is more than welcome.
 
 > [!IMPORTANT]
-> This initial approach is **decentralized** and **permissionless** but not **based** yet. Although sequencing rights aren't currently guaranteed to the L1 proposer, there will be incentives for L1 proposers to eventually participate in the L2, moving toward [Justin Drake's definition](https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016).
+> We believe that [Gattaca's model](https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733)—permissionless with preconfs using L1 proposers (either personally or through delegations) as L2 sequencers—is the ideal approach. However, this model cannot achieve permissionlessness until the deterministic lookahead becomes available after Fusaka. In the meantime, we consider the Spire approach, based on a Dutch auction, to be the most suitable for our current needs. It is important to note that Rogue cannot implement a centralized mechanism for offering preconfs, so we have chosen to prioritize a permissionless structure before enabling preconfirmations. This initial approach is **decentralized** and **permissionless** but not **based** yet. Although sequencing rights aren't currently guaranteed to the L1 proposer, there will be incentives for L1 proposers to eventually participate in the L2, moving toward [Justin Drake's definition](https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016).
 
 From the beginning, [ethrex](https://github.com/lambdaclass/ethrex) was conceived not just as an Ethereum L1 client, but also as an L2 (ZK Rollup). This means anyone will be able to use ethrex to deploy an EVM-equivalent, multi-prover (supporting SP1, RISC Zero, and TEEs) based rollup with just one command. We recently wrote a [blog post](https://blog.lambdaclass.com/celebrating-a-year-of-ethrex/) where we expand this idea more in depth.
 
@@ -18,13 +20,14 @@ While Ethereum Foundation members are actively discussing and proposing EIPs to 
 > [!NOTE]
 > This table compares the different based rollups in the ecosystem based on their current development state, not their final form.
 
-| Based Rollup       | Protocol       | Sequencer Election | Proof System                    | Preconfs                |  Additional Context  |
-| ------------------ | -------------- | ------------------ | ------------------------------- | ----------------------- | --- |
-| Taiko Alethia      | Permissioned | -      | Multi-proof (sgxGeth (TEE), and sgxReth (ZK/TEE)) | Yes |  -  |
-| Based OP (Gattaca) | Permissioned   | Round Robin        | Single Proof (optimistic)       | Yes                     |   For phase 1, the Sequencer/Gateway is centralized. For phase 2 (current phase) the Sequencer/Gateway is permissioned.  |
-| Spire              | Permissionless | Dutch Auction      | Single Proof (optimistic)       | Yes                     |  -   |
-| R1                | Permissionless | Total Anarchy      | Multi-proof (ZK, TEE, Guardian) | No                      |  R1 is yet to be specified but planned to be built on top of Surge and Taiko's Stack. They're waiting until Taiko is mature enough to have preconfs   |
-| Surge            | Permissionless | Total Anarchy      | Multi-proof (ZK, TEE, Guardian) | No                      |  Surge is built on top of Taiko Alethia but it's tuned enough to be a Stage 2 rollup. They're waiting until Taiko is mature enough to have preconfs. |
+| Based Rollup                                                                          | Protocol       | Sequencer Election            | Proof System                                      | Preconfs | Additional Context                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------- | -------------- | ----------------------------- | ------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Taiko Alethia (Taiko Labs)](https://github.com/taikoxyz/taiko-mono)                  | Permissioned   | Fixed Deterministic Lookahead | Multi-proof (sgxGeth (TEE), and sgxReth (ZK/TEE)) | Yes      | -                                                                                                                                                                                                                                                                          |
+| [Gattaca's Based OP (Gattaca + Lambdaclass)](https://github.com/gattaca-com/based-op) | Permissioned   | Round Robin                   | Single Proof (optimistic)                         | Yes      | For phase 1, the Sequencer/Gateway is centralized. For phase 2 (current phase) the Sequencer/Gateway is permissioned.                                                                                                                                                      |
+| [R1](https://ethereumr1.org/)                                                         | Permissionless | Total Anarchy                 | Multi-proof (ZK, TEE, Guardian)                   | No       | R1 is yet to be specified but planned to be built on top of Surge and Taiko's Stack. They're waiting until Taiko is mature enough to have preconfs                                                                                                                         |
+| [Surge (Nethermind)](https://github.com/NethermindEth/surge)                          | Permissionless | Total Anarchy                 | Multi-proof (ZK, TEE, Guardian)                   | No       | Surge is built on top of Taiko Alethia but it's tuned enough to be a Stage 2 rollup. Surge is not designed to compete with existing rollups for users or market share. Instead, it serves as a technical showcase, experimentation platform, and reference implementation. |
+| [Spire (Spire Labs)](https://github.com/spire-labs/based-stack)                       | Permissionless | Dutch Auction                 | Single Proof (optimistic)                         | Yes      | -                                                                                                                                                                                                                                                                          |
+| [Rogue (LambdaClass)](https://x.com/fede_intern/status/1846035499799978475)           | Permissionless | Dutch Auction                 | Multi-Proof (ZK + TEE)                            | Not Yet  | We are prioritizing descentralization and permissionlessness at the expence of preconfirmations until the deterministic lookahead is available after Fusaka                                                                                                                |
 
 Other based rollups not mentioned will be added later.
 
@@ -34,7 +37,7 @@ According to Justin Drake's definition of "based", being "based" implies that th
 
 However, today, the "based" ecosystem is very immature. Despite the constant efforts of various teams, no stack is fully prepared to meet this definition. Additionally, L1 proposers do not have sufficient economic incentives to be part of the protocol.
 
-But there's a way out. As mentioned in Spire's [What is a based rollup?](https://docs.spire.dev/education-hub/what-is-a-based-rollup)
+But there's a way out. As mentioned in Spire's ["What is a based rollup?"](https://docs.spire.dev/education-hub/what-is-a-based-rollup)
 
 > The key to this definition is that sequencing is "driven" by a base layer and not controlled by a completely external party.
 
@@ -53,6 +56,7 @@ The key benefits of our approach to based sequencing are:
 - **Decentralization and Permissionlessness from the Get-Go:** We've decentralized ethrex L2 by allowing anyone to participate in the L2 block proposal; actors willing to participate on it can do this permissionlessly, as the execution ticket auction approach we are taking provides a governance free leader election mechanism.
 - **Robust Censorship Resistance:** By being decentralized and permissionless, and with the addition of Sequencer challenges, we increased the cost of censorship in the protocol.
 - **Low Operational Cost:** We strived to make the sequencer operating costs as low as possible by extending the sequencing window, allowing infrequent L1 finalization for low traffic periods.
+- **Configurability:** We intentionally designed our protocol to be configurable at its core. This allows different rollup setups to be tailored based on their unique needs, ensuring optimal performance, efficiency, and UX.
 
 ## Key points
 
@@ -61,10 +65,12 @@ The key benefits of our approach to based sequencing are:
 - **Ticket:** non-transferable right of a Sequencer to build and commit an L2 batch. One or more are auctioned during each **auction period**.
 - **Sequencing Period:** the period during which a ticket holder has sequencing rights.
 - **Auction Period:** the period during which the auction is performed.
-<!-- TODO: Allocated? Allocation? Auctioned? -->
+- **Auction Challenge:** instance withing a sequencing period where lead Sequencer sequencing rights can be challenged.
+- **Challenge Period:** the period during which a lead sequencer can be challenged.
 - **Allocated Period:** the set of **contiguous sequencing periods** allocated among the winners **of the corresponding auctioning period** -during an auctioning period, multiple sequencing periods are auctioned, the set of these is the allocated period.
 - **L2 batch:** A collection of L2 blocks submitted to L1 in a single transaction.
-- **Commit Transaction:** An L1 transaction submitted by the Lead Sequencer to commit to an L2 batch execution.
+- **Block/Batch Soft-commit Message:** A signed P2P message from the Lead Sequencer publishing a new block or sealed batch.
+- **Commit Transaction:** An L1 transaction submitted by the Lead Sequencer to commit to an L2 batch execution. It is also called Batch Commitment.
 - **Sequencer:** An L2 node registered in the designated L1 contract.
 - **Lead Sequencer:** The Sequencer currently authorized to build L2 blocks and post L2 batches during a specific L1 block.
 - **Follower:** Non-Lead Sequencer nodes, which may be Sequencers awaiting leadership or passive nodes.
@@ -75,12 +81,26 @@ As outlined earlier, sequencing rights for future blocks are allocated through p
 
 During each auction period, a configurable number of tickets are auctioned off. Each ticket grants its holder the right to sequence transactions during one sequencing period within the allocated period. However, at the time of the auction, the specific sequencing period assigned to each ticket remains undetermined. Once the auction period ends, the sequencing periods are randomly assigned (shuffled) among the ticket holders, thereby determining which sequencing period each ticket corresponds to.
 
-<!-- TODO: add updated graph -->
+Parameters like the amount of tickets auctioned, the duration of the auction periods, the duration of the sequencing periods, the amount of sequencing periods per allocated period, and more, are configurable. This configurability is not merely a feature but a deliberate and essential design choice. The complete list of all configurable parameters can be found under the “Protocol details” section.
+
+<!-- TODO: Add image -->
 
 1. Sequencers individually opt in before auction period `n` ends, providing collateral via an L1 contract. This registration is a one-time process per Sequencer.
 2. During the auction, registered Sequencers bid for sequencing rights for a yet-to-be-revealed sequencing period within the allocated period.
 3. At the auction's conclusion, sequencing rights for the sequencing periods within the allocated period are assigned among the ticket holders.
 4. Finally, Sequencers submit L2 batch transactions to L1 during their assigned sequencing period (note: this step does not immediately follow step 3, as additional auctions and sequencing might occur in-between).
+
+In each sequencing period, the Lead Sequencer is initially determined through a bidding process. However, this position can be contested by other Sequencers who are willing to pay a higher price than the winning bid. The number of times such challenges can occur within a single sequencing period is configurable, allowing for control over the stability of the leadership. Should a challenge succeed, the challenging Sequencer takes over as the Lead Sequencer for the remainder of the period, and the original Lead Sequencer is refunded a portion of their bid corresponding to the time left in the period. For example, if a challenge is successful at the midpoint of the sequencing period, the original Lead Sequencer would be refunded half of their bid.
+
+The following example assumes a sequencing period of 1 day, 1 auction challenge per hour with challenge periods of 1 hour.
+
+<!-- TODO: Add image -->
+
+1. Auction winner (Sequencer green) starts as the lead Sequencer of the sequencing period.
+2. No one can challenge the lead in the first hour.
+3. During the second hour, the first auction challenge starts, and multiple Sequencers bid to challenge the lead. Finally, the lead Sequencer is overthrown and the new lead (Sequencer blue) starts sequencing.
+4. In the third hour a new auction challenge opens and the former lead Sequencer takes back the lead.
+5. Until the last hour of the sequencing period, the same cycle repeats having many changes of leaders.
 
 To ensure L2 liveness in this decentralized protocol, Sequencers must participate in a peer-to-peer (P2P) network. The diagram below illustrates this process:
 
@@ -97,13 +117,133 @@ To ensure L2 liveness in this decentralized protocol, Sequencers must participat
 9. Any node: Seals the batch locally and gossips the message.
 10. A User: Receives a non-null receipt for the transaction.
 
+<!--
 Lead Sequencers will follow the following pipeline for L2 block building and batch commitment:
 
-<!-- TODO: add updated graph with L1 block time distribution -->
+TODO: add updated graph with L1 block time distribution
+-->
 
 ## Protocol details
 
-<!-- TODO: add this section -->
+### Additional Terminology
+
+- **Next Batch**: The L2 batch being built by the lead Sequencer.
+- **Up-to-date Nodes:** Nodes that have the last committed batch in their storage and only miss the next batch.
+- **Following:** We say that up-to-date nodes are **following** the lead Sequencer.
+- **Syncing:** Nodes are **syncing** if they are not up-to-date. They’ll stop syncing after they reach the **following** state.
+- **Verify Transaction:** An L1 transaction submitted by anyone to verify a ZK proof to an L2 batch execution.
+
+### Network participants
+
+- Sequencer Nodes: Nodes that have opted in to serve as Sequencers.
+- Follower Nodes: State or RPC Nodes.
+- Prover Nodes:
+
+By default, every Ethrex L2 node begins as a Follower Node. A process will periodically query the L1 smart contract registry for the Lead Sequencer's address and update each node's state accordingly.
+
+### Network parameters
+
+A list of all the configurable parameters of the network.
+
+- Sequencing period duration
+- Auction period duration
+- Number of sequencing periods in an allocated period
+- Time between auction and allocated period
+- L2 block time
+- Minimum collateral in ETH for Sequencers registration
+- Withdrawal delay for Sequencers that quit the protocol
+- Initial ticket auction price multiplier?
+- Batch verification time limit
+- Amount of auction challenges within a sequencing period
+- Challenge period duration
+- Time between auction challenges
+- Challenge price multiplier
+
+### Lead Sequencer election
+
+- Aspiring Lead Sequencers must secure sequencing rights through a Dutch auction in advance, enabling them to post L2 batches to L1.
+- Sequencing rights are tied to tickets: one ticket grants the right to sequence and post batches during a specific sequencing period.
+- For each sequencing period within an allocated period, sequencing rights are randomly assigned from the pool of ticket holders.
+- Each auction period determines tickets for the nth epoch ahead (configurable).
+- Once Ethereum incorporates deterministic lookahead (e.g., [EIP-7917](https://eips.ethereum.org/EIPS/eip-7917)), the Lead Sequencer for a given L1 slot will be the current proposer, provided they hold a ticket.
+
+### Auction challenges
+
+- During a sequencing period, other Sequencers can pay a higher price than the winning bid to challenge the Lead Sequencer.
+- This can only happen a configurable number of times per sequencing period.
+- After a successful challenge, the current Lead Sequencer is replaced by the challenging sequencer for the rest of the Sequencing Period and is refunded the portion of its bid corresponding to the remaining sequencing period (i.e. half of its bid if it loses half of its sequencing period).
+
+### Sequencers registry
+
+- L1 contract that manages Sequencer registration and ticket auctions for sequencing rights.
+- Sequencers can register permissionlessly by providing a minimum collateral in ETH.
+- Sequencers may opt out of an allocated period by not purchasing tickets for that period.
+- Sequencers can unregister and withdraw their collateral after a delay.
+
+### Lead Sequencers role
+
+- Build L2 blocks and post L2 batches to the L1 within the sequencing period.
+- Broadcast to the network:
+  - Transactions.
+  - Sequenced blocks as they are built.
+  - Batch seal messages to prompt the network to seal the batch locally.
+- Serve state.
+
+### Follower nodes role
+
+- Broadcast to the network:
+  - Transactions.
+  - Sequenced blocks.
+  - Batch seal messages.
+- Store incoming blocks sequentially.
+- Seal batches upon receiveng batch seal messages (after storing all batch blocks).
+- Serve state.
+- Monitor the L1 contract for batch updates and reorgs.
+
+### Prover nodes role
+
+- For this stage, it is the Sequencers' responsibility to prove their own batches.
+- The prover receives the proof generation inputs of a batch from another node and returns a proof.
+
+### Batch commitment/proposal
+
+> [!TIP]
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+
+- Only lead Sequencer can post batches.
+- Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.
+- Batch commitment now includes posting the list of blocks in the batch to the L1 for data availability.
+- Penalizamos si uno o más blocks se gossipearon pero no llegaron a incluirse?
+
+### Batch verification
+
+> [!TIP]
+> To enrich the understanding of this part, we suggest reading [ethrex L2 High-Level docs](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/overview.md) as this only details the diff with what we already have.
+
+- Anyone can verify batches.
+- Only one valid verification is required to advance the network.
+- Valid proofs include the blocks of the batch being verified.
+- Penalizamos
+
+### P2P
+
+- Ethrex's L1 P2P network will be used to gossip transactions and for out-of-date nodes to sync.
+- A new capability will be added for gossipping L2 blocks and batch seal messages (`NewBlock` and `BatchSealed`).
+- The `NewBlock` message includes an RLP-encoded list of transactions in the block, along with metadata for re-execution and validation. It is signed, and receivers must verify the signature (additional data may be required in practice).
+- The `SealedBatch` message specifies the batch number and the number of blocks it contains (additional data may be needed in practice).
+- Follower Nodes must validate all messages. They add `NewBlock`s to storage sequentially and seal the batch when the `SealedBatch` message arrives. If a node's current block is `n` and it receives block `n + 2`, it queues `n + 2`, waits for `n + 1`, adds it, then processes `n + 2`. Similarly, a SealedBatch message includes block numbers, and the node delays sealing until all listed blocks are stored.
+
+### Syncing
+
+Nodes that join a live network will need to sync up to the latest state.
+
+For this we'll divide nodes into two different states:
+
+- **Following nodes**: These will keep up-to-date via the based P2P.
+- **Syncing nodes**: These will sync via 2 different mechanisms:
+  - **P2P Syncing:** This is the same as full-sync and snap-sync on L1, but with some changes.
+  - **L1 Syncing:** Also used by provers to download batches from the L1.
+  - In practice, these methods will compete to sync the node.
 
 ## Downsides
 
@@ -187,6 +327,10 @@ The following links, repos, and projects have been important in the development 
 - [Rogue (LambdaClass)](https://x.com/fede_intern/status/1846035499799978475)
 - [Surge (Nethermind)](https://github.com/NethermindEth/surge)
 - [Taiko Alethia (Taiko Labs)](https://github.com/taikoxyz/taiko-mono)
+  - Whitelisted preconfers:
+    - [Gattaca's](https://github.com/gattaca-com/taiko-gateway)
+    - [Chainbound's](https://github.com/chainbound/taiko-mk1)
+    - [Nethermind's](https://github.com/NethermindEth/Taiko-Preconf-AVS)
 - [Based OP (Gattaca + Lambdaclass)](https://github.com/gattaca-com/based-op)
 - [R1](https://ethereumr1.org/)
 - [Minimal Rollup (OpenZeppelin)](https://github.com/OpenZeppelin/minimal-rollup)
