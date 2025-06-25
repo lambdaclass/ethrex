@@ -362,7 +362,7 @@ impl PeerHandler {
                 limit_hash: limit,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self
+            let (peer_id, peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer_channel.receiver.lock().await;
@@ -408,6 +408,8 @@ impl PeerHandler {
                     return Some((account_hashes, accounts, should_continue));
                 }
             }
+            warn!("[SYNCING] Didn't receive account range from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -425,7 +427,7 @@ impl PeerHandler {
                 hashes: hashes.clone(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self
+            let (peer_id, peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer_channel.receiver.lock().await;
@@ -454,6 +456,8 @@ impl PeerHandler {
             {
                 return Some(codes);
             }
+            warn!("[SYNCING] Didn't receive bytecodes from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -482,7 +486,7 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self
+            let (peer_id, peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer_channel.receiver.lock().await;
@@ -557,6 +561,10 @@ impl PeerHandler {
                 }
                 return Some((storage_keys, storage_values, should_continue));
             }
+            warn!(
+                "[SYNCING] Didn't receive storage ranges from peer, penalizing peer {peer_id}..."
+            );
+            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -583,7 +591,7 @@ impl PeerHandler {
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self
+            let (peer_id, peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer_channel.receiver.lock().await;
@@ -621,6 +629,8 @@ impl PeerHandler {
             }) {
                 return Some(nodes);
             }
+            warn!("[SYNCING] Didn't receive trie nodes from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -657,7 +667,7 @@ impl PeerHandler {
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self
+            let (peer_id, peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer_channel.receiver.lock().await;
@@ -695,6 +705,8 @@ impl PeerHandler {
             }) {
                 return Some(nodes);
             }
+            warn!("[SYNCING] Didn't receive trie nodes from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -724,7 +736,7 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self
+            let (peer_id, peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer_channel.receiver.lock().await;
@@ -772,6 +784,8 @@ impl PeerHandler {
                     return Some((storage_keys, storage_values, should_continue));
                 }
             }
+            warn!("[SYNCING] Didn't receive storage range from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
         }
         None
     }
