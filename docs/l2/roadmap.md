@@ -139,7 +139,7 @@ TODO: add updated graph with L1 block time distribution
 - Follower Nodes: State or RPC Nodes.
 - Prover Nodes:
 
-By default, every Ethrex L2 node begins as a Follower Node. A process will periodically query the L1 smart contract registry for the Lead Sequencer's address and update each node's state accordingly.
+By default, every ethrex L2 node begins as a Follower Node. A process will periodically query the L1 smart contract registry for the Lead Sequencer's address and update each node's state accordingly.
 
 ### Network parameters
 
