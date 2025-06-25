@@ -65,7 +65,7 @@ The key benefits of our approach to based sequencing are:
 - **Ticket:** non-transferable right of a Sequencer to build and commit an L2 batch. One or more are auctioned during each **auction period**.
 - **Sequencing Period:** the period during which a ticket holder has sequencing rights.
 - **Auction Period:** the period during which the auction is performed.
-- **Auction Challenge:** instance withing a sequencing period where lead Sequencer sequencing rights can be challenged.
+- **Auction Challenge:** instance within a sequencing period where lead Sequencer sequencing rights can be challenged.
 - **Challenge Period:** the period during which a lead sequencer can be challenged.
 - **Allocated Period:** the set of **contiguous sequencing periods** allocated among the winners **of the corresponding auctioning period** -during an auctioning period, multiple sequencing periods are auctioned, the set of these is the allocated period.
 - **L2 batch:** A collection of L2 blocks submitted to L1 in a single transaction.
