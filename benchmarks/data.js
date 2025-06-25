@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750863723298,
+  "lastUpdate": 1750866772641,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1552,6 +1552,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008758676486937187,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e84f61faddbd32288af58db8ca3c56aa4f3541d7",
+          "message": "test(l1): check if vm state reverts correctly on error (#3198)\n\n**Motivation**\n\nPer the instructions of the [ethereum state test\ndocs](https://eest.ethereum.org/v3.0.0/consuming_tests/state_test/), we\nshould be reverting to the pre-state when the execution throws an\nexception. Levm does this, but it's not asserted in the test runner in\nthe case an exception is expected.\n\n**Description**\n\nThis pr introduces a new error to check if the state was reverted\ncorrectly in the case an exception must occur, or throw error otherwise.\nTo check if the state was correctly reverted I'm using the post state\nhash from the tests and comparing it with the hash of the account's\nlatest state recorded in the db.\n\nCloses #2604",
+          "timestamp": "2025-06-25T14:02:28Z",
+          "tree_id": "45788c1aac7394b905b3c9f02a81cefdd1b332e6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e84f61faddbd32288af58db8ca3c56aa4f3541d7"
+        },
+        "date": 1750866764638,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008802714525139666,
             "unit": "Mgas/s"
           }
         ]
