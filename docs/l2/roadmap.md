@@ -267,10 +267,6 @@ So what about "based" Ethrex tomorrow? Eventually, there will be enough incentiv
 
 This proposal is intentionally minimalistic and adaptable for future refinements. How this will change and adapt to future necessities is something we don't know right now, and we don't care about it until those necessities arrive; this is [Lambda's engineering philosophy](https://blog.lambdaclass.com/lambdas-engineering-philosophy/).
 
-## Open questions
-
-- Do we want this protocol to incentivize L1 proposers to join? How are we doing that? If we guarantee registered L1 proposers to sequence during their slot, what would happen with the rest of the sequencing period? If they don't pay for sequencing, why would others?
-
 ## Further considerations
 
 The following are things we are looking to tackle in the future, but which are not blockers for our current work.
