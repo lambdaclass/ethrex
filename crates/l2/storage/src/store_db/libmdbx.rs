@@ -305,7 +305,7 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
         proof_type: ProverType,
         proof: BatchProof,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         let serialized = bincode::serialize(&proof)?;
         self.write::<BatchProofs>((batch_number, proof_type.into()), serialized)
             .await
@@ -315,12 +315,12 @@ impl StoreEngineRollup for Store {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-    ) -> Result<Option<BatchProof>, StoreError> {
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
         self.read::<BatchProofs>((batch_number, proof_type.into()))
             .await?
             .map(|s| bincode::deserialize(&s))
             .transpose()
-            .map_err(StoreError::from)
+            .map_err(RollupStoreError::from)
     }
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {

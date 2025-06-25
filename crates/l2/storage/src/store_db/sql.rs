@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::{api::StoreEngineRollup, error::StoreError};
+use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber},
@@ -456,16 +456,17 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         prover_type: ProverType,
         proof: BatchProof,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         let serialized_proof = bincode::serialize(&proof)?;
+        let prover_type: u32 = prover_type.into();
         self.execute_in_tx(vec![
             (
                 "DELETE FROM batch_proofs WHERE batch = ?1 AND prover_type = ?2",
-                (batch_number, prover_type as u32).into_params()?,
+                (batch_number, prover_type).into_params()?,
             ),
             (
                 "INSERT INTO batch_proofs VALUES (?1, ?2, ?3)",
-                (batch_number, prover_type as u32, serialized_proof).into_params()?,
+                (batch_number, prover_type, serialized_proof).into_params()?,
             ),
         ])
         .await?;
@@ -476,11 +477,12 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         prover_type: ProverType,
-    ) -> Result<Option<BatchProof>, StoreError> {
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
+        let prover_type: u32 = prover_type.into();
         let mut rows = self
             .query(
                 "SELECT proof from batch_proofs WHERE batch = ?1 AND prover_type = ?2",
-                (batch_number, prover_type as u32),
+                (batch_number, prover_type),
             )
             .await?;
 
@@ -549,7 +551,11 @@ mod tests {
                 ("batch_proofs", "batch") => "INT",
                 ("batch_proofs", "prover_type") => "INT",
                 ("batch_proofs", "proof") => "BLOB",
-                (table, name) => panic!("missing column check for {table}:{name}"),
+                _ => {
+                    return Err(anyhow::Error::msg(
+                        "unexpected attribute {name} in table {table}",
+                    ));
+                }
             };
             assert_eq!(given_type, expected_type);
         }
