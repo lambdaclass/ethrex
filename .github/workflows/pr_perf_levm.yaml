@@ -26,6 +26,7 @@ jobs:
           rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
                    | sed -E 's/.*"([^"]+)".*/\1/')
           echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+          echo "Rust version: ${rust_version}"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -90,6 +91,7 @@ jobs:
           rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
                    | sed -E 's/.*"([^"]+)".*/\1/')
           echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+          echo "Rust version: ${rust_version}"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
