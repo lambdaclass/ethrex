@@ -82,7 +82,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down -t 0
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
 	docker compose -f docker-compose-l2.yaml down
 
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
