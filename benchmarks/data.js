@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750862718094,
+  "lastUpdate": 1750863312623,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1493,6 +1493,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008773306792873052,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "79ed215def989e62e92653c9d0226cc93d941878",
+          "message": "ci(l2): check if the sp1 `Cargo.lock` is modified but not committed (#3302)\n\n**Motivation**\n\nRPC prover ci is constantly breaking because Cargo.lock is modified but\nnot committed in PRs\n\n**Description**\n\n- Add a check in the Lint job that executes `git diff --exit-code --\ncrates/l2/prover/zkvm/interface/sp1/Cargo.lock` and fails if there is a\ndiff\n- Update `Cargo.lock` to fix currently broken ci\n- Example of a failed run:\n-\nhttps://github.com/lambdaclass/ethrex/actions/runs/15863233694/job/44724951989",
+          "timestamp": "2025-06-25T13:45:24Z",
+          "tree_id": "9bf943d70d37d3e05cdab7bce5d099e5632017a0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/79ed215def989e62e92653c9d0226cc93d941878"
+        },
+        "date": 1750863304219,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008758676486937187,
             "unit": "Mgas/s"
           }
         ]
