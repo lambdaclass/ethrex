@@ -36,7 +36,6 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
-use tracing::info;
 
 use super::{
     codec::RLPxCodec,
@@ -70,7 +69,6 @@ pub(crate) async fn perform(
             node,
             stream,
         }) => {
-            info!("Starting handshake as initiator!");
             let mut stream = match Arc::try_unwrap(stream) {
                 Ok(s) => s,
                 Err(_) => return Err(RLPxError::StateError("Cannot use the stream".to_string())),
@@ -82,7 +80,7 @@ pub(crate) async fn perform(
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
-            log_peer_debug(&node, "Completed handshake as initiator!");
+            log_peer_debug(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec), false)
         }
         InnerState::Receiver(Receiver {
@@ -90,7 +88,6 @@ pub(crate) async fn perform(
             peer_addr,
             stream,
         }) => {
-            info!("Starting handshake as receiver!");
             let mut stream = match Arc::try_unwrap(stream) {
                 Ok(s) => s,
                 Err(_) => return Err(RLPxError::StateError("Cannot use the stream".to_string())),
@@ -108,7 +105,7 @@ pub(crate) async fn perform(
                 peer_addr.port(),
                 remote_state.public_key,
             );
-            log_peer_debug(&node, "Completed handshake as receiver!");
+            log_peer_debug(&node, "Completed handshake as receiver");
             (context, node, Framed::new(stream, codec), true)
         }
         InnerState::Established(_) => {

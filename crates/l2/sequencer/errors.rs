@@ -13,6 +13,7 @@ use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
+use ethrex_storage_rollup::RollupStoreError;
 use ethrex_vm::{EvmError, ProverDBError};
 use spawned_concurrency::tasks::GenServerError;
 use tokio::task::JoinError;
@@ -41,6 +42,8 @@ pub enum SequencerError {
     BlockFetcherError(#[from] BlockFetcherError),
     #[error("Failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
+    #[error("Failed to access RollupStore: {0}")]
+    FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("Failed to resolve network")]
     AlignedNetworkError(String),
 }
@@ -57,6 +60,8 @@ pub enum L1WatcherError {
     FailedToRetrieveChainConfig(String),
     #[error("L1Watcher failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
+    #[error("L1Watcher failed to access RollupStore: {0}")]
+    FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("{0}")]
     Custom(String),
     #[error("Spawned GenServer Error")]
@@ -73,6 +78,8 @@ pub enum ProofCoordinatorError {
     FailedToVerifyProofOnChain(String),
     #[error("ProofCoordinator failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
+    #[error("ProverServer failed to access RollupStore: {0}")]
+    FailedAccessingRollupStore(#[from] RollupStoreError),
     #[error("ProofCoordinator failed to retrieve block from storaga, data is None.")]
     StorageDataIsNone,
     #[error("ProofCoordinator failed to create ProverInputs: {0}")]
@@ -125,8 +132,8 @@ pub enum ProofSenderError {
     FailedToParseOnChainProposerResponse(String),
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
-    #[error("Proof Sender failed because of a store error: {0}")]
-    StoreError(#[from] StoreError),
+    #[error("Proof Sender failed because of a rollup store error: {0}")]
+    RollUpStoreError(#[from] RollupStoreError),
     #[error("Proof Sender failed to estimate Aligned fee: {0}")]
     AlignedFeeEstimateError(String),
     #[error("Proof Sender failed to get nonce from batcher: {0}")]
@@ -167,6 +174,8 @@ pub enum BlockProducerError {
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
     #[error("Block Producer failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
+    #[error("Block Producer failed because of a rollup store error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
     #[error("Block Producer failed retrieve block from storage, data is None.")]
     StorageDataIsNone,
     #[error("Block Producer failed to read jwt_secret: {0}")]
@@ -197,6 +206,8 @@ pub enum CommitterError {
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
     StoreError(#[from] StoreError),
+    #[error("Committer failed retrieve block from rollup storage: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
     #[error("Committer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
