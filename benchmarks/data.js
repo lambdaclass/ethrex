@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750890582181,
+  "lastUpdate": 1750891521697,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1379,6 +1379,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 219171300772,
             "range": "± 583199276",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e03f3b0011184f47542db125afa33039176dd1c0",
+          "message": "docs(l2): update based roadmap (#3319)\n\n> [!NOTE]\n> This is not the final version of the latest update.\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-06-25T21:46:19Z",
+          "tree_id": "78387864124b8f1e738172616e71c4dd1699b546",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e03f3b0011184f47542db125afa33039176dd1c0"
+        },
+        "date": 1750891514052,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 219892999296,
+            "range": "± 444798092",
             "unit": "ns/iter"
           }
         ]
