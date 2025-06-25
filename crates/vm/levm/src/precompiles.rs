@@ -1054,15 +1054,12 @@ fn verify_kzg_proof(
     y: &[u8; 32],
     proof_bytes: &[u8; 48],
 ) -> Result<bool, VMError> {
-    let commitment_bytes =
-        Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
-    let z_bytes = Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
-    let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
-    let proof_bytes =
-        Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
-
-    let settings =
-        KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::EvaluationError)?;
+    let commitment_bytes = Bytes48(*commitment_bytes);
+    let z_bytes = Bytes32(*z);
+    let y_bytes = Bytes32(*y);
+    let proof_bytes = Bytes48(*proof_bytes);
+    let settings = KzgSettings::load_trusted_setup_file()
+        .map_err(|err| PrecompileError::KzgError(err.to_string()))?;
 
     kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
         &commitment_bytes,
@@ -1071,7 +1068,7 @@ fn verify_kzg_proof(
         &proof_bytes,
         &settings,
     )
-    .map_err(|_| PrecompileError::EvaluationError.into())
+    .map_err(|err| PrecompileError::KzgError(err.to_string()).into())
 }
 
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
