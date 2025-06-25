@@ -344,7 +344,7 @@ pub fn log(
 
     // The following conversion can never fail on systems where `usize` is at most 64 bits, which
     // covers every system in production today.
-    #[allow(clippy::as_conversions)]
+    #[expect(clippy::as_conversions)]
     let topics_cost = LOGN_DYNAMIC_BASE
         .checked_mul(number_of_topics as u64)
         .ok_or(OutOfGas)?;
