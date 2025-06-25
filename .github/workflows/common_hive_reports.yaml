@@ -24,13 +24,21 @@ jobs:
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
             }
-          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
+          - { 
+              name: "Devp2p eth tests",
+              file_name: devp2p,
+              simulation: devp2p
+            }
           - {
               name: "Cancun Engine tests",
               file_name: engine,
               simulation: ethereum/engine,
             }
-          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
+          - {
+              name: "Sync tests",
+              file_name: sync,
+              simulation: ethereum/sync
+            }
           - {
               name: "Consume Engine tests",
               file_name: consume-engine,
