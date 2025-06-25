@@ -22,6 +22,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+        
       - name: RISC-V Risc0 toolchain install
         if: matrix.backend == 'risc0'
         # should be able to specify a version for `rzup install rust` (toolchain version)
@@ -30,11 +31,13 @@ jobs:
           curl -L https://risczero.com/install | bash
           ~/.risc0/bin/rzup install cargo-risczero 2.1.0
           ~/.risc0/bin/rzup install rust
+          
       - name: RISC-V SP1 toolchain install
         if: matrix.backend == 'sp1'
         run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.0
+          
       - name: Check ${{ matrix.backend }} backend
         run: |
           cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
@@ -42,6 +45,11 @@ jobs:
       - name: Clippy ${{ matrix.backend }} backend
         run: |
           cargo clippy -r -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+          
+      - name: Check sp1 cargo.lock modified but not committed
+        if: matrix.backend == 'sp1'
+        run: |
+          git diff --exit-code -- crates/l2/prover/zkvm/interface/sp1/Cargo.lock
 
   lint_exec:
     name: Lint exec backend
@@ -51,6 +59,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+
       - name: Check exec
         run: |
           cargo check -p ethrex-prover
@@ -66,6 +75,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+        
       - name: Check tdx
         run: |
           cd crates/l2/tee/quote-gen
