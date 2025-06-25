@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting started - Ethrex</title>
+        <title>Contributing to the Documentation - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -236,21 +236,56 @@
 }
 
 </style>
-<h1 id="getting-started"><a class="header" href="#getting-started">Getting started</a></h1>
-<h2 id="l1-and-l2-support"><a class="header" href="#l1-and-l2-support">L1 and L2 support</a></h2>
-<p>This client supports running in two different modes:</p>
+<h1 id="contributing-to-the-documentation"><a class="header" href="#contributing-to-the-documentation">Contributing to the Documentation</a></h1>
+<p>We welcome contributions to the documentation! If you want to help improve or expand the docs, please follow these guidelines:</p>
+<h2 id="how-to-edit-the-docs"><a class="header" href="#how-to-edit-the-docs">How to Edit the Docs</a></h2>
 <ul>
-<li>As a regular Ethereum execution client</li>
-<li>As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
+<li>
+<p>All documentation lives in this <code>docs/</code> directory and its subfolders.</p>
+</li>
+<li>
+<p>The documentation is written in Markdown and rendered using <a href="https://rust-lang.github.io/mdBook/">mdBook</a>.</p>
+</li>
+<li>
+<p>To preview your changes locally, <a href="#documentation-dependencies">install the dependencies</a> and run:</p>
+<pre><code class="language-sh">make docs-serve
+</code></pre>
+<p>This will start a local server and open the docs in your browser.</p>
+</li>
 </ul>
-<p>We call the first one ethrex L1 and the second one ethrex L2.</p>
+<h2 id="adding-or-editing-content"><a class="header" href="#adding-or-editing-content">Adding or Editing Content</a></h2>
+<ul>
+<li>To add a new page, create a new <code>.md</code> file in the appropriate subdirectory and add a link to it in <code>SUMMARY.md</code>.</li>
+<li>To edit an existing page, simply modify the relevant <code>.md</code> file.</li>
+<li>For style and formatting, try to keep a consistent tone and structure with the rest of the documentation.</li>
+</ul>
+<h2 id="documentation-dependencies"><a class="header" href="#documentation-dependencies">Documentation dependencies</a></h2>
+<p>We use some mdBook preprocessors and backends for extra features:</p>
+<ul>
+<li><a href="https://github.com/lambdalisue/rs-mdbook-alerts"><code>mdbook-alerts</code></a> for custom markdown syntax.</li>
+<li><a href="https://github.com/badboy/mdbook-mermaid"><code>mdbook-mermaid</code></a> for diagrams.</li>
+<li><a href="https://github.com/Michael-F-Bryan/mdbook-linkcheck"><code>mdbook-linkcheck</code></a> for checking broken links (optional).</li>
+</ul>
+<p>You can install mdBook and all dependencies with:</p>
+<pre><code class="language-sh">make docs-deps
+</code></pre>
+<h2 id="submitting-changes"><a class="header" href="#submitting-changes">Submitting Changes</a></h2>
+<ul>
+<li>Please open a Pull Request with your proposed changes.</li>
+<li>If you are adding new content, update <code>SUMMARY.md</code> so it appears in the navigation.</li>
+<li>If you have questions, open an issue or ask in the community chat.</li>
+</ul>
+<p>Thank you for helping improve the documentation!</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="developers/l2_load_tests.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
 
-                            <a rel="next prefetch" href="getting-started/roadmap.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="perf_reports/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -260,8 +295,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="developers/l2_load_tests.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
 
-                    <a rel="next prefetch" href="getting-started/roadmap.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="perf_reports/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

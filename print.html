@@ -237,7 +237,700 @@
 }
 
 </style>
-<h1 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h1>
+<h1 id="getting-started"><a class="header" href="#getting-started">Getting started</a></h1>
+<h2 id="l1-and-l2-support"><a class="header" href="#l1-and-l2-support">L1 and L2 support</a></h2>
+<p>This client supports running in two different modes:</p>
+<ul>
+<li>As a regular Ethereum execution client</li>
+<li>As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
+</ul>
+<p>We call the first one ethrex L1 and the second one ethrex L2.</p>
+<div style="break-before: page; page-break-before: always;"></div><style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
+<p>This project is under active development. Over the next <strong>two months</strong>, our <strong>primary objective is to finalize and audit the first version of the stack</strong>.
+This means every component — from L1 syncing to L2 bridging and prover integration — must meet stability, performance, and security standards.</p>
+<p>The roadmap below outlines the remaining work required to achieve this milestone, organized into three major areas: <strong>L2</strong>, <strong>DevOps &amp; Performance</strong>, and <strong>L1</strong>.</p>
+<hr />
+<h2 id="l2-roadmap"><a class="header" href="#l2-roadmap">L2 Roadmap</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
+<tr><td>Native Bridge</td><td>Secure and trust-minimized ERC-20 bridge between Ethereum L1 and L2 using canonical messaging and smart contracts.</td><td>In Progress</td></tr>
+<tr><td>Based Rollup</td><td>Launch the rollup as a based permissionless rollup. Leverages Ethereum for sequencing and DA. For more information check <a href="https://hackmd.io/TCa-bQisToW46enF58_3Vw?view">ethrex roadmap for becoming based</a></td><td>In Progress</td></tr>
+<tr><td>Aligned Integration</td><td>Optimize integration with Aligned’s aggregation mode.</td><td>In Progress</td></tr>
+<tr><td>Risc0 Support</td><td>Integrate RISC Zero as an alternative zkVM to SP1, enabling configurable proving backends.</td><td>In Progress</td></tr>
+<tr><td>Battle-Test the Prover</td><td>Ensure the prover (e.g., SP1, Risc0) is robust, correct, and performant under production-level  conditions.</td><td>In Progress</td></tr>
+<tr><td>One-Click L2 Deployment</td><td>Deploy a fully operational rollup with a single command. Includes TDX, Prover, integrated Grafana metrics, alerting system, block explorer, bridge hub, backups and default configuration for rapid developer spin-up.</td><td>In Progress</td></tr>
+<tr><td>Shared Bridge</td><td>Direct bridging between multiple L2s to improve UX and avoid L1 costs.</td><td>Planned</td></tr>
+<tr><td>Custom Native Token</td><td>Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.</td><td>Planned</td></tr>
+<tr><td>Validiums &amp; DACs</td><td>Enhance Validium mode with Data Availability Committees.</td><td>Planned</td></tr>
+<tr><td>Gas &amp; Fees</td><td>Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.</td><td>Planned</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="devops--performance"><a class="header" href="#devops--performance">DevOps &amp; Performance</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Initiative</th><th>Description</th><th>Status</th></tr></thead><tbody>
+<tr><td>Performance Benchmarking</td><td>Continuous <code>ggas/s</code> measurement, client comparison, and reproducible load tests.</td><td>In Progress</td></tr>
+<tr><td>DB Optimizations</td><td>Snapshots, background trie commits, parallel Merkle root calculation, and exploratory DB design.</td><td>In Progress</td></tr>
+<tr><td>EVM Profiling</td><td>Identify and optimize execution bottlenecks in the VM.</td><td>In Progress</td></tr>
+<tr><td>Deployment &amp; Dev Experience</td><td>One-command L2 launch, localnet spam testing, and L1 syncing on any network.</td><td>In Progress</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="l1-roadmap"><a class="header" href="#l1-roadmap">L1 Roadmap</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
+<tr><td>P2P Improvements</td><td>Use <a href="https://github.com/lambdaclass/spawned">spawned</a> to improve peer discovery, sync reliability, and connection handling.</td><td>In Progress</td></tr>
+<tr><td>Chain Syncing</td><td>Verify the execution of all blocks across all chains. For Proof-of-Stake (PoS) chains (Holesky, Hoodi), verify all blocks since genesis. For chains with a pre-Merge genesis (Sepolia, Mainnet), verify all blocks after the Merge.</td><td>In Progress</td></tr>
+<tr><td>Snap Sync</td><td>Improve Snap Sync implementation to make it more reliable and efficient.</td><td>Planned</td></tr>
+<tr><td>Client Stability</td><td>Increase client resilience to adverse scenarios and network disruptions. Improve observability and logging.</td><td>Planned</td></tr>
+</tbody></table>
+</div><div style="break-before: page; page-break-before: always;"></div><style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="layer-1"><a class="header" href="#layer-1">Layer 1</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="quick-start-l1-localnet"><a class="header" href="#quick-start-l1-localnet">Quick Start (L1 localnet)</a></h1>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li><a href="https://docs.kurtosis.com/install/#ii-install-the-cli">Kurtosis</a></li>
+<li><a href="l1/quick-start-l1.html#rust">Rust</a></li>
+<li><a href="https://docs.docker.com/engine/install/">Docker</a></li>
+</ul>
+<pre><code class="language-shell">make localnet
+</code></pre>
+<p>This make target will:</p>
+<ol>
+<li>Build our node inside a docker image.</li>
+<li>Fetch our fork <a href="https://github.com/ethpandaops/ethereum-package">ethereum package</a>, a private testnet on which multiple ethereum clients can interact.</li>
+<li>Start the localnet with kurtosis.</li>
+</ol>
+<p>If everything went well, you should be faced with our client's logs (ctrl-c to leave)</p>
+<p>To stop everything, simply run:</p>
+<pre><code class="language-shell">make stop-localnet
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="dev-setup-l1"><a class="header" href="#dev-setup-l1">Dev Setup L1</a></h1>
+<h2 id="build"><a class="header" href="#build">Build</a></h2>
+<h3 id="rust"><a class="header" href="#rust">Rust</a></h3>
+<p>To build the node, you will need the rust toolchain. To do so, use <code>rustup</code> following <a href="https://www.rust-lang.org/tools/install">this link</a></p>
+<h2 id="database"><a class="header" href="#database">Database</a></h2>
+<p>Currently, the database is <code>libmdbx</code>, it will be set up
+when you start the client. The location of the db's files will depend on your OS:</p>
+<ul>
+<li>Mac: <code>~/Library/Application Support/ethrex</code></li>
+<li>Linux: <code>~/.config/ethrex</code></li>
+</ul>
+<p>You can delete the db with:</p>
+<pre><code class="language-bash">cargo run --bin ethrex -- removedb
+</code></pre>
+<h2 id="dev-mode"><a class="header" href="#dev-mode">Dev Mode</a></h2>
+<p>In order to run <code>ethrex</code> without a Consensus Client and with the <code>InMemory</code> engine, to start from scratch each time we fire it up, the following make target can be used:</p>
+<pre><code class="language-bash">make dev
+</code></pre>
+<ul>
+<li>RPC endpoint: localhost:8545</li>
+<li>Genesis file: ./test_data/genesis-l1.json</li>
+</ul>
+<h2 id="test"><a class="header" href="#test">Test</a></h2>
+<p>For testing, we're using three kinds of tests.</p>
+<h3 id="ethereum-foundation-tests"><a class="header" href="#ethereum-foundation-tests">Ethereum Foundation Tests</a></h3>
+<p>These are the official execution spec tests, you can execute them with:</p>
+<pre><code class="language-bash">make test
+</code></pre>
+<p>This will download the test cases from the <a href="https://github.com/ethereum/execution-spec-tests/">official execution spec tests repo</a> and run them with our glue code
+under <code>cmd/ef_tests/tests</code>.</p>
+<h3 id="crate-specific-tests"><a class="header" href="#crate-specific-tests">Crate Specific Tests</a></h3>
+<p>The second kind are each crate's tests, you can run them like this:</p>
+<pre><code class="language-bash">make test CRATE=&lt;crate&gt;
+</code></pre>
+<p>For example:</p>
+<pre><code class="language-bash">make test CRATE="ethrex-blockchain"
+</code></pre>
+<h3 id="load-tests"><a class="header" href="#load-tests">Load tests</a></h3>
+<p>More information in the <a href="l1/../developers/l2_load_tests.html">load test documentation</a>.</p>
+<h3 id="hive-tests"><a class="header" href="#hive-tests">Hive Tests</a></h3>
+<p>Finally, we have End-to-End tests with hive.
+Hive is a system which simply sends RPC commands to our node,
+and expects a certain response. You can read more about it <a href="https://github.com/ethereum/hive/blob/master/docs/overview.md">here</a>.</p>
+<h4 id="prereqs"><a class="header" href="#prereqs">Prereqs</a></h4>
+<p>We need to have go installed for the first time we run hive, an easy way to do this is adding the asdf go plugin:</p>
+<pre><code class="language-shell">asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
+
+# If you need to set GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
+</code></pre>
+<p>And uncommenting the golang line in the asdf <code>.tool-versions</code> file:</p>
+<pre><code>rust 1.87.0
+golang 1.23.2
+</code></pre>
+<h4 id="running-simulations"><a class="header" href="#running-simulations">Running Simulations</a></h4>
+<p>Hive tests are categorized by "simulations', and test instances can be filtered with a regex:</p>
+<pre><code class="language-bash">make run-hive-debug SIMULATION=&lt;simulation&gt; TEST_PATTERN=&lt;test-regex&gt;
+</code></pre>
+<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specificaly
+run chain id and transaction by hash rpc tests:</p>
+<pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
+</code></pre>
+<p>If you want debug output from hive, use the run-hive-debug instead:</p>
+<pre><code class="language-bash">make run-hive-debug SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
+</code></pre>
+<p>This example runs <strong>every</strong> test under rpc, with debug output</p>
+<h4 id="assertoor"><a class="header" href="#assertoor">Assertoor</a></h4>
+<p>We run some assertoot checks on our CI, to execute them locally you can run the following:</p>
+<pre><code class="language-bash">make localnet-assertoor-tx
+# or
+make localnet-assertoor-blob
+</code></pre>
+<p>Those are two different set of assertoor checks the details are as follows:</p>
+<p><em>assertoor-tx</em></p>
+<ul>
+<li><a href="https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml">eoa-transaction-test</a></li>
+</ul>
+<p><em>assertoor-blob</em></p>
+<ul>
+<li><a href="https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml">blob-transaction-test</a></li>
+<li><em>Custom</em> <a href="https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml">el-stability-check</a></li>
+</ul>
+<p>For reference on each individual check see the <a href="https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor">assertoor-wiki</a></p>
+<h2 id="run"><a class="header" href="#run">Run</a></h2>
+<p>Example run:</p>
+<pre><code class="language-bash">cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+</code></pre>
+<p>The <code>network</code> argument is mandatory, as it defines the parameters of the chain.
+For more information about the different cli arguments check out the next section.</p>
+<h2 id="cli-commands"><a class="header" href="#cli-commands">CLI Commands</a></h2>
+<!-- BEGIN_CLI_HELP -->
+<pre><code>ethrex Execution client
+
+Usage: ethrex [OPTIONS] [COMMAND]
+
+Commands:
+  removedb  Remove the database
+  import    Import blocks to the database
+  export    Export blocks in the current chain into a file in rlp encoding
+  compute-state-root  Compute the state root from a genesis file
+  help                Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Node options:
+      --network &lt;GENESIS_FILE_PATH&gt;
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
+
+          [env: ETHREX_NETWORK=]
+          [default: mainnet]
+
+      --datadir &lt;DATABASE_DIRECTORY&gt;
+          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
+
+          [env: ETHREX_DATADIR=]
+          [default: ethrex]
+
+      --force
+          Delete the database without confirmation.
+
+      --metrics.addr &lt;ADDRESS&gt;
+          [default: 0.0.0.0]
+
+      --metrics.port &lt;PROMETHEUS_METRICS_PORT&gt;
+          [env: ETHREX_METRICS_PORT=]
+          [default: 9090]
+
+      --metrics
+          Enable metrics collection and exposition
+
+      --dev
+          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
+
+      --evm &lt;EVM_BACKEND&gt;
+          Has to be `levm` or `revm`
+
+          [env: ETHREX_EVM=]
+          [default: levm]
+
+      --log.level &lt;LOG_LEVEL&gt;
+          Possible values: info, debug, trace, warn, error
+
+          [default: INFO]
+
+P2P options:
+      --bootnodes &lt;BOOTNODE_LIST&gt;...
+          Comma separated enode URLs for P2P discovery bootstrap.
+
+      --syncmode &lt;SYNC_MODE&gt;
+          Can be either "full" or "snap" with "full" as default value.
+
+          [default: full]
+
+      --p2p.enabled
+
+
+      --p2p.addr &lt;ADDRESS&gt;
+          [default: 0.0.0.0]
+
+      --p2p.port &lt;PORT&gt;
+          [default: 30303]
+
+      --discovery.addr &lt;ADDRESS&gt;
+          UDP address for P2P discovery.
+
+          [default: 0.0.0.0]
+
+      --discovery.port &lt;PORT&gt;
+          UDP port for P2P discovery.
+
+          [default: 30303]
+
+RPC options:
+      --http.addr &lt;ADDRESS&gt;
+          Listening address for the http rpc server.
+
+          [env: ETHREX_HTTP_ADDR=]
+          [default: localhost]
+
+      --http.port &lt;PORT&gt;
+          Listening port for the http rpc server.
+
+          [env: ETHREX_HTTP_PORT=]
+          [default: 8545]
+
+      --authrpc.addr &lt;ADDRESS&gt;
+          Listening address for the authenticated rpc server.
+
+          [default: localhost]
+
+      --authrpc.port &lt;PORT&gt;
+          Listening port for the authenticated rpc server.
+
+          [default: 8551]
+
+      --authrpc.jwtsecret &lt;JWTSECRET_PATH&gt;
+          Receives the jwt secret used for authenticated rpc requests.
+
+          [default: jwt.hex]
+</code></pre>
+<!-- END_CLI_HELP -->
+<h2 id="syncing-with-holesky"><a class="header" href="#syncing-with-holesky">Syncing with Holesky</a></h2>
+<h3 id="step-1-set-up-a-jwt-secret-for-both-clients"><a class="header" href="#step-1-set-up-a-jwt-secret-for-both-clients">Step 1: Set up a jwt secret for both clients</a></h3>
+<p>As an example, we put the secret in a <code>secrets</code> directory in the home folder.</p>
+<pre><code class="language-bash">mkdir -p ~/secrets
+openssl rand -hex 32 | tr -d "\n" | tee ~/secrets/jwt.hex
+</code></pre>
+<p>We will pass this new file’s path as an argument for both clients.</p>
+<h3 id="step-2-launch-ethrex"><a class="header" href="#step-2-launch-ethrex">Step 2: Launch Ethrex</a></h3>
+<p>Pass holesky as a network and the jwt secret we set in the previous step.
+This will launch the node in full sync mode, in order to test out snap sync you can add the flag <code>--syncmode snap</code>.</p>
+<pre><code class="language-bash">cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network holesky --authrpc.jwtsecret ~/secrets/jwt.hex
+</code></pre>
+<h3 id="step-3-set-up-a-consensus-node"><a class="header" href="#step-3-set-up-a-consensus-node">Step 3: Set up a Consensus Node</a></h3>
+<p>For this quick tutorial we will be using lighthouse, but you can learn how to install and run any consensus node by reading their documentation.</p>
+<p>You can choose your preferred installation method from <a href="https://lighthouse-book.sigmaprime.io/installation.html">lighthouse's installation guide</a> and then run the following command to launch the node and sync it from a public endpoint</p>
+<pre><code class="language-bash">lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io
+</code></pre>
+<p>When using lighthouse directly from its repository, replace <code>lighthouse bn</code> with <code>cargo run --bin lighthouse -- bn</code></p>
+<p>Aside from holesky, these steps can also be used to connect to other supported networks by replacing the <code>--network</code> argument by another supported network and looking up a checkpoint sync endpoint for that network <a href="https://eth-clients.github.io/checkpoint-sync-endpoints/">here</a></p>
+<p>If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the <code>--bootnodes</code> flag</p>
+<p>Once the node is up and running you will be able to see logs indicating the start of each sync cycle along with from which block hash to which block hash we are syncing. You will also get regular logs with the completion rate and estimated finish time for state sync and state rebuild processes during snap sync. This will look something like this:</p>
+<pre><code class="language-bash">INFO ethrex_p2p::sync: Syncing from current head 0xb5f7…bde4 to sync_head 0xce96…fa5e
+INFO ethrex_p2p::sync::state_sync: Downloading state trie, completion rate: 68%, estimated time to finish: 1h20m14s
+INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated time to finish: 1h5m45s
+</code></pre>
+<p>If you want to restart the sync from the very start you can do so by wiping the database using the following command:</p>
+<pre><code class="language-bash">cargo run --bin ethrex -- removedb
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="ethrex-l2"><a class="header" href="#ethrex-l2">Ethrex L2</a></h1>
+<p>In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.</p>
+<p>The main differences between this mode and regular ethrex are:</p>
+<ul>
+<li>In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the network. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.</li>
+<li>Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.</li>
+<li>A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.</li>
+<li>Two new types of transactions are included: deposits (native token mints) and withdrawals.</li>
+</ul>
+<p>At a high level, the following new parts are added to the node:</p>
+<ul>
+<li>A <code>proposer</code> component, in charge of continually creating new blocks from the mempool transactions. This replaces the regular flow that an Ethereum L1 node has, where new blocks come from the consensus layer through the <code>forkChoiceUpdate</code> -&gt; <code>getPayload</code> -&gt; <code>NewPayload</code> Engine API flow in communication with the consensus layer.</li>
+<li>A <code>prover</code> subsystem, which itself consists of two parts:
+<ul>
+<li>A <code>proverClient</code> that takes new blocks from the node, proves them, then sends the proof back to the node to send to the L1. This is a separate binary running outside the node, as proving has very different (and higher) hardware requirements than the sequencer.</li>
+<li>A <code>proverServer</code> component inside the node that communicates with the prover, sending witness data for proving and receiving proofs for settlement on L1.</li>
+</ul>
+</li>
+<li>L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.</li>
+<li>The EVM is lightly modified with new features to process deposits and withdrawals accordingly.</li>
+</ul>
+<h2 id="prerequisites-1"><a class="header" href="#prerequisites-1">Prerequisites</a></h2>
+<p>For how to install our dependencies, go to their official documentation:</p>
+<ul>
+<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
+<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solc 0.29</a></li>
+<li><a href="https://docs.docker.com/engine/install/">Docker</a></li>
+</ul>
+<h2 id="how-to-run"><a class="header" href="#how-to-run">How to run</a></h2>
+<h3 id="initialize-the-network"><a class="header" href="#initialize-the-network">Initialize the network</a></h3>
+<div class="mdbook-alerts mdbook-alerts-important">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  important
+</p>
+<p>Before this step:</p>
+<ol>
+<li>Make sure you are inside the <code>crates/l2</code> directory.</li>
+<li>Make sure the Docker daemon is running.</li>
+</ol>
+</div>
+<pre><code class="language-sh">make init
+</code></pre>
+<p>This will setup a local Ethereum network as the L1, deploy all the needed contracts on it, then start an ethrex L2 node pointing to it.</p>
+<h3 id="restarting-the-network"><a class="header" href="#restarting-the-network">Restarting the network</a></h3>
+<div class="mdbook-alerts mdbook-alerts-warning">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  warning
+</p>
+<p>This command will cleanup your running L1 and L2 nodes.</p>
+</div>
+<pre><code class="language-sh">make restart
+</code></pre>
+<h3 id="local-l1-rich-wallets"><a class="header" href="#local-l1-rich-wallets">Local L1 Rich Wallets</a></h3>
+<p>Most of them are specified in <a href="https://github.com/ethpandaops/ethereum-package/blob/main/src/prelaunch_data_generator/genesis_constants/genesis_constants.star">ethereum-package</a>, but there's an extra one:</p>
+<pre><code class="language-json">{
+    "address": "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
+    "private_key": "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
+}
+</code></pre>
+<h2 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h2>
 <p>For general documentation, see:</p>
 <ul>
 <li><a href="l2/./getting_started.html">Getting started</a> contains guides on setting up and interacting with an ethrex L2 stack.</li>
@@ -245,12 +938,6 @@
 <li><a href="l2/./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts.</li>
 <li><a href="l2/./components.html">Components</a> for more detailed documentation on each off-chain component.</li>
 <li><a href="l2/./roadmap.html">Based roadmap (draft)</a> contains ethrex's roadmap for becoming based.</li>
-</ul>
-<p>For how to install our dependencies, go to their official documentation:</p>
-<ul>
-<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
-<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solc 0.29</a></li>
-<li><a href="https://docs.docker.com/engine/install/">Docker</a></li>
 </ul>
 <h2 id="developer-documentation"><a class="header" href="#developer-documentation">Developer documentation</a></h2>
 <p>Documentation useful for ethrex development can be found in the <a href="l2/../developers">"Developers"</a> section.</p>
@@ -1504,7 +2191,7 @@ Before the <code>zkVM</code> code (or guest), there is a directory called <code>
 <p>After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.</p>
 <h3 id="l1-block-proving"><a class="header" href="#l1-block-proving">L1 block proving</a></h3>
 <p>ethrex-prover is able to generate execution proofs of Ethereum Mainnet/Testnet blocks. An example binary was created for this purpose in <code>crates/l2/prover/bench</code>. Refer to its README for usage.</p>
-<h3 id="dev-mode"><a class="header" href="#dev-mode">Dev Mode</a></h3>
+<h3 id="dev-mode-1"><a class="header" href="#dev-mode-1">Dev Mode</a></h3>
 <p>To run the blockchain (<code>proposer</code>) and prover in conjunction, start the <code>Prover</code>, use the following command:</p>
 <pre><code class="language-sh">make init-prover T="prover_type (risc0,sp1) G=true"
 </code></pre>
@@ -1819,7 +2506,7 @@ These proofs allow verifying that a value is included (or its key doesn't exist)
 </style>
 <h1 id="running-ethrex-in-aligned-mode"><a class="header" href="#running-ethrex-in-aligned-mode">Running Ethrex in Aligned Mode</a></h1>
 <p>This document explains how to run an Ethrex L2 node in <strong>Aligned mode</strong> and highlights the key differences in component behavior compared to the default mode.</p>
-<h2 id="how-to-run"><a class="header" href="#how-to-run">How to Run</a></h2>
+<h2 id="how-to-run-1"><a class="header" href="#how-to-run-1">How to Run</a></h2>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">
   <span class="mdbook-alerts-icon"></span>
@@ -2858,6 +3545,113 @@ make load-test-io
 <p>To run with samply, run</p>
 <pre><code class="language-sh">samply record ./target/profiling/reth node --chain ../ethrex/test_data/genesis-load-test.json --dev --dev.block-time 5000ms --http.port 1729
 </code></pre>
+<div style="break-before: page; page-break-before: always;"></div><style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="contributing-to-the-documentation"><a class="header" href="#contributing-to-the-documentation">Contributing to the Documentation</a></h1>
+<p>We welcome contributions to the documentation! If you want to help improve or expand the docs, please follow these guidelines:</p>
+<h2 id="how-to-edit-the-docs"><a class="header" href="#how-to-edit-the-docs">How to Edit the Docs</a></h2>
+<ul>
+<li>
+<p>All documentation lives in this <code>docs/</code> directory and its subfolders.</p>
+</li>
+<li>
+<p>The documentation is written in Markdown and rendered using <a href="https://rust-lang.github.io/mdBook/">mdBook</a>.</p>
+</li>
+<li>
+<p>To preview your changes locally, <a href="CONTRIBUTING_DOCS.html#documentation-dependencies">install the dependencies</a> and run:</p>
+<pre><code class="language-sh">make docs-serve
+</code></pre>
+<p>This will start a local server and open the docs in your browser.</p>
+</li>
+</ul>
+<h2 id="adding-or-editing-content"><a class="header" href="#adding-or-editing-content">Adding or Editing Content</a></h2>
+<ul>
+<li>To add a new page, create a new <code>.md</code> file in the appropriate subdirectory and add a link to it in <code>SUMMARY.md</code>.</li>
+<li>To edit an existing page, simply modify the relevant <code>.md</code> file.</li>
+<li>For style and formatting, try to keep a consistent tone and structure with the rest of the documentation.</li>
+</ul>
+<h2 id="documentation-dependencies"><a class="header" href="#documentation-dependencies">Documentation dependencies</a></h2>
+<p>We use some mdBook preprocessors and backends for extra features:</p>
+<ul>
+<li><a href="https://github.com/lambdalisue/rs-mdbook-alerts"><code>mdbook-alerts</code></a> for custom markdown syntax.</li>
+<li><a href="https://github.com/badboy/mdbook-mermaid"><code>mdbook-mermaid</code></a> for diagrams.</li>
+<li><a href="https://github.com/Michael-F-Bryan/mdbook-linkcheck"><code>mdbook-linkcheck</code></a> for checking broken links (optional).</li>
+</ul>
+<p>You can install mdBook and all dependencies with:</p>
+<pre><code class="language-sh">make docs-deps
+</code></pre>
+<h2 id="submitting-changes"><a class="header" href="#submitting-changes">Submitting Changes</a></h2>
+<ul>
+<li>Please open a Pull Request with your proposed changes.</li>
+<li>If you are adding new content, update <code>SUMMARY.md</code> so it appears in the navigation.</li>
+<li>If you have questions, open an issue or ask in the community chat.</li>
+</ul>
+<p>Thank you for helping improve the documentation!</p>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
   padding: 8px 16px;

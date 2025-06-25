@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Performance reports - Ethrex</title>
+        <title>Developer setup L1 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -236,18 +236,249 @@
 }
 
 </style>
-<h1 id="performance-optimization-reports"><a class="header" href="#performance-optimization-reports">Performance optimization reports</a></h1>
-<p>This section includes reports on performance problems encountered and how we solved them.</p>
+<h1 id="dev-setup-l1"><a class="header" href="#dev-setup-l1">Dev Setup L1</a></h1>
+<h2 id="build"><a class="header" href="#build">Build</a></h2>
+<h3 id="rust"><a class="header" href="#rust">Rust</a></h3>
+<p>To build the node, you will need the rust toolchain. To do so, use <code>rustup</code> following <a href="https://www.rust-lang.org/tools/install">this link</a></p>
+<h2 id="database"><a class="header" href="#database">Database</a></h2>
+<p>Currently, the database is <code>libmdbx</code>, it will be set up
+when you start the client. The location of the db's files will depend on your OS:</p>
+<ul>
+<li>Mac: <code>~/Library/Application Support/ethrex</code></li>
+<li>Linux: <code>~/.config/ethrex</code></li>
+</ul>
+<p>You can delete the db with:</p>
+<pre><code class="language-bash">cargo run --bin ethrex -- removedb
+</code></pre>
+<h2 id="dev-mode"><a class="header" href="#dev-mode">Dev Mode</a></h2>
+<p>In order to run <code>ethrex</code> without a Consensus Client and with the <code>InMemory</code> engine, to start from scratch each time we fire it up, the following make target can be used:</p>
+<pre><code class="language-bash">make dev
+</code></pre>
+<ul>
+<li>RPC endpoint: localhost:8545</li>
+<li>Genesis file: ./test_data/genesis-l1.json</li>
+</ul>
+<h2 id="test"><a class="header" href="#test">Test</a></h2>
+<p>For testing, we're using three kinds of tests.</p>
+<h3 id="ethereum-foundation-tests"><a class="header" href="#ethereum-foundation-tests">Ethereum Foundation Tests</a></h3>
+<p>These are the official execution spec tests, you can execute them with:</p>
+<pre><code class="language-bash">make test
+</code></pre>
+<p>This will download the test cases from the <a href="https://github.com/ethereum/execution-spec-tests/">official execution spec tests repo</a> and run them with our glue code
+under <code>cmd/ef_tests/tests</code>.</p>
+<h3 id="crate-specific-tests"><a class="header" href="#crate-specific-tests">Crate Specific Tests</a></h3>
+<p>The second kind are each crate's tests, you can run them like this:</p>
+<pre><code class="language-bash">make test CRATE=&lt;crate&gt;
+</code></pre>
+<p>For example:</p>
+<pre><code class="language-bash">make test CRATE="ethrex-blockchain"
+</code></pre>
+<h3 id="load-tests"><a class="header" href="#load-tests">Load tests</a></h3>
+<p>More information in the <a href="../developers/l2_load_tests.html">load test documentation</a>.</p>
+<h3 id="hive-tests"><a class="header" href="#hive-tests">Hive Tests</a></h3>
+<p>Finally, we have End-to-End tests with hive.
+Hive is a system which simply sends RPC commands to our node,
+and expects a certain response. You can read more about it <a href="https://github.com/ethereum/hive/blob/master/docs/overview.md">here</a>.</p>
+<h4 id="prereqs"><a class="header" href="#prereqs">Prereqs</a></h4>
+<p>We need to have go installed for the first time we run hive, an easy way to do this is adding the asdf go plugin:</p>
+<pre><code class="language-shell">asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
+
+# If you need to set GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
+</code></pre>
+<p>And uncommenting the golang line in the asdf <code>.tool-versions</code> file:</p>
+<pre><code>rust 1.87.0
+golang 1.23.2
+</code></pre>
+<h4 id="running-simulations"><a class="header" href="#running-simulations">Running Simulations</a></h4>
+<p>Hive tests are categorized by "simulations', and test instances can be filtered with a regex:</p>
+<pre><code class="language-bash">make run-hive-debug SIMULATION=&lt;simulation&gt; TEST_PATTERN=&lt;test-regex&gt;
+</code></pre>
+<p>This is an example of a Hive simulation called <code>ethereum/rpc-compat</code>, which will specificaly
+run chain id and transaction by hash rpc tests:</p>
+<pre><code class="language-bash">make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
+</code></pre>
+<p>If you want debug output from hive, use the run-hive-debug instead:</p>
+<pre><code class="language-bash">make run-hive-debug SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
+</code></pre>
+<p>This example runs <strong>every</strong> test under rpc, with debug output</p>
+<h4 id="assertoor"><a class="header" href="#assertoor">Assertoor</a></h4>
+<p>We run some assertoot checks on our CI, to execute them locally you can run the following:</p>
+<pre><code class="language-bash">make localnet-assertoor-tx
+# or
+make localnet-assertoor-blob
+</code></pre>
+<p>Those are two different set of assertoor checks the details are as follows:</p>
+<p><em>assertoor-tx</em></p>
+<ul>
+<li><a href="https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml">eoa-transaction-test</a></li>
+</ul>
+<p><em>assertoor-blob</em></p>
+<ul>
+<li><a href="https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml">blob-transaction-test</a></li>
+<li><em>Custom</em> <a href="https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml">el-stability-check</a></li>
+</ul>
+<p>For reference on each individual check see the <a href="https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor">assertoor-wiki</a></p>
+<h2 id="run"><a class="header" href="#run">Run</a></h2>
+<p>Example run:</p>
+<pre><code class="language-bash">cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+</code></pre>
+<p>The <code>network</code> argument is mandatory, as it defines the parameters of the chain.
+For more information about the different cli arguments check out the next section.</p>
+<h2 id="cli-commands"><a class="header" href="#cli-commands">CLI Commands</a></h2>
+<!-- BEGIN_CLI_HELP -->
+<pre><code>ethrex Execution client
+
+Usage: ethrex [OPTIONS] [COMMAND]
+
+Commands:
+  removedb  Remove the database
+  import    Import blocks to the database
+  export    Export blocks in the current chain into a file in rlp encoding
+  compute-state-root  Compute the state root from a genesis file
+  help                Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Node options:
+      --network &lt;GENESIS_FILE_PATH&gt;
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
+
+          [env: ETHREX_NETWORK=]
+          [default: mainnet]
+
+      --datadir &lt;DATABASE_DIRECTORY&gt;
+          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
+
+          [env: ETHREX_DATADIR=]
+          [default: ethrex]
+
+      --force
+          Delete the database without confirmation.
+
+      --metrics.addr &lt;ADDRESS&gt;
+          [default: 0.0.0.0]
+
+      --metrics.port &lt;PROMETHEUS_METRICS_PORT&gt;
+          [env: ETHREX_METRICS_PORT=]
+          [default: 9090]
+
+      --metrics
+          Enable metrics collection and exposition
+
+      --dev
+          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
+
+      --evm &lt;EVM_BACKEND&gt;
+          Has to be `levm` or `revm`
+
+          [env: ETHREX_EVM=]
+          [default: levm]
+
+      --log.level &lt;LOG_LEVEL&gt;
+          Possible values: info, debug, trace, warn, error
+
+          [default: INFO]
+
+P2P options:
+      --bootnodes &lt;BOOTNODE_LIST&gt;...
+          Comma separated enode URLs for P2P discovery bootstrap.
+
+      --syncmode &lt;SYNC_MODE&gt;
+          Can be either "full" or "snap" with "full" as default value.
+
+          [default: full]
+
+      --p2p.enabled
+
+
+      --p2p.addr &lt;ADDRESS&gt;
+          [default: 0.0.0.0]
+
+      --p2p.port &lt;PORT&gt;
+          [default: 30303]
+
+      --discovery.addr &lt;ADDRESS&gt;
+          UDP address for P2P discovery.
+
+          [default: 0.0.0.0]
+
+      --discovery.port &lt;PORT&gt;
+          UDP port for P2P discovery.
+
+          [default: 30303]
+
+RPC options:
+      --http.addr &lt;ADDRESS&gt;
+          Listening address for the http rpc server.
+
+          [env: ETHREX_HTTP_ADDR=]
+          [default: localhost]
+
+      --http.port &lt;PORT&gt;
+          Listening port for the http rpc server.
+
+          [env: ETHREX_HTTP_PORT=]
+          [default: 8545]
+
+      --authrpc.addr &lt;ADDRESS&gt;
+          Listening address for the authenticated rpc server.
+
+          [default: localhost]
+
+      --authrpc.port &lt;PORT&gt;
+          Listening port for the authenticated rpc server.
+
+          [default: 8551]
+
+      --authrpc.jwtsecret &lt;JWTSECRET_PATH&gt;
+          Receives the jwt secret used for authenticated rpc requests.
+
+          [default: jwt.hex]
+</code></pre>
+<!-- END_CLI_HELP -->
+<h2 id="syncing-with-holesky"><a class="header" href="#syncing-with-holesky">Syncing with Holesky</a></h2>
+<h3 id="step-1-set-up-a-jwt-secret-for-both-clients"><a class="header" href="#step-1-set-up-a-jwt-secret-for-both-clients">Step 1: Set up a jwt secret for both clients</a></h3>
+<p>As an example, we put the secret in a <code>secrets</code> directory in the home folder.</p>
+<pre><code class="language-bash">mkdir -p ~/secrets
+openssl rand -hex 32 | tr -d "\n" | tee ~/secrets/jwt.hex
+</code></pre>
+<p>We will pass this new file’s path as an argument for both clients.</p>
+<h3 id="step-2-launch-ethrex"><a class="header" href="#step-2-launch-ethrex">Step 2: Launch Ethrex</a></h3>
+<p>Pass holesky as a network and the jwt secret we set in the previous step.
+This will launch the node in full sync mode, in order to test out snap sync you can add the flag <code>--syncmode snap</code>.</p>
+<pre><code class="language-bash">cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network holesky --authrpc.jwtsecret ~/secrets/jwt.hex
+</code></pre>
+<h3 id="step-3-set-up-a-consensus-node"><a class="header" href="#step-3-set-up-a-consensus-node">Step 3: Set up a Consensus Node</a></h3>
+<p>For this quick tutorial we will be using lighthouse, but you can learn how to install and run any consensus node by reading their documentation.</p>
+<p>You can choose your preferred installation method from <a href="https://lighthouse-book.sigmaprime.io/installation.html">lighthouse's installation guide</a> and then run the following command to launch the node and sync it from a public endpoint</p>
+<pre><code class="language-bash">lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io
+</code></pre>
+<p>When using lighthouse directly from its repository, replace <code>lighthouse bn</code> with <code>cargo run --bin lighthouse -- bn</code></p>
+<p>Aside from holesky, these steps can also be used to connect to other supported networks by replacing the <code>--network</code> argument by another supported network and looking up a checkpoint sync endpoint for that network <a href="https://eth-clients.github.io/checkpoint-sync-endpoints/">here</a></p>
+<p>If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the <code>--bootnodes</code> flag</p>
+<p>Once the node is up and running you will be able to see logs indicating the start of each sync cycle along with from which block hash to which block hash we are syncing. You will also get regular logs with the completion rate and estimated finish time for state sync and state rebuild processes during snap sync. This will look something like this:</p>
+<pre><code class="language-bash">INFO ethrex_p2p::sync: Syncing from current head 0xb5f7…bde4 to sync_head 0xce96…fa5e
+INFO ethrex_p2p::sync::state_sync: Downloading state trie, completion rate: 68%, estimated time to finish: 1h20m14s
+INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated time to finish: 1h5m45s
+</code></pre>
+<p>If you want to restart the sync from the very start you can do so by wiping the database using the following command:</p>
+<pre><code class="language-bash">cargo run --bin ethrex -- removedb
+</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../CONTRIBUTING_DOCS.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../l1/quick-start-l1.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../perf_reports/2025-04-03.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../l2/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -257,11 +488,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../CONTRIBUTING_DOCS.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../l1/quick-start-l1.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../perf_reports/2025-04-03.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../l2/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
