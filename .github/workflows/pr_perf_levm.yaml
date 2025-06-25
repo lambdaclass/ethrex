@@ -132,7 +132,7 @@ jobs:
               if (main_revm && main_levm && pr_revm && pr_levm) {
                 revm_delta = ((main_revm > pr_revm) ? main_revm - pr_revm : pr_revm - main_revm)/(main_revm + pr_revm);
                 levm_delta = ((main_levm > pr_levm) ? main_levm - pr_levm: pr_levm - main_levm)/(main_levm + pr_levm);
-                error_margin = 0;
+                error_margin = 0.01;
                 if ((revm_delta > error_margin) || (levm_delta > error_margin)) {
                   print "| Command | Mean [s] | Min [s] | Max [s] | Relative |"
                   print "|:---|---:|---:|---:|---:|"
