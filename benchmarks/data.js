@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750866772641,
+  "lastUpdate": 1750872998555,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1289,6 +1289,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220230552362,
             "range": "± 351014067",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3a18678adbe6be41af3e05ba0f089d40d9618aed",
+          "message": "perf(levm): refactor `gas_used` to `gas_remaining` (#3256)\n\n**Motivation**\n\nBy using `gas_used` there have to be multiple operations for each gas\ncheck. Replacing it with `gas_remaining`, the same overflow check can be\nused to determine whether there was enough gas or not.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-25T16:36:49Z",
+          "tree_id": "a2ca8debd174ceddfe5037692d47e3855436a185",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3a18678adbe6be41af3e05ba0f089d40d9618aed"
+        },
+        "date": 1750872990523,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220022053969,
+            "range": "± 586341724",
             "unit": "ns/iter"
           }
         ]
