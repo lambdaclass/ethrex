@@ -440,10 +440,12 @@ impl StoreEngine for Store {
         let mut key = old_snapshot_meta;
 
         while canonical_hash != snapshot_hash {
+            tracing::warn!("UNDO: searching for {key:?}");
             let mut found_state_log = state_log_cursor.seek_closest(key)?;
             let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
             // loop over log_entries, take log_value and restore it in the flat tables
             while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                tracing::warn!("UNDO: found state log for {key:?}: {read_key_num_hash:?}");
                 if read_key_num_hash.0 != key {
                     break;
                 }
@@ -460,6 +462,7 @@ impl StoreEngine for Store {
             }
 
             while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                tracing::warn!("UNDO: found storage log for {key:?}: {read_key_num_hash:?}");
                 if read_key_num_hash.1 != key {
                     break;
                 }
@@ -474,6 +477,10 @@ impl StoreEngine for Store {
                 // to the logs found.
                 BlockNumHash(block_num, snapshot_hash) = read_key_num_hash.1;
                 found_storage_log = storage_log_cursor.next()?;
+            }
+            if key == (block_num, snapshot_hash).into() {
+                tracing::info!("logs exhausted: back to canonical chain");
+                break;
             }
 
             // Update the cursors
@@ -527,6 +534,7 @@ impl StoreEngine for Store {
             }
             // loop over log_entries, take log_value and restore it in the flat tables
             while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                tracing::warn!("REPLAY: found state for {block_num_hash:?}: {read_key_num_hash:?}");
                 if read_key_num_hash.0 != block_num_hash {
                     break;
                 }
@@ -541,6 +549,9 @@ impl StoreEngine for Store {
             }
 
             while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                tracing::warn!(
+                    "REPLAY: found storage for {block_num_hash:?}: {read_key_num_hash:?}"
+                );
                 if read_key_num_hash.0 != block_num_hash {
                     break;
                 }
