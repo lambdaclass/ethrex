@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use tokio::{
-    sync::{Mutex, mpsc},
+    sync::mpsc,
     task::JoinHandle,
 };
 

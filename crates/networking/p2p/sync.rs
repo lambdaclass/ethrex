@@ -14,7 +14,7 @@ use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_storage::{error::StoreError, EngineType, Store, TrieWriter, STATE_TRIE_SEGMENTS};
+use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
@@ -27,7 +27,7 @@ use std::{
 };
 use storage_healing::storage_healer;
 use tokio::{
-    sync::{mpsc::error::SendError, Mutex},
+    sync::mpsc::error::SendError,
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -117,7 +117,7 @@ impl Syncer {
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
+                Store::new("", EngineType::InMemory).expect("Failed to start Store Engine"),
             )),
         }
     }

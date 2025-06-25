@@ -19,7 +19,6 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
-use ethrex_storage::TrieWriter;
 use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
@@ -49,11 +48,9 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     assert_eq!(decoded_block.header, genesis_block_header);
 
     let store = build_store_for_test(test).await;
-    let store = Arc::new(Mutex::new(store));
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let trie_writer = TrieWriter::new(store.clone()).await;
     let blockchain = Blockchain::new(evm, store.clone());
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {

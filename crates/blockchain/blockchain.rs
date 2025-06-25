@@ -8,7 +8,6 @@ pub mod tracing;
 pub mod vm;
 
 use ethrex_storage::{TrieUpdates, TrieWriter};
-use tokio::sync::Mutex;
 use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
@@ -32,7 +31,8 @@ use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
 use std::{ops::Div, time::Instant};
 
 use vm::StoreVmDatabase;
@@ -75,7 +75,8 @@ impl Blockchain {
         }
     }
 
-    pub fn default_with_store(store: Store, trie_writer: TrieWriter) -> Self {
+    pub fn default_with_store(store: Store) -> Self {
+        let trie_writer = TrieWriter::new(store.clone());
         Self {
             trie_writer,
             evm_engine: EvmEngine::default(),
