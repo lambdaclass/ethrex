@@ -13,12 +13,11 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+};
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
-use super::utils::random_duration;
-use spawned_concurrency::tasks::{
-    send_after, CallResponse, CastResponse, GenServer, GenServerHandle,
-};
 
 #[derive(Clone)]
 pub struct L1WatcherState {
@@ -89,6 +88,7 @@ impl L1Watcher {
             sequencer_state,
         )?;
         L1Watcher::start(state);
+        Ok(())
     }
 }
 
@@ -109,7 +109,11 @@ impl GenServer for L1Watcher {
         state: Self::State,
     ) -> Result<Self::State, Self::Error> {
         // Perform the check and suscribe a periodic Watch.
-        handle.clone().cast(Self::CastMsg::Watch).await.map_err(Self::Error::GenServerError)?;
+        handle
+            .clone()
+            .cast(Self::CastMsg::Watch)
+            .await
+            .map_err(Self::Error::GenServerError)?;
         Ok(state)
     }
 

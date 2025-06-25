@@ -6,7 +6,9 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerError, send_after};
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerError, GenServerHandle, send_after,
+};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -97,7 +99,8 @@ impl StateUpdater {
 }
 
 impl GenServer for StateUpdater {
-    type InMsg = InMessage;
+    type CallMsg = ();
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = StateUpdaterState;
     type Error = StateUpdaterError;
@@ -108,28 +111,28 @@ impl GenServer for StateUpdater {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> spawned_concurrency::CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, Self::OutMsg::Done)
     }
 
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> spawned_concurrency::CastResponse {
-        let _ = update_state(state)
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
+        let _ = update_state(&mut state)
             .await
             .inspect_err(|err| error!("State Updater Error: {err}"));
         send_after(
             Duration::from_millis(state.check_interval_ms),
-            tx.clone(),
-            Self::InMsg::UpdateState,
+            handle.clone(),
+            Self::CastMsg::UpdateState,
         );
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 

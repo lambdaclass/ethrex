@@ -18,7 +18,9 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, send_after};
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerError, GenServerHandle, send_after,
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -54,7 +56,7 @@ pub enum BlockFetcherError {
     #[error("Failed to compute deposit logs hash: {0}")]
     DepositError(#[from] ethrex_l2_common::deposits::DepositError),
     #[error("Spawned GenServer Error")]
-    GenServerError(spawned_concurrency::GenServerError),
+    GenServerError(GenServerError),
 }
 
 #[derive(Clone)]
@@ -128,7 +130,8 @@ impl BlockFetcher {
 }
 
 impl GenServer for BlockFetcher {
-    type InMsg = InMessage;
+    type CallMsg = ();
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = BlockFetcherState;
     type Error = BlockFetcherError;
@@ -139,30 +142,30 @@ impl GenServer for BlockFetcher {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> spawned_concurrency::CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, Self::OutMsg::Done)
     }
 
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> spawned_concurrency::CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
         if let SequencerStatus::Following = state.sequencer_state.status().await {
-            let _ = fetch(state).await.inspect_err(|err| {
+            let _ = fetch(&mut state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
         }
         send_after(
             Duration::from_millis(state.fetch_interval_ms),
-            _tx.clone(),
-            Self::InMsg::Fetch,
+            handle.clone(),
+            Self::CastMsg::Fetch,
         );
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 

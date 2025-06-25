@@ -1,20 +1,25 @@
-use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
-    types::{MempoolTransaction, Transaction},
     H256,
+    types::{MempoolTransaction, Transaction},
 };
 use ethrex_storage::Store;
-use futures::{stream::SplitSink, SinkExt as _, Stream};
-use k256::{ecdsa::SigningKey, PublicKey};
+use futures::{SinkExt as _, Stream, stream::SplitSink};
+use k256::{PublicKey, ecdsa::SigningKey};
 use rand::random;
 use spawned_concurrency::tasks::{
-    send_interval, CallResponse, CastResponse, GenServer, GenServerHandle,
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_interval,
 };
 use tokio::{
     net::{TcpSocket, TcpStream},
-    sync::{broadcast, mpsc::Sender, Mutex},
+    sync::{Mutex, broadcast, mpsc::Sender},
     task,
 };
 use tokio_stream::StreamExt;
@@ -317,10 +322,7 @@ impl GenServer for RLPxConnection {
                     let _ = handle_broadcast(&mut established_state, (id, msg)).await;
                 }
                 Self::CastMsg::BlockRangeUpdate => {
-                    log_peer_debug(
-                        &established_state.node,
-                        &format!("Block Range Update"),
-                    );
+                    log_peer_debug(&established_state.node, &format!("Block Range Update"));
                     let _ = handle_block_range_update(&mut established_state).await;
                 }
             }
@@ -829,9 +831,7 @@ async fn handle_broadcast(
     Ok(())
 }
 
-async fn handle_block_range_update(
-    state: &mut Established,
-) -> Result<(), RLPxError> {
+async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxError> {
     if should_send_block_range_update(state).await? {
         send_block_range_update(state).await
     } else {

@@ -4,8 +4,8 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
-use spawned_concurrency::tasks::GenServerHandle;
 use rand::random;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};

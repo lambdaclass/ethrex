@@ -5,8 +5,9 @@ use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+};
 use tracing::{debug, error, info};
 
 use super::{
@@ -139,7 +140,8 @@ impl L1ProofSender {
 }
 
 impl GenServer for L1ProofSender {
-    type InMsg = InMessage;
+    type CallMsg = ();
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = L1ProofSenderState;
 
@@ -151,28 +153,28 @@ impl GenServer for L1ProofSender {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, OutMessage::Done)
     }
 
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = verify_and_send_proof(state)
+            let _ = verify_and_send_proof(&state)
                 .await
                 .inspect_err(|err| error!("L1 Proof Sender: {err}"));
         }
         let check_interval = random_duration(state.proof_send_interval_ms);
-        send_after(check_interval, tx.clone(), Self::InMsg::Send);
-        CastResponse::NoReply
+        send_after(check_interval, handle.clone(), Self::CastMsg::Send);
+        CastResponse::NoReply(state)
     }
 }
 

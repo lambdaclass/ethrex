@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::{
     rlpx::{
@@ -19,7 +22,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use futures::{stream::SplitStream, StreamExt};
+use futures::{StreamExt, stream::SplitStream};
 use k256::{
     PublicKey, SecretKey,
     ecdsa::{self, RecoveryId, SigningKey, VerifyingKey},
@@ -109,7 +112,7 @@ pub(crate) async fn perform(
             (context, node, Framed::new(stream, codec), true)
         }
         InnerState::Established(_) => {
-            return Err(RLPxError::StateError("Already established".to_string()))
+            return Err(RLPxError::StateError("Already established".to_string()));
         }
     };
     let (sink, stream) = framed.split();

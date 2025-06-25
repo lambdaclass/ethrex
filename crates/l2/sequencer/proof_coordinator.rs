@@ -22,7 +22,7 @@ use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer};
+use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::{
@@ -199,8 +199,9 @@ impl ProofCoordinatorState {
     }
 }
 
+#[derive(Clone)]
 pub enum ProofCordInMessage {
-    Listen { listener: TcpListener },
+    Listen { listener: Arc<TcpListener> },
 }
 
 #[derive(Clone, PartialEq)]
@@ -229,7 +230,8 @@ impl ProofCoordinator {
             needed_proof_types,
         )
         .await?;
-        let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
+        let listener =
+            Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
         let mut proof_coordinator = ProofCoordinator::start(state);
         let _ = proof_coordinator
             .cast(ProofCordInMessage::Listen { listener })
@@ -239,7 +241,8 @@ impl ProofCoordinator {
 }
 
 impl GenServer for ProofCoordinator {
-    type InMsg = ProofCordInMessage;
+    type CallMsg = ();
+    type CastMsg = ProofCordInMessage;
     type OutMsg = ProofCordOutMessage;
     type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
@@ -250,30 +253,30 @@ impl GenServer for ProofCoordinator {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(ProofCordOutMessage::Done)
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, ProofCordOutMessage::Done)
     }
 
     async fn handle_cast(
         &mut self,
-        message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         info!("Receiving message");
         match message {
             ProofCordInMessage::Listen { listener } => {
-                handle_listens(state, listener).await;
+                handle_listens(&state, listener).await;
             }
         }
         CastResponse::Stop
     }
 }
 
-async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
+async fn handle_listens(state: &ProofCoordinatorState, listener: Arc<TcpListener>) {
     info!("Starting TCP server at {}:{}.", state.listen_ip, state.port);
     loop {
         let res = listener.accept().await;
@@ -309,14 +312,21 @@ impl ConnectionHandler {
     ) -> Result<(), ConnectionHandlerError> {
         let mut connection_handler = ConnectionHandler::start(state);
         connection_handler
-            .cast(ConnInMessage::Connection { stream, addr })
+            .cast(ConnInMessage::Connection {
+                stream: Arc::new(stream),
+                addr,
+            })
             .await
             .map_err(ConnectionHandlerError::GenServerError)
     }
 }
 
+#[derive(Clone)]
 pub enum ConnInMessage {
-    Connection { stream: TcpStream, addr: SocketAddr },
+    Connection {
+        stream: Arc<TcpStream>,
+        addr: SocketAddr,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -325,7 +335,8 @@ pub enum ConnOutMessage {
 }
 
 impl GenServer for ConnectionHandler {
-    type InMsg = ConnInMessage;
+    type CallMsg = ConnInMessage;
+    type CastMsg = ConnInMessage;
     type OutMsg = ConnOutMessage;
     type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
@@ -336,23 +347,23 @@ impl GenServer for ConnectionHandler {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(ConnOutMessage::Done)
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, ConnOutMessage::Done)
     }
 
     async fn handle_cast(
         &mut self,
-        message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         info!("Receiving message");
         match message {
             ConnInMessage::Connection { stream, addr } => {
-                if let Err(err) = handle_connection(state, stream).await {
+                if let Err(err) = handle_connection(&state, stream).await {
                     error!("Error handling connection from {addr}: {err}");
                 } else {
                     debug!("Connection from {addr} handled successfully");
@@ -365,9 +376,11 @@ impl GenServer for ConnectionHandler {
 
 async fn handle_connection(
     state: &ProofCoordinatorState,
-    mut stream: TcpStream,
+    stream: Arc<TcpStream>,
 ) -> Result<(), ProofCoordinatorError> {
     let mut buffer = Vec::new();
+    // TODO: This should be fixed in https://github.com/lambdaclass/ethrex/issues/3316
+    let mut stream = Arc::try_unwrap(stream).unwrap();
     stream.read_to_end(&mut buffer).await?;
 
     let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
