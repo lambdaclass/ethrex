@@ -213,7 +213,6 @@ A list of all the configurable parameters of the network.
 - Only lead Sequencer can post batches.
 - Lead Sequencer batches are accepted during their sequencing period and rejected outside this period.
 - Batch commitment now includes posting the list of blocks in the batch to the L1 for data availability.
-- Penalizamos si uno o más blocks se gossipearon pero no llegaron a incluirse?
 
 ### Batch verification
 
@@ -223,7 +222,7 @@ A list of all the configurable parameters of the network.
 - Anyone can verify batches.
 - Only one valid verification is required to advance the network.
 - Valid proofs include the blocks of the batch being verified.
-- Penalizamos
+- In this initial version, the lead Sequencer is penalized if they fail to correctly verify the batches they post.
 
 ### P2P
 
