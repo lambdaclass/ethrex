@@ -220,7 +220,7 @@ impl GenServer for RLPxConnection {
 
         if let Err(e) = exchange_hello_messages(&mut established_state, &mut stream).await {
             connection_failed(&mut established_state, "Hello messages exchange failed", e).await;
-            return Err(RLPxError::Disconnected());
+            Err(RLPxError::Disconnected())
         } else {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
@@ -322,7 +322,7 @@ impl GenServer for RLPxConnection {
                     let _ = handle_broadcast(&mut established_state, (id, msg)).await;
                 }
                 Self::CastMsg::BlockRangeUpdate => {
-                    log_peer_debug(&established_state.node, &format!("Block Range Update"));
+                    log_peer_debug(&established_state.node, "Block Range Update");
                     let _ = handle_block_range_update(&mut established_state).await;
                 }
             }
@@ -788,7 +788,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 .backend_channel
                 .as_mut()
                 // TODO: this unwrap() is temporary, until we fix the backend process to use spawned
-                .unwrap()
+                .expect("Backend channel is not available")
                 .send(message)
                 .await?
         }
