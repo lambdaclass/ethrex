@@ -188,7 +188,7 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
                 "Priority fee is greater than max fee per gas"
             )
             | ("create initcode size limit", "Initcode size exceeded")
-    ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
+    ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account founds")
 }
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
