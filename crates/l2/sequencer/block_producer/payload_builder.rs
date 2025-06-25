@@ -43,7 +43,6 @@ pub async fn build_payload(
     debug!("Building payload");
     let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
 
-    blockchain.apply_withdrawals(&mut context)?;
     fill_transactions(blockchain.clone(), &mut context, store).await?;
     blockchain.finalize_payload(&mut context).await?;
 
