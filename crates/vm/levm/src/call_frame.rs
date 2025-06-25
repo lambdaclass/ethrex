@@ -230,10 +230,11 @@ impl CallFrame {
     }
 
     pub fn next_opcode(&self) -> Opcode {
-        match self.bytecode.get(self.pc).copied().map(Opcode::from) {
-            Some(opcode) => opcode,
-            None => Opcode::STOP,
-        }
+        self.bytecode
+            .get(self.pc)
+            .copied()
+            .map(Opcode::from)
+            .unwrap_or(Opcode::STOP)
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {

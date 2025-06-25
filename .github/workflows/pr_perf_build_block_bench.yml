@@ -1,17 +1,15 @@
-name: Benchmark Trie
+name: Benchmark Block building
 
 on:
-  workflow_call:
   pull_request:
     branches: ["**"]
-    paths:
-      - "crates/common/trie/**"
 
 permissions:
   pull-requests: write
 
 jobs:
-  build-ethrex-trie:
+  build-block-benchmark:
+    if: contains(github.event.pull_request.labels.*.name, 'performance')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,14 +19,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3
         with:
-          cwd: "crates/common/trie"
-          benchName: "trie_bench"
+          cwd: "cmd/ethrex/bench"
+          benchName: "build_block_benchmark"
           branchName: ${{ github.base_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
