@@ -84,12 +84,10 @@ interface IOnChainProposer {
 
     /// @notice Method used to verify a batch of L2 blocks in Aligned.
     /// @param alignedPublicInputs The public inputs bytes of the proof.
-    /// @param alignedProgramVKey The public verifying key.
     /// @param alignedMerkleProof  The Merkle proof (sibling hashes) needed to reconstruct the Merkle root.
     function verifyBatchAligned(
         uint256 batchNumber,
         bytes calldata alignedPublicInputs,
-        bytes32 alignedProgramVKey,
         bytes32[] calldata alignedMerkleProof
     ) external;
 

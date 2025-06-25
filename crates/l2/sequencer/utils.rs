@@ -5,8 +5,7 @@ use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::WrappedTransaction},
 };
-use ethrex_storage::error::StoreError;
-use ethrex_storage_rollup::StoreRollup;
+use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
 use rand::Rng;
 use secp256k1::SecretKey;
@@ -145,7 +144,7 @@ pub async fn node_is_up_to_date<E>(
     rollup_storage: &StoreRollup,
 ) -> Result<bool, E>
 where
-    E: From<EthClientError> + From<StoreError>,
+    E: From<EthClientError> + From<RollupStoreError>,
 {
     let last_committed_batch_number = eth_client
         .get_last_committed_batch(on_chain_proposer_address)

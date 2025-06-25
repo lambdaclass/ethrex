@@ -24,8 +24,7 @@ use super::{
     utils::{send_verify_tx, sleep_random},
 };
 
-const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
+const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchAligned(uint256,bytes,bytes32[])";
 
 pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
@@ -52,6 +51,7 @@ struct L1ProofVerifier {
     proof_verify_interval_ms: u64,
     network: Network,
     rollup_store: StoreRollup,
+    sp1_vk: [u8; 32],
 }
 
 impl L1ProofVerifier {
@@ -64,6 +64,10 @@ impl L1ProofVerifier {
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
+        let sp1_vk = eth_client
+            .get_sp1_vk(committer_cfg.on_chain_proposer_address)
+            .await?;
+
         Ok(Self {
             eth_client,
             beacon_url: aligned_cfg.beacon_url.clone(),
@@ -73,6 +77,7 @@ impl L1ProofVerifier {
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
+            sp1_vk,
         })
     }
 
@@ -136,13 +141,9 @@ impl L1ProofVerifier {
             ));
         }
         let public_inputs = aligned_proof.public_values();
-        // TODO: use a hardcoded vk
-        let vk = aligned_proof.vk();
 
         let verification_data = AggregationModeVerificationData::SP1 {
-            vk: vk.clone().try_into().map_err(|e| {
-                ProofVerifierError::DecodingError(format!("Failed to decode vk: {e:?}"))
-            })?,
+            vk: self.sp1_vk,
             public_inputs: public_inputs.clone(),
         };
 
@@ -191,7 +192,6 @@ impl L1ProofVerifier {
         let calldata_values = [
             Value::Uint(U256::from(batch_number)),
             Value::Bytes(public_inputs.into()),
-            Value::FixedBytes(vk.into()),
             Value::Array(merkle_path),
         ];
 
