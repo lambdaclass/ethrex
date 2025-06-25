@@ -24,9 +24,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.85.0
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Install solc
         uses: pontem-network/get-solc@master
@@ -74,7 +74,7 @@ jobs:
           cd crates/l2
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          make init-l2 &
+          make init-l2-no-metrics &
           sleep 30
           ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1

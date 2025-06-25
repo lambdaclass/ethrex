@@ -7,11 +7,15 @@ use ethrex_common::{
         AccountUpdate, Block, BlockNumber, PrivilegedL2Transaction, Transaction, batch::Batch,
     },
 };
-use ethrex_l2_common::{deposits::compute_deposit_logs_hash, state_diff::prepare_state_diff};
+use ethrex_l2_common::{
+    deposits::compute_deposit_logs_hash,
+    l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
+    state_diff::prepare_state_diff,
+};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_rpc::{EthClient, types::receipt::RpcLog, utils::get_withdrawal_hash};
+use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
+use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, send_after};
@@ -21,7 +25,6 @@ use crate::{
     SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{l1_committer::generate_blobs_bundle, utils::node_is_up_to_date},
-    utils::helpers::is_withdrawal_l2,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -30,6 +33,8 @@ pub enum BlockFetcherError {
     EthClientError(#[from] ethrex_rpc::clients::EthClientError),
     #[error("Block Fetcher failed due to a Store error: {0}")]
     StoreError(#[from] ethrex_storage::error::StoreError),
+    #[error("State Updater failed due to a RollupStore error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
     #[error("Internal Error: {0}")]
     InternalError(String),
     #[error("Failed to store fetched block: {0}")]
@@ -304,7 +309,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //     uint256 batchNumber,
     //     bytes32 newStateRoot,
     //     bytes32 stateDiffKZGVersionedHash,
-    //     bytes32 withdrawalsLogsMerkleRoot,
+    //     bytes32 messagesLogsMerkleRoot,
     //     bytes32 processedDepositLogsRollingHash,
     //     bytes[] calldata _rlpEncodedBlocks
     // ) external;
@@ -313,7 +318,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //          || 8 bytes (batch number)   4..36
     //          || 32 bytes (new state root) 36..68
     //          || 32 bytes (state diff KZG versioned hash) 68..100
-    //          || 32 bytes (withdrawals logs merkle root) 100..132
+    //          || 32 bytes (messages logs merkle root) 100..132
     //          || 32 bytes (processed deposit logs rolling hash) 132..164
 
     let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
@@ -396,37 +401,35 @@ async fn seal_batch(
     Ok(())
 }
 
-async fn get_batch_withdrawal_hashes(
+async fn get_batch_message_hashes(
     state: &mut BlockFetcherState,
     batch: &[Block],
 ) -> Result<Vec<H256>, BlockFetcherError> {
-    let mut withdrawal_hashes = Vec::new();
+    let mut message_hashes = Vec::new();
 
     for block in batch {
-        let block_withdrawals = get_block_withdrawals(state, block.header.number).await?;
+        let block_messages = extract_block_messages(state, block.header.number).await?;
 
-        for tx in &block_withdrawals {
-            let hash = get_withdrawal_hash(tx).ok_or(BlockFetcherError::InternalError(
-                "Invalid withdraw transaction".to_owned(),
-            ))?;
-            withdrawal_hashes.push(hash);
+        for msg in &block_messages {
+            message_hashes.push(get_l1_message_hash(msg));
         }
     }
 
-    Ok(withdrawal_hashes)
+    Ok(message_hashes)
 }
 
-async fn get_block_withdrawals(
+async fn extract_block_messages(
     state: &mut BlockFetcherState,
     block_number: BlockNumber,
-) -> Result<Vec<Transaction>, BlockFetcherError> {
+) -> Result<Vec<L1Message>, BlockFetcherError> {
     let Some(block_body) = state.store.get_block_body(block_number).await? else {
         return Err(BlockFetcherError::InternalError(format!(
             "Block {block_number} is supposed to be in store at this point"
         )));
     };
 
-    let mut txs_and_receipts = vec![];
+    let mut txs = vec![];
+    let mut receipts = vec![];
     for (index, tx) in block_body.transactions.iter().enumerate() {
         let receipt = state
             .store
@@ -440,17 +443,10 @@ async fn get_block_withdrawals(
             .ok_or(BlockFetcherError::InternalError(
                 "Transactions in a block should have a receipt".to_owned(),
             ))?;
-        txs_and_receipts.push((tx.clone(), receipt));
+        txs.push(tx.clone());
+        receipts.push(receipt);
     }
-
-    let mut ret = vec![];
-
-    for (tx, receipt) in txs_and_receipts {
-        if is_withdrawal_l2(&tx, &receipt) {
-            ret.push(tx.clone())
-        }
-    }
-    Ok(ret)
+    Ok(get_block_l1_messages(&txs, &receipts))
 }
 
 async fn get_batch(
@@ -475,10 +471,10 @@ async fn get_batch(
         .iter()
         .filter_map(|tx| tx.get_deposit_hash())
         .collect();
-    let mut withdrawals = Vec::new();
+    let mut messages = Vec::new();
     for block in batch {
-        let block_withdrawals = get_block_withdrawals(state, block.header.number).await?;
-        withdrawals.extend(block_withdrawals);
+        let block_messages = extract_block_messages(state, block.header.number).await?;
+        messages.extend(block_messages);
     }
     let deposit_logs_hash = compute_deposit_logs_hash(deposit_log_hashes)?;
 
@@ -526,7 +522,7 @@ async fn get_batch(
     let state_diff = prepare_state_diff(
         last_block.header.clone(),
         &parent_db,
-        &withdrawals,
+        &messages,
         &deposits,
         acc_account_updates.into_values().collect(),
     )
@@ -541,7 +537,7 @@ async fn get_batch(
         last_block: last_block.header.number,
         state_root: new_state_root,
         deposit_logs_hash,
-        withdrawal_hashes: get_batch_withdrawal_hashes(state, batch).await?,
+        message_hashes: get_batch_message_hashes(state, batch).await?,
         blobs_bundle,
     })
 }

@@ -393,10 +393,12 @@ impl Blockchain {
             );
 
             let base_log = format!(
-                "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.3} Ggas/s. Gas used: {:.3} Ggas. Time spent: {:.0} ms. #Txs: {}.",
+                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.3} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.3} ({:.0}%), #Txs: {}.",
+                block.header.number,
                 throughput,
-                as_gigas,
                 interval,
+                as_gigas,
+                (block.header.gas_used as f64 / block.header.gas_limit as f64) * 100.0,
                 block.body.transactions.len()
             );
 
