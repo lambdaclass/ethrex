@@ -147,14 +147,14 @@ jobs:
                 }
               } else {
                 printf "#### Benchmark Results: %s \n", file
-                print "No results"
+                print "No results."
               }
             }
             ' "$f" >> ../../../result.md
           done
 
           if [ ! -s ../../../result.md ]; then
-            echo "No significant difference was registered for any benchmark run" > ../../../result.md
+            echo "No significant difference was registered for any benchmark run." > ../../../result.md
           fi
 
       - name: Find comment
