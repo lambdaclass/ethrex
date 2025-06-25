@@ -14,10 +14,17 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
+      - name: Extract Rust version from rust-toolchain.toml
+        id: rustver
+        run: |
+          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+                   | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
+          toolchain: ${{ steps.rustver.outputs.rust_version }}
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2

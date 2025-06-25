@@ -20,10 +20,17 @@ jobs:
       - name: Fetch Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Extract Rust version from rust-toolchain.toml
+        id: rustver
+        run: |
+          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+                   | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
+          toolchain: ${{ steps.rustver.outputs.rust_version }}
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3

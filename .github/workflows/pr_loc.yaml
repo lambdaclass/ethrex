@@ -14,10 +14,17 @@ jobs:
     # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
     if: github.event.pull_request.head.repo.fork == false
     steps:
+      - name: Extract Rust version from rust-toolchain.toml
+        id: rustver
+        run: |
+          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+                   | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
+          toolchain: ${{ steps.rustver.outputs.rust_version }}
           components: rustfmt, clippy
 
       - name: Set up cargo cache

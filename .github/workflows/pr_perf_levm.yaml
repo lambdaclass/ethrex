@@ -20,10 +20,17 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
 
+      - name: Extract Rust version from rust-toolchain.toml
+        id: rustver
+        run: |
+          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+                   | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
+          toolchain: ${{ steps.rustver.outputs.rust_version }}
           components: rustfmt, clippy
 
       - name: Set up cargo cache
@@ -77,10 +84,17 @@ jobs:
         with:
           ref: main
 
+      - name: Extract Rust version from rust-toolchain.toml
+        id: rustver
+        run: |
+          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+                   | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
+          toolchain: ${{ steps.rustver.outputs.rust_version }}
           components: rustfmt, clippy
 
       - name: Set up cargo cache

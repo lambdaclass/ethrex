@@ -23,11 +23,19 @@ jobs:
           path: bin/ethrex-${{ matrix.branch }}
           key: binary-${{ github.event.pull_request[matrix.branch].sha }}
 
+      - name: Extract Rust version from rust-toolchain.toml
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        id: rustver
+        run: |
+          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
+                   | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
+
       - name: Install Rust
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
+          toolchain: ${{ steps.rustver.outputs.rust_version }}
 
       - name: Checkout
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
