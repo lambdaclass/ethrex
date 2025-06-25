@@ -24,7 +24,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prom-001"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -82,7 +82,11 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "A",
-          "useBackend": false
+          "useBackend": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Execution Client",
@@ -91,7 +95,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prom-001"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -146,7 +150,11 @@
           "expr": "eth_con_spec_config_name{instance=~\"$instance\"}",
           "legendFormat": "{{name}}",
           "range": true,
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Consensus Config",
@@ -155,7 +163,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prom-001"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -209,7 +217,11 @@
           "expr": "eth_con_fork_current{instance=~\"$instance\"}",
           "legendFormat": "{{fork}}",
           "range": true,
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Consensus Fork",
@@ -218,7 +230,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prom-001"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -317,11 +329,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prom-001"
+            "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "gas_used",
+          "expr": "gas_used{job=\"$job\"}",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -334,11 +346,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prom-001"
+            "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "gas_limit",
+          "expr": "gas_limit{job=\"$job\"}",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -383,7 +395,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prom-001"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -447,7 +459,7 @@
             "properties": [
               {
                 "id": "custom.axisSoftMax",
-                "value": 0.7
+                "value": 0.5
               }
             ]
           }
@@ -478,13 +490,17 @@
         {
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "gigagas",
+          "expr": "gigagas{job=\"$job\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "legendFormat": "Gigagas/s",
           "range": true,
           "refId": "A",
-          "useBackend": false
+          "useBackend": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         }
       ],
       "title": "Ggas/s",
@@ -493,7 +509,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prom-001"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -574,11 +590,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prom-001"
+            "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "block_number",
+          "expr": "block_number{job=\"$job\"}",
           "format": "time_series",
           "fullMetaSearch": false,
           "hide": false,
@@ -597,7 +613,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prom-001"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -771,22 +787,26 @@
         {
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "block_number",
+          "expr": "block_number{job=\"$job\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "legendFormat": "Block Number",
           "range": true,
           "refId": "A",
-          "useBackend": false
+          "useBackend": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
         },
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prom-001"
+            "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "gigagas",
+          "expr": "gigagas{job=\"$job\"}",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -799,11 +819,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prom-001"
+            "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "gas_used",
+          "expr": "gas_used{job=\"$job\"}",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -816,11 +836,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prom-001"
+            "uid": "${DS_PROMETHEUS}"
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "gas_limit",
+          "expr": "gas_limit{job=\"$job\"}",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -862,7 +882,6 @@
       "type": "xychart"
     }
   ],
-  "preload": false,
   "refresh": "5s",
   "schemaVersion": 41,
   "tags": [],
@@ -901,6 +920,36 @@
         "refresh": 1,
         "regex": "",
         "type": "query"
+      },
+      {
+        "current": {
+          "text": "prom-001",
+          "value": "prom-001"
+        },
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "text": "el-1-ethrex-lighthouse",
+          "value": "el-1-ethrex-lighthouse"
+        },
+        "definition": "label_values(up, job)",
+        "description": "",
+        "label": "job",
+        "name": "job",
+        "options": [],
+        "query": {
+          "qryType": 5,
+          "query": "label_values(up, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
       }
     ]
   },
@@ -912,5 +961,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 8
+  "version": 9
 }
