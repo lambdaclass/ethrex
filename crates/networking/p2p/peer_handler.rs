@@ -407,10 +407,11 @@ impl PeerHandler {
                 ) {
                     self.record_peer_success(peer_id).await;
                     return Some((account_hashes, accounts, should_continue));
+                } else {
+                    warn!("[SYNCING] Received invalid account range, penalizing peer {peer_id}...");
+                    self.record_peer_critical_failure(peer_id).await;
                 }
             }
-            warn!("[SYNCING] Didn't receive account range from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -555,6 +556,8 @@ impl PeerHandler {
                     } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
                         .is_err()
                     {
+                        warn!("[SYNCING] Received invalid storage range, penalizing peer {peer_id}...");
+                        self.record_peer_critical_failure(peer_id).await;
                         continue;
                     }
 
@@ -564,10 +567,6 @@ impl PeerHandler {
                 self.record_peer_success(peer_id).await;
                 return Some((storage_keys, storage_values, should_continue));
             }
-            warn!(
-                "[SYNCING] Didn't receive storage ranges from peer, penalizing peer {peer_id}..."
-            );
-            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -633,8 +632,6 @@ impl PeerHandler {
                 self.record_peer_success(peer_id).await;
                 return Some(nodes);
             }
-            warn!("[SYNCING] Didn't receive trie nodes from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -708,10 +705,9 @@ impl PeerHandler {
                     })
                     .flatten()
             }) {
+                self.record_peer_success(peer_id);
                 return Some(nodes);
             }
-            warn!("[SYNCING] Didn't receive trie nodes from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
         }
         None
     }
@@ -788,10 +784,11 @@ impl PeerHandler {
                     verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
                 {
                     return Some((storage_keys, storage_values, should_continue));
+                } else {
+                    warn!("[SYNCING] Received invalid storage range, penalizing peer {peer_id}...");
+                    self.record_peer_critical_failure(peer_id).await;
                 }
             }
-            warn!("[SYNCING] Didn't receive storage range from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
         }
         None
     }
