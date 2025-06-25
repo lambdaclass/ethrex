@@ -123,7 +123,7 @@ pub async fn fill_transactions(
             break;
         };
 
-        // Fetch the next transactions
+        // Fetch the next transaction
         let Some(head_tx) = txs.peek() else {
             break;
         };
@@ -231,7 +231,7 @@ pub async fn fill_transactions(
     Ok(())
 }
 
-// TODO: once #2857 is implemented, we can totally ignore the blob pools
+// TODO: Once #2857 is implemented, we can completely ignore the blobs pool.
 fn fetch_mempool_transactions(blockchain: Arc<Blockchain>, context: &mut PayloadBuildContext) {
     let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context);
     while let Some(blob_tx) = blob_txs.peek() {
