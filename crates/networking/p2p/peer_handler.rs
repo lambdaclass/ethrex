@@ -405,6 +405,7 @@ impl PeerHandler {
                     &encoded_accounts,
                     &proof,
                 ) {
+                    self.record_peer_success(peer_id).await;
                     return Some((account_hashes, accounts, should_continue));
                 }
             }
@@ -454,6 +455,7 @@ impl PeerHandler {
             .flatten()
             .and_then(|codes| (!codes.is_empty() && codes.len() <= hashes_len).then_some(codes))
             {
+                self.record_peer_success(peer_id).await;
                 return Some(codes);
             }
             warn!("[SYNCING] Didn't receive bytecodes from peer, penalizing peer {peer_id}...");
@@ -559,6 +561,7 @@ impl PeerHandler {
                     storage_keys.push(hashed_keys);
                     storage_values.push(values);
                 }
+                self.record_peer_success(peer_id).await;
                 return Some((storage_keys, storage_values, should_continue));
             }
             warn!(
@@ -627,6 +630,7 @@ impl PeerHandler {
                     })
                     .flatten()
             }) {
+                self.record_peer_success(peer_id).await;
                 return Some(nodes);
             }
             warn!("[SYNCING] Didn't receive trie nodes from peer, penalizing peer {peer_id}...");
@@ -681,6 +685,7 @@ impl PeerHandler {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
                             if id == request_id =>
                         {
+                            self.record_peer_success(peer_id).await;
                             return Some(nodes);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
@@ -750,6 +755,7 @@ impl PeerHandler {
                         Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
                             if id == request_id =>
                         {
+                            self.record_peer_success(peer_id).await;
                             return Some((slots, proof));
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
