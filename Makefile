@@ -72,6 +72,10 @@ localnet-assertoor-ethrex-only: stop-localnet-silent build-image checkout-ethere
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_only.yaml
 	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
+localnet-assertoor-different-cl: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_multiple_cl.yaml
+	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
+
 localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
