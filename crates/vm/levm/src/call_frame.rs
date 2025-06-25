@@ -30,13 +30,13 @@ impl Stack {
 
         // The following operation can never overflow as both `self.offset` and N are within
         // STACK_LIMIT (1024).
-        #[allow(clippy::arithmetic_side_effects)]
+        #[expect(clippy::arithmetic_side_effects)]
         let next_offset = self.offset + N;
 
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
         // check it again.
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let values = self.values[self.offset..]
             .first_chunk::<N>()
             .ok_or(ExceptionalHalt::StackUnderflow)?;
@@ -55,7 +55,7 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         self.values[next_offset..self.offset].copy_from_slice(values);
         self.offset = next_offset;
 
@@ -65,7 +65,7 @@ impl Stack {
     pub fn len(&self) -> usize {
         // The following operation cannot underflow because `self.offset` is known to be less than
         // or equal to `self.values.len()` (aka. `STACK_LIMIT`).
-        #[allow(clippy::arithmetic_side_effects)]
+        #[expect(clippy::arithmetic_side_effects)]
         {
             self.values.len() - self.offset
         }
@@ -78,7 +78,7 @@ impl Stack {
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
         // The following index cannot fail because `self.offset` is known to be within
         // `STACK_LIMIT`.
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         self.values[self.offset..]
             .get(index)
             .ok_or(ExceptionalHalt::StackUnderflow)
@@ -117,7 +117,7 @@ impl fmt::Debug for Stack {
             }
         }
 
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         f.debug_tuple("Stack")
             .field(&StackValues(&self.values[self.offset..]))
             .finish()

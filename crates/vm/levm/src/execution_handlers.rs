@@ -79,7 +79,7 @@ impl<'a> VM<'a> {
             // PUSHn
             op if (Opcode::PUSH3..=Opcode::PUSH32).contains(&op) => {
                 // The following conversions and operation cannot fail due to known operand ranges.
-                #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
                 self.op_push(op as usize - Opcode::PUSH0 as usize)
             }
             Opcode::AND => self.op_and(),
@@ -93,13 +93,13 @@ impl<'a> VM<'a> {
             // DUPn
             op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
                 // The following conversions and operation cannot fail due to known operand ranges.
-                #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
                 self.op_dup(op as usize - Opcode::DUP1 as usize)
             }
             // SWAPn
             op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
                 // The following conversions and operation cannot fail due to known operand ranges.
-                #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
                 self.op_swap(op as usize - Opcode::SWAP1 as usize + 1)
             }
             Opcode::POP => self.op_pop(),
