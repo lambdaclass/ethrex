@@ -152,7 +152,7 @@ A list of all the configurable parameters of the network.
 - L2 block time
 - Minimum collateral in ETH for Sequencers registration
 - Withdrawal delay for Sequencers that quit the protocol
-- Initial ticket auction price multiplier?
+- Initial ticket auction price multiplier
 - Batch verification time limit
 - Amount of auction challenges within a sequencing period
 - Challenge period duration
