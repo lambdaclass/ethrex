@@ -69,11 +69,14 @@ pub enum ExceptionalHalt {
     Precompile(#[from] PrecompileError),
 }
 
+// Error strings are attached to execution-spec-tests mapping https://github.com/ethereum/execution-spec-tests/blob/6aba9a2b732567905b58ee61607ed754bc356a33/src/ethereum_clis/clis/ethrex.py
+// If any change is made here without changing the mapper it will break some tests.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum TxValidationError {
     #[error("Sender account shouldn't be a contract")]
     SenderNotEOA,
-    #[error("Insufficient account funds")]
+    // This should be "funds" but we have this in our mapper and this change is not worth a PR yet: https://github.com/ethereum/execution-spec-tests/blob/6aba9a2b732567905b58ee61607ed754bc356a33/src/ethereum_clis/clis/ethrex.py#L58
+    #[error("Insufficient account founds")]
     InsufficientAccountFunds,
     #[error("Nonce is max")]
     NonceIsMax,
