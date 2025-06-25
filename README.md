@@ -10,8 +10,6 @@ Minimalist, stable, modular and fast implementation of the Ethereum protocol in 
 
 ## Quick-start
 
-<!-- TODO: move this somewhere else in the document -->
-
 To install the client, [first install Rust](https://www.rust-lang.org/tools/install) and run:
 
 ```sh
