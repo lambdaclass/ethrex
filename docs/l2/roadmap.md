@@ -196,7 +196,7 @@ A list of all the configurable parameters of the network.
   - Sequenced blocks.
   - Batch seal messages.
 - Store incoming blocks sequentially.
-- Seal batches upon receiveng batch seal messages (after storing all batch blocks).
+- Seal batches upon receiving batch seal messages (after storing all batch blocks).
 - Serve state.
 - Monitor the L1 contract for batch updates and reorgs.
 
