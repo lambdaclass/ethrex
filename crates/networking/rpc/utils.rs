@@ -1,4 +1,4 @@
-use ethrex_common::{Address, H256, types::Transaction};
+use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -6,6 +6,9 @@ use serde_json::Value;
 
 use crate::authentication::AuthenticationError;
 use ethrex_blockchain::error::MempoolError;
+
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::RollupStoreError;
 
 #[derive(Debug, Deserialize)]
 pub enum RpcErr {
@@ -253,6 +256,13 @@ impl From<StoreError> for RpcErr {
     }
 }
 
+#[cfg(feature = "l2")]
+impl From<RollupStoreError> for RpcErr {
+    fn from(value: RollupStoreError) -> Self {
+        RpcErr::Internal(value.to_string())
+    }
+}
+
 impl From<EvmError> for RpcErr {
     fn from(value: EvmError) -> Self {
         RpcErr::Vm(value.to_string())
@@ -277,55 +287,27 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     }
 }
 
-/// Returns the formated hash of the withdrawal transaction,
-/// or None if the transaction is not a withdrawal.
-/// The hash is computed as keccak256(to || value || tx_hash)
-pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
-    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    let to = Address::from(to_bytes);
-
-    let value = tx.value().to_big_endian();
-
-    Some(keccak_hash::keccak(
-        [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
-    ))
-}
-
-pub fn merkle_proof(data: Vec<H256>, base_element: H256) -> Option<Vec<H256>> {
-    use keccak_hash::keccak;
-
-    if !data.contains(&base_element) {
+pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
+    if index >= data.len() {
         return None;
     }
+    use keccak_hash::keccak;
 
     let mut proof = vec![];
-    let mut data = data;
-
-    let mut target_hash = base_element;
+    let mut current = data.clone();
     let mut first = true;
-    while data.len() > 1 || first {
+    while current.len() > 1 || first {
         first = false;
-        let current_target = target_hash;
-        data = data
+        proof.push(*current.get(index ^ 1).or(current.get(index))?);
+        index /= 2;
+        current = current
             .chunks(2)
-            .flat_map(|chunk| -> Option<H256> {
-                let left = chunk.first().copied()?;
-
-                let right = chunk.get(1).copied().unwrap_or(left);
-                let result = keccak([left.as_bytes(), right.as_bytes()].concat())
+            .map(|chunk| -> H256 {
+                let left = *chunk.first().unwrap_or(&H256::zero());
+                let right = *chunk.get(1).unwrap_or(&left);
+                keccak([left.as_bytes(), right.as_bytes()].concat())
                     .as_fixed_bytes()
-                    .into();
-                if left == current_target {
-                    proof.push(right);
-                    target_hash = result;
-                } else if right == current_target {
-                    proof.push(left);
-                    target_hash = result;
-                }
-                Some(result)
+                    .into()
             })
             .collect();
     }

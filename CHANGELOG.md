@@ -2,9 +2,15 @@
 
 ## Perf
 
-### 2025-06-18
+
+### 2025-06-25
 
 - Trie in place update [3201](https://github.com/lambdaclass/ethrex/pull/3201)
+
+### 2025-06-20
+
+- Use a lookup table for opcode parsing [#3253](https://github.com/lambdaclass/ethrex/pull/3253)
+- Use specialized PUSH1 and PUSH2 implementations [#3262](https://github.com/lambdaclass/ethrex/pull/3262)
 
 ### 2025-05-27
 
