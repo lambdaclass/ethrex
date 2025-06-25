@@ -14,6 +14,11 @@ jobs:
     # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
     if: github.event.pull_request.head.repo.fork == false
     steps:
+      - name: Checkout Base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
       - name: Extract Rust version from rust-toolchain.toml
         id: rustver
         run: |
@@ -29,11 +34,6 @@ jobs:
 
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Checkout Base
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
 
       - name: Run Lines of Code Counter for base
         run: cd tooling/loc && make loc-detailed

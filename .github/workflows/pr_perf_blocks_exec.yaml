@@ -16,6 +16,12 @@ jobs:
     name: Build ethrex for ${{ matrix.branch }}
     runs-on: ubuntu-22.04
     steps:
+      - name: Checkout
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request[matrix.branch].sha }}
+
       - name: Populate cache
         uses: actions/cache@v4
         id: cache
@@ -36,12 +42,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.rustver.outputs.rust_version }}
-
-      - name: Checkout
-        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request[matrix.branch].sha }}
 
       - name: Fetch Rust cache
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}

@@ -15,6 +15,13 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Checkout LFS objects
+        run: git lfs checkout
+
       - name: Extract Rust version from rust-toolchain.toml
         id: rustver
         run: |
@@ -26,13 +33,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.rustver.outputs.rust_version }}
-
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Checkout LFS objects
-        run: git lfs checkout
 
       - name: Update package lists
         run: sudo apt-get update
