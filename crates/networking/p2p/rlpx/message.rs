@@ -2,7 +2,6 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
-use super::based::{BatchSealedMessage, NewBlockMessage};
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -10,6 +9,7 @@ use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
+use super::l2::messages::{BatchSealedMessage, NewBlockMessage};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
