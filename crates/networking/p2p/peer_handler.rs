@@ -705,7 +705,7 @@ impl PeerHandler {
                     })
                     .flatten()
             }) {
-                self.record_peer_success(peer_id);
+                self.record_peer_success(peer_id).await;
                 return Some(nodes);
             }
         }
