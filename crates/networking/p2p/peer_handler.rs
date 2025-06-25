@@ -174,10 +174,13 @@ impl PeerHandler {
     }
 
     #[cfg(feature = "l2")]
-    pub async fn request_batch(&self, batch_number: u64) -> Option<Batch> {
+    pub async fn request_batch(&self, first_batch: u64, last_batch: u64) -> Option<Vec<Batch>> {
         use crate::rlpx::{based::GetBatchSealedMessage, p2p::SUPPORTED_BASED_CAPABILITIES};
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage { batch_number });
+            let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage {
+                first_batch,
+                last_batch,
+            });
             let (peer_id, peer_channel) = self
                 .get_peer_channel_with_retry(
                     &[SUPPORTED_ETH_CAPABILITIES, [SUPPORTED_BASED_CAPABILITIES]].concat(),
@@ -189,14 +192,14 @@ impl PeerHandler {
                 self.record_peer_failure(peer_id).await;
                 return None;
             }
-            if let Some(batch) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            if let Some(batches) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     use crate::rlpx::based::GetBatchSealedResponseMessage;
                     match receiver.recv().await {
                         Some(RLPxMessage::GetBatchSealedResponse(
-                            GetBatchSealedResponseMessage { batch },
-                        )) if batch.number == batch_number => {
-                            return Some(batch);
+                            GetBatchSealedResponseMessage { batches },
+                        )) => {
+                            return Some(batches);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => {
@@ -213,7 +216,7 @@ impl PeerHandler {
             .flatten()
             {
                 // TODO: penalize peer if the signature is incorrect or the batch is invalid
-                return Some(batch);
+                return Some(batches);
             }
         }
         None

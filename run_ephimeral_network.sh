@@ -58,8 +58,8 @@ run_nodes() {
         http_port=$((http_base + i))
         p2p_port=$((p2p_base + i))
         discovery_port=$p2p_port
-
-#        datadir="ethrex_l2_$i"
+        datadir="ethrex_l2_$i"
+        
 #        echo "$committer_key"
 #        echo "$proof_coord_key"
 #        echo $genesis_path

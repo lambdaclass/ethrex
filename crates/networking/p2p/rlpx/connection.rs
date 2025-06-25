@@ -840,16 +840,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 #[cfg(feature = "l2")]
                 {
                     use crate::rlpx::based::GetBatchSealedResponseMessage;
-
-                    let Some(batch) = self.store_rollup.get_batch(_req.batch_number).await? else {
-                        return Err(RLPxError::InternalError(
-                            "CHANGE ERROR: Batch not found".to_string(),
-                        ));
-                    };
+                    let mut batches = vec![];
+                    for batch_number in _req.first_batch..=_req.last_batch {
+                        let Some(batch) = self.store_rollup.get_batch(batch_number).await? else {
+                            return Err(RLPxError::InternalError(
+                                "CHANGE ERROR: Batch not found".to_string(),
+                            ));
+                        };
+                        batches.push(batch);
+                    }
 
                     self.send(Message::GetBatchSealedResponse(
                         GetBatchSealedResponseMessage {
-                            batch,
+                            batches,
                             // for now skipping signatures
                         },
                     ))
@@ -862,9 +865,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     if self.blockchain.is_synced() {
                         return Ok(());
                     }
-                    if self.store_rollup.contains_batch(&_req.batch.number).await? {
-                        return Ok(());
-                    }
+                    // if self.store_rollup.contains_batch(&_req.batch.number).await? {
+                    //     return Ok(());
+                    // }
                     sender.send(Message::GetBatchSealedResponse(_req)).await?;
                 }
             }
@@ -970,12 +973,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
+        debug!("process_new_block");
         self.blocks_on_queue
             .entry(msg.block.header.number)
             .or_insert_with(|| msg.block.clone());
 
         let mut next_block_to_add = self.latest_block_added + 1;
         let latest_block_in_storage = self.storage.get_latest_block_number().await?;
+        debug!(
+            "next block to add: {}, latest block ins storage: {}, does que block contain the block?: {}",
+            next_block_to_add,
+            latest_block_in_storage,
+            self.blocks_on_queue.contains_key(&next_block_to_add)
+        );
         next_block_to_add = next_block_to_add.max(latest_block_in_storage);
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
             // This check is necessary if a connection to another peer already applied the block but this connection
