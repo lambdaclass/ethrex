@@ -189,8 +189,7 @@ impl SubcommandProve {
                     let res = prove(cache).await?;
                     Ok((gas_used, res))
                 };
-                let res = run_and_measure(bench, body).await?;
-                println!("{res}");
+                run_and_measure(bench, body).await?;
             }
             SubcommandProve::BlockRange {
                 start,
@@ -211,8 +210,7 @@ impl SubcommandProve {
                     let res = prove(cache).await?;
                     Ok((gas_used, res))
                 };
-                let res = run_and_measure(bench, body).await?;
-                println!("{res}");
+                run_and_measure(bench, body).await?;
             }
         }
         Ok(())

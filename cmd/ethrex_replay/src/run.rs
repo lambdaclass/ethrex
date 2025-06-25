@@ -29,12 +29,12 @@ pub async fn exec(cache: Cache) -> eyre::Result<()> {
     Ok(())
 }
 
-pub async fn prove(cache: Cache) -> eyre::Result<String> {
+pub async fn prove(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         witness: db,
     } = cache;
-    let out = ethrex_prover_lib::prove(
+    ethrex_prover_lib::prove(
         ProgramInput {
             blocks,
             db,
@@ -52,10 +52,7 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
         false,
     )
     .map_err(|e| eyre::Error::msg(e.to_string()))?;
-    #[cfg(any(feature = "sp1", feature = "risc0"))]
-    return Ok(format!("{out:#?}"));
-    #[cfg(not(all(feature = "sp1", feature = "risc0")))]
-    Ok(serde_json::to_string(&out.0)?)
+    Ok(())
 }
 
 pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
