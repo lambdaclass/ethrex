@@ -15,8 +15,7 @@ Minimalist, stable, modular and fast implementation of the Ethereum protocol in 
 To install the client, [first install Rust](https://www.rust-lang.org/tools/install) and run:
 
 ```sh
-# TODO: update with link to main branch
-curl -sSL https://raw.githubusercontent.com/lambdaclass/ethrex/94678636ec78ffd59bdc8482ddddca21d47bda94/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/install.sh | sh
 ```
 
 This installs the `ethrex` binary, and downloads two scripts used for quickly starting a local L1+L2 stack.
@@ -32,15 +31,6 @@ This can be done by going to the same directory the install script was run from 
 ```
 
 This uses the file `genesis-l1-dev.json` that was also downloaded by the script.
-
-### Starting the L2
-
-After running the install script, you can start the L2 by running the `l2` script that was downloaded.
-This can be done by going to the same directory the install script was run from and executing:
-
-```sh
-./l2
-```
 
 ## L1 and L2 support
 
