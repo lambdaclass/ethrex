@@ -152,7 +152,7 @@ jobs:
             ' "$f" >> ../../../result.md
           done
 
-          if [ ! -s result.md ]; then
+          if [ ! -s ../../../result.md ]; then
             echo "No significant difference was registered for any benchmark run" > ../../../result.md
           fi
 
