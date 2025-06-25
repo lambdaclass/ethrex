@@ -380,41 +380,48 @@ async fn handle_connection(
 ) -> Result<(), ProofCoordinatorError> {
     let mut buffer = Vec::new();
     // TODO: This should be fixed in https://github.com/lambdaclass/ethrex/issues/3316
-    let mut stream = Arc::try_unwrap(stream).unwrap();
-    stream.read_to_end(&mut buffer).await?;
+    // (stream should not be wrapped in an Arc)
+    match Arc::try_unwrap(stream) {
+        Err(_) => {
+            error!("Unable to use stream");
+        }
+        Ok(mut stream) => {
+            stream.read_to_end(&mut buffer).await?;
 
-    let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
-    match data {
-        Ok(ProofData::BatchRequest) => {
-            if let Err(e) = handle_request(state, &mut stream).await {
-                error!("Failed to handle BatchRequest: {e}");
+            let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+            match data {
+                Ok(ProofData::BatchRequest) => {
+                    if let Err(e) = handle_request(state, &mut stream).await {
+                        error!("Failed to handle BatchRequest: {e}");
+                    }
+                }
+                Ok(ProofData::ProofSubmit {
+                    batch_number,
+                    batch_proof,
+                }) => {
+                    if let Err(e) = handle_submit(&mut stream, batch_number, batch_proof).await {
+                        error!("Failed to handle ProofSubmit: {e}");
+                    }
+                }
+                Ok(ProofData::ProverSetup {
+                    prover_type,
+                    payload,
+                }) => {
+                    if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
+                        error!("Failed to handle ProverSetup: {e}");
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to parse request: {e}");
+                }
+                _ => {
+                    warn!("Invalid request");
+                }
             }
-        }
-        Ok(ProofData::ProofSubmit {
-            batch_number,
-            batch_proof,
-        }) => {
-            if let Err(e) = handle_submit(&mut stream, batch_number, batch_proof).await {
-                error!("Failed to handle ProofSubmit: {e}");
-            }
-        }
-        Ok(ProofData::ProverSetup {
-            prover_type,
-            payload,
-        }) => {
-            if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
-                error!("Failed to handle ProverSetup: {e}");
-            }
-        }
-        Err(e) => {
-            warn!("Failed to parse request: {e}");
-        }
-        _ => {
-            warn!("Invalid request");
-        }
-    }
 
-    debug!("Connection closed");
+            debug!("Connection closed");
+        }
+    };
     Ok(())
 }
 

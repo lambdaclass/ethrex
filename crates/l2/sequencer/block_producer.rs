@@ -129,11 +129,11 @@ impl GenServer for BlockProducer {
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        mut state: Self::State,
+        state: Self::State,
     ) -> CastResponse<Self> {
         // Right now we only have the Produce message, so we ignore the message
         if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = produce_block(&mut state)
+            let _ = produce_block(&state)
                 .await
                 .inspect_err(|e| error!("Block Producer Error: {e}"));
         }
