@@ -41,7 +41,8 @@
 
 - [Developers](./developers/README.md)
   - [Quickstart](./developers/quickstart.md)
-  - [L2 load-tests](./developers/l2_load_tests.md)
+  - [L2](./developers/l2/README.md)
+    - [load-tests](./developers/l2/load_tests.md)
 
 - [CLI reference]()
 - [Troubleshooting]()
