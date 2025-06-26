@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750951635793,
+  "lastUpdate": 1750952237110,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1469,6 +1469,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221781615350,
             "range": "± 432103051",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f630e1c0f4fce2264b2991b3d743172e1514b196",
+          "message": "test(l1): run all blockchain tests and refactor logic (#3280)\n\n**Motivation**\n\n- We weren't running all tests that we needed to. We ran tests from\nfolders prague, cancun and shanghai but folders that have names of older\nforks have \"old\" tests but they perform checks for current forks too. So\nwe should run them too!\n\n**Description**\n\n- Deletes `cancun.rs`, `shanghai.rs` and `prague.rs`. Doesn't make sense\nto run tests based on that. For example, when running cancun.rs you\ncould find tests which post state was Prague or Shanghai, so that\ndistinction we were making was kinda useless. Now we just have `all.rs`\nand I simplified it so that it is more clean.\n- Adds all networks to Network enum\n- Refactor `test_runner` so that parsing is better (now it's recursive)\nand also now when a test fails it doesn't stop executing the rest of the\ntests, which was pretty annoying.\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-06-26T14:36:53Z",
+          "tree_id": "70a14b6e94d5840a1ac56f6960b54ff93de31be3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f630e1c0f4fce2264b2991b3d743172e1514b196"
+        },
+        "date": 1750952228526,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222012327070,
+            "range": "± 434402955",
             "unit": "ns/iter"
           }
         ]
