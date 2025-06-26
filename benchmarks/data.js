@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750968682228,
+  "lastUpdate": 1750972978884,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2202,6 +2202,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00865286051619989,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8675fe8bc44977275db954cc4730a79c382cc15a",
+          "message": "perf(levm): refactor levm jump opcodes (#3275)\n\n**Motivation**\n\nThe `JUMP` and `JUMPI` opcodes need to check the target address's\nvalidity. This is currently done with a `HashSet` of valid target\naddresses, which caused the hashing to become a significant part of the\nprofiling time when checking for address validity.\n\n**Description**\n\nThis PR rewrites the `JUMPDEST` checks so that instead of having a\nwhitelist, we do the following:\n- Check the program bytecode directly. The jump target's value should be\na `JUMPDEST`.\n- Check a blacklist of values 0x5B (`JUMPDEST`) that are NOT opcodes\n(they are part of push literals).\n\nThe blacklist is not a `HashMap`, but rather a sorted slice that can be\nchecked efficiently using the binary search algorithm, which should\nterminate on average after the first or second step.\n\nRational: After extracting stats of the first 10k hoodi blocks, I found\nout that...\n- There are almost 60 times more `JUMPDEST` than values 0x5B in push\nliterals.\n- On average, there are less than 2 values in the blacklist. If we were\nto use a whitelist as before, there would be about 70 entries on\naverage.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nRelated to #3305",
+          "timestamp": "2025-06-26T20:36:36Z",
+          "tree_id": "d839a849cc638da9fe2743a8f65a578f6579a8bd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8675fe8bc44977275db954cc4730a79c382cc15a"
+        },
+        "date": 1750972968203,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.009792951522684898,
             "unit": "Mgas/s"
           }
         ]
