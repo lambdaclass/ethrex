@@ -4,8 +4,9 @@ use ethereum_types::Address;
 use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType, MetricsL2OperationType};
 use ethrex_metrics::metrics_transactions::METRICS_TX;
 use ethrex_rpc::clients::eth::EthClient;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerInMsg, send_after,
+};
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -66,7 +67,8 @@ impl MetricsGatherer {
 }
 
 impl GenServer for MetricsGatherer {
-    type InMsg = InMessage;
+    type CallMsg = ();
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = MetricsGathererState;
 
@@ -78,24 +80,24 @@ impl GenServer for MetricsGatherer {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, OutMessage::Done)
     }
 
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         // Right now we only have the Gather message, so we ignore the message
         let _ = gather_metrics(state)
             .await
             .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
-        send_after(state.check_interval, tx.clone(), Self::InMsg::Gather);
+        send_after(state.check_interval, handle.clone(), Self::CastMsg::Gather);
         CastResponse::NoReply
     }
 }
