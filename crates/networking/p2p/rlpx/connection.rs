@@ -110,14 +110,6 @@ pub(crate) struct RLPxConnection<S> {
     next_block_range_update: Instant,
     last_block_range_update_block: u64,
     broadcasted_txs: HashSet<H256>,
-    next_block_broadcast: Instant,
-    next_batch_broadcast: Instant,
-    #[cfg(feature = "l2")]
-    latest_block_sent: u64,
-    latest_block_added: u64,
-    blocks_on_queue: BTreeMap<u64, Block>,
-    #[cfg(feature = "l2")]
-    latest_batch_sent: u64,
     requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     client_version: String,
     /// Send end of the channel used to broadcast messages
@@ -129,11 +121,6 @@ pub(crate) struct RLPxConnection<S> {
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
     connection_broadcast_send: RLPxConnBroadcastSender,
-    #[cfg(feature = "l2")]
-    store_rollup: StoreRollup,
-    based: bool,
-    #[cfg(feature = "l2")]
-    committer_key: Option<SigningKeySecp256k1>,
     pub l2_state: Option<L2ConnState>,
 }
 
@@ -163,25 +150,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             negotiated_snap_capability: None,
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
-            next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
+            // next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            // next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
             next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
-            #[cfg(feature = "l2")]
-            latest_block_sent: 0,
-            latest_block_added: 0,
-            blocks_on_queue: BTreeMap::new(),
-            #[cfg(feature = "l2")]
-            latest_batch_sent: 0,
             requested_pooled_txs: HashMap::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
-            #[cfg(feature = "l2")]
-            store_rollup,
-            based,
-            #[cfg(feature = "l2")]
-            committer_key,
             l2_state: None,
         }
     }
@@ -313,15 +289,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
-        let mut supported_capabilities: Vec<Capability> = [
+        let supported_capabilities: Vec<Capability> = [
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
+            &SUPPORTED_BASED_CAPABILITIES[..]
         ]
         .concat();
-        if self.based {
-            supported_capabilities.push(SUPPORTED_BASED_CAPABILITIES);
-        }
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             supported_capabilities,
             PublicKey::from(self.signer.verifying_key()),
@@ -473,20 +447,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.send_new_pooled_tx_hashes().await?;
             self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
         }
-        if Instant::now() >= self.next_block_broadcast {
-            self.send_new_block().await?;
-            self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
-        }
-        if Instant::now() >= self.next_batch_broadcast {
-            self.send_sealed_batch().await?;
-            self.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
-        }
         if Instant::now() >= self.next_block_range_update {
             self.next_block_range_update = Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL;
             if self.should_send_block_range_update().await? {
                 self.send_block_range_update().await?;
             }
         };
+        // FIXME: Re-add this
+        // if let Some(ref mut l2_state) = self.l2_state {
+        //     if Instant::now() >= l2_state.next_block_broadcast {
+        //         self.send_new_block().await?;
+        //         l2_state.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
+        //     }
+        //     if Instant::now() >= l2_state.next_batch_broadcast {
+        //         self.send_sealed_batch().await?;
+        //         l2_state.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
+        //     }
+        // }
         Ok(())
     }
 
@@ -556,7 +533,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.negotiated_eth_capability.is_some();
-        let peer_supports_based = self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES);
+        let peer_supports_based = self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES[0]);
         match message {
             Message::Disconnect(msg_data) => {
                 log_peer_debug(

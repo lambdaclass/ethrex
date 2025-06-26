@@ -7,7 +7,7 @@ use bytes::BufMut;
 use ethrex_common::H512;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_rlp_item},
+    decode::{decode_rlp_item, RLPDecode},
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
 };
@@ -17,7 +17,7 @@ use serde::Serialize;
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
-pub const SUPPORTED_BASED_CAPABILITIES: Capability = Capability::based(1);
+pub const SUPPORTED_BASED_CAPABILITIES: [Capability; 1] = [Capability::based(1)];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capability {

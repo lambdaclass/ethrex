@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use tokio::time::Instant;
 use crate::rlpx::based::get_hash_batch_sealed;
 use crate::rlpx::l2::messages::{BatchSealedMessage, NewBlockMessage};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
@@ -19,6 +20,8 @@ pub struct L2ConnState {
     pub blocks_on_queue: BTreeMap<u64, Block>,
     pub store_rollup: StoreRollup,
     pub commiter_key: Option<SecretKey>,
+    pub next_block_broadcast: Instant,
+    pub next_batch_broadcast: Instant,
 }
 
 fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
@@ -28,76 +31,66 @@ fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     pub async fn send_new_block(&mut self) -> Result<(), RLPxError> {
-        // This section is conditionally compiled based on the "l2" feature flag due to dependencies on the rollup store.
-        #[cfg(feature = "l2")]
-        {
-            if !self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
-                return Ok(());
-            }
-            let latest_block_number = self.storage.get_latest_block_number().await?;
-            for i in self.latest_block_sent + 1..=latest_block_number {
-                debug!(
-                    "Broadcasting new block, current: {}, last broadcasted: {}",
-                    i, self.latest_block_sent
-                );
+        // FIXME: Re-add this
+            // let latest_block_number = self.storage.get_latest_block_number().await?;
+            // for i in self.latest_block_sent + 1..=latest_block_number {
+            //     debug!(
+            //         "Broadcasting new block, current: {}, last broadcasted: {}",
+            //         i, self.latest_block_sent
+            //     );
 
-                let new_block_body =
-                    self.storage
-                        .get_block_body(i)
-                        .await?
-                        .ok_or(RLPxError::InternalError(
-                            "Block body not found after querying for the block number".to_owned(),
-                        ))?;
-                let new_block_header =
-                    self.storage
-                        .get_block_header(i)?
-                        .ok_or(RLPxError::InternalError(
-                            "Block header not found after querying for the block number".to_owned(),
-                        ))?;
-                let new_block = Block {
-                    header: new_block_header,
-                    body: new_block_body,
-                };
-                let (signature, recovery_id) = if let Some(recovered_sig) = self
-                    .store_rollup
-                    .get_signature_by_block(new_block.hash())
-                    .await?
-                {
-                    let mut signature = [0u8; 64];
-                    let mut recovery_id = [0u8; 4];
-                    signature.copy_from_slice(&recovered_sig[..64]);
-                    recovery_id.copy_from_slice(&recovered_sig[64..68]);
-                    (signature, recovery_id)
-                } else {
-                    let Some(secret_key) = self.committer_key else {
-                        return Err(RLPxError::InternalError(
-                            "Secret key is not set for based connection".to_string(),
-                        ));
-                    };
-                    let (recovery_id, signature) = secp256k1::SECP256K1
-                        .sign_ecdsa_recoverable(
-                            &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
-                            &secret_key,
-                        )
-                        .serialize_compact();
-                    let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
-                    (signature, recovery_id)
-                };
-                self.send(Message::NewBlock(NewBlockMessage {
-                    block: new_block,
-                    signature,
-                    recovery_id,
-                }))
-                .await?;
-            }
-            self.latest_block_sent = latest_block_number;
+            //     let new_block_body =
+            //         self.storage
+            //             .get_block_body(i)
+            //             .await?
+            //             .ok_or(RLPxError::InternalError(
+            //                 "Block body not found after querying for the block number".to_owned(),
+            //             ))?;
+            //     let new_block_header =
+            //         self.storage
+            //             .get_block_header(i)?
+            //             .ok_or(RLPxError::InternalError(
+            //                 "Block header not found after querying for the block number".to_owned(),
+            //             ))?;
+            //     let new_block = Block {
+            //         header: new_block_header,
+            //         body: new_block_body,
+            //     };
+            //     let (signature, recovery_id) = if let Some(recovered_sig) = self
+            //         .store_rollup
+            //         .get_signature_by_block(new_block.hash())
+            //         .await?
+            //     {
+            //         let mut signature = [0u8; 64];
+            //         let mut recovery_id = [0u8; 4];
+            //         signature.copy_from_slice(&recovered_sig[..64]);
+            //         recovery_id.copy_from_slice(&recovered_sig[64..68]);
+            //         (signature, recovery_id)
+            //     } else {
+            //         let Some(secret_key) = self.committer_key else {
+            //             return Err(RLPxError::InternalError(
+            //                 "Secret key is not set for based connection".to_string(),
+            //             ));
+            //         };
+            //         let (recovery_id, signature) = secp256k1::SECP256K1
+            //             .sign_ecdsa_recoverable(
+            //                 &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
+            //                 &secret_key,
+            //             )
+            //             .serialize_compact();
+            //         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+            //         (signature, recovery_id)
+            //     };
+            //     self.send(Message::NewBlock(NewBlockMessage {
+            //         block: new_block,
+            //         signature,
+            //         recovery_id,
+            //     }))
+            //     .await?;
+            // }
+            // self.latest_block_sent = latest_block_number;
 
             Ok(())
-        }
-        #[cfg(not(feature = "l2"))]
-        {
-            Ok(())
-        }
     }
 
     pub async fn should_process_new_block(
