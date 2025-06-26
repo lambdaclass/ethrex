@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
-
-use ethrex_blockchain::payload::TransactionQueue;
+use crate::sequencer::errors::BlockProducerError;
 use ethrex_blockchain::{
     Blockchain,
     constants::TX_GAS_COST,
-    payload::{HeadTransaction, PayloadBuildContext, PayloadBuildResult, apply_plain_transaction},
+    payload::{
+        HeadTransaction, PayloadBuildContext, PayloadBuildResult, TransactionQueue,
+        apply_plain_transaction,
+    },
 };
 use ethrex_common::{
     Address,
@@ -24,11 +24,11 @@ use ethrex_metrics::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
+use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error};
-
-use crate::sequencer::errors::BlockProducerError;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -101,7 +101,7 @@ pub async fn fill_transactions(
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
-    let mut txs = fetch_mempool_transactions(blockchain.clone(), context)?;
+    let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -228,7 +228,7 @@ pub async fn fill_transactions(
 
 // TODO: Once #2857 is implemented, we can completely ignore the blobs pool.
 fn fetch_mempool_transactions(
-    blockchain: Arc<Blockchain>,
+    blockchain: &Blockchain,
     context: &mut PayloadBuildContext,
 ) -> Result<TransactionQueue, BlockProducerError> {
     let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
