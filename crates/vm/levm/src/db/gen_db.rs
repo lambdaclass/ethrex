@@ -20,7 +20,7 @@ use super::Database;
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
-    pub current_accounts_state: HashMap<Address, Account>,
+    pub current_accounts_state: CacheDB,
     pub initial_accounts_state: HashMap<Address, Account>,
     pub tx_backup: Option<CallFrameBackup>,
 }
