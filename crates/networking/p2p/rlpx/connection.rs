@@ -1,6 +1,6 @@
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
-    l2::l2_conn_state::{send_new_block, L2ConnState},
+    l2::l2_conn_state::{process_batch_sealed, send_new_block, L2ConnState},
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
@@ -748,12 +748,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.broadcast_message(Message::NewBlock(req))?;
                 }
             }
-            Message::BatchSealed(_req) => {
+            Message::BatchSealed(req) => {
                 {
-                    if self.should_process_batch_sealed(&_req).await? {
-                        self.process_batch_sealed(&_req).await?;
+                    if self.should_process_batch_sealed(&req).await? {
+                        process_batch_sealed(self, &req).await?;
+                        // self.process_batch_sealed(&_req).await?;
                         // for now we broadcast valid messages
-                        self.broadcast_message(Message::BatchSealed(_req))?;
+                        self.broadcast_message(Message::BatchSealed(req))?;
                     }
                 }
             }
@@ -951,14 +952,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(true)
     }
 
-    async fn process_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<(), RLPxError> {
-        self.l2_state.clone().unwrap().store_rollup.seal_batch(msg.batch.clone()).await?;
-        info!(
-            "Sealed batch {} with blocks from {} to {}",
-            msg.batch.number, msg.batch.first_block, msg.batch.last_block
-        );
-        Ok(())
-    }
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
         if let Some(eth) = self.negotiated_eth_capability.clone() {

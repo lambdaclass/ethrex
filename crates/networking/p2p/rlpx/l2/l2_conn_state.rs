@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::rlpx::based::get_hash_batch_sealed;
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
 use crate::rlpx::{connection::RLPxConnection, error::RLPxError, message::Message};
 use crate::rlpx::l2::messages::{NewBlockMessage, BatchSealedMessage};
@@ -8,7 +9,7 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use ethereum_types::Address;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::debug;
+use tracing::{debug, info};
 #[derive(Debug, Clone)]
 pub struct L2ConnState {
     pub latest_block_sent: u64,
@@ -151,4 +152,81 @@ pub async fn should_process_new_block<S: AsyncWrite + AsyncRead + std::marker::U
 fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
     // Until the RPC module can be included in the P2P crate, we skip the validation
     true
+}
+
+
+async fn send_sealed_batch<S: AsyncWrite + AsyncRead + std::marker::Unpin>(conn: &mut RLPxConnection<S>) -> Result<(), RLPxError> {
+    {
+        // FIXME: Avoid clone + unwrap.
+        let next_batch_to_send = conn.l2_state.clone().unwrap().latest_batch_sent + 1;
+        // FIXME: Avoid clone + unwrap.
+        if !conn
+            .l2_state
+            .clone()
+            .unwrap()
+            .store_rollup
+            .contains_batch(&next_batch_to_send)
+            .await?
+        {
+            return Ok(());
+        }
+        // FIXME: Avoid clone + unwrap
+        let Some(batch) = conn.l2_state.clone().unwrap().store_rollup.get_batch(next_batch_to_send).await? else {
+            return Ok(());
+        };
+
+        // FIXME: Avoid clone + unwrap
+        let (signature, recovery_id) = if let Some(recovered_sig) = conn
+            .l2_state
+            .clone()
+            .unwrap()
+            .store_rollup
+            .get_signature_by_batch(next_batch_to_send)
+            .await?
+        {
+            let mut signature = [0u8; 64];
+            let mut recovery_id = [0u8; 4];
+            signature.copy_from_slice(&recovered_sig[..64]);
+            recovery_id.copy_from_slice(&recovered_sig[64..68]);
+            (signature, recovery_id)
+        } else {
+            // FIXME: Avoid clone + unwrap, try to avoid some check
+            let Some(secret_key) = conn.l2_state.clone().unwrap().commiter_key else {
+                return Err(RLPxError::InternalError(
+                    "Secret key is not set for based connection".to_string(),
+                ));
+            };
+            let (recovery_id, signature) = secp256k1::SECP256K1
+                .sign_ecdsa_recoverable(
+                    &SecpMessage::from_digest(get_hash_batch_sealed(&batch)),
+                    &secret_key,
+                )
+                .serialize_compact();
+            let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+            (signature, recovery_id)
+        };
+
+        let msg = Message::BatchSealed(BatchSealedMessage {
+            batch,
+            signature,
+            recovery_id,
+        });
+        conn.send(msg).await?;
+        // FIXME: Avoid clone + unwrap, try to avoid some check
+        let Some(ref mut l2_state) = conn.l2_state else {
+            return Err(RLPxError::IncompatibleProtocol);
+        };
+        l2_state.latest_batch_sent += 1;
+        Ok(())
+    }
+}
+
+pub async fn process_batch_sealed<S: AsyncWrite + AsyncRead + std::marker::Unpin>(conn: &mut RLPxConnection<S>, msg: &BatchSealedMessage) -> Result<(), RLPxError> {
+    // FIXME: Avoid unwrap + clone
+    conn.l2_state.clone().unwrap().store_rollup.seal_batch(msg.batch.clone()).await?;
+    info!(
+        "Sealed batch {} with blocks from {} to {}",
+        msg.batch.number, msg.batch.first_block, msg.batch.last_block
+    );
+    Ok(())
 }
