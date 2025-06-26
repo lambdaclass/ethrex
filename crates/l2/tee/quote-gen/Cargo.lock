@@ -2205,7 +2205,7 @@ dependencies = [
  "k256",
  "keccak-hash",
  "kzg-rs",
- "lambdaworks-math 0.11.0",
+ "lambdaworks-math 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "num-bigint 0.4.6",
  "p256",
@@ -3579,10 +3579,12 @@ dependencies = [
 
 [[package]]
 name = "lambdaworks-math"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "708d148956bcdc21ae5c432b4e20bbaa26fd68d5376a3a6c461f41095abea0ba"
+checksum = "405d65a26831650ba348a503a2881ed7a0483ef3ec17f66e0fc8e2f9c97fc7ca"
 dependencies = [
+ "getrandom 0.2.16",
+ "rand 0.8.5",
  "rayon",
  "serde",
  "serde_json",
