@@ -344,46 +344,54 @@ impl StoreEngine for Store {
             // for each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
             // store account updates
+            let mut state_trie_cursor = tx.cursor::<StateTrieNodes>()?;
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
+                state_trie_cursor.upsert(node_hash, node_data)?;
             }
 
             // store code updates
+            let mut codes_cursor = tx.cursor::<AccountCodes>()?;
             for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())?;
+                codes_cursor.upsert(hashed_address.into(), code.into())?;
             }
 
+            let mut storage_tries_cursor = tx.cursor::<StorageTriesNodes>()?;
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
+                    storage_tries_cursor.upsert((key_1, key_2), node_data)?;
                 }
             }
+            let mut locations_cursor = tx.cursor::<TransactionLocations>()?;
+            let mut bodies_cursor = tx.cursor::<Bodies>()?;
+            let mut headers_cursor = tx.cursor::<Headers>()?;
+            let mut block_numbers_cursor = tx.cursor::<BlockNumbers>()?;
+            let mut receipts_cursor = tx.cursor()?;
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.upsert::<TransactionLocations>(
+                    locations_cursor.upsert(
                         transaction.compute_hash().into(),
                         (number, hash, index as u64).into(),
                     )?;
                 }
 
-                tx.upsert::<Bodies>(
+                bodies_cursor.upsert(
                     hash.into(),
                     BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
                 )?;
 
-                tx.upsert::<Headers>(
+                headers_cursor.upsert(
                     hash.into(),
                     BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
                 )?;
 
-                tx.upsert::<BlockNumbers>(hash.into(), number)?;
+                block_numbers_cursor.upsert(hash.into(), number)?;
             }
             for (block_hash, receipts) in update_batch.receipts {
                 let mut key_values = vec![];
@@ -401,9 +409,8 @@ impl StoreEngine for Store {
                 {
                     key_values.append(&mut entries);
                 }
-                let mut cursor = tx.cursor::<Receipts>()?;
                 for (key, value) in key_values {
-                    cursor.upsert(key, value)?;
+                    receipts_cursor.upsert(key, value)?;
                 }
             }
 
