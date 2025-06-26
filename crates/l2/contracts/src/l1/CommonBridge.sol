@@ -118,6 +118,10 @@ contract CommonBridge is
     
     /// @inheritdoc ICommonBridge
     function deposit(address l2Recipient) public payable {
+        _deposit(l2Recipient);
+    }
+
+    function _deposit(address l2Recipient) private {
         bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
@@ -129,7 +133,7 @@ contract CommonBridge is
     }
 
     receive() external payable {
-        deposit(msg.sender);
+        _deposit(msg.sender);
     }
 
     /// @inheritdoc ICommonBridge
