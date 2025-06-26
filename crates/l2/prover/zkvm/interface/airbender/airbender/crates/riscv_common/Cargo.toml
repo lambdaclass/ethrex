@@ -1,0 +1,18 @@
+[package]
+name = "riscv_common"
+version = "0.1.0"
+edition = "2021"
+authors = ["The Matter Labs Team <hello@matterlabs.dev>"]
+homepage = "https://zksync.io/"
+repository = "https://github.com/matter-labs/zksync-airbender/"
+license = "MIT OR Apache-2.0"
+keywords = ["blockchain", "zksync", "zk", "risc-v"]
+categories = ["cryptography"]
+
+[dependencies]
+heapless = { version = "*", default-features = false, optional = true }
+
+[features]
+uart = ["heapless"]
+custom_panic = []
+custom_allocator = []

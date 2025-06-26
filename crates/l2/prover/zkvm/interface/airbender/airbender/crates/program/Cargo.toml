@@ -1,0 +1,12 @@
+[package]
+name = "airbender"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+riscv_common = { path = "../riscv_common"}
+
+[profile.release]
+lto = true

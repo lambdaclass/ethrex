@@ -1,0 +1,9 @@
+[build]
+target = "riscv32i-unknown-none-elf"
+rustflags = [
+  "-C", "target-feature=+m,-unaligned-scalar-mem,+relax",
+  "-C", "link-arg=-T../../scripts/lds_memory.x",
+  "-C", "link-arg=-T../../scripts/lds_link.x",
+  "-C", "link-arg=--save-temps",
+  "-C", "force-frame-pointers",
+]
