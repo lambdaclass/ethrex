@@ -7,27 +7,27 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{types::EMPTY_KECCACK_HASH, BigEndianHash, H256, U256, U512};
-use ethrex_storage::{Store, STATE_TRIE_SEGMENTS};
+use ethrex_common::{BigEndianHash, H256, U256, U512, constants::EMPTY_KECCACK_HASH};
+use ethrex_storage::{STATE_TRIE_SEGMENTS, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::{
     sync::{
-        mpsc::{channel, Sender},
         Mutex,
+        mpsc::{Sender, channel},
     },
-    time::{sleep, Instant},
+    time::{Instant, sleep},
 };
 use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        bytecode_fetcher, seconds_to_readable, storage_fetcher::storage_fetcher,
-        MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+        MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, bytecode_fetcher,
+        seconds_to_readable, storage_fetcher::storage_fetcher,
     },
 };
 
-use super::{SyncError, SHOW_PROGRESS_INTERVAL_DURATION};
+use super::{SHOW_PROGRESS_INTERVAL_DURATION, SyncError};
 
 /// Downloads the leaf values of a Block's state trie by requesting snap state from peers
 /// Also downloads the storage tries & bytecodes for each downloaded account
@@ -123,7 +123,9 @@ async fn state_sync_segment(
         state_root,
         storage_trie_rebuilder_sender.clone(),
     ));
-    info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
+    info!(
+        "Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}"
+    );
     // Fetch Account Ranges
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut stale = false;
@@ -134,7 +136,9 @@ async fn state_sync_segment(
             segment_number,
             start_account_hash,
         ));
-        info!("[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
+        info!(
+            "[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}"
+        );
         if let Some((account_hashes, accounts, should_continue)) = peers
             .request_account_range(
                 state_root,
@@ -148,7 +152,11 @@ async fn state_sync_segment(
                 accounts.len()
             );
             // Update starting hash for next batch
-            start_account_hash = *account_hashes.last().unwrap();
+            let last_account_hash = account_hashes
+                .last()
+                .ok_or(SyncError::InvalidRangeReceived)?;
+            start_account_hash = *last_account_hash;
+
             // Fetch Account Storage & Bytecode
             let mut code_hashes = vec![];
             let mut account_hashes_and_storage_roots = vec![];
@@ -193,7 +201,9 @@ async fn state_sync_segment(
             break;
         }
     }
-    debug!("[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
+    debug!(
+        "[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process"
+    );
     // Update sync progress (this task is not vital so we can detach it)
     tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),

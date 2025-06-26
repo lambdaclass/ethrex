@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ethrex_trie::{NodeHash, TrieDB, TrieError};
 use redb::{Database, TableDefinition};
 
-const TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("Trie");
+const TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("StateTrieNodes");
 
 pub struct RedBTrie {
     db: Arc<Database>,

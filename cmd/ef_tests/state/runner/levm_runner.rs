@@ -5,18 +5,18 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{
-        tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
-        TxKind,
-    },
     H256, U256,
+    types::{
+        AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
+        tx_fields::*,
+    },
 };
 use ethrex_levm::{
+    EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
     vm::VM,
-    EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
@@ -56,7 +56,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                     levm_cache,
                 )) => {
                     ef_test_report_fork.register_post_state_validation_failure(
-                        transaction_report,
+                        *transaction_report,
                         reason,
                         *vector,
                         levm_cache,
@@ -72,6 +72,9 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                     ef_test_report_fork
                         .register_post_state_validation_error_mismatch(reason, *vector);
                 }
+                Err(EFTestRunnerError::FailedToRevertLEVMState(reason)) => {
+                    ef_test_report_fork.register_error_on_reverting_levm_state(reason, *vector);
+                }
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
                 }
@@ -79,6 +82,11 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
                         "This case should not happen".to_owned(),
                     )));
+                }
+                Err(EFTestRunnerError::TestsFailed) => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
                 }
             }
         }
@@ -325,7 +333,7 @@ pub async fn ensure_post_state(
     fork: &Fork,
     db: &mut GeneralizedDatabase,
 ) -> Result<(), EFTestRunnerError> {
-    let cache = db.cache.clone();
+    let cache = db.current_accounts_state.clone();
     match levm_execution_result {
         Ok(execution_report) => {
             match test.post.vector_post_value(vector, *fork).expect_exception {
@@ -333,7 +341,7 @@ pub async fn ensure_post_state(
                 Some(expected_exceptions) => {
                     let error_reason = format!("Expected exception: {:?}", expected_exceptions);
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        execution_report.clone(),
+                        Box::new(execution_report.clone()),
                         error_reason,
                         cache,
                     ));
@@ -353,7 +361,7 @@ pub async fn ensure_post_state(
                     if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
                     {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            execution_report.clone(),
+                            Box::new(execution_report.clone()),
                             "Post-state root mismatch".to_string(),
                             cache,
                         ));
@@ -371,7 +379,7 @@ pub async fn ensure_post_state(
 
                     if keccak_logs != vector_post_value.logs {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            execution_report.clone(),
+                            Box::new(execution_report.clone()),
                             "Logs mismatch".to_string(),
                             cache,
                         ));
@@ -392,6 +400,23 @@ pub async fn ensure_post_state(
                             error_reason,
                         ));
                     }
+
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
+                        .map_err(|_| {
+                            InternalError::Custom(
+                                "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                    .to_owned(),
+                            )
+                        })?;
+                    let vector_post_value = test.post.vector_post_value(vector, *fork);
+
+                    // Compare the post-state root hash with the expected post-state root hash to ensure levm state is correct (was reverted)
+                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    {
+                        return Err(EFTestRunnerError::FailedToRevertLEVMState(
+                            "Failed to revert LEVM state".to_string(),
+                        ));
+                    }
                 }
                 // Execution result was unsuccessful but no exception was expected.
                 None => {
@@ -405,9 +430,10 @@ pub async fn ensure_post_state(
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
     let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
-    store
-        .apply_account_updates(block_hash, account_updates)
+    let ret_account_updates_batch = store
+        .apply_account_updates_batch(block_hash, account_updates)
         .await
         .unwrap()
-        .unwrap()
+        .unwrap();
+    ret_account_updates_batch.state_trie_hash
 }

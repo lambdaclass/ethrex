@@ -1,15 +1,15 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_common::{
-    types::{Account, AccountUpdate, Fork},
     Address, H256,
+    types::{Account, AccountUpdate, Fork},
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_vm::EvmError;
 use itertools::Itertools;
 use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
-use spinoff::{spinners::Dots, Color, Spinner};
+use spinoff::{Color, Spinner, spinners::Dots};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
@@ -329,9 +329,12 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
         writeln!(f)?;
-        writeln!(f, "Failed tests:")?;
+        writeln!(f, "Passed tests:")?;
         writeln!(f)?;
         writeln!(f, "{}", test_dir_summary_for_shell(&self.0))?;
+        writeln!(f)?;
+        writeln!(f, "Failed tests:")?;
+        writeln!(f)?;
         for report in self.0.iter() {
             if report.passed() {
                 continue;
@@ -412,10 +415,16 @@ impl Display for EFTestsReport {
                         {
                             writeln!(f, "\t\t\t{}", &account_update.to_string())?;
                         } else {
-                            writeln!(f, "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
+                            writeln!(
+                                f,
+                                "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage."
+                            )?;
                         }
                     } else {
-                        writeln!(f, "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
+                        writeln!(
+                            f,
+                            "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage."
+                        )?;
                     }
                     writeln!(f)?;
                 }
@@ -520,7 +529,11 @@ impl EFTestReportForkResult {
     ) {
         self.failed_vectors.insert(
             failed_vector,
-            EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason, levm_cache),
+            EFTestRunnerError::FailedToEnsurePostState(
+                Box::new(transaction_report),
+                reason,
+                levm_cache,
+            ),
         );
     }
 
@@ -532,6 +545,17 @@ impl EFTestReportForkResult {
         self.failed_vectors.insert(
             failed_vector,
             EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason),
+        );
+    }
+
+    pub fn register_error_on_reverting_levm_state(
+        &mut self,
+        reason: String,
+        failed_vector: TestVector,
+    ) {
+        self.failed_vectors.insert(
+            failed_vector,
+            EFTestRunnerError::FailedToRevertLEVMState(reason),
         );
     }
 

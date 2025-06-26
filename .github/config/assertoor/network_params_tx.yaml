@@ -11,7 +11,18 @@ participants:
 
 additional_services:
   - assertoor
-  - dora
+  - spamoor
+#   - dora
+#   - prometheus_grafana
+# ethereum_metrics_exporter_enabled: true
+# Uncomment the previous lines to enable metrics dashboards and dora explorer, useful for local testing
+
+spamoor_params:
+  spammers:
+    - scenario: blobs
+      config:
+        # The eip limits our blob transactions to 6 per block, so for max transactions we keep it at that
+        throughput: 6
 
 network_params:
   electra_fork_epoch: 1

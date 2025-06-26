@@ -1,4 +1,4 @@
-use ethrex_common::{types::Account, Address};
+use ethrex_common::{Address, types::Account};
 use std::collections::HashMap;
 
 pub type CacheDB = HashMap<Address, Account>;
@@ -27,10 +27,6 @@ pub fn insert_account(
     account: Account,
 ) -> Option<Account> {
     cached_accounts.insert(address, account)
-}
-
-pub fn remove_account(cached_accounts: &mut CacheDB, address: &Address) -> Option<Account> {
-    cached_accounts.remove(address)
 }
 
 pub fn is_account_cached(cached_accounts: &CacheDB, address: &Address) -> bool {

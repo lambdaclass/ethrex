@@ -1,15 +1,19 @@
-name: Check README
+name: Check CLI Help Consistency
 
 on:
   pull_request:
     paths:
       - "cmd/ethrex/**"
-      - "README.md"
+      - "docs/l1/dev-setup-l1.md"
       - ".github/workflows/pr_lint_readme.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
+
+env:
+  # Remember to update the triggers whenever this path changes
+  MDFILE_WITH_CLI_HELP: docs/l1/dev-setup-l1.md
 
 jobs:
   check-cli-help:
@@ -21,7 +25,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -33,18 +39,18 @@ jobs:
         id: generate_help
         run: cargo run --bin ethrex -- --help > current_help.txt
 
-      - name: Extract documented CLI help from README
+      - name: Extract documented CLI help from documentation
         id: extract_help
         run: |
           # Extract content between markers, remove markers, remove code block fences
-          sed -n '/<!-- BEGIN_CLI_HELP -->/,/<!-- END_CLI_HELP -->/p' README.md \
+          sed -n '/<!-- BEGIN_CLI_HELP -->/,/<!-- END_CLI_HELP -->/p' ${{env.MDFILE_WITH_CLI_HELP}} \
             | sed '1d;$d' \
             | sed '/^```/d' \
             > documented_help.txt
 
           # Check if extraction was successful (simple check: file not empty)
           if [ ! -s documented_help.txt ]; then
-            echo "::error::Could not extract CLI help section from README.md. Check markers <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP -->."
+            echo "::error::Could not extract CLI help section from ${{env.MDFILE_WITH_CLI_HELP}}. Check markers <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP -->."
             exit 1
           fi
 
@@ -56,11 +62,11 @@ jobs:
           # -B: ignore changes whose lines are all blank
           # This makes the check less sensitive to minor formatting differences.
           if ! diff -ubB documented_help.txt current_help.txt; then
-            echo "::error::CLI help in README.md is out of date."
+            echo "::error::CLI help in ${{env.MDFILE_WITH_CLI_HELP}} is out of date."
             echo "Please run 'cargo run --bin ethrex -- --help', copy the output,"
-            echo "and update the section between <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP --> in README.md."
+            echo "and update the section between <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP --> in ${{env.MDFILE_WITH_CLI_HELP}}."
             echo "(Ignoring differences in spacing and blank lines)."
             exit 1
           else
-            echo "README CLI help is up to date."
+            echo "${{env.MDFILE_WITH_CLI_HELP}} CLI help is up to date."
           fi

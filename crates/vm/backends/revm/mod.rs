@@ -15,28 +15,28 @@ use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 
-use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
+use revm::db::states::bundle_state::BundleRetention;
 
-use revm::{
-    primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
-    Evm,
-};
 use revm::{Database, DatabaseCommit};
+use revm::{
+    Evm,
+    primitives::{B256, BlobExcessGasAndPrice, BlockEnv, TxEnv},
+};
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use ethrex_common::{
-    types::{
-        requests::Requests, Block, BlockHeader, GenericTransaction, Receipt, Transaction, TxKind,
-        Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
-    },
     Address,
+    types::{
+        Block, BlockHeader, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
+        Transaction, TxKind, Withdrawal, requests::Requests,
+    },
 };
 use revm_primitives::Bytes;
 use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
+    AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
     Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
-    TxKind as RevmTxKind, U256 as RevmU256,
+    TxKind as RevmTxKind, U256 as RevmU256, ruint::Uint,
 };
 use std::cmp::min;
 
@@ -74,7 +74,9 @@ impl REVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, sender) in block.body.get_transactions_with_sender() {
+        for (tx, sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
             let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
@@ -142,7 +144,7 @@ impl REVM {
             None => {
                 return Err(EvmError::Header(
                     "parent_beacon_block_root field is missing".to_string(),
-                ))
+                ));
             }
             Some(beacon_root) => beacon_root,
         };
@@ -211,11 +213,16 @@ impl REVM {
             } => Ok(output.into()),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
-                let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                let err_str = format!(
+                    "Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}"
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
-                let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                let err_str = format!(
+                    "Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
+                    output
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
@@ -252,11 +259,16 @@ impl REVM {
             } => Ok(output.into()),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
-                let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                let err_str = format!(
+                    "Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}"
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
-                let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                let err_str = format!(
+                    "Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
+                    output
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
@@ -294,6 +306,37 @@ impl REVM {
                 continue;
             }
 
+            // Edge case: Account was destroyed and created again afterwards with CREATE2.
+            if matches!(account.status, AccountStatus::DestroyedChanged) {
+                // Push to account updates the removal of the account and then push the new state of the account.
+                // This is for clearing the account's storage when it was selfdestructed in the first place.
+                account_updates.push(AccountUpdate::removed(address));
+                // This will always be Some though, because it is DestroyedChanged
+                if let Some(new_acc_info) = account.account_info() {
+                    let new_acc_update = AccountUpdate {
+                        address,
+                        removed: false,
+                        info: Some(AccountInfo {
+                            code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
+                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                            nonce: new_acc_info.nonce,
+                        }),
+                        code: new_acc_info.code.map(|c| c.original_bytes().0),
+                        added_storage: account
+                            .storage
+                            .iter()
+                            .map(|(key, slot)| {
+                                (
+                                    H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                                    U256::from_little_endian(slot.present_value().as_le_slice()),
+                                )
+                            })
+                            .collect(),
+                    };
+                    account_updates.push(new_acc_update);
+                }
+                continue;
+            }
             // Apply account changes to DB
             let mut account_update = AccountUpdate::new(address);
             // If the account was changed then both original and current info will be present in the bundle account

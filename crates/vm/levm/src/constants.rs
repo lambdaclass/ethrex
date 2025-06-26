@@ -1,7 +1,7 @@
 use ethrex_common::{H256, U256};
 use k256::{
-    elliptic_curve::{bigint::Encoding, Curve},
     Secp256k1,
+    elliptic_curve::{Curve, bigint::Encoding},
 };
 use std::sync::LazyLock;
 
@@ -27,10 +27,11 @@ pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
 // Transaction costs in gas
 pub const TX_BASE_COST: u64 = 21000;
 
-pub const MAX_CODE_SIZE: usize = 0x6000;
+pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
 
-pub const INVALID_CONTRACT_PREFIX: u8 = 0xef;
+// https://eips.ethereum.org/EIPS/eip-3541
+pub const EOF_PREFIX: u8 = 0xef;
 
 pub mod create_opcode {
     use ethrex_common::U256;

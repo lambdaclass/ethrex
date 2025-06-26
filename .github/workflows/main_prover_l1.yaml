@@ -26,7 +26,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -37,7 +39,7 @@ jobs:
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.7
+          ~/.sp1/bin/sp1up --version 5.0.0
 
       - name: Build
         run: |
@@ -50,9 +52,9 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "dummy"
         run: |
-          cp test_data/rpc_prover/cache_22240087.json cmd/ethrex_replay
+          cp test_data/rpc_prover/cache_3990967.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
+          make prove-sp1-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
@@ -60,7 +62,7 @@ jobs:
           name: "L1 block proving benchmark"
           tool: "customBiggerIsBetter"
           output-file-path: cmd/ethrex_replay/bench_latest.json
-          benchmark-data-dir-path: "."
+          benchmark-data-dir-path: "benchmarks"
           # Access token to deploy GitHub Pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically
@@ -70,12 +72,11 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-      # Reenable when job is stable
-      # - name: Report Status
-      #   if: always()
-      #   uses: ravsamhq/notify-slack-action@v2
-      #   with:
-      #     status: ${{ job.status }}
-      #     notify_when: 'failure'
-      #   env:
-      #     SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      - name: Report Status
+        if: always()
+        uses: ravsamhq/notify-slack-action@v2
+        with:
+          status: ${{ job.status }}
+          notify_when: 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}

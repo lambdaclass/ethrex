@@ -7,7 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::{public_key_from_signing_key, P2PContext},
+    network::{P2PContext, public_key_from_signing_key},
     peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -20,7 +20,6 @@ use rand::rngs::OsRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
-    future::IntoFuture,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -28,7 +27,7 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
-use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
+use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 #[cfg(feature = "l2")]
 use crate::l2::L2Options;
@@ -94,7 +93,9 @@ pub fn open_store(data_dir: &str) -> Store {
 #[cfg(feature = "l2")]
 pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_redb")] {
+        if #[cfg(feature = "rollup_storage_sql")] {
+            let engine_type = EngineTypeRollup::SQL;
+        } else if #[cfg(feature = "rollup_storage_redb")] {
             let engine_type = EngineTypeRollup::RedB;
         } else if #[cfg(feature = "rollup_storage_libmdbx")] {
             let engine_type = EngineTypeRollup::Libmdbx;
@@ -112,6 +113,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+    info!("Initiating blockchain with EVM: {}", evm_engine);
     Blockchain::new(evm_engine, store).into()
 }
 
@@ -157,8 +159,7 @@ pub async fn init_rpc_api(
         l2_opts.sponsor_private_key,
         #[cfg(feature = "l2")]
         rollup_store,
-    )
-    .into_future();
+    );
 
     tracker.spawn(rpc_api);
 }
@@ -286,7 +287,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 pub fn get_signer(data_dir: &str) -> SigningKey {
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = Path::new(data_dir).join("node.key");
-    let signer = match fs::read(key_path.clone()) {
+    match fs::read(key_path.clone()) {
         Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
             info!(
@@ -301,8 +302,7 @@ pub fn get_signer(data_dir: &str) -> SigningKey {
                 .expect("Newly created signer could not be saved to disk.");
             signer
         }
-    };
-    signer
+    }
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {

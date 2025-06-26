@@ -7,11 +7,11 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
+    Address, U256,
     types::{
         AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, Signable,
         TxKind,
     },
-    Address, U256,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -138,18 +138,20 @@ impl RpcHandler for SponsoredTx {
             .lock()
             .await
             .estimate_gas_tip(&context.storage)
-            .await
-            .map_err(RpcErr::from)?;
+            .await?;
         let gas_price_request = GasPrice {}.handle(context.clone()).await?;
-        let max_fee_per_gas = u64::from_str_radix(
-            gas_price_request
-                .as_str()
-                .unwrap_or("0x0")
-                .strip_prefix("0x")
-                .unwrap(),
-            16,
-        )
-        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+
+        let gas_price_request = gas_price_request
+            .as_str()
+            .unwrap_or("0x0")
+            .strip_prefix("0x")
+            .ok_or(RpcErr::InvalidEthrexL2Message(
+                "Gas price request has invalid format".to_string(),
+            ))?;
+
+        let max_fee_per_gas = u64::from_str_radix(gas_price_request, 16).map_err(|error| {
+            RpcErr::InvalidEthrexL2Message(format!("Gas price request has invalid size: {error}"))
+        })?;
 
         let mut tx = if let Some(auth_list) = &self.authorization_list {
             SendRawTransactionRequest::EIP7702(EIP7702Transaction {
@@ -182,7 +184,7 @@ impl RpcHandler for SponsoredTx {
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Error while creating transaction".to_string(),
-                ))
+                ));
             }
         };
         generic.gas = None;
@@ -195,15 +197,20 @@ impl RpcHandler for SponsoredTx {
         }
         .handle(context.clone())
         .await?;
-        let gas_limit = u64::from_str_radix(
-            estimate_gas_request
-                .as_str()
-                .unwrap_or("0x0")
-                .strip_prefix("0x")
-                .unwrap(),
-            16,
-        )
-        .unwrap();
+
+        let estimate_gas_request = estimate_gas_request
+            .as_str()
+            .unwrap_or("0x0")
+            .strip_prefix("0x")
+            .ok_or(RpcErr::InvalidEthrexL2Message(
+                "Estimate gas request has invalid format".to_string(),
+            ))?;
+
+        let gas_limit = u64::from_str_radix(estimate_gas_request, 16).map_err(|error| {
+            RpcErr::InvalidEthrexL2Message(format!(
+                "Estimate gas request has invalid size: {error}"
+            ))
+        })?;
         if gas_limit == 0 || gas_limit > GAS_LIMIT_HARD_LIMIT {
             return Err(RpcErr::InvalidEthrexL2Message(
                 "tx too expensive".to_string(),
@@ -215,19 +222,19 @@ impl RpcHandler for SponsoredTx {
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk);
+                tx.sign_inplace(&context.sponsor_pk)?;
             }
             SendRawTransactionRequest::EIP1559(ref mut tx) => {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk);
+                tx.sign_inplace(&context.sponsor_pk)?;
             }
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Error while creating transaction".to_string(),
-                ))
+                ));
             }
         }
 

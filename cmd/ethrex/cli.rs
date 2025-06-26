@@ -1,24 +1,24 @@
 use std::{
-    fs::{metadata, read_dir, File},
+    fs::{File, metadata, read_dir},
     io::{self, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
+use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
-use tracing::{info, warn, Level};
+use tracing::{Level, info, warn};
 
 use crate::{
+    DEFAULT_DATADIR,
     initializers::{init_blockchain, init_store, open_store},
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, set_datadir},
-    DEFAULT_DATADIR,
 };
 
 #[cfg(feature = "l2")]
@@ -304,15 +304,15 @@ impl Subcommand {
                 }
 
                 let network = &opts.network;
-                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
+                let genesis = network.get_genesis()?;
+                import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
-                let state_root = Network::from(genesis_path)
-                    .get_genesis()
-                    .compute_state_root();
+                let genesis = Network::from(genesis_path).get_genesis()?;
+                let state_root = genesis.compute_state_root();
                 println!("{:#x}", state_root);
             }
             #[cfg(feature = "l2")]
@@ -398,12 +398,22 @@ pub async fn import_blocks(
             .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
     }
 
-    if let Some(last_block) = blocks.last() {
-        let hash = last_block.hash();
-        let _ = apply_fork_choice(&store, hash, hash, hash)
-            .await
-            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
+    _ = store
+        .mark_chain_as_canonical(&blocks)
+        .await
+        .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
+
+    // Make head canonical and label all special blocks correctly.
+    if let Some(block) = blocks.last() {
+        store
+            .update_finalized_block_number(block.header.number)
+            .await?;
+        store.update_safe_block_number(block.header.number).await?;
+        store
+            .update_latest_block_number(block.header.number)
+            .await?;
     }
+
     info!("Added {size} blocks to blockchain");
     Ok(())
 }
@@ -428,7 +438,9 @@ pub async fn export_blocks(
     };
     // Check that the requested range doesn't exceed our current chain length
     if last_number.is_some_and(|number| number > latest_number) {
-        warn!("The requested block range exceeds the current amount of blocks in the chain {latest_number}");
+        warn!(
+            "The requested block range exceeds the current amount of blocks in the chain {latest_number}"
+        );
         return;
     }
     let end = last_number.unwrap_or(latest_number);

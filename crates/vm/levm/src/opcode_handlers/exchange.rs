@@ -1,5 +1,5 @@
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -13,21 +13,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
 
-        let stack_top_index = current_call_frame
-            .stack
-            .len()
-            .checked_sub(1)
-            .ok_or(VMError::StackUnderflow)?;
-
         if current_call_frame.stack.len() < depth {
-            return Err(VMError::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow.into());
         }
-        let to_swap_index = stack_top_index
-            .checked_sub(depth)
-            .ok_or(VMError::StackUnderflow)?;
-        current_call_frame
-            .stack
-            .swap(stack_top_index, to_swap_index)?;
+        current_call_frame.stack.swap(depth)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

@@ -1,6 +1,6 @@
-use crate::{config::ProverConfig, prove, to_calldata};
+use crate::{config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::ProofCalldata,
+    sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::BatchProof,
 };
 use std::time::Duration;
 use tokio::{
@@ -24,6 +24,7 @@ struct ProverData {
 struct Prover {
     prover_server_endpoint: String,
     proving_time_ms: u64,
+    aligned_mode: bool,
 }
 
 impl Prover {
@@ -31,6 +32,7 @@ impl Prover {
         Self {
             prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
             proving_time_ms: cfg.proving_time_ms,
+            aligned_mode: cfg.aligned_mode,
         }
     }
 
@@ -48,15 +50,15 @@ impl Prover {
             };
             // If we get the input
             // Generate the Proof
-            let Ok(proving_output) = prove(prover_data.input)
-                .and_then(to_calldata)
+            let Ok(batch_proof) = prove(prover_data.input, self.aligned_mode)
+                .and_then(|output| to_batch_proof(output, self.aligned_mode))
                 .inspect_err(|e| error!(e))
             else {
                 continue;
             };
 
             let _ = self
-                .submit_proof(prover_data.batch_number, proving_output)
+                .submit_proof(prover_data.batch_number, batch_proof)
                 .await
                 .inspect_err(|e|
                     // TODO: Retry?
@@ -91,19 +93,18 @@ impl Prover {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
-                parent_block_header: input.parent_block_header,
                 db: input.db,
                 elasticity_multiplier: input.elasticity_multiplier,
+                #[cfg(feature = "l2")]
+                blob_commitment: input.blob_commitment,
+                #[cfg(feature = "l2")]
+                blob_proof: input.blob_proof,
             },
         })
     }
 
-    async fn submit_proof(
-        &self,
-        batch_number: u64,
-        proving_output: ProofCalldata,
-    ) -> Result<(), String> {
-        let submit = ProofData::proof_submit(batch_number, proving_output);
+    async fn submit_proof(&self, batch_number: u64, batch_proof: BatchProof) -> Result<(), String> {
+        let submit = ProofData::proof_submit(batch_number, batch_proof);
 
         let ProofData::ProofSubmitACK { batch_number } =
             connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)

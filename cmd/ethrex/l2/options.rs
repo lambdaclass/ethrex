@@ -2,12 +2,13 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
-    BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
-    SequencerConfig,
+    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
+    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
+    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
 };
 use ethrex_rpc::clients::eth::{
-    get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
-    MIN_RETRY_DELAY,
+    BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
+    get_address_from_secret_key,
 };
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
@@ -56,6 +57,27 @@ pub struct SequencerOptions {
     pub committer_opts: CommitterOptions,
     #[command(flatten)]
     pub proof_coordinator_opts: ProofCoordinatorOptions,
+    #[command(flatten)]
+    pub based_opts: BasedOptions,
+    #[command(flatten)]
+    pub aligned_opts: AlignedOptions,
+    #[arg(
+        long = "validium",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_L2_VALIDIUM",
+        help_heading = "L2 options",
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+    )]
+    pub validium: bool,
+    #[clap(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_BASED",
+        help_heading = "Based options"
+    )]
+    pub based: bool,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -75,7 +97,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 l1_private_key: opts.committer_opts.committer_l1_private_key,
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
-                validium: opts.committer_opts.validium,
+                validium: opts.validium,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -104,6 +126,32 @@ impl From<SequencerOptions> for SequencerConfig {
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
+                validium: opts.validium,
+            },
+            based: BasedConfig {
+                based: opts.based,
+                state_updater: StateUpdaterConfig {
+                    sequencer_registry: opts
+                        .based_opts
+                        .state_updater_opts
+                        .sequencer_registry
+                        .unwrap_or_default(),
+                    check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
+                },
+                block_fetcher: BlockFetcherConfig {
+                    fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
+                    fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
+                },
+            },
+            aligned: AlignedConfig {
+                aligned_mode: opts.aligned_opts.aligned,
+                aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
+                beacon_url: opts.aligned_opts.beacon_url.unwrap_or_default(),
+                network: resolve_aligned_network(
+                    &opts.aligned_opts.aligned_network.unwrap_or_default(),
+                ),
+                fee_estimate: opts.aligned_opts.fee_estimate,
+                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
         }
     }
@@ -297,15 +345,6 @@ pub struct CommitterOptions {
         help_heading = "L1 Committer options"
     )]
     pub arbitrary_base_blob_gas_price: u64,
-    #[arg(
-        long = "committer.validium",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_COMMITTER_VALIDIUM",
-        help_heading = "L1 Committer options",
-        help = "If set to true, initializes the committer in validium mode."
-    )]
-    pub validium: bool,
 }
 
 impl Default for CommitterOptions {
@@ -320,7 +359,6 @@ impl Default for CommitterOptions {
                 .unwrap(),
             commit_time_ms: 1000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
-            validium: false,
         }
     }
 }
@@ -364,7 +402,7 @@ pub struct ProofCoordinatorOptions {
     pub proof_send_interval_ms: u64,
     #[arg(
         long = "proof-coordinator.dev-mode",
-        default_value = "true",
+        default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_PROOF_COORDINATOR_DEV_MODE",
         help_heading = "Proof coordinator options"
@@ -382,7 +420,129 @@ impl Default for ProofCoordinatorOptions {
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            dev_mode: true,
+            dev_mode: false,
         }
     }
+}
+#[derive(Parser, Clone)]
+pub struct AlignedOptions {
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        default_value = "false",
+        value_name = "ALIGNED_MODE",
+        env = "ETHREX_ALIGNED_MODE",
+        help_heading = "Aligned options"
+    )]
+    pub aligned: bool,
+    #[arg(
+        long,
+        default_value = "5000",
+        value_name = "ETHREX_ALIGNED_VERIFIER_INTERVAL_MS",
+        env = "ETHREX_ALIGNED_VERIFIER_INTERVAL_MS",
+        help_heading = "Aligned options"
+    )]
+    pub aligned_verifier_interval_ms: u64,
+    #[arg(
+        long = "aligned.beacon-url",
+        value_name = "BEACON_URL",
+        required_if_eq("aligned", "true"),
+        env = "ETHREX_ALIGNED_BEACON_URL",
+        help = "Beacon url to use.",
+        help_heading = "Aligned options"
+    )]
+    pub beacon_url: Option<String>,
+    #[arg(
+        long,
+        value_name = "ETHREX_ALIGNED_NETWORK",
+        env = "ETHREX_ALIGNED_NETWORK",
+        required_if_eq("aligned", "true"),
+        default_value = "devnet",
+        help = "L1 network name for Aligned sdk",
+        help_heading = "Aligned options"
+    )]
+    pub aligned_network: Option<String>,
+
+    #[arg(
+        long = "aligned.fee-estimate",
+        default_value = "instant",
+        value_name = "FEE_ESTIMATE",
+        env = "ETHREX_ALIGNED_FEE_ESTIMATE",
+        help = "Fee estimate for Aligned sdk",
+        help_heading = "Aligned options"
+    )]
+    pub fee_estimate: String,
+    #[arg(
+        long,
+        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
+        required_if_eq("aligned", "true"),
+        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
+        help_heading = "Aligned options",
+        help = "Path to the SP1 elf. This is used for proof verification."
+    )]
+    pub aligned_sp1_elf_path: Option<String>,
+}
+
+impl Default for AlignedOptions {
+    fn default() -> Self {
+        Self {
+            aligned: false,
+            aligned_verifier_interval_ms: 5000,
+            beacon_url: Some("http://127.0.0.1:58801".to_string()),
+            aligned_network: Some("devnet".to_string()),
+            fee_estimate: "instant".to_string(),
+            aligned_sp1_elf_path: Some(format!(
+                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                env!("CARGO_MANIFEST_DIR")
+            )),
+        }
+    }
+}
+
+#[derive(Parser, Default)]
+pub struct BasedOptions {
+    #[clap(flatten)]
+    pub state_updater_opts: StateUpdaterOptions,
+    #[clap(flatten)]
+    pub block_fetcher: BlockFetcherOptions,
+}
+
+#[derive(Parser, Default)]
+pub struct StateUpdaterOptions {
+    #[arg(
+        long = "state-updater.sequencer-registry",
+        value_name = "ADDRESS",
+        env = "ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY",
+        required_if_eq("based", "true"),
+        help_heading = "Based options"
+    )]
+    pub sequencer_registry: Option<Address>,
+    #[arg(
+        long = "state-updater.check-interval",
+        default_value = "1000",
+        value_name = "UINT64",
+        env = "ETHREX_STATE_UPDATER_CHECK_INTERVAL",
+        help_heading = "Based options"
+    )]
+    pub check_interval_ms: u64,
+}
+
+#[derive(Parser, Default)]
+pub struct BlockFetcherOptions {
+    #[arg(
+        long = "block-fetcher.fetch_interval_ms",
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
+        help_heading = "Based options"
+    )]
+    pub fetch_interval_ms: u64,
+    #[arg(
+        long,
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_BLOCK_STEP",
+        help_heading = "Based options"
+    )]
+    pub fetch_block_step: u64,
 }

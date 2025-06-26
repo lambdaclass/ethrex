@@ -1,3 +1,4 @@
+use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
@@ -8,26 +9,26 @@ use crate::rlp::{
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
+use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
+use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{
     dupsort,
-    orm::{table, Database},
+    orm::{Database, table},
     table_info,
 };
-use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
-use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -125,6 +126,89 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // store account updates
+            for (node_hash, node_data) in update_batch.account_updates {
+                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            // store code updates
+            for (hashed_address, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            for (hashed_address, nodes) in update_batch.storage_updates {
+                for (node_hash, node_data) in nodes {
+                    let key_1: [u8; 32] = hashed_address.into();
+                    let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+            for block in update_batch.blocks {
+                // store block
+                let number = block.header.number;
+                let hash = block.hash();
+
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    tx.upsert::<TransactionLocations>(
+                        transaction.compute_hash().into(),
+                        (number, hash, index as u64).into(),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
+                }
+
+                tx.upsert::<Bodies>(
+                    hash.into(),
+                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+
+                tx.upsert::<Headers>(
+                    hash.into(),
+                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+
+                tx.upsert::<BlockNumbers>(hash.into(), number)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+            for (block_hash, receipts) in update_batch.receipts {
+                // store receipts
+                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+                for mut entries in
+                    receipts
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, receipt)| {
+                            let key = (block_hash, index as u64).into();
+                            let receipt_rlp = receipt.encode_to_vec();
+                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                        })
+                {
+                    key_values.append(&mut entries);
+                }
+                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+                for (key, value) in key_values {
+                    cursor
+                        .upsert(key, value)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn add_block_header(
         &self,
         block_hash: BlockHash,
@@ -227,6 +311,27 @@ impl StoreEngine for Store {
         } else {
             Ok(None)
         }
+    }
+
+    async fn remove_block(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let Some(hash) = self.get_block_hash_by_block_number(block_number)? else {
+            return Ok(());
+        };
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        txn.delete::<CanonicalBlockHashes>(block_number, None)
+            .map_err(StoreError::LibmdbxError)?;
+        txn.delete::<Bodies>(hash.into(), None)
+            .map_err(StoreError::LibmdbxError)?;
+        txn.delete::<Headers>(hash.into(), None)
+            .map_err(StoreError::LibmdbxError)?;
+        txn.delete::<BlockNumbers>(hash.into(), None)
+            .map_err(StoreError::LibmdbxError)?;
+
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn get_block_bodies(
@@ -682,27 +787,6 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values).await
     }
 
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (block_hash, receipts) in receipts.into_iter() {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-
-                key_values.append(&mut entries);
-            }
-        }
-
-        self.write_batch::<Receipts>(key_values).await
-    }
-
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;
@@ -971,17 +1055,17 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-
-        let mut account_snapshots = Vec::new();
-        let mut cursor_it = cursor.walk(Some(start.into()));
-        while let Some(Ok((hash, acc))) = cursor_it.next() {
-            account_snapshots.push((hash.to()?, acc.to()?));
-        }
-
-        Ok(account_snapshots
-            .into_iter()
-            .take(MAX_SNAPSHOT_READS)
-            .collect::<Vec<_>>())
+        let iter = cursor
+            .walk(Some(start.into()))
+            .map_while(|res| {
+                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
+                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
+                    _ => None,
+                })
+            })
+            .flatten()
+            .take(MAX_SNAPSHOT_READS);
+        Ok(iter.collect::<Vec<_>>())
     }
 
     async fn read_storage_snapshot(
@@ -1358,8 +1442,8 @@ mod tests {
     use crate::rlp::TupleRLP;
     use bytes::Bytes;
     use ethrex_common::{
-        types::{BlockHash, Index, Log, TxType},
         Address, H256,
+        types::{BlockHash, Index, Log, TxType},
     };
 
     #[test]
@@ -1540,7 +1624,7 @@ mod tests {
             let txn = db.begin_read().unwrap();
             let cursor = txn.cursor::<DupsortExample>().unwrap();
             let mut acc = 0;
-            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0 .0) {
+            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0.0) {
                 acc += key;
             }
 
@@ -1685,16 +1769,16 @@ mod tests {
         topics_size: usize,
     ) -> Receipt {
         let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
-        let large_topics: Vec<H256> = std::iter::repeat(H256::random())
-            .take(topics_size)
-            .collect();
+        let large_topics: Vec<H256> = std::iter::repeat_n(H256::random(), topics_size).collect();
 
-        let logs = std::iter::repeat(Log {
-            address: Address::random(),
-            topics: large_topics.clone(),
-            data: large_data.clone(),
-        })
-        .take(logs_size)
+        let logs = std::iter::repeat_n(
+            Log {
+                address: Address::random(),
+                topics: large_topics.clone(),
+                data: large_data.clone(),
+            },
+            logs_size,
+        )
         .collect();
 
         Receipt {

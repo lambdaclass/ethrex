@@ -1,7 +1,7 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
-    payload::{create_payload, BuildPayloadArgs},
+    payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
@@ -240,13 +240,15 @@ async fn handle_forkchoice(
                     }
                 }
                 Ok(None) => {
-                    warn!("Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network")
+                    warn!(
+                        "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
+                    )
                 }
                 Err(_) => {
                     return Err(RpcErr::Internal(
                         "Failed to get block by hash to remove transactions from the mempool"
                             .to_string(),
-                    ))
+                    ));
                 }
             };
 
@@ -375,7 +377,9 @@ async fn build_payload(
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
-    let payload_id = args.id();
+    let payload_id = args
+        .id()
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let payload = match create_payload(&args, &context.storage) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),

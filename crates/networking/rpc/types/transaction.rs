@@ -1,10 +1,10 @@
+use crate::utils::RpcErr;
 use ethrex_common::{
-    serde_utils,
+    Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
         LegacyTransaction, PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
     },
-    Address, H256,
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
@@ -30,18 +30,18 @@ impl RpcTransaction {
         block_number: Option<BlockNumber>,
         block_hash: BlockHash,
         transaction_index: Option<usize>,
-    ) -> Self {
-        let from = tx.sender();
+    ) -> Result<Self, RpcErr> {
+        let from = tx.sender()?;
         let hash = tx.compute_hash();
         let transaction_index = transaction_index.map(|n| n as u64);
-        RpcTransaction {
+        Ok(RpcTransaction {
             tx,
             block_number,
             block_hash,
             from,
             hash,
             transaction_index,
-        }
+        })
     }
 }
 

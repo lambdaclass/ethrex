@@ -13,7 +13,7 @@ use crate::{
     utils::RpcErr,
 };
 use ethrex_common::types::{
-    calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt, calculate_base_fee_per_blob_gas,
 };
 use ethrex_storage::Store;
 
@@ -51,6 +51,11 @@ pub struct GetRawReceipts {
 pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
+pub struct ExecutionWitness {
+    pub from: BlockIdentifier,
+    pub to: Option<BlockIdentifier>,
+}
+
 impl RpcHandler for GetBlockByNumberRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockByNumberRequest, RpcErr> {
         let params = params
@@ -79,7 +84,7 @@ impl RpcHandler for GetBlockByNumberRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated);
+        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
 
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -113,7 +118,7 @@ impl RpcHandler for GetBlockByHashRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated);
+        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -330,6 +335,92 @@ impl RpcHandler for GetBlobBaseFee {
     }
 }
 
+impl RpcHandler for ExecutionWitness {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() > 2 {
+            return Err(RpcErr::BadParams(format!(
+                "Expected one or two params and {} were provided",
+                params.len()
+            )));
+        }
+
+        let from = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let to = if let Some(param) = params.get(1) {
+            Some(BlockIdentifier::parse(param.clone(), 1)?)
+        } else {
+            None
+        };
+
+        Ok(ExecutionWitness { from, to })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let from_block_number = self
+            .from
+            .resolve_block_number(&context.storage)
+            .await?
+            .ok_or(RpcErr::Internal(
+                "Failed to resolve block number".to_string(),
+            ))?;
+        let to_block_number = self
+            .to
+            .as_ref()
+            .unwrap_or(&self.from)
+            .resolve_block_number(&context.storage)
+            .await?
+            .ok_or(RpcErr::Internal(
+                "Failed to resolve block number".to_string(),
+            ))?;
+
+        if from_block_number > to_block_number {
+            return Err(RpcErr::BadParams(
+                "From block number is greater than To block number".to_string(),
+            ));
+        }
+
+        if self.to.is_some() {
+            info!(
+                "Requested execution witness from block: {from_block_number} to {to_block_number}",
+            );
+        } else {
+            info!("Requested execution witness for block: {from_block_number}",);
+        }
+
+        let mut blocks = Vec::new();
+        let mut block_headers = Vec::new();
+        for block_number in from_block_number..=to_block_number {
+            let header = context
+                .storage
+                .get_block_header(block_number)?
+                .ok_or(RpcErr::Internal("Could not get block header".to_string()))?;
+            let parent_header = context
+                .storage
+                .get_block_header_by_hash(header.parent_hash)?
+                .ok_or(RpcErr::Internal(
+                    "Could not get parent block header".to_string(),
+                ))?;
+            block_headers.push(parent_header);
+            let block = context
+                .storage
+                .get_block_by_hash(header.hash())
+                .await?
+                .ok_or(RpcErr::Internal("Could not get block body".to_string()))?;
+            blocks.push(block);
+        }
+
+        let execution_witness = context
+            .blockchain
+            .generate_witness_for_blocks(&blocks)
+            .await
+            .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
+
+        serde_json::to_value(execution_witness).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
 pub async fn get_all_block_rpc_receipts(
     block_number: BlockNumber,
     header: BlockHeader,
@@ -365,7 +456,7 @@ pub async fn get_all_block_rpc_receipts(
         };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info =
-            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee);
+            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee)?;
         let receipt = RpcReceipt::new(
             receipt.clone(),
             tx_info,

@@ -65,3 +65,9 @@ cmd/ef_tests/state/levm_perfgraphs
 prof_*.json
 prof.json
 profile.json.gz
+
+# mdbook artifacts
+book/
+# mdbook-mermaid artifacts
+mermaid-init.js
+mermaid.min.js
