@@ -3916,7 +3916,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "keccak-hash",
- "lambdaworks-crypto 0.12.0 (git+https://github.com/lambdaclass/lambdaworks.git?tag=v0.12.0)",
+ "lambdaworks-crypto 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "serde",
  "sha3",
@@ -6010,9 +6010,10 @@ dependencies = [
 [[package]]
 name = "lambdaworks-crypto"
 version = "0.12.0"
-source = "git+https://github.com/lambdaclass/lambdaworks.git?tag=v0.12.0#e3debf3881318287a10ac954ae8ab58ea30f09b6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fce8f59622ed408c318c9b5eca17f1a1154159e3738b5c4d5a22a0dd3700c906"
 dependencies = [
- "lambdaworks-math 0.12.0 (git+https://github.com/lambdaclass/lambdaworks.git?tag=v0.12.0)",
+ "lambdaworks-math 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde",
@@ -6042,17 +6043,6 @@ dependencies = [
  "getrandom 0.2.16",
  "rand 0.8.5",
  "rayon",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "lambdaworks-math"
-version = "0.12.0"
-source = "git+https://github.com/lambdaclass/lambdaworks.git?tag=v0.12.0#e3debf3881318287a10ac954ae8ab58ea30f09b6"
-dependencies = [
- "getrandom 0.2.16",
- "rand 0.8.5",
  "serde",
  "serde_json",
 ]
