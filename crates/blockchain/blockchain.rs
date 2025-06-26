@@ -61,6 +61,22 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
+
+fn log_batch_progress(batch_size: u64, current_block: u64) {
+    let progress_needed = batch_size > 10;
+    let percent_marks = [20, 40, 60, 80];
+    let mut next_mark = 0;
+    for (i, _) in blocks.iter().enumerate() {
+        if progress_needed {
+            let percent = ((i + 1) * 100) / blocks_len;
+            if next_mark < percent_marks.len() && percent >= percent_marks[next_mark] {
+                info!("Processed {}% of current batch", percent_marks[next_mark]);
+                next_mark += 1;
+            }
+        }
+    }
+}
+
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
@@ -492,15 +508,9 @@ impl Blockchain {
                             failed_block_hash: block.hash(),
                             last_valid_hash,
                         }),
-                    ))
-                }
-            };
-            progress_marks
-                .iter()
-                .position(|val| *val == i)
-                .inspect(|pos| info!("Processed {}% of current batch", (pos + 1) * 20));
                     )
                 })?;
+
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
