@@ -25,7 +25,7 @@ use ethrex_common::types::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
     deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
-    l1_messages::{L1MessagingError, compute_merkle_root, get_block_l1_messages},
+    l1_messages::get_block_l1_messages,
     state_diff::{StateDiff, StateDiffError, prepare_state_diff},
 };
 #[cfg(feature = "l2")]
@@ -45,9 +45,6 @@ pub enum StatelessExecutionError {
     ReceiptsRootValidationError(ChainError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
-    #[cfg(feature = "l2")]
-    #[error("L1Message calculation error: {0}")]
-    L1MessageError(#[from] L1MessagingError),
     #[cfg(feature = "l2")]
     #[error("Deposit calculation error: {0}")]
     DepositError(#[from] DepositError),
@@ -346,7 +343,7 @@ fn compute_l1messages_and_deposits_digests(
     l1messages: &[L1Message],
     deposits: &[PrivilegedL2Transaction],
 ) -> Result<(H256, H256), StatelessExecutionError> {
-    use ethrex_l2_common::l1_messages::get_l1_message_hash;
+    use ethrex_l2_common::{l1_messages::get_l1_message_hash, merkle_tree::compute_merkle_root};
 
     let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
     let deposit_hashes: Vec<_> = deposits
@@ -355,7 +352,7 @@ fn compute_l1messages_and_deposits_digests(
         .map(|hash| hash.ok_or(StatelessExecutionError::InvalidDeposit))
         .collect::<Result<_, _>>()?;
 
-    let l1message_merkle_root = compute_merkle_root(&message_hashes)?;
+    let l1message_merkle_root = compute_merkle_root(&message_hashes);
     let deposit_logs_hash =
         compute_deposit_logs_hash(deposit_hashes).map_err(StatelessExecutionError::DepositError)?;
 

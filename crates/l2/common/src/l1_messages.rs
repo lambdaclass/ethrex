@@ -8,7 +8,6 @@ use ethrex_common::{
 use keccak_hash::keccak;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 pub const L1MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -36,24 +35,15 @@ impl L1Message {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum L1MessagingError {
-    #[error("Failed to merkelize messages")]
-    FailedToMerkelize,
-}
-
 pub fn get_l1_message_hash(msg: &L1Message) -> H256 {
     keccak(msg.encode())
 }
 
-pub fn get_block_l1_message_hashes(
-    txs: &[Transaction],
-    receipts: &[Receipt],
-) -> Result<Vec<H256>, L1MessagingError> {
-    Ok(get_block_l1_messages(txs, receipts)
+pub fn get_block_l1_message_hashes(txs: &[Transaction], receipts: &[Receipt]) -> Vec<H256> {
+    get_block_l1_messages(txs, receipts)
         .iter()
         .map(get_l1_message_hash)
-        .collect())
+        .collect()
 }
 
 pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L1Message> {
@@ -80,33 +70,4 @@ pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L
                 })
         })
         .collect()
-}
-
-pub fn compute_merkle_root(hashes: &[H256]) -> Result<H256, L1MessagingError> {
-    if !hashes.is_empty() {
-        merkelize(hashes)
-    } else {
-        Ok(H256::zero())
-    }
-}
-
-pub fn merkelize(data: &[H256]) -> Result<H256, L1MessagingError> {
-    let mut data = data.to_vec();
-    let mut first = true;
-    while data.len() > 1 || first {
-        first = false;
-        data = data
-            .chunks(2)
-            .flat_map(|chunk| -> Result<H256, L1MessagingError> {
-                let left = chunk.first().ok_or(L1MessagingError::FailedToMerkelize)?;
-                let right = *chunk.get(1).unwrap_or(left);
-                Ok(keccak([left.as_bytes(), right.as_bytes()].concat())
-                    .as_fixed_bytes()
-                    .into())
-            })
-            .collect();
-    }
-    data.first()
-        .copied()
-        .ok_or(L1MessagingError::FailedToMerkelize)
 }

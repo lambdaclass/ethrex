@@ -5,10 +5,12 @@ use tracing::info;
 use crate::{
     clients::eth::L1MessageProof,
     rpc::{RpcApiContext, RpcHandler},
-    utils::{RpcErr, merkle_proof},
+    utils::RpcErr,
 };
 
-use ethrex_l2_common::l1_messages::get_block_l1_message_hashes;
+use ethrex_l2_common::{
+    l1_messages::get_block_l1_message_hashes, merkle_tree::compute_merkle_proof,
+};
 
 pub struct GetL1MessageProof {
     pub transaction_hash: H256,
@@ -57,8 +59,7 @@ impl RpcHandler for GetL1MessageProof {
         };
 
         // Gets the message hashes from the transaction
-        let tx_message_hashes = get_block_l1_message_hashes(&[tx], &[tx_receipt])
-            .map_err(|e| RpcErr::Internal(e.to_string()))?;
+        let tx_message_hashes = get_block_l1_message_hashes(&[tx], &[tx_receipt]);
 
         // Gets the batch number for the block
         let batch_number = match context
@@ -87,7 +88,7 @@ impl RpcHandler for GetL1MessageProof {
             }
 
             // Calculates the merkle proof of the batch
-            let Some(path) = merkle_proof(batch_message_hashes.clone(), index) else {
+            let Some(path) = compute_merkle_proof(&batch_message_hashes, index) else {
                 return Ok(Value::Null);
             };
 
