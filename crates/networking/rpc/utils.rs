@@ -1,4 +1,3 @@
-use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -276,33 +275,6 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     } else {
         Err(format!("Could not parse given hex {}", hex))
     }
-}
-
-pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
-    if index >= data.len() {
-        return None;
-    }
-    use keccak_hash::keccak;
-
-    let mut proof = vec![];
-    let mut current = data.clone();
-    let mut first = true;
-    while current.len() > 1 || first {
-        first = false;
-        proof.push(*current.get(index ^ 1).or(current.get(index))?);
-        index /= 2;
-        current = current
-            .chunks(2)
-            .map(|chunk| -> H256 {
-                let left = *chunk.first().unwrap_or(&H256::zero());
-                let right = *chunk.get(1).unwrap_or(&left);
-                keccak([left.as_bytes(), right.as_bytes()].concat())
-                    .as_fixed_bytes()
-                    .into()
-            })
-            .collect();
-    }
-    Some(proof)
 }
 
 #[cfg(test)]

@@ -1,9 +1,6 @@
 use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::EvmError;
 use serde_json::Value;
-
-use ethrex_blockchain::error::MempoolError;
 
 use ethrex_storage_rollup::RollupStoreError;
 
@@ -46,12 +43,6 @@ impl From<serde_json::Error> for RpcErr {
     }
 }
 
-impl From<MempoolError> for RpcErr {
-    fn from(error: MempoolError) -> Self {
-        Self::L1RpcErr(error.into())
-    }
-}
-
 impl From<secp256k1::Error> for RpcErr {
     fn from(error: secp256k1::Error) -> Self {
         Self::L1RpcErr(error.into())
@@ -88,12 +79,6 @@ impl From<StoreError> for RpcErr {
 impl From<RollupStoreError> for RpcErr {
     fn from(value: RollupStoreError) -> Self {
         RpcErr::Internal(value.to_string())
-    }
-}
-
-impl From<EvmError> for RpcErr {
-    fn from(value: EvmError) -> Self {
-        L1RpcErr::Vm(value.to_string()).into()
     }
 }
 

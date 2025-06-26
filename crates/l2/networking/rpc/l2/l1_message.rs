@@ -5,7 +5,7 @@ use tracing::info;
 
 use crate::{
     rpc::RpcApiContext,
-    utils::{L1RpcErr, RpcErr},
+    utils::{L1RpcErr, RpcErr, merkle_proof},
 };
 
 use ethrex_l2_common::l1_messages::get_block_l1_message_hashes;
@@ -93,8 +93,7 @@ impl GetL1MessageProof {
             }
 
             // Calculates the merkle proof of the batch
-            let Some(path) = ethrex_rpc::utils::merkle_proof(batch_message_hashes.clone(), index)
-            else {
+            let Some(path) = merkle_proof(batch_message_hashes.clone(), index) else {
                 return Ok(Value::Null);
             };
 
