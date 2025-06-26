@@ -1,2 +1,2 @@
-pub mod l2_conn_state;
+pub mod l2_connection;
 pub mod messages;
