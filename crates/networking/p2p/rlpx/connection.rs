@@ -838,17 +838,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) if peer_supports_based => {
-                if self.should_process_new_block(&req).await? {
-                    self.process_new_block(&req).await?;
-                    // for now we broadcast valid messages
-                    #[cfg(feature = "l2")]
-                    let new_latest_block_sent = req.block.header.number;
-                    self.broadcast_message(Message::NewBlock(req))?;
-                    #[cfg(feature = "l2")]
-                    {
-                        self.latest_block_sent = new_latest_block_sent;
-                    }
-                }
+                self.blocks_on_queue
+                    .entry(req.block.header.number)
+                    .or_insert_with(|| req.block.clone());
+                self.should_process_new_block(&req).await?;
+                self.process_new_block(&req).await?;
+                self.broadcast_message(Message::NewBlock(req))?;
+                // if self.should_process_new_block(&req).await? {
+                //     self.process_new_block(&req).await?;
+                //     // for now we broadcast valid messages
+                //     #[cfg(feature = "l2")]
+                //     let new_latest_block_sent = req.block.header.number;
+                //     self.broadcast_message(Message::NewBlock(req))?;
+                //     #[cfg(feature = "l2")]
+                //     {
+                //         self.latest_block_sent = new_latest_block_sent;
+                //     }
+                // }
             }
             Message::NewBatchSealed(_req) => {
                 #[cfg(feature = "l2")]
@@ -979,10 +985,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         })?;
 
         if !Self::validate_signature(recovered_lead_sequencer) {
+            self.blocks_on_queue.remove(&msg.block.header.number);
             return Ok(false);
         }
         #[cfg(feature = "l2")]
         {
+            // TODO: signature creation should be moved to a correct place, when producing the block
             let mut signature = [0u8; 68];
             signature[..64].copy_from_slice(&msg.signature[..]);
             signature[64..].copy_from_slice(&msg.recovery_id[..]);
@@ -998,12 +1006,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         true
     }
 
-    async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
-        debug!("process_new_block");
-        self.blocks_on_queue
-            .entry(msg.block.header.number)
-            .or_insert_with(|| msg.block.clone());
-
+    async fn process_new_block(&mut self, _msg: &NewBlockMessage) -> Result<(), RLPxError> {
         let mut next_block_to_add = self.latest_block_added + 1;
         let latest_block_in_storage = self.storage.get_latest_block_number().await?;
         debug!(
@@ -1012,7 +1015,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             latest_block_in_storage,
             self.blocks_on_queue.contains_key(&next_block_to_add)
         );
-        next_block_to_add = next_block_to_add.max(latest_block_in_storage);
+        next_block_to_add = next_block_to_add.max(latest_block_in_storage + 1);
+        // TODO: clean old blocks that were added and then sync to a newer head
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
             // This check is necessary if a connection to another peer already applied the block but this connection
             // did not register that update.
