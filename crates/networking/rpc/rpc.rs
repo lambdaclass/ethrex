@@ -92,6 +92,7 @@ pub struct NodeData {
     pub client_version: String,
 }
 
+#[allow(async_fn_in_trait)]
 pub trait RpcHandler: Sized {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
