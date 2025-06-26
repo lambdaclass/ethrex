@@ -97,8 +97,7 @@
           "execErrState": "Error",
           "annotations": {
             "description": "L1 Committer balance is lower than 0.1 ETH",
-            "summary": "L1 Committer is running out of funds",
-            "instance": "$HOSTNAME"
+            "summary": "L1 Committer is running out of funds"
           },
           "isPaused": false,
           "notification_settings": { "receiver": "Slack" }
@@ -193,8 +192,7 @@
           "execErrState": "Error",
           "annotations": {
             "description": "Proof Sender balance is lower than 0.1 ETH",
-            "summary": "Proof Sender is running out of funds",
-            "instance": "$HOSTNAME"
+            "summary": "Proof Sender is running out of funds"
           },
           "isPaused": false,
           "notification_settings": { "receiver": "Slack" }
@@ -277,8 +275,7 @@
           "execErrState": "Error",
           "annotations": {
             "description": "Last batch commitment was sent more than an hour ago to L1",
-            "summary": "L1 Committer is stuck",
-            "instance": "$HOSTNAME"
+            "summary": "L1 Committer is stuck"
           },
           "isPaused": false,
           "notification_settings": {
@@ -355,8 +352,7 @@
           "execErrState": "Error",
           "annotations": {
             "description": "Last batch verification was sent more than an hour ago to L1",
-            "summary": "Proof Sender is stuck",
-            "instance": "$HOSTNAME"
+            "summary": "Proof Sender is stuck"
           },
           "isPaused": false,
           "notification_settings": {
@@ -433,8 +429,7 @@
           "execErrState": "Error",
           "annotations": {
             "description": "The L2 is not generating new blocks",
-            "summary": "L2 is stuck",
-            "instance": "$HOSTNAME"
+            "summary": "L2 is stuck"
           },
           "isPaused": false,
           "notification_settings": {
@@ -515,8 +510,7 @@
           "execErrState": "Error",
           "annotations": {
             "description": "The mempool has grown a lot in the last minute",
-            "summary": "Mempool transactions are increasing fast",
-            "instance": "$HOSTNAME"
+            "summary": "Mempool transactions are increasing fast"
           },
           "isPaused": false,
           "notification_settings": {
