@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750965146914,
+  "lastUpdate": 1750965209917,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1619,6 +1619,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 218838381174,
             "range": "± 846219042",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a0eebfa256edaaf3ffc35676fc3b3ad021dccde8",
+          "message": "ci(l2): build docker images for all l2 tests (#3342)\n\n**Motivation**\n\nAfter #3338 state reconstruct test and based tests started failing\n**Description**\n\n- build the docker image for those steps too",
+          "timestamp": "2025-06-26T18:13:36Z",
+          "tree_id": "3f597839d3d2dc64484734cb7189722eede96728",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a0eebfa256edaaf3ffc35676fc3b3ad021dccde8"
+        },
+        "date": 1750965201069,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220949612216,
+            "range": "± 278785962",
             "unit": "ns/iter"
           }
         ]
