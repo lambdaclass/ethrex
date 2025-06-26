@@ -76,7 +76,7 @@ pub enum TxValidationError {
     #[error("Sender account shouldn't be a contract")]
     SenderNotEOA,
     // This should be "funds" but we have this in our mapper and this change is not worth a PR yet: https://github.com/ethereum/execution-spec-tests/blob/6aba9a2b732567905b58ee61607ed754bc356a33/src/ethereum_clis/clis/ethrex.py#L58
-    #[error("Insufficient account founds")]
+    #[error("Insufficient account funds")]
     InsufficientAccountFunds,
     #[error("Nonce is max")]
     NonceIsMax,

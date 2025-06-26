@@ -42,7 +42,7 @@ where
                 }
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     BlockChainExpectedException::TxtException(
-                        "Insufficient account founds".to_string(),
+                        "Insufficient account funds".to_string(),
                     )
                 }
                 "TransactionException.SENDER_NOT_EOA" => BlockChainExpectedException::TxtException(
