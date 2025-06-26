@@ -57,10 +57,11 @@ contract CommonBridge is
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
-    mapping (address => mapping (address => uint256)) public depositsERC20;
+    mapping(address => mapping(address => uint256)) public depositsERC20;
 
     /// @notice Token address used to represent ETH
-    address public constant ETH_TOKEN =  0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    address public constant ETH_TOKEN =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     modifier onlyOnChainProposer() {
         require(
@@ -97,7 +98,10 @@ contract CommonBridge is
         return pendingDepositLogs;
     }
 
-    function _deposit(address from, DepositValues memory depositValues) private {
+    function _deposit(
+        address from,
+        DepositValues memory depositValues
+    ) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(depositValues.to),
@@ -141,12 +145,20 @@ contract CommonBridge is
         _deposit(msg.sender, depositValues);
     }
 
-    function depositERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
+    function depositERC20(
+        address tokenL1,
+        address tokenL2,
+        address destination,
+        uint256 amount
+    ) external {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
         depositsERC20[tokenL1][tokenL2] += amount;
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
-        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintERC20, (tokenL1, tokenL2, destination, amount));
+        bytes memory callData = abi.encodeCall(
+            ICommonBridgeL2.mintERC20,
+            (tokenL1, tokenL2, destination, amount)
+        );
         DepositValues memory depositValues = DepositValues({
             to: L2_BRIDGE_ADDRESS,
             recipient: L2_BRIDGE_ADDRESS,
@@ -260,7 +272,10 @@ contract CommonBridge is
             withdrawalLogIndex,
             withdrawalProof
         );
-        require(tokenL1 != ETH_TOKEN, "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()");
+        require(
+            tokenL1 != ETH_TOKEN,
+            "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
+        );
         IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
     }
 
@@ -273,30 +288,17 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) private {
-        require(depositsERC20[tokenL1][tokenL2] >= claimedAmount, "CommonBridge: trying to withdraw more tokens/ETH than were deposited");
-        depositsERC20[tokenL1][tokenL2] -= claimedAmount;
-        bytes32 msgHash = keccak256(abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount));
         require(
-            _claimWithdrawProof(
-                l2WithdrawalTxHash,
-                msgHash,
-                withdrawalBatchNumber,
-                withdrawalLogIndex,
-                withdrawalProof
-            ),
-            "CommonBridge: invalid withdrawal proof"
+            depositsERC20[tokenL1][tokenL2] >= claimedAmount,
+            "CommonBridge: trying to withdraw more tokens/ETH than were deposited"
         );
-    }
-
-    /// @dev msgHash must be derived using msg.sender to prevent malicious claims
-    function _claimWithdrawProof(
-        bytes32 l2WithdrawalTxHash,
-        bytes32 msgHash,
-        uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
-        bytes32[] calldata withdrawalProof
-    ) internal returns (bool) {
-        bytes32 withdrawalId = keccak256(abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex));
+        depositsERC20[tokenL1][tokenL2] -= claimedAmount;
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
+        );
+        bytes32 withdrawalId = keccak256(
+            abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex)
+        );
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
             "CommonBridge: the batch that emitted the withdrawal logs was not committed"
@@ -312,16 +314,19 @@ contract CommonBridge is
         );
         claimedWithdrawals[withdrawalId] = true;
         emit WithdrawalClaimed(withdrawalId);
-        return _verifyWithdrawProof(
-            l2WithdrawalTxHash,
-            msgHash,
-            withdrawalBatchNumber,
-            withdrawalLogIndex,
-            withdrawalProof
+        require(
+            _verifyMessageProof(
+                l2WithdrawalTxHash,
+                msgHash,
+                withdrawalBatchNumber,
+                withdrawalLogIndex,
+                withdrawalProof
+            ),
+            "CommonBridge: Invalid proof"
         );
     }
 
-    function _verifyWithdrawProof(
+    function _verifyMessageProof(
         bytes32 l2WithdrawalTxHash,
         bytes32 msgHash,
         uint256 withdrawalBatchNumber,
