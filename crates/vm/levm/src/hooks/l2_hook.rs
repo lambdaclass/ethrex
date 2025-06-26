@@ -32,7 +32,7 @@ impl Hook for L2Hook {
             if value > sender_balance {
                 vm.current_call_frame_mut()?.msg_value = U256::zero();
                 vm.current_call_frame_mut()?
-                    .set_code(vec![Opcode::INVALID as u8].into())?;
+                    .set_code(vec![Opcode::INVALID.into()].into())?;
                 return Ok(());
             }
             // This should never fail, since we just checked the balance is enough.

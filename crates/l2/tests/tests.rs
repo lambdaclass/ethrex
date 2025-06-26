@@ -108,7 +108,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     test_deposit_with_contract_call_revert(&proposer_client, &eth_client).await?;
 
-    test_deposit_not_enough_balance(&transfer_return_private_key, &eth_client, &proposer_client).await?;
+    test_deposit_not_enough_balance(&transfer_return_private_key, &eth_client, &proposer_client)
+        .await?;
 
     let withdrawals_count = std::env::var("INTEGRATION_TEST_WITHDRAW_COUNT")
         .map(|amount| amount.parse().expect("Invalid withdrawal amount value"))
@@ -430,7 +431,6 @@ async fn test_transfer_with_deposit(
     Ok(())
 }
 
-
 async fn test_deposit_not_enough_balance(
     receiver_private_key: &SecretKey,
     eth_client: &EthClient,
@@ -439,7 +439,7 @@ async fn test_deposit_not_enough_balance(
     println!("Transferring funds on L2 through a deposit");
     let rich_wallet_private_key = l1_rich_wallet_private_key();
     let rich_address = get_address_from_secret_key(&rich_wallet_private_key)?;
-    let receiver_address = get_address_from_secret_key(&receiver_private_key)?;
+    let receiver_address = get_address_from_secret_key(receiver_private_key)?;
 
     let balance_sender = proposer_client
         .get_balance(receiver_address, BlockByNumber::Latest)
@@ -478,10 +478,7 @@ async fn test_deposit_not_enough_balance(
     let balance_after = proposer_client
         .get_balance(receiver_address, BlockByNumber::Latest)
         .await?;
-    assert_eq!(
-        balance_after,
-        balance_before
-    );
+    assert_eq!(balance_after, balance_before);
     Ok(())
 }
 
