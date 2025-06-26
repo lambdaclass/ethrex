@@ -10,7 +10,7 @@
           "type": "slack",
           "settings": {
             "recipient": "${ALERTS_SLACK_CHANNEL}",
-            "text": "{{ define \"slack.body\" -}}\n{{ .CommonAnnotations.description }}\n{{- end }}\n{{ template \"slack.body\" . }}",
+            "text": "{{ define \"slack.body\" -}}\n[{{ .CommonAnnotations.instance }}]\n{{ .CommonAnnotations.description }}\n{{- end }}\n{{ template \"slack.body\" . }}",
             "title": "{{ define \"slack.title\" -}}{{- if eq .Status \"firing\" -}}🚨{{- else -}}✅ [SOLVED]{{- end }} {{ .CommonAnnotations.summary }}{{- end }}{{ template \"slack.title\" . }}",
             "token": "${ALERTS_SLACK_TOKEN}"
           },
