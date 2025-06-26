@@ -237,7 +237,7 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) public {
-        claimWithdrawalERC20(
+        _claimWithdrawal(
             l2WithdrawalTxHash,
             ETH_TOKEN,
             ETH_TOKEN,
