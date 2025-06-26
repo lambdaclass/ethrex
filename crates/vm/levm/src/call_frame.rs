@@ -101,8 +101,8 @@ impl Stack {
 impl Default for Stack {
     fn default() -> Self {
         Self {
-            values: Box::new([U256::zero(); 1024]),
-            offset: 1024,
+            values: Box::new([U256::zero(); STACK_LIMIT]),
+            offset: STACK_LIMIT,
         }
     }
 }
