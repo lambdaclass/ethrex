@@ -604,21 +604,15 @@ where
 {
     let node = node.clone();
     spawned_rt::tasks::spawn(async move {
-        loop {
-            match stream.next().await {
-                Some(message) => match message {
-                    Ok(message) => {
-                        let _ = conn.cast(CastMessage::PeerMessage(message)).await;
-                    }
-                    Err(e) => {
-                        log_peer_debug(&node, &format!("Received RLPX Error in msg {}", e));
-                    }
-                },
-                None => {
-                    // stream is finished, no need to keep looping
-                    break;
+        while let Some(message) = stream.next().await {
+            match message {
+                Ok(message) => {
+                    let _ = conn.cast(CastMessage::PeerMessage(message)).await;
                 }
-            };
+                Err(e) => {
+                    log_peer_debug(&node, &format!("Received RLPX Error in msg {}", e));
+                }
+            }
         }
     });
 }
