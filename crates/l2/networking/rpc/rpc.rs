@@ -174,7 +174,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
             map_eth_requests(req, context).await
         }
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
-        _other_namespace => ethrex_rpc::map_http_requests(req, context.l1_ctx)
+        _ => ethrex_rpc::map_http_requests(req, context.l1_ctx)
             .await
             .map_err(RpcErr::L1RpcErr),
     }
