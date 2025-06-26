@@ -614,7 +614,10 @@ where
                         log_peer_debug(&node, &format!("Received RLPX Error in msg {}", e));
                     }
                 },
-                None => todo!(),
+                None => {
+                    // stream is finished, no need to keep looping
+                    break;
+                }
             };
         }
     });
