@@ -178,9 +178,9 @@ cargo run --release --bin ethrex --features l2 -- l2 init \
   --proof-coordinator.addr 127.0.0.1 \
   --proof-coordinator.port 4566 \
   --http.port 1729 \
-  --state-updater.sequencer-registry 0xad860cee33bf496141b9f47d48c3955fa0ecf7ac \
-  --l1.on-chain-proposer-address 0x0cc759688cdb4aba65f1a356c6ebdb82edca3b46 \
-  --l1.bridge-address 0x765498d4d68eac9bf869a2bf9a870384c303e4f9 \
+  --state-updater.sequencer-registry <SEQUENCER_REGISTRY_ADDRESS> \
+  --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
+  --l1.bridge-address <COMMON_BRIDGE_ADDRESS>` \
   --based
 ```
 
@@ -207,7 +207,7 @@ For nodes to become lead Sequencers they need to register themselves in the `Seq
 To register a node as a Sequencer, you can use the following command using `rex`:
 
 ```bash
-rex send <REGISTRY_CONTRACT> 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> // registers SEQUENCER_ADDRESS as a Sequencer supplying 1 ETH as collateral (the minimum).
+rex send <SEQUENCER_REGISTRY_ADDRESS> 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <REGISTRANT_ADDRESS> // registers REGISTRANT_ADDRESS as a Sequencer supplying 1 ETH as collateral (the minimum).
 ```
 
 > [!IMPORTANT]
@@ -217,7 +217,7 @@ Once registered, the node will be able to participate in the Sequencer election 
 
 > [!NOTE]
 >
-> 1. Replace `<REGISTRY_CONTRACT>`, `<REGISTRANT_PRIVATE_KEY>`, and `<SEQUENCER_ADDRESS>` with the appropriate values.
+> 1. Replace `<SEQUENCER_REGISTRY_ADDRESS>`, `<REGISTRANT_PRIVATE_KEY>`, and `<REGISTRANT_ADDRESS>` with the appropriate values.
 > 2. The registrant is not necessarily related to the sequencer, one could pay the registration for some else.
 > 3. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
 
