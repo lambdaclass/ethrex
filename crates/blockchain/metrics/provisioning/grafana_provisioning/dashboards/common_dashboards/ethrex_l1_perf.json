@@ -394,6 +394,48 @@
     },
     {
       "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 13,
+        "x": 11,
+        "y": 3
+      },
+      "id": 18,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": false,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "pluginVersion": "11.4.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "editorMode": "builder",
+          "expr": "{filename=\"/var/log/ethrex/ethrex-sync-hoodi-levm.log\"} |= ``",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Node logs",
+      "type": "logs"
+    },
+    {
+      "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
@@ -467,9 +509,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 7,
-        "x": 6,
-        "y": 3
+        "w": 11,
+        "x": 0,
+        "y": 11
       },
       "id": 11,
       "options": {
@@ -567,9 +609,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 11,
-        "x": 13,
-        "y": 3
+        "w": 13,
+        "x": 11,
+        "y": 11
       },
       "id": 1,
       "options": {
@@ -723,7 +765,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 19
       },
       "id": 12,
       "options": {
