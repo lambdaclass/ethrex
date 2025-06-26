@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750898975024,
+  "lastUpdate": 1750943022845,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1439,6 +1439,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220985078809,
             "range": "± 605677520",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "217ad13acdaa6d7219ec4a5ad16fce5164749ae8",
+          "message": "perf(levm): refactor `Stack` to have a fixed size and grow downwards (#3266)\n\n**Motivation**\n\nThe stack is currently implemented using a `Vec<U256>` that grows\nupwards. Since the stack is limited to a reasonable amount by design\n(1024 entries, or 32KiB) it can be converted to a static array along\nwith an offset and made to grow downwards.\n\n**Description**\n\nThis PR:\n- Removes stack allocation (and its associated runtime checks) from the\nruntime costs.\n- Makes the stack grow downwards: better integration with stack\noperations.\n- Changes the API so that multiple items can be inserted and removed\nfrom the stack at the same time, which is especially useful for opcodes\nthat handle multiple arguments or return values.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-06-26T12:02:50Z",
+          "tree_id": "5ac3d6fb4b5de3b973e523181a199aa9ab11338c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/217ad13acdaa6d7219ec4a5ad16fce5164749ae8"
+        },
+        "date": 1750943014631,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221781615350,
+            "range": "± 432103051",
             "unit": "ns/iter"
           }
         ]
