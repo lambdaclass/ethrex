@@ -5,7 +5,7 @@ use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType, MetricsL2Operat
 use ethrex_metrics::metrics_transactions::METRICS_TX;
 use ethrex_rpc::clients::eth::EthClient;
 use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerInMsg, send_after,
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
 };
 use std::time::Duration;
 use tracing::{debug, error};
@@ -38,6 +38,7 @@ impl MetricsGathererState {
     }
 }
 
+#[derive(Clone)]
 pub enum InMessage {
     Gather,
 }
@@ -91,14 +92,14 @@ impl GenServer for MetricsGatherer {
         &mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        state: Self::State,
+        mut state: Self::State,
     ) -> CastResponse<Self> {
         // Right now we only have the Gather message, so we ignore the message
-        let _ = gather_metrics(state)
+        let _ = gather_metrics(&mut state)
             .await
             .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
         send_after(state.check_interval, handle.clone(), Self::CastMsg::Gather);
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 
