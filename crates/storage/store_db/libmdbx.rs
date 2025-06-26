@@ -368,7 +368,7 @@ impl StoreEngine for Store {
             let mut bodies_cursor = tx.cursor::<Bodies>()?;
             let mut headers_cursor = tx.cursor::<Headers>()?;
             let mut block_numbers_cursor = tx.cursor::<BlockNumbers>()?;
-            let mut receipts_cursor = tx.cursor()?;
+            let mut receipts_cursor = tx.cursor::<Receipts>()?;
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
