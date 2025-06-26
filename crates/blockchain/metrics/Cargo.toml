@@ -17,6 +17,7 @@ ethrex-common.workspace = true
 
 prometheus = { version = "0.13.4", optional = true }
 axum = { workspace = true, optional = true }
+tracing-subscriber.workspace = true
 
 
 [lib]
