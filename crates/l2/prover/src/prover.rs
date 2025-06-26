@@ -1,6 +1,7 @@
 use crate::{config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::BatchProof,
+    sequencer::proof_coordinator::{ProofData, get_code_version},
+    utils::prover::proving_systems::BatchProof,
 };
 use std::time::Duration;
 use tokio::{
@@ -25,6 +26,7 @@ struct Prover {
     prover_server_endpoint: String,
     proving_time_ms: u64,
     aligned_mode: bool,
+    code_version: String,
 }
 
 impl Prover {
@@ -33,6 +35,7 @@ impl Prover {
             prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
             proving_time_ms: cfg.proving_time_ms,
             aligned_mode: cfg.aligned_mode,
+            code_version: get_code_version(),
         }
     }
 
@@ -68,17 +71,24 @@ impl Prover {
 
     async fn request_new_input(&self) -> Result<ProverData, String> {
         // Request the input with the correct batch_number
-        let request = ProofData::batch_request();
+        let request = ProofData::batch_request(self.code_version.clone());
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
-        let ProofData::BatchResponse {
-            batch_number,
-            input,
-        } = response
-        else {
-            return Err("Expecting ProofData::Response".to_owned());
+        let (batch_number, input) = match response {
+            ProofData::BatchResponse {
+                batch_number,
+                input,
+            } => (batch_number, input),
+            ProofData::InvalidCodeVersion { code_version } => {
+                return Err(fmt!(
+                    "Invalid code version received. Server code: {}, Prover code: {}",
+                    code_version,
+                    self.code_version
+                ));
+            }
+            _ => return Err("Expecting ProofData::Response".to_owned()),
         };
 
         let (Some(batch_number), Some(input)) = (batch_number, input) else {
