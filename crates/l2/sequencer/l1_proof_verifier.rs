@@ -135,11 +135,6 @@ impl L1ProofVerifier {
         batch_number: u64,
         aligned_proof: BatchProof,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        if aligned_proof.prover_type() != ProverType::Aligned {
-            return Err(ProofVerifierError::InternalError(
-                "Tried to verify a non-Aligned proof".to_string(),
-            ));
-        }
         let public_inputs = aligned_proof.public_values();
 
         let verification_data = AggregationModeVerificationData::SP1 {
