@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
@@ -19,6 +20,8 @@ contract CommonBridge is
     Ownable2StepUpgradeable,
     ReentrancyGuardUpgradeable
 {
+    using SafeERC20 for IERC20;
+
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping (a merkle root) for the hash
     /// of the L2 transaction that requested the withdrawal.
@@ -102,8 +105,7 @@ contract CommonBridge is
         return pendingDepositLogs;
     }
 
-    function _deposit(DepositValues memory depositValues) private {
-        require(msg.value > 0, "CommonBridge: amount to deposit is zero");
+    function _deposit(address from, DepositValues memory depositValues) private {
         depositsERC20[ETH_TOKEN][ETH_TOKEN] += msg.value;
 
         bytes32 l2MintTxHash = keccak256(
@@ -112,7 +114,7 @@ contract CommonBridge is
                 bytes32(msg.value),
                 bytes32(depositId),
                 bytes20(depositValues.recipient),
-                bytes20(msg.sender),
+                bytes20(from),
                 bytes32(depositValues.gasLimit),
                 bytes32(keccak256(depositValues.data))
             )
@@ -125,7 +127,7 @@ contract CommonBridge is
             depositValues.to,
             depositId,
             depositValues.recipient,
-            msg.sender,
+            from,
             depositValues.gasLimit,
             depositValues.data,
             l2MintTxHash
@@ -135,7 +137,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function deposit(DepositValues calldata depositValues) public payable {
-        _deposit(depositValues);
+        _deposit(msg.sender, depositValues);
     }
 
     receive() external payable {
@@ -145,40 +147,22 @@ contract CommonBridge is
             gasLimit: 21000 * 5,
             data: bytes("")
         });
-        _deposit(depositValues);
+        _deposit(msg.sender, depositValues);
     }
 
     function depositERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
-        require(IERC20(tokenL1).transferFrom(msg.sender, address(this), amount), "CommonBridge: transferFrom failed");
+        IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
         depositsERC20[tokenL1][tokenL2] += amount;
         bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintERC20, (tokenL1, tokenL2, destination, amount));
-        uint256 gasLimit = 21000 * 10;
-        
-        bytes32 l2MintTxHash = keccak256(
-            bytes.concat(
-                bytes20(L2_BRIDGE_ADDRESS),
-                bytes32(0),
-                bytes32(depositId),
-                bytes20(L2_BRIDGE_ADDRESS),
-                bytes20(L2_BRIDGE_ADDRESS),
-                bytes32(gasLimit),
-                bytes32(keccak256(callData))
-            )
-        );
-        pendingDepositLogs.push(l2MintTxHash);
-        emit DepositInitiated(
-            0,
-            L2_BRIDGE_ADDRESS,
-            depositId,
-            L2_BRIDGE_ADDRESS,
-            L2_BRIDGE_ADDRESS,
-            gasLimit,
-            callData,
-            l2MintTxHash
-        );
-        depositId += 1;
+        DepositValues memory depositValues = DepositValues({
+            to: L2_BRIDGE_ADDRESS,
+            recipient: L2_BRIDGE_ADDRESS,
+            gasLimit: 21000 * 5,
+            data: callData
+        });
+        _deposit(L2_BRIDGE_ADDRESS, depositValues);
     }
 
     /// @inheritdoc ICommonBridge
@@ -262,6 +246,8 @@ contract CommonBridge is
             withdrawalLogIndex,
             withdrawalProof
         );
+        (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
+        require(success, "CommonBridge: failed to send the claimed amount");
     }
 
     /// @inheritdoc ICommonBridge
@@ -274,7 +260,29 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
-        require(depositsERC20[tokenL1][tokenL2] >= claimedAmount, "CommonBridge: trying to withdraw more tokens than were deposited");
+        _claimWithdrawal(
+            l2WithdrawalTxHash,
+            tokenL1,
+            tokenL2,
+            claimedAmount,
+            withdrawalBatchNumber,
+            withdrawalLogIndex,
+            withdrawalProof
+        );
+        require(tokenL1 != ETH_TOKEN, "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()");
+        IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
+    }
+
+    function _claimWithdrawal(
+        bytes32 l2WithdrawalTxHash,
+        address tokenL1,
+        address tokenL2,
+        uint256 claimedAmount,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalLogIndex,
+        bytes32[] calldata withdrawalProof
+    ) private {
+        require(depositsERC20[tokenL1][tokenL2] >= claimedAmount, "CommonBridge: trying to withdraw more tokens/ETH than were deposited");
         depositsERC20[tokenL1][tokenL2] -= claimedAmount;
         bytes32 msgHash = keccak256(abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount));
         require(
@@ -287,12 +295,6 @@ contract CommonBridge is
             ),
             "CommonBridge: invalid withdrawal proof"
         );
-        if (tokenL1 == ETH_TOKEN) {
-            (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
-            require(success, "CommonBridge: failed to send the claimed amount");
-        } else {
-            require(IERC20(tokenL1).transfer(msg.sender, claimedAmount), "CommonBridge: transfer failed");
-        }
     }
 
     /// @dev msgHash must be derived using msg.sender to prevent malicious claims

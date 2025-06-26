@@ -15,6 +15,12 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =  0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    // Some calls come as a privileged transaction, whose sender is the bridge itself.
+    modifier onlyBridge() {
+        require(msg.sender == address(this), "CommonBridgeL2: caller is not the bridge");
+        _;
+    }
+
     function withdraw(address _receiverOnL1) external payable {
         require(msg.value > 0, "Withdrawal amount must be positive");
 
@@ -29,24 +35,31 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         )));
     }
 
-    function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
-        // The call comes as a privileged transaction, whose sender is the bridge itself.
-        require(msg.sender == address(this));
+    function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
+        try this._mintERC20(tokenL1, tokenL2, destination, amount) {
+        } catch {
+            _withdrawERC20(tokenL1, tokenL2, destination, amount);
+        }
+    }
+
+    function _mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
         IERC20L2 token = IERC20L2(tokenL2);
         require(token.l1Address() == tokenL1);
-        token.mint(destination, amount);
+        token.crosschainMint(destination, amount);
     }
 
     function withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
         require(amount > 0, "Withdrawal amount must be positive");
+        IERC20L2(tokenL2).crosschainBurn(msg.sender, amount);
+        _withdrawERC20(tokenL1, tokenL2, destination, amount);
+    }
 
-        require(IERC20(tokenL2).transferFrom(msg.sender, address(this), amount), "CommonBridge: burn failed");
-
+    function _withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) private {
         IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
-            tokenL1,
-            tokenL2,
-            destination,
-            amount
+                tokenL1,
+                tokenL2,
+                destination,
+                amount
         )));
     }
 }

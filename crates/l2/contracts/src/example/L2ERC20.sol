@@ -14,11 +14,20 @@ contract TestTokenL2 is ERC20, IERC20L2 {
         L1_TOKEN = l1Addr;
     }
 
+    modifier onlyBridge() {
+        require(msg.sender == BRIDGE, "TestToken: not authorized to mint");
+        _;
+    }
+
     function l1Address() external view returns (address) {
         return L1_TOKEN;
     }
-    function mint(address destination, uint256 amount) external {
-        require(msg.sender == BRIDGE, "TestToken: not authorized to mint");
+    
+    function crosschainMint(address destination, uint256 amount) external onlyBridge {
         _mint(destination, amount);
+    }
+
+    function crosschainBurn(address from, uint256 value) external onlyBridge {
+        _burn(from, value);
     }
 }
