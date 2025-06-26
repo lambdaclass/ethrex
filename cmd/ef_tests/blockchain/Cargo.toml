@@ -17,9 +17,7 @@ serde_json.workspace = true
 bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
-tokio = { workspace = true , features = ["full"] }
-
-[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
 datatest-stable = "0.2.9"
 
 [lib]
@@ -32,13 +30,5 @@ c-kzg = ["ethrex-blockchain/c-kzg"]
 levm = []
 
 [[test]]
-name = "cancun"
-harness = false
-
-[[test]]
-name = "shanghai"
-harness = false
-
-[[test]]
-name = "prague"
+name = "all"
 harness = false
