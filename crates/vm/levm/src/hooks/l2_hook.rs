@@ -36,14 +36,15 @@ impl Hook for L2Hook {
                 vm.current_call_frame_mut()?.msg_value = U256::zero();
                 vm.current_call_frame_mut()?
                     .set_code(vec![Opcode::INVALID.into()].into())?;
+            } else {
+                // This should never fail, since we just checked the balance is enough.
+                vm.decrease_account_balance(sender_address, value)
+                    .map_err(|_| {
+                        InternalError::Custom(
+                            "Insufficient funds in privileged transaction".to_string(),
+                        )
+                    })?;
             }
-            // This should never fail, since we just checked the balance is enough.
-            vm.decrease_account_balance(sender_address, value)
-                .map_err(|_| {
-                    InternalError::Custom(
-                        "Insufficient funds in privileged transaction".to_string(),
-                    )
-                })?;
         }
 
         if vm.env.config.fork >= Fork::Prague {
