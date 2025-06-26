@@ -60,8 +60,8 @@ On L2:
 Back on L1:
 
 1. A sequencer commits a batch on L1 including the privileged transaction.
-2. The `OnChainProposer` notifies the bridge of the consumed privileged transactions.
-3. The bridge removes them from `pendingDepositLogs`, asserting the included privileged transactions exist and are included in order.
+2. The `OnChainProposer` asserts the included privileged transactions exist and are included in order.
+3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingDepositLogs`.
 
 ```mermaid
 ---
@@ -126,8 +126,8 @@ On L2:
 Back on L1:
 
 1. A sequencer commits a batch on L1 including the privileged transaction.
-2. The `OnChainProposer` notifies the bridge of the consumed privileged transactions.
-3. The bridge removes them from `pendingDepositLogs`, asserting the included privileged transactions exist and are included in order.
+2. The `OnChainProposer` asserts the included privileged transactions exist and are included in order.
+3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingDepositLogs`.
 
 ```mermaid
 ---
