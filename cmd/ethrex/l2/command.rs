@@ -487,7 +487,7 @@ impl Command {
                     info!("Private key not given, not updating contract.");
                 }
                 info!("Updating store...");
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
                 let last_kept_block = rollup_store
                     .get_block_numbers_by_batch(batch)
                     .await?

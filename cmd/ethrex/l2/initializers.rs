@@ -8,7 +8,7 @@ use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
+use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -79,4 +79,25 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
     }
     addresses
+}
+
+pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "rollup_storage_sql")] {
+            let engine_type = EngineTypeRollup::SQL;
+        } else if #[cfg(feature = "rollup_storage_redb")] {
+            let engine_type = EngineTypeRollup::RedB;
+        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
+            let engine_type = EngineTypeRollup::Libmdbx;
+        } else {
+            let engine_type = EngineTypeRollup::InMemory;
+        }
+    }
+    let rollup_store =
+        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+    rollup_store
+        .init()
+        .await
+        .expect("Failed to init rollup store");
+    rollup_store
 }
