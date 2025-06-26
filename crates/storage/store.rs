@@ -138,10 +138,12 @@ impl Store {
     // apply_updates function.
     pub fn build_account_info_logs<'a>(
         &self,
+        parent_hash: H256,
         account_updates: impl Iterator<Item = &'a AccountUpdate>,
     ) -> Result<Vec<(AccountAddress, AccountInfo, AccountInfo)>, StoreError> {
         let mut accounts_info_log = Vec::new();
         let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
+        let from_snapshot = self.get_block_for_current_snapshot()? == Some(parent_hash);
 
         for account_update in account_updates {
             let new_info = if account_update.removed {
@@ -155,9 +157,12 @@ impl Store {
             let address = account_update.address;
             let old_info = match previous_account_info.get(&address) {
                 Some(info) => info.clone(),
-                None => self
+                None if from_snapshot => self
                     .engine
                     .get_current_account_info(address)?
+                    .unwrap_or_default(),
+                None => self
+                    .get_account_info_by_hash(parent_hash, address)?
                     .unwrap_or_default(),
             };
             // NOTE: this might also be useful as preparation for the snapshot
@@ -169,19 +174,24 @@ impl Store {
 
     pub fn build_account_storage_logs<'a>(
         &self,
+        block_hash: H256,
         account_updates: impl Iterator<Item = &'a AccountUpdate>,
     ) -> Result<Vec<AccountStorageLogEntry>, StoreError> {
         let mut accounts_storage_log = Vec::new();
         let mut previous_account_storage = HashMap::<(H160, H256), U256>::new();
+        let from_snapshot = self.get_block_for_current_snapshot()? == Some(block_hash);
 
         for account_update in account_updates {
             let address = account_update.address;
             for (slot, new_value) in account_update.added_storage.iter() {
                 let old_value = match previous_account_storage.get(&(address, *slot)) {
                     Some(value) => *value,
-                    None => self
+                    None if from_snapshot => self
                         .engine
                         .get_current_storage(address, *slot)?
+                        .unwrap_or_default(),
+                    None => self
+                        .get_storage_at_hash(block_hash, address, *slot)?
                         .unwrap_or_default(),
                 };
                 // NOTE: this might also be useful as preparation for the snapshot
