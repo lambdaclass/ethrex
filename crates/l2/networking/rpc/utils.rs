@@ -1,13 +1,8 @@
 use ethrex_common::H256;
+use ethrex_rpc::utils::{RpcErr as L1RpcErr, RpcErrorMetadata, RpcNamespace as L1RpcNamespace};
 use ethrex_storage::error::StoreError;
-use serde_json::Value;
-
 use ethrex_storage_rollup::RollupStoreError;
-
-pub type L1RpcErr = ethrex_rpc::utils::RpcErr;
-pub type L1RpcErrorMetadata = ethrex_rpc::utils::RpcErrorMetadata;
-pub type L1RpcNamespace = ethrex_rpc::utils::RpcNamespace;
-pub type L1RpcRequest = ethrex_rpc::utils::RpcRequest;
+use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
@@ -19,16 +14,16 @@ pub enum RpcErr {
     InvalidEthrexL2Message(String),
 }
 
-impl From<RpcErr> for L1RpcErrorMetadata {
+impl From<RpcErr> for RpcErrorMetadata {
     fn from(value: RpcErr) -> Self {
         match value {
             RpcErr::L1RpcErr(l1_rpc_err) => l1_rpc_err.into(),
-            RpcErr::Internal(context) => L1RpcErrorMetadata {
+            RpcErr::Internal(context) => RpcErrorMetadata {
                 code: -32603,
                 data: None,
                 message: format!("Internal Error: {context}"),
             },
-            RpcErr::InvalidEthrexL2Message(reason) => L1RpcErrorMetadata {
+            RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
                 code: -39000,
                 data: None,
                 message: format!("Invalid Ethex L2 message: {reason}",),

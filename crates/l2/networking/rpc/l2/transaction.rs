@@ -1,7 +1,4 @@
-use crate::{
-    rpc::RpcApiContext,
-    utils::{L1RpcErr, RpcErr},
-};
+use crate::{rpc::RpcApiContext, utils::RpcErr};
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
@@ -10,7 +7,11 @@ use ethrex_common::{
         TxKind,
     },
 };
-use ethrex_rpc::{RpcHandler, types::transaction::SendRawTransactionRequest, utils::RpcRequest};
+use ethrex_rpc::{
+    RpcHandler,
+    types::transaction::SendRawTransactionRequest,
+    utils::{RpcErr as L1RpcErr, RpcRequest},
+};
 use serde::Deserialize;
 use serde_json::Value;
 

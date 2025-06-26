@@ -1,5 +1,5 @@
 use crate::l2::l1_message::GetL1MessageProof;
-use crate::utils::{L1RpcErr, L1RpcNamespace, RpcErr, RpcNamespace, resolve_namespace};
+use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
@@ -9,9 +9,11 @@ use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
-use ethrex_rpc::types::transaction::SendRawTransactionRequest;
-use ethrex_rpc::utils::{RpcRequest, RpcRequestId};
-use ethrex_rpc::{RpcHandler, RpcRequestWrapper};
+use ethrex_rpc::{
+    GasTipEstimator, NodeData, RpcApiContext as L1RpcApiContext, RpcHandler, RpcRequestWrapper,
+    types::transaction::SendRawTransactionRequest,
+    utils::{RpcErr as L1RpcErr, RpcNamespace as L1RpcNamespace, RpcRequest, RpcRequestId},
+};
 use ethrex_storage::Store;
 use serde_json::Value;
 use std::{
@@ -29,10 +31,6 @@ use crate::l2::transaction::SponsoredTx;
 use ethrex_common::Address;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
-
-pub type L1RpcApiContext = ethrex_rpc::RpcApiContext;
-type L1NodeData = ethrex_rpc::NodeData;
-type L1GasTipEstimator = ethrex_rpc::GasTipEstimator;
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
@@ -76,13 +74,13 @@ pub async fn start_api(
             active_filters: active_filters.clone(),
             syncer: Arc::new(syncer),
             peer_handler,
-            node_data: L1NodeData {
+            node_data: NodeData {
                 jwt_secret,
                 local_p2p_node,
                 local_node_record,
                 client_version,
             },
-            gas_tip_estimator: Arc::new(TokioMutex::new(L1GasTipEstimator::new())),
+            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         },
         valid_delegation_addresses,
         sponsor_pk,

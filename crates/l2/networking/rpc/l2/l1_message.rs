@@ -1,14 +1,13 @@
-use ethrex_rpc::utils::RpcRequest;
+use ethrex_l2_common::l1_messages::get_block_l1_message_hashes;
+use ethrex_rpc::utils::{RpcErr as L1RpcErr, RpcRequest};
 use keccak_hash::H256;
 use serde_json::Value;
 use tracing::info;
 
 use crate::{
     rpc::RpcApiContext,
-    utils::{L1RpcErr, RpcErr, merkle_proof},
+    utils::{RpcErr, merkle_proof},
 };
-
-use ethrex_l2_common::l1_messages::get_block_l1_message_hashes;
 
 pub struct GetL1MessageProof {
     pub transaction_hash: H256,
