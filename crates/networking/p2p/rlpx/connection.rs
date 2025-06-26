@@ -5,7 +5,8 @@ use super::{
     utils::log_peer_warn,
 };
 use crate::rlpx::based::get_hash_batch_sealed;
-use crate::rlpx::l2::messages::{BatchSealedMessage, NewBlockMessage};
+use crate::rlpx::l2::messages::BatchSealed;
+use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
 use crate::rlpx::utils::get_pub_key;
 use crate::{
     kademlia::PeerChannels,
@@ -22,7 +23,7 @@ use crate::{
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, PingMessage, PongMessage,
-            SUPPORTED_BASED_CAPABILITIES, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES,
+            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES,
             SUPPORTED_SNAP_CAPABILITIES,
         },
         utils::{log_peer_debug, log_peer_error},
@@ -136,9 +137,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         blockchain: Arc<Blockchain>,
         client_version: String,
         connection_broadcast: RLPxConnBroadcastSender,
-        #[cfg(feature = "l2")] store_rollup: StoreRollup,
-        based: bool,
-        #[cfg(feature = "l2")] committer_key: Option<SigningKeySecp256k1>,
     ) -> Self {
         Self {
             signer,
@@ -151,8 +149,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             negotiated_snap_capability: None,
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
-            // next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            // next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
             next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
@@ -294,7 +290,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
-            #[cfg(feature = "l2")]
             &SUPPORTED_BASED_CAPABILITIES[..]
         ]
         .concat();
@@ -590,7 +585,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     if !valid_txs.is_empty() {
                         self.broadcast_message(Message::Transactions(Transactions::new(
                             valid_txs,
-                        )))?;
+                        ))).await?;
                     }
                 }
             }
@@ -681,23 +676,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
-            Message::NewBlock(req) if peer_supports_based => {
-                if self.should_process_new_block(&req).await? {
-                    self.process_new_block(&req).await?;
-                    // for now we broadcast valid messages
-                    self.broadcast_message(Message::NewBlock(req))?;
-                }
+            Message::L2Message(msg) => {
+               self.handle_based_capability_message(msg).await?
             }
-            Message::BatchSealed(req) => {
-                {
-                    if self.should_process_batch_sealed(&req).await? {
-                        self.process_batch_sealed(&req).await?;
-                        // for now we broadcast valid messages
-                        self.broadcast_message(Message::BatchSealed(req))?;
-                    }
-                }
-            }
-
             // Send response messages to the backend
             message @ Message::AccountRange(_)
             | message @ Message::StorageRanges(_)
@@ -707,7 +688,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             | message @ Message::BlockHeaders(_)
             | message @ Message::Receipts(_) => sender.send(message).await?,
             // TODO: Add new message types and handlers as they are implemented
-            message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
+            message => {
+                return Err(RLPxError::MessageNotHandled(format!("{message}")))
+            }
         };
         Ok(())
     }
@@ -726,12 +709,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     });
                     self.send(new_msg).await?;
                 }
-                Message::NewBlock(block_msg) => {
-                    let new_msg = Message::NewBlock(block_msg.clone());
-                    self.send(new_msg).await?;
-                }
-                Message::BatchSealed(batch_msg) => {
-                    let new_msg = Message::BatchSealed(batch_msg.clone());
+                Message::L2Message(l2_msg) => {
+                    let cloned = l2_msg;
+                    let new_msg = Message::L2Message(l2_msg.clone());
                     self.send(new_msg).await?;
                 }
                 msg => {
@@ -798,11 +778,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.framed.next().await
     }
 
-    fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
+    pub async fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
+        let task_id = tokio::task::id();
         match msg {
             txs_msg @ Message::Transactions(_) => {
                 let txs = Arc::new(txs_msg);
-                let task_id = tokio::task::id();
                 let Ok(_) = self.connection_broadcast_send.send((task_id, txs)) else {
                     let error_message = "Could not broadcast received transactions";
                     log_peer_error(&self.node, error_message);
@@ -810,21 +790,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 };
                 Ok(())
             }
-            block_msg @ Message::NewBlock(_) => {
-                let block = Arc::new(block_msg);
-                let task_id = tokio::task::id();
-                let Ok(_) = self.connection_broadcast_send.send((task_id, block)) else {
-                    let error_message = "Could not broadcast received block";
-                    log_peer_error(&self.node, error_message);
-                    return Err(RLPxError::BroadcastError(error_message.to_owned()));
-                };
-                Ok(())
-            }
-            batch_msg @ Message::BatchSealed(_) => {
-                let batch = Arc::new(batch_msg);
-                let task_id = tokio::task::id();
-                let Ok(_) = self.connection_broadcast_send.send((task_id, batch)) else {
-                    let error_message = "Could not broadcast received batch";
+            l2_msg @ Message::L2Message(_) => {
+                let Ok(_) = self.connection_broadcast_send.send((task_id, l2_msg.into())) else {
+                    let error_message = "Could not broadcast l2 message";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));
                 };
@@ -961,7 +929,7 @@ mod tests {
             .serialize_compact();
         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
 
-        let message_to_send = Message::NewBlock(NewBlockMessage {
+        let message_to_send = Message::NewBlock(NewBlcok {
             block: _block.clone(),
             signature,
             recovery_id,
@@ -996,7 +964,7 @@ mod tests {
             .serialize_compact();
         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
 
-        let message_to_send = Message::BatchSealed(BatchSealedMessage {
+        let message_to_send = Message::BatchSealed(BatchSealed {
             batch,
             signature,
             recovery_id,

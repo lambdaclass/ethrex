@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use ethrex_common::types::batch::Batch;
 use tokio::time::Instant;
 use crate::rlpx::based::get_hash_batch_sealed;
-use crate::rlpx::l2::messages::{BatchSealedMessage, NewBlockMessage};
+use crate::rlpx::l2::messages::{BatchSealed, NewBlock};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
 use crate::rlpx::{connection::RLPxConnection, error::RLPxError, message::Message};
 use ethereum_types::Address;
@@ -12,6 +13,9 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::{Message as SecpMessage, SecretKey};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, info};
+
+use super::messages::L2Message;
+
 #[derive(Debug, Clone)]
 pub struct L2ConnState {
     pub latest_block_sent: u64,
@@ -30,6 +34,23 @@ fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
+    pub async fn handle_based_capability_message(&mut self, msg: L2Message) -> Result<(), RLPxError> {
+       // FIXME: Check the current connection actually supports the 'based' capability.
+       match msg {
+           L2Message::BatchSealed(ref batch_sealed_msg) => {
+               if self.should_process_batch_sealed(&batch_sealed_msg).await? {
+                   self.process_batch_sealed(&batch_sealed_msg).await?;
+               }
+           }
+           L2Message::NewBlock(ref new_block_msg) => {
+               if self.should_process_new_block(&new_block_msg).await? {
+                   self.process_new_block(&new_block_msg).await?;
+               }
+           }
+       }
+        // for now we broadcast valid messages
+        self.broadcast_message(msg.into()).await
+    }
     pub async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         // FIXME: Re-add this
             // let latest_block_number = self.storage.get_latest_block_number().await?;
@@ -95,7 +116,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     pub async fn should_process_new_block(
         &mut self,
-        msg: &NewBlockMessage,
+        msg: &NewBlock,
     ) -> Result<bool, RLPxError> {
         // FIXME: See if we can avoid this check
         let Some(ref mut l2_state) = self.l2_state else {
@@ -149,7 +170,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     pub async fn should_process_batch_sealed(
         &mut self,
-        msg: &BatchSealedMessage,
+        msg: &BatchSealed,
     ) -> Result<bool, RLPxError> {
         let Some(ref mut l2_state) = self.l2_state else {
             return Err(RLPxError::IncompatibleProtocol);
@@ -204,7 +225,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .await?;
         Ok(true)
     }
-    pub async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
+    pub async fn process_new_block(&mut self, msg: &NewBlock) -> Result<(), RLPxError> {
         // FIXME: Remove this unwrap
         let Some(ref mut l2_state) = self.l2_state else {
             return Err(RLPxError::IncompatibleProtocol);
@@ -295,7 +316,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 (signature, recovery_id)
             };
 
-            let msg = Message::BatchSealed(BatchSealedMessage {
+            let msg = Message::BatchSealed(BatchSealed {
                 batch,
                 signature,
                 recovery_id,
@@ -312,7 +333,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     pub async fn process_batch_sealed(
         &mut self,
-        msg: &BatchSealedMessage,
+        msg: &BatchSealed,
     ) -> Result<(), RLPxError> {
         // FIXME: Avoid unwrap + clone
         self.l2_state

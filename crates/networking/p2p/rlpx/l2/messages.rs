@@ -1,20 +1,20 @@
 use crate::rlpx::{
-    message::RLPxMessage,
+    message::{Message, RLPxMessage},
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{Block, batch::Batch};
+use ethrex_common::types::{batch::Batch, Block};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
 
 #[derive(Debug, Clone)]
-pub struct NewBlockMessage {
+pub struct NewBlock {
     pub block: Block,
     pub signature: [u8; 64],
     pub recovery_id: [u8; 4],
 }
 
-impl RLPxMessage for NewBlockMessage {
+impl RLPxMessage for NewBlock {
     const CODE: u8 = 0x0;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
@@ -36,7 +36,7 @@ impl RLPxMessage for NewBlockMessage {
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
         decoder.finish()?;
-        Ok(NewBlockMessage {
+        Ok(NewBlock {
             block,
             signature,
             recovery_id,
@@ -45,13 +45,13 @@ impl RLPxMessage for NewBlockMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct BatchSealedMessage {
+pub struct BatchSealed {
     pub batch: Batch,
     pub signature: [u8; 64],
     pub recovery_id: [u8; 4],
 }
 
-impl RLPxMessage for BatchSealedMessage {
+impl RLPxMessage for BatchSealed {
     const CODE: u8 = 0x1;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
@@ -102,10 +102,22 @@ impl RLPxMessage for BatchSealedMessage {
                 proofs,
             },
         };
-        Ok(BatchSealedMessage {
+        Ok(BatchSealed {
             batch,
             signature,
             recovery_id,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum L2Message {
+    BatchSealed(BatchSealed),
+    NewBlock(NewBlock),
+}
+
+impl From<L2Message> for crate::rlpx::message::Message {
+    fn from(value: L2Message) -> Self {
+        Message::L2Message(value)
     }
 }

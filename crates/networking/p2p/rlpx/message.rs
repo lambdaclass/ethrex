@@ -9,7 +9,8 @@ use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
-use super::l2::messages::{BatchSealedMessage, NewBlockMessage};
+use super::l2::messages::{BatchSealed, L2Message, NewBlock};
+use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -61,8 +62,7 @@ pub(crate) enum Message {
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
     // based capability
-    NewBlock(NewBlockMessage),
-    BatchSealed(BatchSealedMessage),
+    L2Message(messages::L2Message),
 }
 
 impl Message {
@@ -101,8 +101,14 @@ impl Message {
             Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
 
             // based capability
-            Message::NewBlock(_) => BASED_CAPABILITY_OFFSET + NewBlockMessage::CODE,
-            Message::BatchSealed(_) => BASED_CAPABILITY_OFFSET + BatchSealedMessage::CODE,
+            Message::L2Message(l2_msg) => {
+                BASED_CAPABILITY_OFFSET + {
+                    match l2_msg {
+                        L2Message::NewBlock(_) => NewBlock::CODE,
+                        L2Message::BatchSealed(_) => BatchSealed::CODE,
+                    }
+                }
+            }
         }
     }
     pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
@@ -162,15 +168,17 @@ impl Message {
             }
         } else {
             // based capability
-            match msg_id - BASED_CAPABILITY_OFFSET {
-                NewBlockMessage::CODE => {
-                    return Ok(Message::NewBlock(NewBlockMessage::decode(data)?));
+            Ok(Message::L2Message(match msg_id - BASED_CAPABILITY_OFFSET {
+                messages::NewBlock::CODE => {
+                    let decoded = l2::messages::NewBlock::decode(data)?;
+                    L2Message::NewBlock(decoded)
                 }
-                BatchSealedMessage::CODE => {
-                    return Ok(Message::BatchSealed(BatchSealedMessage::decode(data)?));
+                BatchSealed::CODE => {
+                    let decoded = l2::messages::BatchSealed::decode(data)?;
+                    L2Message::BatchSealed(decoded)
                 }
                 _ => return Err(RLPDecodeError::MalformedData),
-            }
+            }))
         }
     }
 
@@ -201,8 +209,10 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
-            Message::NewBlock(msg) => msg.encode(buf),
-            Message::BatchSealed(msg) => msg.encode(buf),
+            Message::L2Message(l2_msg) => match l2_msg {
+                L2Message::BatchSealed(msg) => msg.encode(buf),
+                L2Message::NewBlock(msg) => msg.encode(buf),
+            },
         }
     }
 }
@@ -234,8 +244,10 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
-            Message::NewBlock(_) => "based:NewBlock".fmt(f),
-            Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
+            Message::L2Message(l2_msg) => match l2_msg {
+                L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
+                L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
+            },
         }
     }
 }
