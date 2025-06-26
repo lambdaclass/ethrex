@@ -134,7 +134,7 @@ impl Command {
 
                 let genesis = network.get_genesis()?;
                 let store = init_store(&data_dir, genesis).await;
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
 
