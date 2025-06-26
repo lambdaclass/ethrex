@@ -72,7 +72,7 @@ impl PeerHandler {
 
     /// Helper method to record a succesful peer response as well as record previous failed responses from other peers
     /// We make this distinction for snap requests as the data we request might have become stale
-    /// So we cannot know wether a peer returning an empty response is a failure until another peer returns the requested data
+    /// So we cannot know whether a peer returning an empty response is a failure until another peer returns the requested data
     async fn record_snap_peer_success(&self, succesful_peer_id: H256, mut peer_ids: HashSet<H256>) {
         // Reward succesful peer
         self.record_peer_success(succesful_peer_id).await;
@@ -376,7 +376,6 @@ impl PeerHandler {
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let mut peer_ids = HashSet::new();
-        // TODO: Keep track of peers returning null res and penalize if we get succesful answer
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetAccountRange(GetAccountRange {
