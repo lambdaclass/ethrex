@@ -22,6 +22,8 @@ impl Hook for L2Hook {
             (sender_account.info.balance, sender_account.info.nonce)
         };
 
+        let mut privileged_had_insufficient_balance = false;
+
         // The bridge is allowed to mint ETH.
         // This is done by not decreasing it's balance when it's the source of a transfer.
         // For other privileged transactions, insufficient balance can't cause an error
@@ -30,10 +32,10 @@ impl Hook for L2Hook {
         if vm.env.is_privileged && sender_address != COMMON_BRIDGE_L2_ADDRESS {
             let value = vm.current_call_frame()?.msg_value;
             if value > sender_balance {
+                privileged_had_insufficient_balance = true;
                 vm.current_call_frame_mut()?.msg_value = U256::zero();
                 vm.current_call_frame_mut()?
                     .set_code(vec![Opcode::INVALID.into()].into())?;
-                return Ok(());
             }
             // This should never fail, since we just checked the balance is enough.
             vm.decrease_account_balance(sender_address, value)
@@ -116,6 +118,12 @@ impl Hook for L2Hook {
         // Transaction is type 4 if authorization_list is Some
         if vm.tx.authorization_list().is_some() {
             default_hook::validate_type_4_tx(vm)?;
+        }
+
+        if privileged_had_insufficient_balance {
+            // If the transaction is privileged and had insufficient balance, we already set the bytecode
+            // to INVALID and we need to return here to avoid setting the bytecode again.
+            return Ok(());
         }
 
         default_hook::transfer_value(vm)?;
