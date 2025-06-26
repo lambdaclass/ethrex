@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750965924656,
+  "lastUpdate": 1750968682228,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2173,6 +2173,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00861501312192455,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a0eebfa256edaaf3ffc35676fc3b3ad021dccde8",
+          "message": "ci(l2): build docker images for all l2 tests (#3342)\n\n**Motivation**\n\nAfter #3338 state reconstruct test and based tests started failing\n**Description**\n\n- build the docker image for those steps too",
+          "timestamp": "2025-06-26T18:13:36Z",
+          "tree_id": "3f597839d3d2dc64484734cb7189722eede96728",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a0eebfa256edaaf3ffc35676fc3b3ad021dccde8"
+        },
+        "date": 1750968676207,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00865286051619989,
             "unit": "Mgas/s"
           }
         ]
