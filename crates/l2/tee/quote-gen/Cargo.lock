@@ -4625,6 +4625,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "vergen-git2",
  "zerocopy",
  "zkvm_interface",
 ]
