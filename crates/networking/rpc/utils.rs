@@ -10,29 +10,40 @@ use ethrex_blockchain::error::MempoolError;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::RollupStoreError;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
+    #[error("Method not found: {0}")]
     MethodNotFound(String),
+    #[error("Wrong parameter: {0}")]
     WrongParam(String),
+    #[error("Invalid params: {0}")]
     BadParams(String),
+    #[error("Missing parameter: {0}")]
     MissingParam(String),
+    #[error("Too large request")]
     TooLargeRequest,
+    #[error("Bad hex format: {0}")]
     BadHexFormat(u64),
+    #[error("Unsupported fork: {0}")]
     UnsuportedFork(String),
+    #[error("Internal Error: {0}")]
     Internal(String),
+    #[error("Vm execution error: {0}")]
     Vm(String),
-    Revert {
-        data: String,
-    },
-    Halt {
-        reason: String,
-        gas_used: u64,
-    },
+    #[error("execution reverted: data={data}")]
+    Revert { data: String },
+    #[error("execution halted: reason={reason}, gas_used={gas_used}")]
+    Halt { reason: String, gas_used: u64 },
+    #[error("Authentication error: {0:?}")]
     AuthenticationError(AuthenticationError),
+    #[error("Invalid forkchoice state: {0}")]
     InvalidForkChoiceState(String),
+    #[error("Invalid payload attributes: {0}")]
     InvalidPayloadAttributes(String),
+    #[error("Unknown payload: {0}")]
     UnknownPayload(String),
     #[cfg(feature = "l2")]
+    #[error("Invalid Ethex L2 message: {0}")]
     InvalidEthrexL2Message(String),
 }
 
@@ -196,23 +207,26 @@ pub struct RpcRequest {
 impl RpcRequest {
     pub fn namespace(&self) -> Result<RpcNamespace, RpcErr> {
         let mut parts = self.method.split('_');
-        if let Some(namespace) = parts.next() {
-            match namespace {
-                "engine" => Ok(RpcNamespace::Engine),
-                "eth" => Ok(RpcNamespace::Eth),
-                "admin" => Ok(RpcNamespace::Admin),
-                "debug" => Ok(RpcNamespace::Debug),
-                "web3" => Ok(RpcNamespace::Web3),
-                "net" => Ok(RpcNamespace::Net),
-                // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
-                "txpool" => Ok(RpcNamespace::Mempool),
-                #[cfg(feature = "l2")]
-                "ethrex" => Ok(RpcNamespace::EthrexL2),
-                _ => Err(RpcErr::MethodNotFound(self.method.clone())),
-            }
-        } else {
-            Err(RpcErr::MethodNotFound(self.method.clone()))
-        }
+        let Some(namespace) = parts.next() else {
+            return Err(RpcErr::MethodNotFound(self.method.clone()));
+        };
+        resolve_namespace(namespace, self.method.clone())
+    }
+}
+
+pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
+    match maybe_namespace {
+        "engine" => Ok(RpcNamespace::Engine),
+        "eth" => Ok(RpcNamespace::Eth),
+        "admin" => Ok(RpcNamespace::Admin),
+        "debug" => Ok(RpcNamespace::Debug),
+        "web3" => Ok(RpcNamespace::Web3),
+        "net" => Ok(RpcNamespace::Net),
+        // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
+        "txpool" => Ok(RpcNamespace::Mempool),
+        #[cfg(feature = "l2")]
+        "ethrex" => Ok(RpcNamespace::EthrexL2),
+        _ => Err(RpcErr::MethodNotFound(method)),
     }
 }
 

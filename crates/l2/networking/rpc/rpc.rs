@@ -1,0 +1,175 @@
+use crate::l2::l1_message::GetL1MessageProof;
+use crate::utils::{L1RpcErr, RpcErr, RpcNamespace, resolve_namespace};
+use axum::extract::State;
+use axum::{Json, Router, http::StatusCode, routing::post};
+use bytes::Bytes;
+use ethrex_blockchain::Blockchain;
+use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::sync_manager::SyncManager;
+use ethrex_p2p::types::Node;
+use ethrex_p2p::types::NodeRecord;
+use ethrex_rpc::RpcRequestWrapper;
+use ethrex_rpc::utils::{RpcRequest, RpcRequestId};
+use ethrex_storage::Store;
+use serde_json::Value;
+use std::{
+    collections::HashMap,
+    future::IntoFuture,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tower_http::cors::CorsLayer;
+use tracing::info;
+
+use crate::l2::transaction::SponsoredTx;
+use ethrex_common::Address;
+use ethrex_storage_rollup::StoreRollup;
+use secp256k1::SecretKey;
+
+pub type L1RpcApiContext = ethrex_rpc::RpcApiContext;
+type L1NodeData = ethrex_rpc::NodeData;
+type L1GasTipEstimator = ethrex_rpc::GasTipEstimator;
+
+#[derive(Debug, Clone)]
+pub struct RpcApiContext {
+    pub l1_ctx: L1RpcApiContext,
+    pub valid_delegation_addresses: Vec<Address>,
+    pub sponsor_pk: SecretKey,
+    pub rollup_store: StoreRollup,
+}
+
+pub const FILTER_DURATION: Duration = {
+    if cfg!(test) {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_secs(5 * 60)
+    }
+};
+
+#[allow(clippy::too_many_arguments)]
+pub async fn start_api(
+    http_addr: SocketAddr,
+    authrpc_addr: SocketAddr,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    jwt_secret: Bytes,
+    local_p2p_node: Node,
+    local_node_record: NodeRecord,
+    syncer: SyncManager,
+    peer_handler: PeerHandler,
+    client_version: String,
+    valid_delegation_addresses: Vec<Address>,
+    sponsor_pk: SecretKey,
+    rollup_store: StoreRollup,
+) -> Result<(), RpcErr> {
+    // TODO: Refactor how filters are handled,
+    // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
+    let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let service_context = RpcApiContext {
+        l1_ctx: L1RpcApiContext {
+            storage,
+            blockchain,
+            active_filters: active_filters.clone(),
+            syncer: Arc::new(syncer),
+            peer_handler,
+            node_data: L1NodeData {
+                jwt_secret,
+                local_p2p_node,
+                local_node_record,
+                client_version,
+            },
+            gas_tip_estimator: Arc::new(TokioMutex::new(L1GasTipEstimator::new())),
+        },
+        valid_delegation_addresses,
+        sponsor_pk,
+        rollup_store,
+    };
+
+    // Periodically clean up the active filters for the filters endpoints.
+    tokio::task::spawn(async move {
+        let mut interval = tokio::time::interval(FILTER_DURATION);
+        let filters = active_filters.clone();
+        loop {
+            interval.tick().await;
+            tracing::info!("Running filter clean task");
+            ethrex_rpc::clean_outdated_filters(filters.clone(), FILTER_DURATION);
+            tracing::info!("Filter clean task complete");
+        }
+    });
+
+    // All request headers allowed.
+    // All methods allowed.
+    // All origins allowed.
+    // All headers exposed.
+    let cors = CorsLayer::permissive();
+
+    let http_router = Router::new()
+        .route("/", post(handle_http_request))
+        .layer(cors)
+        .with_state(service_context.clone());
+    let http_listener = TcpListener::bind(http_addr)
+        .await
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
+    let http_server = axum::serve(http_listener, http_router)
+        .with_graceful_shutdown(ethrex_rpc::shutdown_signal())
+        .into_future();
+    info!("Starting HTTP server at {http_addr}");
+
+    info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
+
+    let _ =
+        tokio::try_join!(http_server).inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+
+    Ok(())
+}
+
+async fn handle_http_request(
+    State(service_context): State<RpcApiContext>,
+    body: String,
+) -> Result<Json<Value>, StatusCode> {
+    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+        Ok(RpcRequestWrapper::Single(request)) => {
+            let res = map_http_requests(&request, service_context).await;
+            ethrex_rpc::rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
+        }
+        Ok(RpcRequestWrapper::Multiple(requests)) => {
+            let mut responses = Vec::new();
+            for req in requests {
+                let res = map_http_requests(&req, service_context.clone()).await;
+                responses.push(
+                    ethrex_rpc::rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
+                );
+            }
+            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
+        }
+        Err(_) => ethrex_rpc::rpc_response(
+            RpcRequestId::String("".to_string()),
+            Err(L1RpcErr::BadParams("Invalid request body".to_string())),
+        )
+        .map_err(|_| StatusCode::BAD_REQUEST)?,
+    };
+    Ok(Json(res))
+}
+
+/// Handle requests that can come from either clients or other users
+pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    let Ok(RpcNamespace::EthrexL2) = resolve_namespace(&req.method) else {
+        return ethrex_rpc::map_http_requests(req, context.l1_ctx)
+            .await
+            .map_err(RpcErr::L1RpcErr);
+    };
+
+    map_l2_requests(req, context).await
+}
+
+pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
+        "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
+        unknown_ethrex_l2_method => {
+            Err(L1RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
+        }
+    }
+}

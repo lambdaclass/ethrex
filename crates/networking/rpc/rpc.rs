@@ -77,7 +77,7 @@ cfg_if::cfg_if! {
 
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum RpcRequestWrapper {
+pub enum RpcRequestWrapper {
     Single(RpcRequest),
     Multiple(Vec<RpcRequest>),
 }
@@ -221,7 +221,7 @@ pub async fn start_api(
     Ok(())
 }
 
-async fn shutdown_signal() {
+pub async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("failed to install Ctrl+C handler");
@@ -456,7 +456,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
     }
 }
 
-fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Result<Value, RpcErr>
+pub fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Result<Value, RpcErr>
 where
     E: Into<RpcErrorMetadata>,
 {
