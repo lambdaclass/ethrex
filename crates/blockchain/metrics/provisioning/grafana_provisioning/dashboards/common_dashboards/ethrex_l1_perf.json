@@ -426,7 +426,7 @@
             "uid": "P8E80F9AEF21F6940"
           },
           "editorMode": "builder",
-          "expr": "{filename=\"/var/log/ethrex/ethrex-sync-hoodi-levm.log\"} |= ``",
+          "expr": "{filename=~\".+|$network\"} |= ``",
           "queryType": "range",
           "refId": "A"
         }
