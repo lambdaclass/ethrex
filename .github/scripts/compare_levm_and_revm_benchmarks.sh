@@ -53,8 +53,17 @@ for f in ../../../benchmark_comparison_results/*; do
               }
             }
             ' "$f" >> ../../../result.md
+            cat $f >> ../../../detailed_result.md
           done
 
-          if [ ! -s ../../../result.md ]; then
-            echo "No significant difference was registered for any benchmark run." > ../../../result.md
-          fi
+if [ ! -s ../../../result.md ]; then
+echo "No significant difference was registered for any benchmark run." > ../../../result.md
+fi
+
+echo "\n" >> ../../../result.md
+echo "<details>\n" >> ../../../result.md
+echo "<summary>Detailed view</summary>\n \n" >> ../../../result.md
+echo "\`\`\`\n" >> ../../../result.md
+cat ../../../detailed_result.md >> ../../../result.md
+echo "\`\`\`\n" >> ../../../result.md
+echo "<details>\n" >> ../../../result.md
