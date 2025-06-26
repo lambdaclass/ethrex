@@ -1,14 +1,20 @@
+use std::collections::BTreeMap;
+
+use crate::rlpx::utils::{get_pub_key, log_peer_error};
 use crate::rlpx::{connection::RLPxConnection, error::RLPxError, message::Message};
 use crate::rlpx::l2::messages::{NewBlockMessage, BatchSealedMessage};
 use ethrex_common::types::Block;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use ethereum_types::Address;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::debug;
 #[derive(Debug, Clone)]
 pub struct L2ConnState {
     pub latest_block_sent: u64,
+    pub latest_block_added: u64,
     pub latest_batch_sent: u64,
+    pub blocks_on_queue: BTreeMap<u64, Block>,
     pub store_rollup: StoreRollup,
     pub commiter_key: Option<SecretKey>,
 }
@@ -94,4 +100,55 @@ pub async fn send_new_block<S: AsyncWrite + AsyncRead + std::marker::Unpin>(conn
     conn_l2_state.latest_block_sent = latest_block_number;
 
     Ok(())
+}
+
+pub async fn should_process_new_block<S: AsyncWrite + AsyncRead + std::marker::Unpin>(conn: &mut RLPxConnection<S>, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
+    if !conn.blockchain.is_synced() {
+        debug!("Not processing new block, blockchain is not synced");
+        return Ok(false);
+    }
+
+    // FIXME: Avoid clone & unwrap
+    if conn.l2_state.clone().unwrap().latest_block_added >= msg.block.header.number
+        // FIXME: Avoid clone & unwrap
+        || conn.l2_state.clone().unwrap().blocks_on_queue.contains_key(&msg.block.header.number)
+    {
+        debug!(
+            "Block {} received by peer already stored, ignoring it",
+            msg.block.header.number
+        );
+        return Ok(false);
+    }
+
+    let block_hash = msg.block.hash();
+
+    let recovered_lead_sequencer = get_pub_key(
+        msg.recovery_id,
+        &msg.signature,
+        *block_hash.as_fixed_bytes(),
+    )
+        .map_err(|e| {
+            log_peer_error(
+                &conn.node,
+                &format!("Failed to recover lead sequencer: {e}"),
+            );
+            RLPxError::CryptographyError(e.to_string())
+        })?;
+
+    if !validate_signature(recovered_lead_sequencer) {
+        return Ok(false);
+    }
+    let mut signature = [0u8; 68];
+    signature[..64].copy_from_slice(&msg.signature[..]);
+    signature[64..].copy_from_slice(&msg.recovery_id[..]);
+    // FIXME: Avoid clone & unwrap
+    conn.l2_state.clone().unwrap().store_rollup
+        .store_signature_by_block(block_hash, signature)
+        .await?;
+    Ok(true)
+}
+
+fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
+    // Until the RPC module can be included in the P2P crate, we skip the validation
+    true
 }

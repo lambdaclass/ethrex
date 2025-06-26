@@ -98,10 +98,10 @@ pub(crate) struct LocalState {
 /// Fully working RLPx connection.
 pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
-    node: Node,
+    pub node: Node,
     framed: Framed<S, RLPxCodec>,
     pub storage: Store,
-    blockchain: Arc<Blockchain>,
+    pub blockchain: Arc<Blockchain>,
     capabilities: Vec<Capability>,
     negotiated_eth_capability: Option<Capability>,
     negotiated_snap_capability: Option<Capability>,
@@ -804,7 +804,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
+    pub async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
         if !self.blockchain.is_synced() {
             debug!("Not processing new block, blockchain is not synced");
             return Ok(false);
