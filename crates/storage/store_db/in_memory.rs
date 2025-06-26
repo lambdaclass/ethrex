@@ -10,13 +10,13 @@ use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, payload::PayloadBundle,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<HashMap<H256, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -460,13 +460,13 @@ impl StoreEngine for Store {
         let mut store = self.inner()?;
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
         let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
-        Ok(Trie::open(db, storage_root))
+        Ok(Trie::open(db, storage_root)?)
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_backend = self.inner()?.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
-        Ok(Trie::open(db, state_root))
+        Ok(Trie::open(db, state_root)?)
     }
 
     async fn get_block_body_by_hash(

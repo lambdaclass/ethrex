@@ -28,6 +28,7 @@ pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::error::RLPDecodeError;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -47,7 +48,7 @@ pub type ValueRLP = Vec<u8>;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
-pub type TrieNode = (NodeHash, NodeRLP);
+pub type TrieNode = (H256, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
@@ -71,13 +72,13 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
-        Self {
+    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Result<Self, RLPDecodeError> {
+        Ok(Self {
             db,
             root: (root != *EMPTY_TRIE_HASH)
-                .then_some(NodeHash::from(root).into())
+                .then_some(NodeHash::from(root).try_into()?)
                 .unwrap_or_default(),
-        }
+        })
     }
 
     /// Return a reference to the internal database.
@@ -92,7 +93,7 @@ impl Trie {
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
-            NodeRef::Hash(hash) if hash.is_valid() => {
+            NodeRef::Hash(hash) if !hash.is_zero() => {
                 Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
                     .map_err(TrieError::RLPDecode)?
                     .get(self.db.as_ref(), Nibbles::from_bytes(path))?
@@ -171,14 +172,15 @@ impl Trie {
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
     /// the cached nodes.
-    pub fn commit(&mut self) -> Result<(), TrieError> {
-        if self.root.is_valid() {
+    pub fn commit(&mut self) -> Result<NodeHash, TrieError> {
+        Ok(if self.root.is_valid() {
             let mut acc = Vec::new();
-            self.root.commit(&mut acc);
+            let hash = self.root.commit(&mut acc);
             self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
-        }
-
-        Ok(())
+            hash
+        } else {
+            NodeHash::default()
+        })
     }
 
     /// Computes the nodes that would be added if updating the trie.
@@ -259,49 +261,48 @@ impl Trie {
             .iter()
             .map(|node| {
                 (
-                    NodeHash::from_slice(&Keccak256::new_with_prefix(node).finalize()),
+                    H256::from_slice(&Keccak256::new_with_prefix(node).finalize()),
                     node,
                 )
             })
             .collect::<HashMap<_, _>>();
-        let nodes = storage
-            .iter()
-            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
-            .collect::<HashMap<_, _>>();
         let Some(root) = root else {
+            let nodes = storage
+                .iter()
+                .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
+                .collect::<HashMap<_, _>>();
             let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
             return Ok(Trie::new(in_memory_trie));
         };
 
-        fn inner(
-            storage: &mut HashMap<NodeHash, &Vec<u8>>,
-            node: &NodeRLP,
-        ) -> Result<Node, TrieError> {
+        fn inner(storage: &mut HashMap<H256, &Vec<u8>>, node: &NodeRLP) -> Result<Node, TrieError> {
             Ok(match Node::decode_raw(node)? {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        if hash.is_valid() {
-                            *choice = match storage.remove(&hash) {
-                                Some(rlp) => inner(storage, rlp)?.into(),
-                                None => hash.into(),
-                            };
+                        if choice.is_valid() {
+                            *choice = match choice.compute_hash() {
+                                NodeHash::Hashed(hash) => match storage.remove(&hash) {
+                                    Some(rlp) => inner(storage, rlp)?.into(),
+                                    None => NodeRef::Hash(hash),
+                                },
+                                NodeHash::Inline((data, len)) => {
+                                    inner(storage, &data[..len as usize].to_vec())?.into()
+                                }
+                            }
                         }
                     }
 
                     (*node).into()
                 }
                 Node::Extension(mut node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    node.child = match storage.remove(&hash) {
-                        Some(rlp) => inner(storage, rlp)?.into(),
-                        None => hash.into(),
+                    node.child = match node.child.compute_hash() {
+                        NodeHash::Hashed(hash) => match storage.remove(&hash) {
+                            Some(rlp) => inner(storage, rlp)?.into(),
+                            None => NodeRef::Hash(hash),
+                        },
+                        NodeHash::Inline((data, len)) => {
+                            inner(storage, &data[..len as usize].to_vec())?.into()
+                        }
                     };
 
                     node.into()
@@ -311,9 +312,10 @@ impl Trie {
         }
 
         let root = inner(&mut storage, root)?.into();
+
         let nodes = storage
-            .into_iter()
-            .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
+            .iter()
+            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
             .collect::<HashMap<_, _>>();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
 
@@ -343,7 +345,7 @@ impl Trie {
         struct NullTrieDB;
 
         impl TrieDB for NullTrieDB {
-            fn get(&self, _key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+            fn get(&self, _key: H256) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
             }
 
@@ -435,7 +437,7 @@ impl Trie {
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
+        let hmap: HashMap<H256, Vec<u8>> = HashMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
@@ -469,7 +471,7 @@ impl ProofTrie {
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?
                 .into()
         } else {
-            external_ref.into()
+            external_ref.try_into()?
         };
 
         Ok(())

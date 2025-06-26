@@ -1,17 +1,19 @@
-use ethrex_trie::{NodeHash, error::TrieError};
+use ethrex_trie::error::TrieError;
 use libmdbx::orm::{Database, Table};
 use std::{marker::PhantomData, sync::Arc};
+
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
 pub struct LibmdbxTrieDB<T: Table> {
     db: Arc<Database>,
     phantom: PhantomData<T>,
 }
 
+use ethrex_common::H256;
 use ethrex_trie::TrieDB;
 
 impl<T> LibmdbxTrieDB<T>
 where
-    T: Table<Key = NodeHash, Value = Vec<u8>>,
+    T: Table<Key = [u8; 32], Value = Vec<u8>>,
 {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -23,17 +25,17 @@ where
 
 impl<T> TrieDB for LibmdbxTrieDB<T>
 where
-    T: Table<Key = NodeHash, Value = Vec<u8>>,
+    T: Table<Key = [u8; 32], Value = Vec<u8>>,
 {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: H256) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(key).map_err(TrieError::DbError)
+        txn.get::<T>(key.0).map_err(TrieError::DbError)
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(H256, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
+            txn.upsert::<T>(key.0, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
     }
@@ -43,7 +45,7 @@ where
 mod test {
     use super::LibmdbxTrieDB;
     use crate::trie_db::test_utils::libmdbx::{TestNodes, new_db};
-    use ethrex_trie::NodeHash;
+    use ethrex_common::H256;
     use ethrex_trie::Trie;
     use ethrex_trie::TrieDB;
     use libmdbx::{
@@ -57,10 +59,10 @@ mod test {
     fn simple_addition() {
         table!(
             /// NodeHash to Node table
-            ( Nodes )  NodeHash => Vec<u8>
+            ( Nodes ) [u8; 32] => Vec<u8>
         );
         let inner_db = new_db::<Nodes>();
-        let key = NodeHash::from_encoded_raw(b"hello");
+        let key = H256::random();
         let db = LibmdbxTrieDB::<Nodes>::new(inner_db);
         assert_eq!(db.get(key).unwrap(), None);
         db.put(key, "value".into()).unwrap();
@@ -71,11 +73,11 @@ mod test {
     fn different_tables() {
         table!(
             /// vec to vec
-            ( TableA ) NodeHash => Vec<u8>
+            ( TableA ) [u8; 32] => Vec<u8>
         );
         table!(
             /// vec to vec
-            ( TableB ) NodeHash => Vec<u8>
+            ( TableB ) [u8; 32] => Vec<u8>
         );
         let tables = [table_info!(TableA), table_info!(TableB)]
             .into_iter()
@@ -84,7 +86,7 @@ mod test {
         let inner_db = Arc::new(Database::create(None, &tables).unwrap());
         let db_a = LibmdbxTrieDB::<TableA>::new(inner_db.clone());
         let db_b = LibmdbxTrieDB::<TableB>::new(inner_db.clone());
-        let key = NodeHash::from_encoded_raw(b"hello");
+        let key = H256::random();
         db_a.put(key, "value".into()).unwrap();
         assert_eq!(db_b.get(key).unwrap(), None);
     }
@@ -105,7 +107,7 @@ mod test {
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([3; 32].to_vec()));
 
-        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
+        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root).unwrap();
 
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
@@ -131,7 +133,7 @@ mod test {
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), None);
         assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some(vec![0x05]));
 
-        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
+        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root).unwrap();
 
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
@@ -151,7 +153,8 @@ mod test {
         trie.insert([0; 32].to_vec(), [2; 32].to_vec()).unwrap();
         trie.insert([1; 32].to_vec(), [3; 32].to_vec()).unwrap();
 
-        let mut trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
+        let mut trie =
+            Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root).unwrap();
 
         trie.insert([2; 32].to_vec(), [4; 32].to_vec()).unwrap();
 
@@ -176,7 +179,8 @@ mod test {
         trie.insert([2; 32].to_vec(), [5; 32].to_vec()).unwrap();
         trie.remove([0; 32].to_vec()).unwrap();
 
-        let mut trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
+        let mut trie =
+            Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root).unwrap();
 
         trie.remove([2; 32].to_vec()).unwrap();
 
@@ -210,7 +214,7 @@ mod test {
 
         let db2 = open_db::<TestNodes>(trie_dir.to_str().unwrap());
         // Create a new trie based on the previous trie's DB
-        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db2)), root);
+        let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db2)), root).unwrap();
 
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));

@@ -27,7 +27,6 @@ use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
 use crate::UpdateBatch;
-use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::SnapStateIndex;
 use crate::{api::StoreEngine, utils::ChainDataIndex};
 
@@ -45,7 +44,7 @@ const RECEIPTS_TABLE: TableDefinition<TupleRLP<BlockHash, Index>, ReceiptRLP> =
     TableDefinition::new("Receipts");
 const CANONICAL_BLOCK_HASHES_TABLE: TableDefinition<BlockNumber, BlockHashRLP> =
     TableDefinition::new("CanonicalBlockHashes");
-pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33]), &[u8]> =
+pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 32]), &[u8]> =
     MultimapTableDefinition::new("StorageTrieNodes");
 const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
@@ -328,7 +327,7 @@ impl StoreEngine for RedBStore {
                 for (hashed_address, nodes) in update_batch.storage_updates {
                     for (node_hash, node_data) in nodes {
                         addr_store.insert(
-                            (hashed_address.0, node_hash_to_fixed_size(node_hash)),
+                            (hashed_address.0, node_hash.0),
                             &*node_data,
                         )?;
                     }
@@ -921,7 +920,7 @@ impl StoreEngine for RedBStore {
         storage_root: ethrex_common::H256,
     ) -> Result<ethrex_trie::Trie, StoreError> {
         let db = Box::new(RedBMultiTableTrieDB::new(self.db.clone(), hashed_address.0));
-        Ok(Trie::open(db, storage_root))
+        Ok(Trie::open(db, storage_root)?)
     }
 
     fn open_state_trie(
@@ -929,7 +928,7 @@ impl StoreEngine for RedBStore {
         state_root: ethrex_common::H256,
     ) -> Result<ethrex_trie::Trie, StoreError> {
         let db = Box::new(RedBTrie::new(self.db.clone()));
-        Ok(Trie::open(db, state_root))
+        Ok(Trie::open(db, state_root)?)
     }
 
     async fn set_canonical_block(
