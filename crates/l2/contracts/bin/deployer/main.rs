@@ -2,7 +2,7 @@ use std::{
     fs::{File, OpenOptions, read_to_string},
     io::{BufWriter, Write},
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Command,
     str::FromStr,
 };
 
@@ -277,7 +277,6 @@ fn deploy_tdx_contracts(
         .env("RPC_URL", &opts.rpc_url)
         .env("ON_CHAIN_PROPOSER", format!("{:#x}", on_chain_proposer))
         .current_dir("tee/contracts")
-        .stdout(Stdio::null())
         .spawn()
         .map_err(|err| {
             DeployerError::DeploymentSubtaskFailed(format!("Failed to spawn make: {err}"))
