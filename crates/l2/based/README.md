@@ -138,7 +138,6 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
   --genesis-l2-path ../../test_data/genesis-l2.json \
   --contracts-path contracts \
   --sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-  --pico.verifier-address 0x00000000000000000000000000000000000000aa \
   --risc0.verifier-address 0x00000000000000000000000000000000000000aa \
   --tdx.verifier-address 0x00000000000000000000000000000000000000aa \
   --aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
