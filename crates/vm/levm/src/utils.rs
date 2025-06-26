@@ -1,3 +1,7 @@
+#[cfg(feature = "l2")]
+use crate::l2_precompiles;
+#[cfg(not(feature = "l2"))]
+use crate::precompiles;
 use crate::{
     EVMConfig,
     call_frame::CallFrameBackup,
@@ -10,10 +14,7 @@ use crate::{
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
     opcodes::Opcode,
-    precompiles::{
-        SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
-        is_precompile,
-    },
+    precompiles::{SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN},
     vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
@@ -577,7 +578,14 @@ impl<'a> VM<'a> {
     }
 
     pub fn is_precompile(&self, address: &Address) -> bool {
-        is_precompile(address, self.env.config.fork)
+        #[cfg(not(feature = "l2"))]
+        {
+            precompiles::is_precompile(address, self.env.config.fork)
+        }
+        #[cfg(feature = "l2")]
+        {
+            l2_precompiles::is_precompile(address, self.env.config.fork)
+        }
     }
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted

@@ -1,3 +1,7 @@
+#[cfg(feature = "l2")]
+use crate::l2_precompiles;
+#[cfg(not(feature = "l2"))]
+use crate::precompiles;
 use crate::{
     TransientStorage,
     call_frame::CallFrame,
@@ -9,7 +13,6 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    precompiles::execute_precompile,
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -195,11 +198,22 @@ impl<'a> VM<'a> {
         let callframe = self.current_call_frame_mut()?;
 
         let precompile_result = {
-            execute_precompile(
-                callframe.code_address,
-                &callframe.calldata,
-                &mut callframe.gas_remaining,
-            )
+            #[cfg(not(feature = "l2"))]
+            {
+                precompiles::execute_precompile(
+                    callframe.code_address,
+                    &callframe.calldata,
+                    &mut callframe.gas_remaining,
+                )
+            }
+            #[cfg(feature = "l2")]
+            {
+                l2_precompiles::execute_precompile(
+                    callframe.code_address,
+                    &callframe.calldata,
+                    &mut callframe.gas_remaining,
+                )
+            }
         };
 
         let ctx_result = self.handle_precompile_result(precompile_result)?;
