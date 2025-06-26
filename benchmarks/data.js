@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750954773090,
+  "lastUpdate": 1750955299967,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1966,6 +1966,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008596213311511183,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3741a2ad5647ad1945907dfe6f1ac02d65054bc4",
+          "message": "fix(l1, levm): fix remaining blockchain test (#3293)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Fix last blockchain test, it was failing for both LEVM and REVM\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- The test destroyed an account that had non-empty storage and then\nre-created it with CREATE2. When getting the AccountUpdates we just said\nthat the account had no added storage (which is true) but we don't have\na way to directly communicate that the account was destroyed and then\ncreated again, so even though it exists its old storage should be\ncleared.\n- For this I implemented an ugly solution. For both LEVM and REVM in\nget_account_updates if I see that an account was Destroyed but now\nexists what I'll do is I'll push 2 Account Updates, one that removes the\naccount and another one with the new state of the account, so that the\nwhole account is removed (and therefore, its storage) and then we write\nto the database the new state of the account with it's new storage. I\nthink a cleaner solution would be to have an attribute `removed_storage`\n(or similar) in `AccountUpdate` that will tell the client to remove the\nstorage of the existing account without removing all the account and\nthen we don't have to do messy things like the one I implemented. The\ndownside that I see on this new approach is that we'll have an attribute\nthat we'll hardly ever use, because it's an edge case.\n- Then, for LEVM I had to implement a `destroyed_accounts` in\n`GeneralizedDatabase` so that in `get_state_transitions()` we can check\nwhich accounts were destroyed and now exist so that we do the procedure\nthat I described above. This and many other things would be way nicer if\nwe used in LEVM our own Account struct instead of reusing the one in\nEthrex. I'm seriously considering making that change because it seems\nworth doing so, there are other reasons to pull the trigger on that.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nQuestions:\n1. Should we add a `removed_storage` to `AccountUpdate` instead? Or this\nway of implementing it (removing account and then writing it) is good\nenough? Created #3321\n2. Should we use our own Account type in LEVM so that we don't rely on\nexternal HashSets and HashMaps for some things? For this I opened #3298\n\nCloses #3283\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-06-26T15:18:38Z",
+          "tree_id": "73dcb8916d9e6a46cc1f6b47ab5c31c7b2ba2616",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3741a2ad5647ad1945907dfe6f1ac02d65054bc4"
+        },
+        "date": 1750955291352,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00865286051619989,
             "unit": "Mgas/s"
           }
         ]
