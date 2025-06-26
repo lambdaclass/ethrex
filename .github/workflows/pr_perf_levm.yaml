@@ -103,6 +103,7 @@ jobs:
           make revm-comparison-ci
           error_margin=0.1
           for f in ../../../benchmark_comparison_results/*; do
+            f="${f##../../../benchmark_comparison_results/}"
             awk -F'|' -v file="${f%.md}" '      
             /`main_revm_/ {
               main_revm_row = $0;
@@ -164,7 +165,7 @@ jobs:
           echo -e "\`\`\`\n" >> ../../../result.md
           cat ../../../detailed_result.md >> ../../../result.md
           echo -e "\`\`\`\n" >> ../../../result.md
-          echo -e "<details>\n" >> ../../../result.md
+          echo -e "</details>\n" >> ../../../result.md
 
       - name: Find comment
         continue-on-error: true
