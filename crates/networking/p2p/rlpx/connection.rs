@@ -838,10 +838,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) if peer_supports_based => {
-                self.blocks_on_queue
-                    .entry(req.block.header.number)
-                    .or_insert_with(|| req.block.clone());
-                self.should_process_new_block(&req).await?;
+                if self.should_process_new_block(&req).await? {
+                    self.blocks_on_queue
+                        .entry(req.block.header.number)
+                        .or_insert_with(|| req.block.clone());
+                }
                 self.process_new_block(&req).await?;
                 self.broadcast_message(Message::NewBlock(req))?;
                 // if self.should_process_new_block(&req).await? {
@@ -951,9 +952,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
-        if !self.blockchain.is_synced() {
-            return Ok(false);
-        }
         let latest_block_number = self.storage.get_latest_block_number().await?;
         if latest_block_number > self.latest_block_added {
             self.latest_block_added = latest_block_number;
@@ -1007,6 +1005,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn process_new_block(&mut self, _msg: &NewBlockMessage) -> Result<(), RLPxError> {
+        if !self.blockchain.is_synced() {
+            return Ok(());
+        }
         let mut next_block_to_add = self.latest_block_added + 1;
         let latest_block_in_storage = self.storage.get_latest_block_number().await?;
         debug!(
@@ -1025,6 +1026,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 next_block_to_add += 1;
                 continue;
             }
+            // log_peer_warn(&self.node, "here");
             self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_error(
                     &self.node,
