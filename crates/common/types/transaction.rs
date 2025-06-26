@@ -821,7 +821,10 @@ impl RLPDecode for EIP7702Transaction {
             decoder.decode_field("max_priority_fee_per_gas")?;
         let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
         let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
-        let (to, decoder) = decoder.decode_field("to")?;
+        let (to, decoder) = decoder.decode_field("to").map_err(|_| {
+            // Override error for being more descriptive when a Type 4 transaction without 'to' field is received.
+            RLPDecodeError::Custom("Error decoding field 'to' in type 4 transaction".to_string())
+        })?;
         let (value, decoder) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
