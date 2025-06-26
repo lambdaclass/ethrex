@@ -3,7 +3,7 @@ use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_rollup_store, init_store,
+        init_metrics, init_network, init_store,
     },
     l2::{self, options::Options},
     networks::Network,
