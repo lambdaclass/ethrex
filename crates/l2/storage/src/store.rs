@@ -256,6 +256,7 @@ impl Store {
             .await?;
         self.store_state_root_by_batch(batch.number, batch.state_root)
             .await?;
+        self.engine.set_latest_batch_number(batch.number).await?;
         Ok(())
     }
 
@@ -325,5 +326,10 @@ impl Store {
     /// Sets the lastest sent batch proof
     pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.engine.set_lastest_sent_batch_proof(batch_number).await
+    }
+
+    /// Returns the latest batch number
+    pub async fn get_latest_batch_number(&self) -> Result<u64, StoreError> {
+        self.engine.get_latest_batch_number().await
     }
 }

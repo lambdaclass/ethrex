@@ -336,8 +336,10 @@ impl Syncer {
         #[cfg(feature = "l2")]
         {
             let mut current = current_batch_number;
+            // dbg!(current, new_batch_head);
             while current < new_batch_head {
                 let step = new_batch_head.min(current + 32);
+                // dbg!(step);
                 let Some(batches) = self.peers.request_batch(current, step).await else {
                     warn!("Sync failed to request batch seal, aborting");
                     return Ok(());
@@ -349,6 +351,7 @@ impl Syncer {
                     info!("Sealed batch number {batch_number}");
                 }
                 current = step;
+                // dbg!("new step");
             }
             // for batch_number in current_batch_number..=new_batch_head {
             //     let Some(batch) = self.peers.request_batch(batch_number).await else {
@@ -359,6 +362,7 @@ impl Syncer {
             //     rollup_store.seal_batch(batch).await?;
             //     info!("Sealed batch number {batch_number}");
             // }
+            // dbg!("done requesting batches");
         }
         match sync_mode {
             SyncMode::Snap => {

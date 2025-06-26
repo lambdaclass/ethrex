@@ -76,6 +76,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(StateRoots),
         table_info!(DepositLogsHash),
         table_info!(LastSentBatchProof),
+        table_info!(LatestBatchNumber),
     ]
     .into_iter()
     .collect();
@@ -305,6 +306,16 @@ impl StoreEngineRollup for Store {
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
+
+    async fn get_latest_batch_number(&self) -> Result<u64, StoreError> {
+        self.read::<LatestBatchNumber>(0)
+            .await
+            .map(|v| v.unwrap_or(0))
+    }
+
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.write::<LatestBatchNumber>(0, batch_number).await
+    }
 }
 
 table!(
@@ -355,4 +366,9 @@ table!(
 table!(
     /// Last sent batch proof
     ( LastSentBatchProof ) u64 => u64
+);
+
+table!(
+    /// Latest batch number stored
+    ( LatestBatchNumber ) u64 => u64
 );

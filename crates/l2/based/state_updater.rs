@@ -191,6 +191,13 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
                 .eth_client
                 .get_last_committed_batch(state.on_chain_proposer_address)
                 .await?;
+            // dbg!(latest_batch_committed);
+            // dbg!(
+            //     state
+            //         .rollup_store
+            //         .contains_batch(&latest_batch_committed)
+            //         .await?
+            // );
             let logs = state
                 .eth_client
                 .get_logs(

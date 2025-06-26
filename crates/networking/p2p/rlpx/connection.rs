@@ -140,7 +140,7 @@ pub(crate) struct RLPxConnection<S> {
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         signer: SigningKey,
         node: Node,
         stream: S,
@@ -153,6 +153,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         based: bool,
         #[cfg(feature = "l2")] committer_key: Option<SigningKeySecp256k1>,
     ) -> Self {
+        #[cfg(feature = "l2")]
+        let latest_batch_on_store = store_rollup.get_latest_batch_number().await.unwrap_or(0);
+        let latest_block_on_store = storage.get_latest_block_number().await.unwrap_or(0);
         Self {
             signer,
             node,
@@ -170,11 +173,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
             #[cfg(feature = "l2")]
-            latest_block_sent: 0,
+            latest_block_sent: latest_block_on_store,
             latest_block_added: 0,
             blocks_on_queue: BTreeMap::new(),
             #[cfg(feature = "l2")]
-            latest_batch_sent: 0,
+            latest_batch_sent: latest_batch_on_store,
             requested_pooled_txs: HashMap::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
@@ -539,6 +542,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 return Ok(());
             }
             let latest_block_number = self.storage.get_latest_block_number().await?;
+            if !self.blockchain.is_synced() {
+                // We do this since we are syncing, we don't want to broadcast old blocks
+                self.latest_block_added = latest_block_number;
+                return Ok(());
+            }
             for i in self.latest_block_sent + 1..=latest_block_number {
                 debug!(
                     "Broadcasting new block, current: {}, last broadcasted: {}",
@@ -607,6 +615,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
         #[cfg(feature = "l2")]
         {
+            if !self.blockchain.is_synced() {
+                // We do this since we are syncing, we don't want to broadcast old batches
+                self.latest_batch_sent = self.store_rollup.get_latest_batch_number().await?;
+                return Ok(());
+            }
             let next_batch_to_send = self.latest_batch_sent + 1;
             if !self
                 .store_rollup
@@ -823,7 +836,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if self.should_process_new_block(&req).await? {
                     self.process_new_block(&req).await?;
                     // for now we broadcast valid messages
+                    #[cfg(feature = "l2")]
+                    let new_latest_block_sent = req.block.header.number;
                     self.broadcast_message(Message::NewBlock(req))?;
+                    #[cfg(feature = "l2")]
+                    {
+                        self.latest_block_sent = new_latest_block_sent;
+                    }
                 }
             }
             Message::NewBatchSealed(_req) => {
@@ -832,7 +851,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     if self.should_process_batch_sealed(&_req).await? {
                         self.process_batch_sealed(&_req).await?;
                         // for now we broadcast valid messages
+                        let new_latest_batch_sent = _req.batch.number;
                         self.broadcast_message(Message::NewBatchSealed(_req))?;
+                        self.latest_batch_sent = new_latest_batch_sent;
                     }
                 }
             }
@@ -1274,7 +1295,8 @@ mod tests {
             true,
             #[cfg(feature = "l2")]
             committer_key,
-        );
+        )
+        .await;
         connection.capabilities.push(SUPPORTED_BASED_CAPABILITIES);
         connection.negotiated_eth_capability = Some(SUPPORTED_ETH_CAPABILITIES[0].clone());
         connection.blockchain.set_synced();
