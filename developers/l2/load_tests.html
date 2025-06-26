@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Contributing to the Documentation - Ethrex</title>
+        <title>load-tests - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -236,56 +236,56 @@
 }
 
 </style>
-<h1 id="contributing-to-the-documentation"><a class="header" href="#contributing-to-the-documentation">Contributing to the Documentation</a></h1>
-<p>We welcome contributions to the documentation! If you want to help improve or expand the docs, please follow these guidelines:</p>
-<h2 id="how-to-edit-the-docs"><a class="header" href="#how-to-edit-the-docs">How to Edit the Docs</a></h2>
-<ul>
-<li>
-<p>All documentation lives in this <code>docs/</code> directory and its subfolders.</p>
-</li>
-<li>
-<p>The documentation is written in Markdown and rendered using <a href="https://rust-lang.github.io/mdBook/">mdBook</a>.</p>
-</li>
-<li>
-<p>To preview your changes locally, <a href="#documentation-dependencies">install the dependencies</a> and run:</p>
-<pre><code class="language-sh">make docs-serve
+<h1 id="l2-load-tests"><a class="header" href="#l2-load-tests">L2 load-tests</a></h1>
+<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
+<p>Load tests are available via L2 CLI and Makefile targets.</p>
+<h3 id="makefile"><a class="header" href="#makefile">Makefile</a></h3>
+<p>There are currently three different load tests you can run:</p>
+<pre><code class="language-sh">make load-test
+make load-test-erc20
+make load-test-fibonacci
+make load-test-io
 </code></pre>
-<p>This will start a local server and open the docs in your browser.</p>
-</li>
-</ul>
-<h2 id="adding-or-editing-content"><a class="header" href="#adding-or-editing-content">Adding or Editing Content</a></h2>
-<ul>
-<li>To add a new page, create a new <code>.md</code> file in the appropriate subdirectory and add a link to it in <code>SUMMARY.md</code>.</li>
-<li>To edit an existing page, simply modify the relevant <code>.md</code> file.</li>
-<li>For style and formatting, try to keep a consistent tone and structure with the rest of the documentation.</li>
-</ul>
-<h2 id="documentation-dependencies"><a class="header" href="#documentation-dependencies">Documentation dependencies</a></h2>
-<p>We use some mdBook preprocessors and backends for extra features:</p>
-<ul>
-<li><a href="https://github.com/lambdalisue/rs-mdbook-alerts"><code>mdbook-alerts</code></a> for custom markdown syntax.</li>
-<li><a href="https://github.com/badboy/mdbook-mermaid"><code>mdbook-mermaid</code></a> for diagrams.</li>
-<li><a href="https://github.com/Michael-F-Bryan/mdbook-linkcheck"><code>mdbook-linkcheck</code></a> for checking broken links (optional).</li>
-</ul>
-<p>You can install mdBook and all dependencies with:</p>
-<pre><code class="language-sh">make docs-deps
+<p>The first one sends regular transfers between accounts, the second runs an EVM-heavy contract that computes fibonacci numbers, the third a heavy IO contract that writes to 100 storage slots per transaction.</p>
+<h2 id="load-test-comparison-against-reth"><a class="header" href="#load-test-comparison-against-reth">Load test comparison against Reth</a></h2>
+<p>To run a load test on Reth, clone the repo, then run</p>
+<pre><code class="language-sh">cargo run --release -- node --chain &lt;path_to_genesis-load-test.json&gt; --dev --dev.block-time 5000ms --http.port 1729
 </code></pre>
-<h2 id="submitting-changes"><a class="header" href="#submitting-changes">Submitting Changes</a></h2>
-<ul>
-<li>Please open a Pull Request with your proposed changes.</li>
-<li>If you are adding new content, update <code>SUMMARY.md</code> so it appears in the navigation.</li>
-<li>If you have questions, open an issue or ask in the community chat.</li>
-</ul>
-<p>Thank you for helping improve the documentation!</p>
+<p>to spin up a reth node in <code>dev</code> mode that will produce a block every 5 seconds.</p>
+<p>Reth has a default mempool size of 10k transactions. If the load test goes too fast it will reach the limit; if you want to increase mempool limits pass the following flags:</p>
+<pre><code class="language-sh">--txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000
+</code></pre>
+<h3 id="changing-block-gas-limit"><a class="header" href="#changing-block-gas-limit">Changing block gas limit</a></h3>
+<p>By default the block gas limit is the one Ethereum mainnet uses, i.e. 30 million gas. If you wish to change it, just edit the <code>gasLimit</code> field in the genesis file (in the case of <code>ethrex</code> it's <code>genesis-l2.json</code>, in the case of <code>reth</code> it's <code>genesis-load-test.json</code>). Note that the number has to be passed as a hextstring.</p>
+<h2 id="flamegraphs"><a class="header" href="#flamegraphs">Flamegraphs</a></h2>
+<p>To analyze performance during load tests (both <code>ethrex</code> and <code>reth</code>) you can use <code>cargo flamegraph</code> to generate a flamegraph of the node.</p>
+<p>For <code>ethrex</code>, you can run the server with:</p>
+<pre><code class="language-sh">sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network test_data/genesis-l2.json --http.port 1729 --dev
+</code></pre>
+<p>For <code>reth</code>:</p>
+<pre><code class="language-sh">sudo cargo flamegraph --profile profiling -- node --chain &lt;path_to_genesis-load-test.json&gt; --dev --dev.block-time 5000ms --http.port 1729
+</code></pre>
+<h3 id="with-make-targets"><a class="header" href="#with-make-targets">With Make Targets</a></h3>
+<p>There are some make targets inside the root's Makefile.</p>
+<p>You will need two terminals:</p>
+<ol>
+<li><code>make start-node-with-flamegraph</code> → This starts the ethrex client.</li>
+<li><code>make flamegraph</code> → This starts a script that sends a bunch of transactions, the script will stop ethrex when the account reaches a certain balance.</li>
+</ol>
+<h3 id="samply"><a class="header" href="#samply">Samply</a></h3>
+<p>To run with samply, run</p>
+<pre><code class="language-sh">samply record ./target/profiling/reth node --chain ../ethrex/test_data/genesis-load-test.json --dev --dev.block-time 5000ms --http.port 1729
+</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="developers/l2/load_tests.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../developers/l2/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="perf_reports/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../CONTRIBUTING_DOCS.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -295,11 +295,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="developers/l2/load_tests.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../developers/l2/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="perf_reports/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../CONTRIBUTING_DOCS.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -314,17 +314,17 @@
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid.min.js"></script>
-        <script src="mermaid-init.js"></script>
+        <script src="../../mermaid.min.js"></script>
+        <script src="../../mermaid-init.js"></script>
 
 
     </div>
