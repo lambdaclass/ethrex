@@ -1,4 +1,4 @@
-# Dev Setup L1
+# L1 dev setup
 
 ## Build
 
@@ -21,6 +21,7 @@ cargo run --bin ethrex -- removedb
 ```
 
 ## Dev Mode
+
 In order to run `ethrex` without a Consensus Client and with the `InMemory` engine, to start from scratch each time we fire it up, the following make target can be used:
 
 ```bash
