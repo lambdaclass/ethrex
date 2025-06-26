@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750957383645,
+  "lastUpdate": 1750958858899,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2025,6 +2025,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00865286051619989,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "09cac25ff1b390c5a03ab1846a46ef82283e8e2e",
+          "message": "fix(l1): flaky test `test_peer_scoring_system ` (#3301)\n\n**Motivation**\nThe test executes a function that selects peers randomly but\nprioritizing those with high score, and checks that the number of\nselections for each peer is proportional to its score. However given\nthat the selection is somehow random, this is not always the case.\n\n**Description**\nIntroduces the following changes in the test\n* Increments the number of selections, which should reduce the\nprobability of failure.\n* Initializes a different `KademliaTable` for working with multiple\npeers.\nNote that the table used for multiple-peer scoring checks was the same\nas the one used for single-peer scoring tests. The problem is that a\nhigh-scoring peer from the initial phase remains in the table but is\nincorrectly omitted from subsequent multi-peer selection calculations,\nthus impacting the final outcome.\n\nThe following bash script can be used to get a sense of the failure rate\nof the test. It loops running the test and printing the total and failed\nruns.\n\nWith these changes, the failure rate dropped from (approximately) 4% to\n0.025%.\n\n```bash\n#!/bin/bash\n\nCOMMAND=(cargo test --package=ethrex-p2p --lib -- --exact kademlia::tests::test_peer_scoring_system --nocapture)\n\ntotal=0\nfailed=0\n\nwhile true; do\n    \"${COMMAND[@]}\" >/dev/null 2>&1\n    exit_code=$?\n\n    if [ $exit_code -ne 0 ]; then\n        failed=$((failed + 1))\n        echo \"❌ failed\"\n    else\n        echo \"✅ ok\"\n    fi\n\n    total=$((total + 1))\n    echo \"Total = $total, Failed = $failed\"\n    echo \"---\"\ndone\n\n```\n\n\n\nCloses #3191",
+          "timestamp": "2025-06-26T16:03:58Z",
+          "tree_id": "0b5e1ee9b62d541aa34180f07b73361f632a71be",
+          "url": "https://github.com/lambdaclass/ethrex/commit/09cac25ff1b390c5a03ab1846a46ef82283e8e2e"
+        },
+        "date": 1750958849926,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008671909190974133,
             "unit": "Mgas/s"
           }
         ]
