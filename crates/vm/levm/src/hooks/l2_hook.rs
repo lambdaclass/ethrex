@@ -118,7 +118,6 @@ impl Hook for L2Hook {
             } else {
                 default_hook::undo_value_transfer(vm)?;
             }
-            vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
