@@ -82,10 +82,9 @@ impl Prover {
                 input,
             } => (batch_number, input),
             ProofData::InvalidCodeVersion { code_version } => {
-                return Err(fmt!(
+                return Err(format!(
                     "Invalid code version received. Server code: {}, Prover code: {}",
-                    code_version,
-                    self.code_version
+                    code_version, self.code_version
                 ));
             }
             _ => return Err("Expecting ProofData::Response".to_owned()),
