@@ -5,7 +5,11 @@ use crate::{
     vm::VM,
 };
 use ExceptionalHalt::OutOfBounds;
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{
+    U256,
+    types::Fork,
+    utils::{u256_from_big_endian, u256_from_big_endian_const},
+};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -20,7 +24,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[U256::from_big_endian(read_n_bytes)])?;
+            .push(&[u256_from_big_endian(read_n_bytes)])?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
         let increment_pc_by = n_bytes.wrapping_add(1);
@@ -30,39 +34,21 @@ impl<'a> VM<'a> {
         })
     }
 
-    /// Specialized PUSH1 operation
-    ///
-    /// We use specialized push1 and push2 implementations because they are way more frequent than the others,
-    /// so their impact on performance is significant.
-    /// These implementations allow using U256::from, which is considerable more performant than U256::from_big_endian)
-    pub fn op_push1(&mut self) -> Result<OpcodeResult, VMError> {
+    // Generic PUSH operation, optimized at compile time for the given N.
+    pub fn op_pushn<const N: usize>(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
-        let value = read_bytcode_slice_const::<1>(current_call_frame)?[0];
+        let read_n_bytes = read_bytcode_slice_const::<N>(current_call_frame)?;
 
-        current_call_frame.stack.push(&[U256::from(value)])?;
+        let value = u256_from_big_endian_const(read_n_bytes);
+        current_call_frame.stack.push(&[value])?;
 
-        Ok(OpcodeResult::Continue {
-            // The 1 byte that you push to the stack + 1 for the next instruction
-            pc_increment: 2,
-        })
-    }
-
-    // Specialized PUSH2 operation
-    pub fn op_push2(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
-
-        let read_n_bytes = read_bytcode_slice_const::<2>(current_call_frame)?;
-
-        let value = u16::from_be_bytes(read_n_bytes);
-
-        current_call_frame.stack.push(&[U256::from(value)])?;
+        // The n_bytes that you push to the stack + 1 for the next instruction
+        let increment_pc_by = N.wrapping_add(1);
 
         Ok(OpcodeResult::Continue {
-            // The 2 bytes that you push to the stack + 1 for the next instruction
-            pc_increment: 3,
+            pc_increment: increment_pc_by,
         })
     }
 

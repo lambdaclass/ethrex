@@ -80,8 +80,13 @@ impl<'a> VM<'a> {
             Opcode::BLOBHASH => self.op_blobhash(),
             Opcode::BLOBBASEFEE => self.op_blobbasefee(),
             Opcode::PUSH0 => self.op_push0(),
-            Opcode::PUSH1 => self.op_push1(),
-            Opcode::PUSH2 => self.op_push2(),
+            // Optimize push 1,2,3,4,8 and 32 at compile time due to their higher usage.
+            Opcode::PUSH1 => self.op_pushn::<1>(),
+            Opcode::PUSH2 => self.op_pushn::<2>(),
+            Opcode::PUSH3 => self.op_pushn::<3>(),
+            Opcode::PUSH4 => self.op_pushn::<4>(),
+            Opcode::PUSH8 => self.op_pushn::<8>(),
+            Opcode::PUSH32 => self.op_pushn::<32>(),
             // PUSHn
             op if (Opcode::PUSH3..=Opcode::PUSH32).contains(&op) => {
                 // The following conversions and operation cannot fail due to known operand ranges.
