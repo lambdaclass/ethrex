@@ -195,69 +195,18 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, mut stream) = handshake::perform(state.0).await?;
+        let (mut established_state, stream) = handshake::perform(state.0).await?;
         log_peer_debug(&established_state.node, "Starting RLPx connection");
-        if let Err(reason) = post_handshake_checks(established_state.table.clone()).await {
+
+        if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
             connection_failed(
                 &mut established_state,
-                "Post handshake validations failed",
-                RLPxError::DisconnectSent(reason),
+                "Failed to initialize RLPx connection",
+                reason,
             )
             .await;
-            return Err(RLPxError::Disconnected());
-        }
-
-        if let Err(e) = exchange_hello_messages(&mut established_state, &mut stream).await {
-            connection_failed(&mut established_state, "Hello messages exchange failed", e).await;
             Err(RLPxError::Disconnected())
         } else {
-            // Handshake OK: handle connection
-            // Create channels to communicate directly to the peer
-            let (peer_channels, sender) = PeerChannels::create(handle.clone());
-
-            // Updating the state to establish the backend channel
-            established_state.backend_channel = Some(sender);
-
-            // NOTE: if the peer came from the discovery server it will already be inserted in the table
-            // but that might not always be the case, so we try to add it to the table
-            // Note: we don't ping the node we let the validation service do its job
-            {
-                let mut table_lock = established_state.table.lock().await;
-                table_lock.insert_node_forced(established_state.node.clone());
-                table_lock.init_backend_communication(
-                    established_state.node.node_id(),
-                    peer_channels,
-                    established_state.capabilities.clone(),
-                    established_state.inbound,
-                );
-            }
-            init_peer_conn(&mut established_state, &mut stream).await?;
-            log_peer_debug(&established_state.node, "Peer connection initialized.");
-
-            // Send transactions transaction hashes from mempool at connection start
-            send_new_pooled_tx_hashes(&mut established_state).await?;
-
-            // Periodic broadcast check repeated events.
-            send_interval(
-                TX_BROADCAST_INTERVAL,
-                handle.clone(),
-                CastMessage::SendNewPooledTxHashes,
-            );
-
-            // Periodic Pings repeated events.
-            send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
-
-            // Periodic block range update.
-            send_interval(
-                BLOCK_RANGE_UPDATE_INTERVAL,
-                handle.clone(),
-                CastMessage::BlockRangeUpdate,
-            );
-
-            spawn_listener(handle.clone(), &established_state.node, stream);
-
-            spawn_broadcast_listener(handle.clone(), &mut established_state);
-
             // New state
             state.0 = InnerState::Established(established_state);
             Ok(state)
@@ -324,6 +273,68 @@ impl GenServer for RLPxConnection {
             CastResponse::NoReply(state)
         }
     }
+}
+
+async fn initialize_connection<S>(
+    handle: &RLPxConnectionHandle,
+    state: &mut Established,
+    mut stream: S,
+) -> Result<(), RLPxError>
+where
+    S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
+{
+    post_handshake_checks(state.table.clone()).await?;
+
+    exchange_hello_messages(state, &mut stream).await?;
+
+    // Handshake OK: handle connection
+    // Create channels to communicate directly to the peer
+    let (peer_channels, sender) = PeerChannels::create(handle.clone());
+
+    // Updating the state to establish the backend channel
+    state.backend_channel = Some(sender);
+
+    // NOTE: if the peer came from the discovery server it will already be inserted in the table
+    // but that might not always be the case, so we try to add it to the table
+    // Note: we don't ping the node we let the validation service do its job
+    {
+        let mut table_lock = state.table.lock().await;
+        table_lock.insert_node_forced(state.node.clone());
+        table_lock.init_backend_communication(
+            state.node.node_id(),
+            peer_channels,
+            state.capabilities.clone(),
+            state.inbound,
+        );
+    }
+    init_peer_conn(state, &mut stream).await?;
+    log_peer_debug(&state.node, "Peer connection initialized.");
+
+    // Send transactions transaction hashes from mempool at connection start
+    send_new_pooled_tx_hashes(state).await?;
+
+    // Periodic broadcast check repeated events.
+    send_interval(
+        TX_BROADCAST_INTERVAL,
+        handle.clone(),
+        CastMessage::SendNewPooledTxHashes,
+    );
+
+    // Periodic Pings repeated events.
+    send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
+
+    // Periodic block range update.
+    send_interval(
+        BLOCK_RANGE_UPDATE_INTERVAL,
+        handle.clone(),
+        CastMessage::BlockRangeUpdate,
+    );
+
+    spawn_listener(handle.clone(), &state.node, stream);
+
+    spawn_broadcast_listener(handle.clone(), state);
+
+    Ok(())
 }
 
 async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {
@@ -426,7 +437,7 @@ where
 
 async fn post_handshake_checks(
     table: Arc<Mutex<crate::kademlia::KademliaTable>>,
-) -> Result<(), DisconnectReason> {
+) -> Result<(), RLPxError> {
     // Check if connected peers exceed the limit
     let peer_count = {
         let table_lock = table.lock().await;
@@ -434,7 +445,7 @@ async fn post_handshake_checks(
     };
 
     if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
-        return Err(DisconnectReason::TooManyPeers);
+        return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
     }
 
     Ok(())
