@@ -417,18 +417,31 @@ impl EthClient {
             TxKind::Call(addr) => Some(format!("{addr:#x}")),
             TxKind::Create => None,
         };
-        let blob_versioned_hashes_str: Vec<_> = transaction
-            .blob_versioned_hashes
-            .into_iter()
-            .map(|hash| format!("{hash:#x}"))
-            .collect();
+
         let mut data = json!({
             "to": to,
             "input": format!("0x{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
             "value": format!("{:#x}", transaction.value),
-            "blobVersionedHashes": blob_versioned_hashes_str
+
         });
+
+        if !transaction.blob_versioned_hashes.is_empty() {
+            let blob_versioned_hashes_str: Vec<_> = transaction
+                .blob_versioned_hashes
+                .into_iter()
+                .map(|hash| format!("{hash:#x}"))
+                .collect();
+
+            data.as_object_mut()
+                .ok_or_else(|| {
+                    EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
+                })?
+                .insert(
+                    "blobVersionedHashes".to_owned(),
+                    json!(blob_versioned_hashes_str),
+                );
+        }
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
         if let Some(nonce) = transaction.nonce {
@@ -1044,6 +1057,14 @@ impl EthClient {
             .await
     }
 
+    pub async fn get_sp1_vk(
+        &self,
+        on_chain_proposer_address: Address,
+    ) -> Result<[u8; 32], EthClientError> {
+        self._call_bytes32_variable(b"SP1_VERIFICATION_KEY()", on_chain_proposer_address)
+            .await
+    }
+
     pub async fn get_last_fetched_l1_block(
         &self,
         common_bridge_address: Address,
@@ -1152,6 +1173,27 @@ impl EthClient {
         let value = Address::from_str(hex_str)
             .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?;
         Ok(value)
+    }
+
+    async fn _call_bytes32_variable(
+        &self,
+        selector: &[u8],
+        contract_address: Address,
+    ) -> Result<[u8; 32], EthClientError> {
+        let hex_string = self._generic_call(selector, contract_address).await?;
+
+        let hex = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+            "Couldn't strip '0x' prefix from hex string".to_owned(),
+        ))?;
+
+        let bytes = hex::decode(hex)
+            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {}", e)))?;
+
+        let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+            EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned())
+        })?;
+
+        Ok(arr)
     }
 
     pub async fn wait_for_transaction_receipt(
