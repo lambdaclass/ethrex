@@ -2,6 +2,7 @@ use ethrex_common::H256;
 use ethrex_rpc::utils::RpcErrorMetadata;
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
+use keccak_hash::keccak;
 use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -50,12 +51,13 @@ pub enum RpcNamespace {
 }
 
 pub fn resolve_namespace(method: &str) -> Result<RpcNamespace, RpcErr> {
-    let mut parts = method.split('_');
-    let Some(maybe_namespace) = parts.next() else {
-        return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(
-            method.to_string(),
-        )));
-    };
+    let maybe_namespace =
+        method
+            .split('_')
+            .next()
+            .ok_or(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(
+                method.to_string(),
+            )))?;
     match maybe_namespace {
         "ethrex" => Ok(RpcNamespace::EthrexL2),
         _ => ethrex_rpc::utils::resolve_namespace(maybe_namespace, method.to_string())
@@ -78,20 +80,18 @@ impl From<RollupStoreError> for RpcErr {
 }
 
 pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
-    if let Value::String(maybe_hex) = hex {
-        let trimmed = maybe_hex.trim_start_matches("0x");
-        let maybe_parsed = u64::from_str_radix(trimmed, 16);
-        maybe_parsed.map_err(|_| format!("Could not parse given hex {}", maybe_hex))
-    } else {
-        Err(format!("Could not parse given hex {}", hex))
-    }
+    let Value::String(maybe_hex) = hex else {
+        return Err(format!("Could not parse given hex {}", hex));
+    };
+    let trimmed = maybe_hex.trim_start_matches("0x");
+    let maybe_parsed = u64::from_str_radix(trimmed, 16);
+    maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
 }
 
 pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
     if index >= data.len() {
         return None;
     }
-    use keccak_hash::keccak;
 
     let mut proof = vec![];
     let mut current = data.clone();
