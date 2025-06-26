@@ -92,34 +92,28 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
-/// Calculates valid jump destinations given some bytecode.
+/// Generates blacklist of jump destinations given some bytecode.
 /// This is a necessary calculation because of PUSH opcodes.
 /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
 /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
-    let mut valid_jump_destinations = HashSet::new();
-    let mut pc = 0;
+pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
+    let mut address_blacklist = Vec::new();
 
-    while let Some(&opcode_number) = code.get(pc) {
-        let current_opcode = Opcode::from(opcode_number);
-
-        if current_opcode == Opcode::JUMPDEST {
-            // If current opcode is jumpdest, add it to valid destinations set
-            valid_jump_destinations.insert(pc);
-        } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&current_opcode) {
-            // If current opcode is push, skip as many positions as the size of the push
-            let size_to_push = opcode_number
-                .checked_sub(u8::from(Opcode::PUSH1))
-                .ok_or(InternalError::Underflow)?;
-            let skip_length =
-                usize::from(size_to_push.checked_add(1).ok_or(InternalError::Overflow)?);
-            pc = pc.checked_add(skip_length).ok_or(InternalError::Overflow)?;
+    let mut iter = code.iter().enumerate();
+    while let Some((_, &value)) = iter.next() {
+        let op_code = Opcode::from(value);
+        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
+            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+            let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
+            address_blacklist.extend(
+                (&mut iter)
+                    .take(num_bytes)
+                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
+            );
         }
-
-        pc = pc.checked_add(1).ok_or(InternalError::Overflow)?;
     }
 
-    Ok(valid_jump_destinations)
+    Ok(address_blacklist.into_boxed_slice())
 }
 
 // ================== Backup related functions =======================
