@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750976442258,
+  "lastUpdate": 1750977135540,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1679,6 +1679,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210448650992,
             "range": "± 434898055",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f6b0ba4a352725e762dc0420b84ef9198a20d640",
+          "message": "chore(l2): change default chain ID (#3337)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCurrent chain ID (1729) is causing some problems with wallets like\nMetamask as the chain ID is registered for another network.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nChanged default chain ID to 65536999 following our new naming method:\n- `65536XYY`\n- Being `X` the stage (0 for mainnet, 1 for testnet, 2 for staging,\netc.).\n- Being `YY` each specific rollup.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3312",
+          "timestamp": "2025-06-26T21:35:10Z",
+          "tree_id": "5c0e989bf8fcfec78d3f3aca85cd30d7ff18d6c0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f6b0ba4a352725e762dc0420b84ef9198a20d640"
+        },
+        "date": 1750977127124,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210972090092,
+            "range": "± 454975535",
             "unit": "ns/iter"
           }
         ]
