@@ -4,6 +4,7 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
+    opcodes::Opcode,
     vm::VM,
 };
 use ethrex_common::{H256, U256, types::Fork};
