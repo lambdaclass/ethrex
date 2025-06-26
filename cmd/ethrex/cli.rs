@@ -121,14 +121,16 @@ pub struct Options {
         long = "log.filename",
         value_name = "LOG_FILENAME",
         help = "Filename for log file (will be created in log.dir)",
-        help_heading = "Node options")]
+        help_heading = "Node options"
+    )]
     pub log_filename: Option<String>,
     #[arg(
         long = "log.dir",
         default_value = "logs",
         value_name = "LOG_DIRECTORY",
         help = "Directory where log files will be written",
-        help_heading = "Node options")]
+        help_heading = "Node options"
+    )]
     pub log_dir: String,
     #[arg(
         long = "http.addr",

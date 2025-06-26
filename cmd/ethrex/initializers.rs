@@ -46,7 +46,11 @@ pub fn init_tracing(opts: &Options) {
         // Create the log directory if it doesn't exist
         let log_dir_path = Path::new(&opts.log_dir);
         if let Err(e) = std::fs::create_dir_all(log_dir_path) {
-            eprintln!("Failed to create log directory '{}': {}", log_dir_path.display(), e);
+            eprintln!(
+                "Failed to create log directory '{}': {}",
+                log_dir_path.display(),
+                e
+            );
             std::process::exit(1);
         }
 
@@ -61,7 +65,11 @@ pub fn init_tracing(opts: &Options) {
         {
             Ok(file) => file,
             Err(e) => {
-                eprintln!("Failed to open log file '{}': {}", log_file_path.display(), e);
+                eprintln!(
+                    "Failed to open log file '{}': {}",
+                    log_file_path.display(),
+                    e
+                );
                 std::process::exit(1);
             }
         };
@@ -71,14 +79,16 @@ pub fn init_tracing(opts: &Options) {
             .with_writer(file)
             .with_ansi(false)
             .finish();
-        
-        tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
     } else {
         let subscriber = FmtSubscriber::builder()
             .with_env_filter(log_filter)
             .finish();
-        
-        tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
     }
 }
 
