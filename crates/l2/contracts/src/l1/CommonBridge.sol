@@ -98,8 +98,6 @@ contract CommonBridge is
     }
 
     function _deposit(address from, DepositValues memory depositValues) private {
-        depositsERC20[ETH_TOKEN][ETH_TOKEN] += msg.value;
-
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(depositValues.to),
@@ -133,6 +131,7 @@ contract CommonBridge is
     }
 
     receive() external payable {
+        depositsERC20[ETH_TOKEN][ETH_TOKEN] += msg.value;
         DepositValues memory depositValues = DepositValues({
             to: msg.sender,
             recipient: msg.sender,
@@ -144,9 +143,9 @@ contract CommonBridge is
 
     function depositERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
+        depositsERC20[tokenL1][tokenL2] += amount;
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
-        depositsERC20[tokenL1][tokenL2] += amount;
         bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintERC20, (tokenL1, tokenL2, destination, amount));
         DepositValues memory depositValues = DepositValues({
             to: L2_BRIDGE_ADDRESS,
