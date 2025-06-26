@@ -3,7 +3,6 @@ use crate::{
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
-    utils::*,
     vm::VM,
 };
 
@@ -85,8 +84,9 @@ impl<'a> VM<'a> {
             Opcode::PUSH2 => self.op_push2(),
             // PUSHn
             op if (Opcode::PUSH3..=Opcode::PUSH32).contains(&op) => {
-                let n_bytes = get_n_value(op, Opcode::PUSH1)?;
-                self.op_push(n_bytes)
+                // The following conversions and operation cannot fail due to known operand ranges.
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                self.op_push(op as usize - Opcode::PUSH0 as usize)
             }
             Opcode::AND => self.op_and(),
             Opcode::OR => self.op_or(),
@@ -98,19 +98,22 @@ impl<'a> VM<'a> {
             Opcode::SAR => self.op_sar(),
             // DUPn
             op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
-                let depth = get_n_value(op, Opcode::DUP1)?;
-                self.op_dup(depth)
+                // The following conversions and operation cannot fail due to known operand ranges.
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                self.op_dup(op as usize - Opcode::DUP1 as usize)
             }
             // SWAPn
             op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
-                let depth = get_n_value(op, Opcode::SWAP1)?;
-                self.op_swap(depth)
+                // The following conversions and operation cannot fail due to known operand ranges.
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                self.op_swap(op as usize - Opcode::SWAP1 as usize + 1)
             }
             Opcode::POP => self.op_pop(),
-            op if (Opcode::LOG0..=Opcode::LOG4).contains(&op) => {
-                let number_of_topics = get_number_of_topics(op)?;
-                self.op_log(number_of_topics)
-            }
+            Opcode::LOG0 => self.op_log::<0>(),
+            Opcode::LOG1 => self.op_log::<1>(),
+            Opcode::LOG2 => self.op_log::<2>(),
+            Opcode::LOG3 => self.op_log::<3>(),
+            Opcode::LOG4 => self.op_log::<4>(),
             Opcode::MLOAD => self.op_mload(),
             Opcode::MSTORE => self.op_mstore(),
             Opcode::MSTORE8 => self.op_mstore8(),
