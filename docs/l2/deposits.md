@@ -10,22 +10,7 @@ On L1:
 
 1. The user sends ETH to the `CommonBridge` contract.
 2. The bridge adds the deposit's hash to the `pendingDepositLogs`.
-   This hash is computed as follows:
-
-    ```solidity
-    keccak256(
-        bytes.concat(
-            bytes20(depositValues.to),
-            bytes32(msg.value),
-            bytes32(depositId),
-            bytes20(depositValues.recipient),
-            bytes20(msg.sender),
-            bytes32(depositValues.gasLimit),
-            bytes32(keccak256(depositValues.data))
-        )
-    );
-    ```
-
+   We explain how to compute this hash in ["Generic L1->L2 messaging"](#generic-l1-l2-messaging)
 3. The bridge emits a `DepositInitiated` event:
 
     ```solidity
@@ -168,7 +153,7 @@ sequenceDiagram
     CommonBridge-->>CommonBridge: pendingDepositLogs.pop()
 ```
 
-## Why store the provenance of bridged tokens?
+### Why store the provenance of bridged tokens?
 
 As said before, storing the provenance of bridged tokens or, in other words, how many tokens were sent from each L1 token to each L2 token, ensures that L2 token withdrawals don't unlock L1 tokens that weren't deposited into another L2 token.
 
@@ -206,3 +191,7 @@ sequenceDiagram
     CommonBridgeL2 -->> CommonBridge: Notifies withdrawal
     CommonBridge ->> L1Eve: Sends 101 Foo tokens
 ```
+
+## Generic L1->L2 messaging
+
+<!-- TODO: add this part -->
