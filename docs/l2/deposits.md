@@ -194,4 +194,35 @@ sequenceDiagram
 
 ## Generic L1->L2 messaging
 
-<!-- TODO: add this part -->
+<!-- TODO: extend this version once we have generic L1->L2 messages -->
+
+Privileged transactions are sent as a `DepositInitiated` event.
+
+```solidity
+emit DepositInitiated(
+    amount,
+    to,
+    depositId,
+    recipient,
+    from,
+    gasLimit,
+    calldata,
+    l2MintTxHash
+);
+```
+
+The `l2MintTxHash` is the hash of the privileged transaction, computed as follows:
+
+```solidity
+keccak256(
+    bytes.concat(
+        bytes20(to),
+        bytes32(value),
+        bytes32(depositId),
+        bytes20(recipient),
+        bytes20(from),
+        bytes32(gasLimit),
+        keccak256(calldata)
+    )
+)
+```
