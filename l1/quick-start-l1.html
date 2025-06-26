@@ -237,12 +237,14 @@
 
 </style>
 <h1 id="quick-start-l1-localnet"><a class="header" href="#quick-start-l1-localnet">Quick Start (L1 localnet)</a></h1>
+<p>This page will show you how to quickly spin up a local development network with ethrex.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
 <li><a href="https://docs.kurtosis.com/install/#ii-install-the-cli">Kurtosis</a></li>
-<li><a href="#rust">Rust</a></li>
+<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
 <li><a href="https://docs.docker.com/engine/install/">Docker</a></li>
 </ul>
+<h2 id="starting-a-local-devnet"><a class="header" href="#starting-a-local-devnet">Starting a local devnet</a></h2>
 <pre><code class="language-shell">make localnet
 </code></pre>
 <p>This make target will:</p>
@@ -251,7 +253,8 @@
 <li>Fetch our fork <a href="https://github.com/ethpandaops/ethereum-package">ethereum package</a>, a private testnet on which multiple ethereum clients can interact.</li>
 <li>Start the localnet with kurtosis.</li>
 </ol>
-<p>If everything went well, you should be faced with our client's logs (ctrl-c to leave)</p>
+<p>If everything went well, you should be faced with our client's logs (ctrl-c to leave).</p>
+<h2 id="stopping-a-local-devnet"><a class="header" href="#stopping-a-local-devnet">Stopping a local devnet</a></h2>
 <p>To stop everything, simply run:</p>
 <pre><code class="language-shell">make stop-localnet
 </code></pre>

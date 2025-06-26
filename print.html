@@ -244,7 +244,8 @@
 <li>As a regular Ethereum execution client</li>
 <li>As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.</li>
 </ul>
-<p>We call the first one ethrex L1 and the second one ethrex L2.</p>
+<p>We call the first one "ethrex L1" and the second one "ethrex L2".
+You can find more information on our <a href="getting-started/../l1">L1</a> or <a href="getting-started/../l2">L2</a> docs, respectively.</p>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
   padding: 8px 16px;
@@ -415,7 +416,10 @@ This means every component — from L1 syncing to L2 bridging and prover integra
 }
 
 </style>
-<h1 id="layer-1"><a class="header" href="#layer-1">Layer 1</a></h1>
+<h1 id="ethrex-l1"><a class="header" href="#ethrex-l1">Ethrex L1</a></h1>
+<p>Ethrex is a minimalist Ethereum Rust execution client.</p>
+<p>To quickly get started, visit <a href="l1/./quick-start-l1.html">our quick-start page</a>.</p>
+<p>If you're looking to experiment with the codebase, <a href="l1/./dev-setup-l1.html">"L1 dev setup" will be of help</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
   padding: 8px 16px;
@@ -484,12 +488,14 @@ This means every component — from L1 syncing to L2 bridging and prover integra
 
 </style>
 <h1 id="quick-start-l1-localnet"><a class="header" href="#quick-start-l1-localnet">Quick Start (L1 localnet)</a></h1>
+<p>This page will show you how to quickly spin up a local development network with ethrex.</p>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
 <li><a href="https://docs.kurtosis.com/install/#ii-install-the-cli">Kurtosis</a></li>
-<li><a href="l1/quick-start-l1.html#rust">Rust</a></li>
+<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
 <li><a href="https://docs.docker.com/engine/install/">Docker</a></li>
 </ul>
+<h2 id="starting-a-local-devnet"><a class="header" href="#starting-a-local-devnet">Starting a local devnet</a></h2>
 <pre><code class="language-shell">make localnet
 </code></pre>
 <p>This make target will:</p>
@@ -498,7 +504,8 @@ This means every component — from L1 syncing to L2 bridging and prover integra
 <li>Fetch our fork <a href="https://github.com/ethpandaops/ethereum-package">ethereum package</a>, a private testnet on which multiple ethereum clients can interact.</li>
 <li>Start the localnet with kurtosis.</li>
 </ol>
-<p>If everything went well, you should be faced with our client's logs (ctrl-c to leave)</p>
+<p>If everything went well, you should be faced with our client's logs (ctrl-c to leave).</p>
+<h2 id="stopping-a-local-devnet"><a class="header" href="#stopping-a-local-devnet">Stopping a local devnet</a></h2>
 <p>To stop everything, simply run:</p>
 <pre><code class="language-shell">make stop-localnet
 </code></pre>
@@ -569,7 +576,7 @@ This means every component — from L1 syncing to L2 bridging and prover integra
 }
 
 </style>
-<h1 id="dev-setup-l1"><a class="header" href="#dev-setup-l1">Dev Setup L1</a></h1>
+<h1 id="l1-dev-setup"><a class="header" href="#l1-dev-setup">L1 dev setup</a></h1>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <h3 id="rust"><a class="header" href="#rust">Rust</a></h3>
 <p>To build the node, you will need the rust toolchain. To do so, use <code>rustup</code> following <a href="https://www.rust-lang.org/tools/install">this link</a></p>
@@ -619,7 +626,7 @@ and expects a certain response. You can read more about it <a href="https://gith
 # If you need to set GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
 </code></pre>
 <p>And uncommenting the golang line in the asdf <code>.tool-versions</code> file:</p>
-<pre><code>rust 1.87.0
+<pre><code class="language-text">rust 1.87.0
 golang 1.23.2
 </code></pre>
 <h4 id="running-simulations"><a class="header" href="#running-simulations">Running Simulations</a></h4>
@@ -792,7 +799,7 @@ This will launch the node in full sync mode, in order to test out snap sync you 
 <pre><code class="language-bash">lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io
 </code></pre>
 <p>When using lighthouse directly from its repository, replace <code>lighthouse bn</code> with <code>cargo run --bin lighthouse -- bn</code></p>
-<p>Aside from holesky, these steps can also be used to connect to other supported networks by replacing the <code>--network</code> argument by another supported network and looking up a checkpoint sync endpoint for that network <a href="https://eth-clients.github.io/checkpoint-sync-endpoints/">here</a></p>
+<p>Aside from holesky, these steps can also be used to connect to other supported networks by replacing the <code>--network</code> argument by another supported network and looking up a checkpoint sync endpoint for that network <a href="https://eth-clients.github.io/checkpoint-sync-endpoints/">in this community-maintained list</a></p>
 <p>If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the <code>--bootnodes</code> flag</p>
 <p>Once the node is up and running you will be able to see logs indicating the start of each sync cycle along with from which block hash to which block hash we are syncing. You will also get regular logs with the completion rate and estimated finish time for state sync and state rebuild processes during snap sync. This will look something like this:</p>
 <pre><code class="language-bash">INFO ethrex_p2p::sync: Syncing from current head 0xb5f7…bde4 to sync_head 0xce96…fa5e
@@ -1038,7 +1045,7 @@ INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated
 Apart from these, each component accepts multiple configuration options, which can be configured either in the <code>.env</code>, or with CLI flags.
 More information is available in <a href="l2/./components.html">the documentation for each component</a>.</p>
 <h2 id="guides"><a class="header" href="#guides">Guides</a></h2>
-<p>For more information on how to perform certain operations, go to <a href="l2/./guides/README.html">Guides</a>.</p>
+<p>For more information on how to perform certain operations, go to <a href="l2/./guides">Guides</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
   padding: 8px 16px;

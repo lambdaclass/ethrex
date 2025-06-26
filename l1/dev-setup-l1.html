@@ -236,7 +236,7 @@
 }
 
 </style>
-<h1 id="dev-setup-l1"><a class="header" href="#dev-setup-l1">Dev Setup L1</a></h1>
+<h1 id="l1-dev-setup"><a class="header" href="#l1-dev-setup">L1 dev setup</a></h1>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <h3 id="rust"><a class="header" href="#rust">Rust</a></h3>
 <p>To build the node, you will need the rust toolchain. To do so, use <code>rustup</code> following <a href="https://www.rust-lang.org/tools/install">this link</a></p>
@@ -286,7 +286,7 @@ and expects a certain response. You can read more about it <a href="https://gith
 # If you need to set GOROOT please follow: https://github.com/asdf-community/asdf-golang?tab=readme-ov-file#goroot
 </code></pre>
 <p>And uncommenting the golang line in the asdf <code>.tool-versions</code> file:</p>
-<pre><code>rust 1.87.0
+<pre><code class="language-text">rust 1.87.0
 golang 1.23.2
 </code></pre>
 <h4 id="running-simulations"><a class="header" href="#running-simulations">Running Simulations</a></h4>
@@ -459,7 +459,7 @@ This will launch the node in full sync mode, in order to test out snap sync you 
 <pre><code class="language-bash">lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io
 </code></pre>
 <p>When using lighthouse directly from its repository, replace <code>lighthouse bn</code> with <code>cargo run --bin lighthouse -- bn</code></p>
-<p>Aside from holesky, these steps can also be used to connect to other supported networks by replacing the <code>--network</code> argument by another supported network and looking up a checkpoint sync endpoint for that network <a href="https://eth-clients.github.io/checkpoint-sync-endpoints/">here</a></p>
+<p>Aside from holesky, these steps can also be used to connect to other supported networks by replacing the <code>--network</code> argument by another supported network and looking up a checkpoint sync endpoint for that network <a href="https://eth-clients.github.io/checkpoint-sync-endpoints/">in this community-maintained list</a></p>
 <p>If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the <code>--bootnodes</code> flag</p>
 <p>Once the node is up and running you will be able to see logs indicating the start of each sync cycle along with from which block hash to which block hash we are syncing. You will also get regular logs with the completion rate and estimated finish time for state sync and state rebuild processes during snap sync. This will look something like this:</p>
 <pre><code class="language-bash">INFO ethrex_p2p::sync: Syncing from current head 0xb5f7…bde4 to sync_head 0xce96…fa5e
