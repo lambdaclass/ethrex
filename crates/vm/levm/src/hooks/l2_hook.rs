@@ -23,7 +23,7 @@ impl Hook for L2Hook {
 
         // The bridge is allowed to mint ETH.
         // For other privileged transactions, insufficient balance can't cause an error
-        // since they must always be accepted, and an errro would mark them as invalid
+        // since they must always be accepted, and an error would mark them as invalid
         // Instead, we make them revert by inserting a revert2
         if vm.env.is_privileged && sender_address != COMMON_BRIDGE_L2_ADDRESS {
             let value = vm.current_call_frame()?.msg_value;
