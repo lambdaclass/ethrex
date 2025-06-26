@@ -47,7 +47,7 @@ impl Prover {
             let Ok(prover_data) = self
                 .request_new_input()
                 .await
-                .inspect_err(|e| warn!("Failed to request new data: {e}"))
+                .inspect_err(|e| error!("Failed to request new data: {e}"))
             else {
                 continue;
             };
