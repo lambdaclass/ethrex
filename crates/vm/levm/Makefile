@@ -27,6 +27,7 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 REPETITIONS := 10000
 REPETITIONS_SLOW := 200
 
+BENCH_DEEPSTACK_ITERATIONS := 100
 BENCH_FACT_ITERATIONS := 57
 BENCH_FACT_REC_ITERATIONS := 57
 BENCH_FIB_ITERATIONS := 57
@@ -75,6 +76,7 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+	$(call run_benchmark,DeepStack,REPETITIONS,BENCH_DEEPSTACK_ITERATIONS)
 
 revm-comparison-ci: compile-contracts
 	$(MAKE) build-revm-comparison
@@ -86,6 +88,7 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+	$(call run_benchmark_ci,DeepStack,REPETITIONS,BENCH_DEEPSTACK_ITERATIONS)
 
 flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
@@ -96,6 +99,7 @@ flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=ERC20Approval repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_APPROVAL_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=ERC20Transfer repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_TRANSFER_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=ERC20Mint repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_MINT_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=DeepStack repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_DEEPSTACK_ITERATIONS)
 
 flamegraph-levm-bench-generic:
 	mkdir -p flamegraph_levm_benchmark
