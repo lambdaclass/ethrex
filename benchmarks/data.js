@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750958858899,
+  "lastUpdate": 1750960402516,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1559,6 +1559,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220126650798,
             "range": "± 260140480",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "319656f7891424735deeb7a18d9b0976680dd04b",
+          "message": "ci(l2): build docker images for integration test (#3338)\n\n**Motivation**\n\nCi failing because ethrex_dev:latest not found \n\n**Description**\n\n- add step to build the image",
+          "timestamp": "2025-06-26T16:52:58Z",
+          "tree_id": "db70eefd6d0032e7f761cfd28e4186e80e9775d5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/319656f7891424735deeb7a18d9b0976680dd04b"
+        },
+        "date": 1750960393763,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222816708012,
+            "range": "± 419298346",
             "unit": "ns/iter"
           }
         ]
