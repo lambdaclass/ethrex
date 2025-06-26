@@ -51,6 +51,11 @@ impl Prover {
             else {
                 continue;
             };
+
+            let Some(prover_data) = prover_data else {
+                continue;
+            };
+
             // If we get the input
             // Generate the Proof
             let Ok(batch_proof) = prove(prover_data.input, self.aligned_mode)
@@ -69,7 +74,7 @@ impl Prover {
         }
     }
 
-    async fn request_new_input(&self) -> Result<ProverData, String> {
+    async fn request_new_input(&self) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
         let request = ProofData::batch_request(self.code_version.clone());
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
@@ -91,14 +96,14 @@ impl Prover {
         };
 
         let (Some(batch_number), Some(input)) = (batch_number, input) else {
-            return Err(
-                    "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
-                        .to_owned(),
-                );
+            warn!(
+                "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
+            );
+            return Ok(None);
         };
 
         info!("Received Response for batch_number: {batch_number}");
-        Ok(ProverData {
+        Ok(Some(ProverData {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
@@ -109,7 +114,7 @@ impl Prover {
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
             },
-        })
+        }))
     }
 
     async fn submit_proof(&self, batch_number: u64, batch_proof: BatchProof) -> Result<(), String> {
