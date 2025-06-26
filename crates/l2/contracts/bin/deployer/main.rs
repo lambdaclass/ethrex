@@ -279,9 +279,13 @@ fn deploy_tdx_contracts(
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
         .spawn()
-        .map_err(|err| DeployerError::DeploymentSubtaskFailed(format!("Failed to spawn make: {err}")))?
+        .map_err(|err| {
+            DeployerError::DeploymentSubtaskFailed(format!("Failed to spawn make: {err}"))
+        })?
         .wait()
-        .map_err(|err| DeployerError::DeploymentSubtaskFailed(format!("Failed to wait for make: {err}")))?;
+        .map_err(|err| {
+            DeployerError::DeploymentSubtaskFailed(format!("Failed to wait for make: {err}"))
+        })?;
 
     let address = read_tdx_deployment_address("TDXVerifier");
     Ok(address)

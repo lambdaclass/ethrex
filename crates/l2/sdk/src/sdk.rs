@@ -840,7 +840,7 @@ pub fn git_clone(
     }
 }
 
-pub fn download_contract_deps(contracts_path: &PathBuf) -> Result<(), GitError> {
+pub fn download_contract_deps(contracts_path: &Path) -> Result<(), GitError> {
     trace!("Downloading contract dependencies");
     std::fs::create_dir_all(contracts_path.join("lib")).map_err(|err| {
         GitError::DependencyError(format!("Failed to create contracts/lib: {err}"))

@@ -265,7 +265,7 @@ async fn test_erc20_roundtrip(
     let token_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
 
     let contracts_path = Path::new("contracts");
-    ethrex_l2_sdk::download_contract_deps(&contracts_path.to_path_buf())?;
+    ethrex_l2_sdk::download_contract_deps(contracts_path)?;
     compile_contract(contracts_path, "src/example/L2ERC20.sol", false)?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
