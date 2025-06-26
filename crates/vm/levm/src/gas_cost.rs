@@ -902,10 +902,7 @@ pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
 /// https://eips.ethereum.org/EIPS/eip-150
 pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMError> {
-    let mut remaining_gas = current_call_frame
-        .gas_limit
-        .checked_sub(current_call_frame.gas_used)
-        .ok_or(InternalError::Underflow)?;
+    let mut remaining_gas = current_call_frame.gas_remaining;
 
     remaining_gas = remaining_gas
         .checked_sub(remaining_gas / 64)

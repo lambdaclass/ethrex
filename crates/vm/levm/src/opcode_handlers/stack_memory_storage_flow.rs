@@ -172,11 +172,7 @@ impl<'a> VM<'a> {
         };
 
         // EIP-2200
-        let gas_left = self
-            .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
+        let gas_left = self.current_call_frame()?.gas_remaining;
         if gas_left <= SSTORE_STIPEND {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
@@ -255,10 +251,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
 
-        let remaining_gas = current_call_frame
-            .gas_limit
-            .checked_sub(current_call_frame.gas_used)
-            .ok_or(InternalError::Underflow)?;
+        let remaining_gas = current_call_frame.gas_remaining;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(&[remaining_gas.into()])?;
 
