@@ -39,6 +39,7 @@ use ethrex_common::{
     types::{Block, MempoolTransaction, Transaction},
 };
 use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
@@ -65,7 +66,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::debug;
+use tracing::{debug, warn};
 use tracing::info;
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -293,6 +294,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
+            #[cfg(feature = "l2")]
             &SUPPORTED_BASED_CAPABILITIES[..]
         ]
         .concat();
@@ -340,7 +342,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                                 negotiated_snap_version = cap.version;
                             }
                         }
-                        _ => {}
+                        "based" => {
+                            self.l2_state = Some(
+                                L2ConnState {
+                                    latest_block_sent: 0,
+                                    latest_block_added: 0,
+                                    blocks_on_queue: BTreeMap::new(),
+                                    latest_batch_sent: 0,
+                                    store_rollup: StoreRollup::default(),
+                                    commiter_key: None,
+                                    next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+                                    next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL
+                                }
+                            )
+                        }
+                        unknown_protocol =>  {
+                            warn!("Peer sent an unsupported protocol: {unknown_protocol}")
+                        }
                     }
                 }
 
