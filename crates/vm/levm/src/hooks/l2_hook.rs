@@ -1,6 +1,7 @@
 use crate::{
     errors::{ContextResult, InternalError, TxValidationError},
     hooks::{default_hook, hook::Hook},
+    opcodes::Opcode,
     vm::VM,
 };
 
@@ -22,6 +23,7 @@ impl Hook for L2Hook {
         };
 
         // The bridge is allowed to mint ETH.
+        // This is done by not decreasing it's balance when it's the source of a transfer.
         // For other privileged transactions, insufficient balance can't cause an error
         // since they must always be accepted, and an error would mark them as invalid
         // Instead, we make them revert by inserting a revert2
@@ -29,8 +31,11 @@ impl Hook for L2Hook {
             let value = vm.current_call_frame()?.msg_value;
             if value > sender_balance {
                 vm.current_call_frame_mut()?.msg_value = U256::zero();
-                vm.current_call_frame_mut()?.set_code("\u{00FE}".into())?;
+                vm.current_call_frame_mut()?
+                    .set_code(vec![Opcode::INVALID as u8].into())?;
+                return Ok(());
             }
+            // This should never fail, since we just checked the balance is enough.
             vm.decrease_account_balance(sender_address, value)
                 .map_err(|_| {
                     InternalError::Custom(

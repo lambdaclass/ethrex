@@ -108,6 +108,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     test_deposit_with_contract_call_revert(&proposer_client, &eth_client).await?;
 
+    test_deposit_not_enough_balance(&transfer_return_private_key, &eth_client, &proposer_client).await?;
+
     let withdrawals_count = std::env::var("INTEGRATION_TEST_WITHDRAW_COUNT")
         .map(|amount| amount.parse().expect("Invalid withdrawal amount value"))
         .unwrap_or(5);
@@ -424,6 +426,61 @@ async fn test_transfer_with_deposit(
     assert_eq!(
         receiver_balance_after,
         receiver_balance_before + transfer_value
+    );
+    Ok(())
+}
+
+
+async fn test_deposit_not_enough_balance(
+    receiver_private_key: &SecretKey,
+    eth_client: &EthClient,
+    proposer_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Transferring funds on L2 through a deposit");
+    let rich_wallet_private_key = l1_rich_wallet_private_key();
+    let rich_address = get_address_from_secret_key(&rich_wallet_private_key)?;
+    let receiver_address = get_address_from_secret_key(&receiver_private_key)?;
+
+    let balance_sender = proposer_client
+        .get_balance(receiver_address, BlockByNumber::Latest)
+        .await?;
+    let balance_before = proposer_client
+        .get_balance(receiver_address, BlockByNumber::Latest)
+        .await?;
+
+    let transfer_value = balance_sender + U256::one();
+
+    let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
+        rich_address,
+        Some(0),
+        Some(21000 * 10),
+        L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
+        &l1_rich_wallet_private_key(),
+        common_bridge_address(),
+        eth_client,
+    )
+    .await?;
+
+    println!("Waiting for L1 to L2 transaction receipt on L1");
+
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, eth_client, 5).await?;
+    println!("Waiting for L1 to L2 transaction receipt on L2");
+
+    let _ = wait_for_l2_deposit_receipt(
+        l1_to_l2_tx_receipt.block_info.block_number,
+        eth_client,
+        proposer_client,
+    )
+    .await?;
+
+    println!("Checking balances after transfer");
+
+    let balance_after = proposer_client
+        .get_balance(receiver_address, BlockByNumber::Latest)
+        .await?;
+    assert_eq!(
+        balance_after,
+        balance_before
     );
     Ok(())
 }
