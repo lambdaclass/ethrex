@@ -66,15 +66,6 @@ use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "l2")] {
-        use crate::l2::transaction::SponsoredTx;
-        use ethrex_common::Address;
-        use secp256k1::SecretKey;
-        use ethrex_storage_rollup::StoreRollup;
-    }
-}
-
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestWrapper {
@@ -91,12 +82,6 @@ pub struct RpcApiContext {
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
-    #[cfg(feature = "l2")]
-    pub valid_delegation_addresses: Vec<Address>,
-    #[cfg(feature = "l2")]
-    pub sponsor_pk: SecretKey,
-    #[cfg(feature = "l2")]
-    pub rollup_store: StoreRollup,
 }
 
 #[derive(Debug, Clone)]
@@ -138,9 +123,6 @@ pub async fn start_api(
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
-    #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
-    #[cfg(feature = "l2")] sponsor_pk: SecretKey,
-    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -158,12 +140,6 @@ pub async fn start_api(
             client_version,
         },
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-        #[cfg(feature = "l2")]
-        valid_delegation_addresses,
-        #[cfg(feature = "l2")]
-        sponsor_pk,
-        #[cfg(feature = "l2")]
-        rollup_store,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -196,28 +172,21 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    if cfg!(feature = "l2") {
-        info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
+    let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
+    let authrpc_router = Router::new()
+        .route("/", post(authrpc_handler))
+        .with_state(service_context);
+    let authrpc_listener = TcpListener::bind(authrpc_addr)
+        .await
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
+    let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
+        .with_graceful_shutdown(shutdown_signal())
+        .into_future();
+    info!("Starting Auth-RPC server at {authrpc_addr}");
 
-        let _ = tokio::try_join!(http_server)
-            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
-    } else {
-        let authrpc_handler =
-            |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
-        let authrpc_router = Router::new()
-            .route("/", post(authrpc_handler))
-            .with_state(service_context);
-        let authrpc_listener = TcpListener::bind(authrpc_addr)
-            .await
-            .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-            .with_graceful_shutdown(shutdown_signal())
-            .into_future();
-        info!("Starting Auth-RPC server at {authrpc_addr}");
+    let _ = tokio::try_join!(authrpc_server, http_server)
+        .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
 
-        let _ = tokio::try_join!(authrpc_server, http_server)
-            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
-    }
     Ok(())
 }
 
@@ -297,8 +266,6 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
         Err(rpc_err) => Err(rpc_err),
-        #[cfg(feature = "l2")]
-        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
     }
 }
 
@@ -440,19 +407,6 @@ pub async fn map_mempool_requests(
         "txpool_content" => mempool::content(contex).await,
         "txpool_status" => mempool::status(contex).await,
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
-    }
-}
-
-#[cfg(feature = "l2")]
-pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    use crate::l2::l1_message::GetL1MessageProof;
-
-    match req.method.as_str() {
-        "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
-        "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
-        unknown_ethrex_l2_method => {
-            Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
-        }
     }
 }
 

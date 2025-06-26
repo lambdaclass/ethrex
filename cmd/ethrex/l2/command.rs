@@ -3,9 +3,9 @@ use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
+        init_metrics, init_network, init_rollup_store, init_store,
     },
-    l2::options::Options,
+    l2::{self, options::Options},
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
@@ -155,7 +155,7 @@ impl Command {
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
-                init_rpc_api(
+                l2::initializers::init_rpc_api(
                     &opts.node_opts,
                     &opts,
                     peer_table.clone(),

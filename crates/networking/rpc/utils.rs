@@ -7,9 +7,6 @@ use serde_json::Value;
 use crate::authentication::AuthenticationError;
 use ethrex_blockchain::error::MempoolError;
 
-#[cfg(feature = "l2")]
-use ethrex_storage_rollup::RollupStoreError;
-
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("Method not found: {0}")]
@@ -42,9 +39,6 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
-    #[cfg(feature = "l2")]
-    #[error("Invalid Ethex L2 message: {0}")]
-    InvalidEthrexL2Message(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -144,12 +138,6 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
-            #[cfg(feature = "l2")]
-            RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
-                code: -39000,
-                data: None,
-                message: format!("Invalid Ethex L2 message: {reason}",),
-            },
         }
     }
 }
@@ -185,8 +173,6 @@ pub enum RpcNamespace {
     Web3,
     Net,
     Mempool,
-    #[cfg(feature = "l2")]
-    EthrexL2,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -224,8 +210,6 @@ pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNam
         "net" => Ok(RpcNamespace::Net),
         // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
         "txpool" => Ok(RpcNamespace::Mempool),
-        #[cfg(feature = "l2")]
-        "ethrex" => Ok(RpcNamespace::EthrexL2),
         _ => Err(RpcErr::MethodNotFound(method)),
     }
 }
@@ -266,13 +250,6 @@ pub struct RpcErrorResponse {
 /// Failure to read from DB will always constitute an internal error
 impl From<StoreError> for RpcErr {
     fn from(value: StoreError) -> Self {
-        RpcErr::Internal(value.to_string())
-    }
-}
-
-#[cfg(feature = "l2")]
-impl From<RollupStoreError> for RpcErr {
-    fn from(value: RollupStoreError) -> Self {
         RpcErr::Internal(value.to_string())
     }
 }
@@ -347,10 +324,6 @@ pub mod test_utils {
         eth::gas_tip_estimator::GasTipEstimator,
         rpc::{NodeData, RpcApiContext, start_api},
     };
-    #[cfg(feature = "l2")]
-    use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-    #[cfg(feature = "l2")]
-    use secp256k1::{SecretKey, rand};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
@@ -389,13 +362,6 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
-        #[cfg(feature = "l2")]
-        let valid_delegation_addresses = Vec::new();
-        #[cfg(feature = "l2")]
-        let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
-        #[cfg(feature = "l2")]
-        let rollup_store = StoreRollup::new("", EngineTypeRollup::InMemory)
-            .expect("Failed to create in-memory storage");
         start_api(
             http_addr,
             authrpc_addr,
@@ -407,12 +373,6 @@ pub mod test_utils {
             SyncManager::dummy(),
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses,
-            #[cfg(feature = "l2")]
-            sponsor_pk,
-            #[cfg(feature = "l2")]
-            rollup_store,
         )
         .await
         .unwrap();
@@ -433,13 +393,6 @@ pub mod test_utils {
                 client_version: "ethrex/test".to_string(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-            #[cfg(feature = "l2")]
-            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
-                .expect("Fail to create in-memory db test"),
         }
     }
 }
