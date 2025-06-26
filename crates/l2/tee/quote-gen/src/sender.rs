@@ -14,10 +14,12 @@ use ethrex_common::Bytes;
 const SERVER_URL: &str = "172.17.0.1:3900";
 const SERVER_URL_DEV: &str = "localhost:3900";
 
-pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
-    let batch = connect_to_prover_server_wr(&ProofData::BatchRequest)
-        .await
-        .map_err(|e| format!("Failed to get Response: {e}"))?;
+pub async fn get_batch(code_version: String) -> Result<(u64, ProgramInput), String> {
+    let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
+        code_version: code_version.clone(),
+    })
+    .await
+    .map_err(|e| format!("Failed to get Response: {e}"))?;
     match batch {
         ProofData::BatchResponse {
             batch_number,
@@ -37,6 +39,12 @@ pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
             )),
             _ => Err("No blocks to prove.".to_owned()),
         },
+        ProofData::InvalidCodeVersion {
+            code_version: server_code_version,
+        } => Err(format!(
+            "Invalid code version received. Server code: {}, Prover code: {}",
+            server_code_version, code_version
+        )),
         _ => Err("Expecting ProofData::Response".to_owned()),
     }
 }
