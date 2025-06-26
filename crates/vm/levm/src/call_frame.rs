@@ -9,10 +9,19 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
-use std::{collections::HashMap, fmt};
+use std::collections::HashMap;
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
+///
+/// The specification says the stack is limited to 1024 items, aka. 32KiB, which is reasonable
+/// enough for allocating it all at once to make sense. Every time an item is pushed into the stack,
+/// its bounds have to be checked; by making the stack grow downwards, the underflow detection of
+/// the offset update operation can also be reused to check for stack overflow.
+///
+/// A few opcodes require pushing and/or popping multiple elements. The [`push`](Self::push) and
+/// [`pop`](Self::pop) methods support working with multiple elements instead of a single one,
+/// reducing the number of checks performed on the stack.
 pub struct Stack {
     pub values: Box<[U256; STACK_LIMIT]>,
     pub offset: usize,
@@ -98,8 +107,8 @@ impl Stack {
 impl Default for Stack {
     fn default() -> Self {
         Self {
-            values: Box::new([U256::zero(); 1024]),
-            offset: 1024,
+            values: Box::new([U256::zero(); STACK_LIMIT]),
+            offset: STACK_LIMIT,
         }
     }
 }
@@ -129,8 +138,8 @@ impl fmt::Debug for Stack {
 pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
-    /// Keeps track of the gas that's been used in current context
-    pub gas_used: u64,
+    /// Keeps track of the remaining gas in the current context.
+    pub gas_remaining: u64,
     /// Program Counter
     pub pc: usize,
     /// Address of the account that sent the message
@@ -211,6 +220,7 @@ impl CallFrame {
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
             gas_limit,
+            gas_remaining: gas_limit,
             msg_sender,
             to,
             code_address,
@@ -247,15 +257,10 @@ impl CallFrame {
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
-        self.gas_used = self
-            .gas_used
-            .checked_add(gas)
+        self.gas_remaining = self
+            .gas_remaining
+            .checked_sub(gas)
             .ok_or(ExceptionalHalt::OutOfGas)?;
-
-        if self.gas_used > self.gas_limit {
-            return Err(ExceptionalHalt::OutOfGas);
-        }
-
         Ok(())
     }
 

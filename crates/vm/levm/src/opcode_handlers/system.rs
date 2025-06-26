@@ -80,9 +80,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -182,9 +180,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -306,9 +302,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -404,9 +398,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -850,10 +842,10 @@ impl<'a> VM<'a> {
         let child_unused_gas = gas_limit
             .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
-        parent_call_frame.gas_used = parent_call_frame
-            .gas_used
-            .checked_sub(child_unused_gas)
-            .ok_or(InternalError::Underflow)?;
+        parent_call_frame.gas_remaining = parent_call_frame
+            .gas_remaining
+            .checked_add(child_unused_gas)
+            .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
         memory::try_store_range(
@@ -896,10 +888,10 @@ impl<'a> VM<'a> {
         let unused_gas = gas_limit
             .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
-        parent_call_frame.gas_used = parent_call_frame
-            .gas_used
-            .checked_sub(unused_gas)
-            .ok_or(InternalError::Underflow)?;
+        parent_call_frame.gas_remaining = parent_call_frame
+            .gas_remaining
+            .checked_add(unused_gas)
+            .ok_or(InternalError::Overflow)?;
 
         // What to do, depending on TxResult
         match ctx_result.result.clone() {
@@ -931,10 +923,10 @@ impl<'a> VM<'a> {
         let callframe = self.current_call_frame_mut()?;
 
         // Return gas_limit to callframe.
-        callframe.gas_used = callframe
-            .gas_used
-            .checked_sub(gas_limit)
-            .ok_or(InternalError::Underflow)?;
+        callframe.gas_remaining = callframe
+            .gas_remaining
+            .checked_add(gas_limit)
+            .ok_or(InternalError::Overflow)?;
         callframe.stack.push(&[FAIL])?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;
