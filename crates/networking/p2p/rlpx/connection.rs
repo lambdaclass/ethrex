@@ -544,6 +544,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let latest_block_number = self.storage.get_latest_block_number().await?;
             if !self.blockchain.is_synced() {
                 // We do this since we are syncing, we don't want to broadcast old blocks
+                self.latest_block_sent = latest_block_number;
                 self.latest_block_added = latest_block_number;
                 return Ok(());
             }
@@ -631,6 +632,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let Some(batch) = self.store_rollup.get_batch(next_batch_to_send).await? else {
                 return Ok(());
             };
+            debug!(
+                "Broadcasting new batch, current: {}, last broadcasted: {}",
+                next_batch_to_send, self.latest_batch_sent
+            );
 
             let (signature, recovery_id) = if let Some(recovered_sig) = self
                 .store_rollup
