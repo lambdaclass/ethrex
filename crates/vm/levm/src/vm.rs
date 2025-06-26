@@ -1,3 +1,7 @@
+#[cfg(not(feature = "l2"))]
+use crate::hooks::hook::l1_hooks;
+#[cfg(feature = "l2")]
+use crate::hooks::hook::l2_hooks;
 #[cfg(feature = "l2")]
 use crate::l2_precompiles;
 #[cfg(not(feature = "l2"))]
@@ -9,10 +13,7 @@ use crate::{
     debug::DebugMode,
     environment::Environment,
     errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
-    hooks::{
-        backup_hook::BackupHook,
-        hook::{Hook, get_hooks},
-    },
+    hooks::{backup_hook::BackupHook, hook::Hook},
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -64,7 +65,16 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
     ) -> Self {
-        let hooks = get_hooks(tx);
+        let hooks = {
+            #[cfg(not(feature = "l2"))]
+            {
+                l1_hooks()
+            }
+            #[cfg(feature = "l2")]
+            {
+                l2_hooks(tx)
+            }
+        };
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
         Self {

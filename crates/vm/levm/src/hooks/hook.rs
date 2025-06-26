@@ -1,12 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
-use ethrex_common::types::Transaction;
+use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
 
 use crate::{
     errors::{ContextResult, VMError},
+    hooks::{L2Hook, backup_hook::BackupHook, default_hook::DefaultHook},
     vm::VM,
 };
-
 pub trait Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError>;
 
@@ -17,28 +17,21 @@ pub trait Hook {
     ) -> Result<(), VMError>;
 }
 
-pub fn get_hooks(_tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
-    #[cfg(not(feature = "l2"))]
-    {
-        use crate::hooks::default_hook::DefaultHook;
-        vec![Rc::new(RefCell::new(DefaultHook))]
-    }
+pub fn l1_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    vec![Rc::new(RefCell::new(DefaultHook))]
+}
 
-    #[cfg(feature = "l2")]
-    {
-        use crate::hooks::{L2Hook, backup_hook::BackupHook};
-        use ethrex_common::types::PrivilegedL2Transaction;
-
-        let recipient = match _tx {
-            Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction { recipient, .. }) => {
-                Some(*recipient)
-            }
-            _ => None,
+pub fn l2_hooks(tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    let recipient =
+        if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction { recipient, .. }) = tx
+        {
+            Some(*recipient)
+        } else {
+            None
         };
 
-        vec![
-            Rc::new(RefCell::new(L2Hook { recipient })),
-            Rc::new(RefCell::new(BackupHook::default())),
-        ]
-    }
+    vec![
+        Rc::new(RefCell::new(L2Hook { recipient })),
+        Rc::new(RefCell::new(BackupHook::default())),
+    ]
 }
