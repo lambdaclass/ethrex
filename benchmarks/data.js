@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750977444756,
+  "lastUpdate": 1750978466067,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2350,6 +2350,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.009854195747342089,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "19cfb4e1874c35f32ff78602093f1305c17b6f4d",
+          "message": "chore(core): add install script (#3273)\n\n**Description**\n\nThis PR adds an installation script with readme instructions on how to\nquickly set up a local L1 with `ethrex`, without having to clone the\nrepo.\n\nThe idea is to extend this script once the L2 can be more easily\ndeployed. Right now, it requires installing two more binaries and\ndownloading multiple contracts (either the source or compiled\nartifacts), which makes this more complex than it needs to be.\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-06-26T21:40:31Z",
+          "tree_id": "cfb5520d0c3f5cac05f111e8f19749137c261c90",
+          "url": "https://github.com/lambdaclass/ethrex/commit/19cfb4e1874c35f32ff78602093f1305c17b6f4d"
+        },
+        "date": 1750978457260,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.009829606363069246,
             "unit": "Mgas/s"
           }
         ]
