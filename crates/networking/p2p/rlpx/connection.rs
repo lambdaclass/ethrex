@@ -5,8 +5,8 @@ use super::{
     utils::log_peer_warn,
 };
 use crate::rlpx::based::get_hash_batch_sealed;
-use crate::rlpx::l2::messages::BatchSealed;
 use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
+use crate::rlpx::l2::messages::BatchSealed;
 use crate::rlpx::utils::get_pub_key;
 use crate::{
     kademlia::PeerChannels,
@@ -23,8 +23,7 @@ use crate::{
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES,
-            SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
         utils::{log_peer_debug, log_peer_error},
     },
@@ -67,8 +66,8 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, warn};
 use tracing::info;
+use tracing::{debug, warn};
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
@@ -290,7 +289,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
-            &SUPPORTED_BASED_CAPABILITIES[..]
+            &SUPPORTED_BASED_CAPABILITIES[..],
         ]
         .concat();
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
@@ -338,20 +337,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             }
                         }
                         "based" => {
-                            self.l2_state = Some(
-                                L2ConnState {
-                                    latest_block_sent: 0,
-                                    latest_block_added: 0,
-                                    blocks_on_queue: BTreeMap::new(),
-                                    latest_batch_sent: 0,
-                                    store_rollup: StoreRollup::default(),
-                                    commiter_key: None,
-                                    next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
-                                    next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL
-                                }
-                            )
+                            self.l2_state = Some(L2ConnState {
+                                latest_block_sent: 0,
+                                latest_block_added: 0,
+                                blocks_on_queue: BTreeMap::new(),
+                                latest_batch_sent: 0,
+                                store_rollup: StoreRollup::default(),
+                                commiter_key: None,
+                                next_block_broadcast: Instant::now()
+                                    + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+                                next_batch_broadcast: Instant::now()
+                                    + PERIODIC_BATCH_BROADCAST_INTERVAL,
+                            })
                         }
-                        unknown_protocol =>  {
+                        unknown_protocol => {
                             warn!("Peer sent an unsupported protocol: {unknown_protocol}")
                         }
                     }
@@ -583,9 +582,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         valid_txs.push(tx.clone());
                     }
                     if !valid_txs.is_empty() {
-                        self.broadcast_message(Message::Transactions(Transactions::new(
-                            valid_txs,
-                        ))).await?;
+                        self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))
+                            .await?;
                     }
                 }
             }
@@ -676,9 +674,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
-            Message::L2Message(msg) => {
-               self.handle_based_capability_message(msg).await?
-            }
+            Message::L2Message(msg) => self.handle_based_capability_message(msg).await?,
             // Send response messages to the backend
             message @ Message::AccountRange(_)
             | message @ Message::StorageRanges(_)
@@ -688,9 +684,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             | message @ Message::BlockHeaders(_)
             | message @ Message::Receipts(_) => sender.send(message).await?,
             // TODO: Add new message types and handlers as they are implemented
-            message => {
-                return Err(RLPxError::MessageNotHandled(format!("{message}")))
-            }
+            message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
         };
         Ok(())
     }
@@ -791,7 +785,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 Ok(())
             }
             l2_msg @ Message::L2Message(_) => {
-                let Ok(_) = self.connection_broadcast_send.send((task_id, l2_msg.into())) else {
+                let Ok(_) = self
+                    .connection_broadcast_send
+                    .send((task_id, l2_msg.into()))
+                else {
                     let error_message = "Could not broadcast l2 message";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));

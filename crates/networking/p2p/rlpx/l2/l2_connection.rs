@@ -1,6 +1,3 @@
-use std::collections::BTreeMap;
-use ethrex_common::types::batch::Batch;
-use tokio::time::Instant;
 use crate::rlpx::based::get_hash_batch_sealed;
 use crate::rlpx::l2::messages::{BatchSealed, NewBlock};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
@@ -9,9 +6,12 @@ use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::Block;
+use ethrex_common::types::batch::Batch;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use secp256k1::{Message as SecpMessage, SecretKey};
+use std::collections::BTreeMap;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::Instant;
 use tracing::{debug, info};
 
 use super::messages::L2Message;
@@ -34,90 +34,90 @@ fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    pub async fn handle_based_capability_message(&mut self, msg: L2Message) -> Result<(), RLPxError> {
-       // FIXME: Check the current connection actually supports the 'based' capability.
-       match msg {
-           L2Message::BatchSealed(ref batch_sealed_msg) => {
-               if self.should_process_batch_sealed(&batch_sealed_msg).await? {
-                   self.process_batch_sealed(&batch_sealed_msg).await?;
-               }
-           }
-           L2Message::NewBlock(ref new_block_msg) => {
-               if self.should_process_new_block(&new_block_msg).await? {
-                   self.process_new_block(&new_block_msg).await?;
-               }
-           }
-       }
+    pub async fn handle_based_capability_message(
+        &mut self,
+        msg: L2Message,
+    ) -> Result<(), RLPxError> {
+        // FIXME: Check the current connection actually supports the 'based' capability.
+        match msg {
+            L2Message::BatchSealed(ref batch_sealed_msg) => {
+                if self.should_process_batch_sealed(&batch_sealed_msg).await? {
+                    self.process_batch_sealed(&batch_sealed_msg).await?;
+                }
+            }
+            L2Message::NewBlock(ref new_block_msg) => {
+                if self.should_process_new_block(&new_block_msg).await? {
+                    self.process_new_block(&new_block_msg).await?;
+                }
+            }
+        }
         // for now we broadcast valid messages
         self.broadcast_message(msg.into()).await
     }
     pub async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         // FIXME: Re-add this
-            // let latest_block_number = self.storage.get_latest_block_number().await?;
-            // for i in self.latest_block_sent + 1..=latest_block_number {
-            //     debug!(
-            //         "Broadcasting new block, current: {}, last broadcasted: {}",
-            //         i, self.latest_block_sent
-            //     );
+        // let latest_block_number = self.storage.get_latest_block_number().await?;
+        // for i in self.latest_block_sent + 1..=latest_block_number {
+        //     debug!(
+        //         "Broadcasting new block, current: {}, last broadcasted: {}",
+        //         i, self.latest_block_sent
+        //     );
 
-            //     let new_block_body =
-            //         self.storage
-            //             .get_block_body(i)
-            //             .await?
-            //             .ok_or(RLPxError::InternalError(
-            //                 "Block body not found after querying for the block number".to_owned(),
-            //             ))?;
-            //     let new_block_header =
-            //         self.storage
-            //             .get_block_header(i)?
-            //             .ok_or(RLPxError::InternalError(
-            //                 "Block header not found after querying for the block number".to_owned(),
-            //             ))?;
-            //     let new_block = Block {
-            //         header: new_block_header,
-            //         body: new_block_body,
-            //     };
-            //     let (signature, recovery_id) = if let Some(recovered_sig) = self
-            //         .store_rollup
-            //         .get_signature_by_block(new_block.hash())
-            //         .await?
-            //     {
-            //         let mut signature = [0u8; 64];
-            //         let mut recovery_id = [0u8; 4];
-            //         signature.copy_from_slice(&recovered_sig[..64]);
-            //         recovery_id.copy_from_slice(&recovered_sig[64..68]);
-            //         (signature, recovery_id)
-            //     } else {
-            //         let Some(secret_key) = self.committer_key else {
-            //             return Err(RLPxError::InternalError(
-            //                 "Secret key is not set for based connection".to_string(),
-            //             ));
-            //         };
-            //         let (recovery_id, signature) = secp256k1::SECP256K1
-            //             .sign_ecdsa_recoverable(
-            //                 &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
-            //                 &secret_key,
-            //             )
-            //             .serialize_compact();
-            //         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
-            //         (signature, recovery_id)
-            //     };
-            //     self.send(Message::NewBlock(NewBlockMessage {
-            //         block: new_block,
-            //         signature,
-            //         recovery_id,
-            //     }))
-            //     .await?;
-            // }
-            // self.latest_block_sent = latest_block_number;
+        //     let new_block_body =
+        //         self.storage
+        //             .get_block_body(i)
+        //             .await?
+        //             .ok_or(RLPxError::InternalError(
+        //                 "Block body not found after querying for the block number".to_owned(),
+        //             ))?;
+        //     let new_block_header =
+        //         self.storage
+        //             .get_block_header(i)?
+        //             .ok_or(RLPxError::InternalError(
+        //                 "Block header not found after querying for the block number".to_owned(),
+        //             ))?;
+        //     let new_block = Block {
+        //         header: new_block_header,
+        //         body: new_block_body,
+        //     };
+        //     let (signature, recovery_id) = if let Some(recovered_sig) = self
+        //         .store_rollup
+        //         .get_signature_by_block(new_block.hash())
+        //         .await?
+        //     {
+        //         let mut signature = [0u8; 64];
+        //         let mut recovery_id = [0u8; 4];
+        //         signature.copy_from_slice(&recovered_sig[..64]);
+        //         recovery_id.copy_from_slice(&recovered_sig[64..68]);
+        //         (signature, recovery_id)
+        //     } else {
+        //         let Some(secret_key) = self.committer_key else {
+        //             return Err(RLPxError::InternalError(
+        //                 "Secret key is not set for based connection".to_string(),
+        //             ));
+        //         };
+        //         let (recovery_id, signature) = secp256k1::SECP256K1
+        //             .sign_ecdsa_recoverable(
+        //                 &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
+        //                 &secret_key,
+        //             )
+        //             .serialize_compact();
+        //         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+        //         (signature, recovery_id)
+        //     };
+        //     self.send(Message::NewBlock(NewBlockMessage {
+        //         block: new_block,
+        //         signature,
+        //         recovery_id,
+        //     }))
+        //     .await?;
+        // }
+        // self.latest_block_sent = latest_block_number;
 
-            Ok(())
+        Ok(())
     }
 
-    pub async fn should_process_new_block(
-        &mut self,
-        msg: &NewBlock,
-    ) -> Result<bool, RLPxError> {
+    pub async fn should_process_new_block(&mut self, msg: &NewBlock) -> Result<bool, RLPxError> {
         // FIXME: See if we can avoid this check
         let Some(ref mut l2_state) = self.l2_state else {
             return Err(RLPxError::IncompatibleProtocol);
@@ -331,10 +331,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    pub async fn process_batch_sealed(
-        &mut self,
-        msg: &BatchSealed,
-    ) -> Result<(), RLPxError> {
+    pub async fn process_batch_sealed(&mut self, msg: &BatchSealed) -> Result<(), RLPxError> {
         // FIXME: Avoid unwrap + clone
         self.l2_state
             .clone()
