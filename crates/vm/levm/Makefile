@@ -57,7 +57,7 @@ define run_benchmark_ci
 	@../../../pr/benchmark revm $(1) 1 $($(3))
 	@printf "%s\n" "pr_levm_$(1)"
 	@../../../pr/benchmark levm $(1) 1 $($(3))
-	hyperfine -w 5 -r 10 -N --export-markdown $(1).md \
+	hyperfine -w 5 -r 10 -N --export-markdown ../../../benchmark_comparison_results/$(1).md \
 		-n "main_revm_$(1)" "../../../main/benchmark revm $(1) $($(2)) $($(3))" \
 		-n "main_levm_$(1)" "../../../main/benchmark levm $(1) $($(2)) $($(3))" \
 		-n "pr_revm_$(1)" "../../../pr/benchmark revm $(1) $($(2)) $($(3))" \
@@ -83,6 +83,7 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 revm-comparison-ci: compile-contracts
+	mkdir -p ../../../benchmark_comparison_results
 	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)

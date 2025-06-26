@@ -35,7 +35,7 @@ jobs:
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
-          name: pr-result
+          name: pr-binary
           path: crates/vm/levm/target/release/benchmark
 
   benchmark-main:
@@ -62,7 +62,7 @@ jobs:
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
-          name: main-result
+          name: main-binary
           path: crates/vm/levm/target/release/benchmark
 
   combine-results:
@@ -83,16 +83,16 @@ jobs:
         with:
           version: v0.8.29
 
-      - name: Download PR results
+      - name: Download PR binaries
         uses: actions/download-artifact@v4
         with:
-          name: pr-result
+          name: pr-binary
           path: ./pr
 
-      - name: Download main results
+      - name: Download main binaries
         uses: actions/download-artifact@v4
         with:
-          name: main-result
+          name: main-binary
           path: ./main
 
       - name: Run benchmarks
@@ -101,61 +101,7 @@ jobs:
           chmod +x ./pr/benchmark
           cd crates/vm/levm
           make revm-comparison-ci
-          for f in Factorial.md FactorialRecursive.md Fibonacci.md ManyHashes.md BubbleSort.md ERC20Transfer.md ERC20Mint.md ERC20Approval.md; do
-            awk -F'|' -v file="${f%.md}" '      
-            /`main_revm_/ {
-              main_revm_row = $0;
-              gsub(/±.*/, "", $3); # Remove ± part from $3 posicion of the row
-              gsub(/[[:space:]]/, "", $3); # Remove spaces
-              main_revm = $3 + 0; # Convert to number
-            }
-            /`main_levm_/ {
-              main_levm_row = $0;
-              gsub(/±.*/, "", $3);
-              gsub(/[[:space:]]/, "", $3);
-              main_levm = $3 + 0;
-            }
-            /`pr_revm_/ {
-              pr_revm_row = $0;
-              gsub(/±.*/, "", $3);
-              gsub(/[[:space:]]/, "", $3);
-              pr_revm = $3 + 0;
-            }
-            /`pr_levm_/ {
-              pr_levm_row = $0;
-              gsub(/±.*/, "", $3);
-              gsub(/[[:space:]]/, "", $3);
-              pr_levm = $3 + 0;
-            }
-            END {
-              if (main_revm && main_levm && pr_revm && pr_levm) {
-                revm_delta = ((main_revm > pr_revm) ? main_revm - pr_revm : pr_revm - main_revm)/(main_revm + pr_revm);
-                levm_delta = ((main_levm > pr_levm) ? main_levm - pr_levm: pr_levm - main_levm)/(main_levm + pr_levm);
-                error_margin = 0.1;
-                if ((revm_delta > error_margin) || (levm_delta > error_margin)) {
-                  printf "#### Benchmark Results: %s \n", file
-                  print "| Command | Mean [s] | Min [s] | Max [s] | Relative |"
-                  print "|:---|---:|---:|---:|---:|"
-                  print main_revm_row
-                  print main_levm_row
-                  if (revm_delta > error_margin) {
-                      print pr_revm_row
-                  }
-                  if (levm_delta > error_margin) {
-                      print pr_levm_row
-                  }
-                }
-              } else {
-                printf "#### Benchmark Results: %s \n", file
-                print "No results."
-              }
-            }
-            ' "$f" >> ../../../result.md
-          done
-
-          if [ ! -s ../../../result.md ]; then
-            echo "No significant difference was registered for any benchmark run." > ../../../result.md
-          fi
+          bash .github/scripts/compare_levm_and_revm_benchmarks.sh
 
       - name: Find comment
         continue-on-error: true
