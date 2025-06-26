@@ -224,7 +224,6 @@ contract CommonBridge is
                 l2WithdrawalTxHash,
                 claimedAmount,
                 withdrawalBatchNumber,
-                withdrawalLogIndex,
                 withdrawalProof
             ),
             "CommonBridge: invalid withdrawal proof"
@@ -243,7 +242,6 @@ contract CommonBridge is
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
         bytes32 msgHash = keccak256(
