@@ -98,7 +98,7 @@ jobs:
         if: always()
         run: |
           cd crates/l2
-          docker compose -f docker-compose-l2.yaml down -t 0
+          docker compose -f docker-compose-l2.yaml down
 
       - name: Ensure admin permissions in _work
         if: always()
