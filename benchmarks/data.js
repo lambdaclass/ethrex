@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750960402516,
+  "lastUpdate": 1750965146914,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1589,6 +1589,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 222816708012,
             "range": "± 419298346",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e12f615f1a6e67c1fb719f6693d6627d8e2a2e70",
+          "message": "docs(l1): fix readme links and improve L1 documentation (#3340)\n\n**Motivation**\n\nThe current readme links to the unrendered documentation instead of our\nhosted book. Also, the general landing page doesn't have any links or\npointers on where to go next, while the L1 landing page is empty.\n\n**Description**\n\nThis PR addresses the previous issues, adding some content to the L1\nlanding page and generally cleaning up the docs. It also merges the two\ndocumentation sections in the readme and updates links to point to\ndocs.ethrex.xyz",
+          "timestamp": "2025-06-26T18:13:10Z",
+          "tree_id": "9da9d65d7fc47ea4423505e1996ffbbca8421bcc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e12f615f1a6e67c1fb719f6693d6627d8e2a2e70"
+        },
+        "date": 1750965138428,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 218838381174,
+            "range": "± 846219042",
             "unit": "ns/iter"
           }
         ]
