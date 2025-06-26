@@ -9,7 +9,23 @@ This section explains step by step how native ETH deposits work.
 On L1:
 
 1. The user sends ETH to the `CommonBridge` contract.
-2. The bridge adds the hash of the deposit to the `pendingDepositLogs`.
+2. The bridge adds the deposit's hash to the `pendingDepositLogs`.
+   This hash is computed as follows:
+
+    ```solidity
+    keccak256(
+        bytes.concat(
+            bytes20(depositValues.to),
+            bytes32(msg.value),
+            bytes32(depositId),
+            bytes20(depositValues.recipient),
+            bytes20(msg.sender),
+            bytes32(depositValues.gasLimit),
+            bytes32(keccak256(depositValues.data))
+        )
+    );
+    ```
+
 3. The bridge emits a `DepositInitiated` event:
 
     ```solidity
