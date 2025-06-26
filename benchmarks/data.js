@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750896720353,
+  "lastUpdate": 1750898975024,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1789,6 +1789,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00877819442896936,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3eee599280855b30cfd023ecce4a706ebe69d3a5",
+          "message": "docs(l2): update image and add suggestions (#3328)\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-06-25T23:11:27Z",
+          "tree_id": "e83b3b37045190a2d8c8a3425969a1e070a94eb0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3eee599280855b30cfd023ecce4a706ebe69d3a5"
+        },
+        "date": 1750898966299,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008773306792873052,
             "unit": "Mgas/s"
           }
         ]
