@@ -1,5 +1,5 @@
 use ethrex_common::H256;
-use ethrex_rpc::utils::{RpcErr as L1RpcErr, RpcErrorMetadata, RpcNamespace as L1RpcNamespace};
+use ethrex_rpc::utils::RpcErrorMetadata;
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
 use serde_json::Value;
@@ -7,7 +7,7 @@ use serde_json::Value;
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("L1 RPC Error: {0}")]
-    L1RpcErr(#[from] L1RpcErr),
+    L1RpcErr(#[from] ethrex_rpc::RpcErr),
     #[error("Internal Error: {0}")]
     Internal(String),
     #[error("Invalid ethrex L2 message: {0}")]
@@ -45,14 +45,14 @@ impl From<secp256k1::Error> for RpcErr {
 }
 
 pub enum RpcNamespace {
-    L1RpcNamespace(L1RpcNamespace),
+    L1RpcNamespace(ethrex_rpc::RpcNamespace),
     EthrexL2,
 }
 
 pub fn resolve_namespace(method: &str) -> Result<RpcNamespace, RpcErr> {
     let mut parts = method.split('_');
     let Some(maybe_namespace) = parts.next() else {
-        return Err(RpcErr::L1RpcErr(L1RpcErr::MethodNotFound(
+        return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(
             method.to_string(),
         )));
     };

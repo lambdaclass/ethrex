@@ -1,11 +1,10 @@
 use ethrex_l2_common::l1_messages::get_block_l1_message_hashes;
-use ethrex_rpc::utils::{RpcErr as L1RpcErr, RpcRequest};
 use keccak_hash::H256;
 use serde_json::Value;
 use tracing::info;
 
 use crate::{
-    rpc::RpcApiContext,
+    rpc::{RpcApiContext, RpcHandler},
     utils::{RpcErr, merkle_proof},
 };
 
@@ -13,18 +12,13 @@ pub struct GetL1MessageProof {
     pub transaction_hash: H256,
 }
 
-impl GetL1MessageProof {
-    pub async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
-        request.handle(context).await
-    }
-
+impl RpcHandler for GetL1MessageProof {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetL1MessageProof, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(L1RpcErr::BadParams("No params provided".to_owned()))?;
+        let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
+            "No params provided".to_owned(),
+        ))?;
         if params.len() != 1 {
-            return Err(L1RpcErr::BadParams(format!(
+            return Err(ethrex_rpc::RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
                 params.len()
             ))
@@ -63,7 +57,7 @@ impl GetL1MessageProof {
 
         // Gets the message hashes from the transaction
         let tx_message_hashes = get_block_l1_message_hashes(&[tx], &[tx_receipt])
-            .map_err(|e| L1RpcErr::Internal(e.to_string()))?;
+            .map_err(|e| ethrex_rpc::RpcErr::Internal(e.to_string()))?;
 
         // Gets the batch number for the block
         let batch_number = match context
@@ -104,6 +98,7 @@ impl GetL1MessageProof {
             };
             proofs.push(proof);
         }
-        serde_json::to_value(proofs).map_err(|error| L1RpcErr::Internal(error.to_string()).into())
+        serde_json::to_value(proofs)
+            .map_err(|error| ethrex_rpc::RpcErr::Internal(error.to_string()).into())
     }
 }

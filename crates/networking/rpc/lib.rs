@@ -26,3 +26,4 @@ pub use rpc::{
     NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_eth_requests, map_http_requests,
     rpc_response, shutdown_signal,
 };
+pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};

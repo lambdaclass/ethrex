@@ -9,10 +9,11 @@ use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
+use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::{
-    GasTipEstimator, NodeData, RpcApiContext as L1RpcApiContext, RpcHandler, RpcRequestWrapper,
+    GasTipEstimator, NodeData, RpcRequestWrapper,
     types::transaction::SendRawTransactionRequest,
-    utils::{RpcErr as L1RpcErr, RpcNamespace as L1RpcNamespace, RpcRequest, RpcRequestId},
+    utils::{RpcRequest, RpcRequestId},
 };
 use ethrex_storage::Store;
 use serde_json::Value;
@@ -34,10 +35,21 @@ use secp256k1::SecretKey;
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
-    pub l1_ctx: L1RpcApiContext,
+    pub l1_ctx: ethrex_rpc::RpcApiContext,
     pub valid_delegation_addresses: Vec<Address>,
     pub sponsor_pk: SecretKey,
     pub rollup_store: StoreRollup,
+}
+
+pub trait RpcHandler: Sized {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+
+    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let request = Self::parse(&req.params)?;
+        request.handle(context).await
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
 pub const FILTER_DURATION: Duration = {
@@ -68,7 +80,7 @@ pub async fn start_api(
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let service_context = RpcApiContext {
-        l1_ctx: L1RpcApiContext {
+        l1_ctx: ethrex_rpc::RpcApiContext {
             storage,
             blockchain,
             active_filters: active_filters.clone(),
@@ -146,7 +158,9 @@ async fn handle_http_request(
         }
         Err(_) => ethrex_rpc::rpc_response(
             RpcRequestId::String("".to_string()),
-            Err(L1RpcErr::BadParams("Invalid request body".to_string())),
+            Err(ethrex_rpc::RpcErr::BadParams(
+                "Invalid request body".to_string(),
+            )),
         )
         .map_err(|_| StatusCode::BAD_REQUEST)?,
     };
@@ -156,7 +170,7 @@ async fn handle_http_request(
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match resolve_namespace(&req.method) {
-        Ok(RpcNamespace::L1RpcNamespace(L1RpcNamespace::Eth)) => {
+        Ok(RpcNamespace::L1RpcNamespace(ethrex_rpc::RpcNamespace::Eth)) => {
             map_eth_requests(req, context).await
         }
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
@@ -194,7 +208,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
         "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
         unknown_ethrex_l2_method => {
-            Err(L1RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
+            Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
         }
     }
 }

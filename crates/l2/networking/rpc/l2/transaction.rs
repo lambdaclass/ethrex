@@ -1,4 +1,7 @@
-use crate::{rpc::RpcApiContext, utils::RpcErr};
+use crate::{
+    rpc::{RpcApiContext, RpcHandler},
+    utils::RpcErr,
+};
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
@@ -7,11 +10,7 @@ use ethrex_common::{
         TxKind,
     },
 };
-use ethrex_rpc::{
-    RpcHandler,
-    types::transaction::SendRawTransactionRequest,
-    utils::{RpcErr as L1RpcErr, RpcRequest},
-};
+use ethrex_rpc::types::transaction::SendRawTransactionRequest;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -33,19 +32,14 @@ pub struct SponsoredTx {
 // https://ithaca.xyz/updates/exp-0000
 // You can check the reference implementation here
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
-impl SponsoredTx {
-    pub async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let request = Self::parse(&req.params)?;
-        request.handle(context).await
-    }
-
+impl RpcHandler for SponsoredTx {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(L1RpcErr::BadParams("No params provided".to_owned()))?;
+        let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
+            "No params provided".to_owned(),
+        ))?;
 
         if params.len() != 1 {
-            return Err(L1RpcErr::BadParams(format!(
+            return Err(ethrex_rpc::RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
                 params.len()
             ))
@@ -155,9 +149,9 @@ impl SponsoredTx {
             .await
             .estimate_gas_tip(&context.l1_ctx.storage)
             .await?;
-        let gas_price_request = ethrex_rpc::GasPrice {}
-            .handle(context.l1_ctx.clone())
-            .await?;
+        let gas_price_request =
+            ethrex_rpc::RpcHandler::handle(&ethrex_rpc::GasPrice {}, context.l1_ctx.clone())
+                .await?;
 
         let gas_price_request = gas_price_request
             .as_str()
@@ -209,11 +203,13 @@ impl SponsoredTx {
         generic.nonce = Some(nonce);
         generic.from = sponsor_address;
 
-        let estimate_gas_request = ethrex_rpc::EstimateGasRequest {
-            transaction: generic,
-            block: None,
-        }
-        .handle(context.l1_ctx.clone())
+        let estimate_gas_request = ethrex_rpc::RpcHandler::handle(
+            &ethrex_rpc::EstimateGasRequest {
+                transaction: generic,
+                block: None,
+            },
+            context.l1_ctx.clone(),
+        )
         .await?;
 
         let estimate_gas_request = estimate_gas_request
@@ -256,6 +252,8 @@ impl SponsoredTx {
             }
         }
 
-        tx.handle(context.l1_ctx).await.map_err(RpcErr::L1RpcErr)
+        ethrex_rpc::RpcHandler::handle(&tx, context.l1_ctx)
+            .await
+            .map_err(RpcErr::L1RpcErr)
     }
 }
