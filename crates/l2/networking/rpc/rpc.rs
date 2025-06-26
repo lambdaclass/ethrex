@@ -1,15 +1,17 @@
 use crate::l2::l1_message::GetL1MessageProof;
-use crate::utils::{L1RpcErr, RpcErr, RpcNamespace, resolve_namespace};
+use crate::utils::{L1RpcErr, L1RpcNamespace, RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Transaction;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
-use ethrex_rpc::RpcRequestWrapper;
+use ethrex_rpc::types::transaction::SendRawTransactionRequest;
 use ethrex_rpc::utils::{RpcRequest, RpcRequestId};
+use ethrex_rpc::{RpcHandler, RpcRequestWrapper};
 use ethrex_storage::Store;
 use serde_json::Value;
 use std::{
@@ -21,7 +23,7 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::l2::transaction::SponsoredTx;
 use ethrex_common::Address;
@@ -155,13 +157,38 @@ async fn handle_http_request(
 
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    let Ok(RpcNamespace::EthrexL2) = resolve_namespace(&req.method) else {
-        return ethrex_rpc::map_http_requests(req, context.l1_ctx)
+    match resolve_namespace(&req.method) {
+        Ok(RpcNamespace::L1RpcNamespace(L1RpcNamespace::Eth)) => {
+            map_eth_requests(req, context).await
+        }
+        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
+        _other_namespace => ethrex_rpc::map_http_requests(req, context.l1_ctx)
             .await
-            .map_err(RpcErr::L1RpcErr);
-    };
+            .map_err(RpcErr::L1RpcErr),
+    }
+}
 
-    map_l2_requests(req, context).await
+pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "eth_sendRawTransaction" => {
+            let tx = SendRawTransactionRequest::parse(&req.params)?;
+            if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
+                debug!(
+                    "EIP-4844 transaction are not supported in the L2: {:#x}",
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).compute_hash()
+                );
+                return Err(RpcErr::InvalidEthrexL2Message(
+                    "EIP-4844 transactions are not supported in the L2".to_string(),
+                ));
+            }
+            SendRawTransactionRequest::call(req, context.l1_ctx)
+                .await
+                .map_err(RpcErr::L1RpcErr)
+        }
+        _other_eth_method => ethrex_rpc::map_eth_requests(req, context.l1_ctx)
+            .await
+            .map_err(RpcErr::L1RpcErr),
+    }
 }
 
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {

@@ -23,6 +23,6 @@ pub use eth::{
     transaction::EstimateGasRequest,
 };
 pub use rpc::{
-    NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_http_requests, rpc_response,
-    shutdown_signal,
+    NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_eth_requests, map_http_requests,
+    rpc_response, shutdown_signal,
 };
