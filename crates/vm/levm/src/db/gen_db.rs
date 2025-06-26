@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -24,6 +25,10 @@ pub struct GeneralizedDatabase {
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: HashMap<Address, Account>,
     pub tx_backup: Option<CallFrameBackup>,
+    /// For keeping track of all destroyed accounts during block execution.
+    /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
+    /// In that scenario we want to remove the previous storage of the account but we still want the account to exist.
+    pub destroyed_accounts: HashSet<Address>,
 }
 
 impl GeneralizedDatabase {
@@ -33,6 +38,7 @@ impl GeneralizedDatabase {
             current_accounts_state: current_accounts_state.clone(),
             initial_accounts_state: current_accounts_state,
             tx_backup: None,
+            destroyed_accounts: HashSet::new(),
         }
     }
 

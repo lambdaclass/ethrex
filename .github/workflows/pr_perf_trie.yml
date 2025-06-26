@@ -21,7 +21,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3
