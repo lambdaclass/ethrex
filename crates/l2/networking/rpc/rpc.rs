@@ -60,7 +60,7 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
