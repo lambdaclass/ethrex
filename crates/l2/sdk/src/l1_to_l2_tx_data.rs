@@ -42,7 +42,7 @@ impl L1ToL2TransactionData {
             Value::Uint(self.value),
             Value::Bytes(self.calldata.clone()),
         ])];
-        calldata::encode_calldata("deposit((address,uint256,uint256,bytes))", &values)
+        calldata::encode_calldata("sendToL2((address,uint256,uint256,bytes))", &values)
     }
 }
 

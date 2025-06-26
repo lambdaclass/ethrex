@@ -93,46 +93,51 @@ contract CommonBridge is
         return pendingDepositLogs;
     }
 
-    function _deposit(address from, DepositValues memory depositValues) private {
+    function _sendToL2(address from, SendValues memory sendValues) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
-                bytes20(depositValues.to),
-                bytes32(depositValues.value),
+                bytes20(sendValues.to),
+                bytes32(sendValues.value),
                 bytes32(depositId),
                 bytes20(from),
-                bytes32(depositValues.gasLimit),
-                bytes32(keccak256(depositValues.data))
+                bytes32(sendValues.gasLimit),
+                bytes32(keccak256(sendValues.data))
             )
         );
 
         pendingDepositLogs.push(l2MintTxHash);
 
-        emit DepositInitiated(
-            depositValues.value,
-            depositValues.to,
+        emit L1ToL2Message(
+            sendValues.value,
+            sendValues.to,
             depositId,
             from,
-            depositValues.gasLimit,
-            depositValues.data,
+            sendValues.gasLimit,
+            sendValues.data,
             l2MintTxHash
         );
         depositId += 1;
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(DepositValues calldata depositValues) public {
-        _deposit(msg.sender, depositValues);
+    function sendToL2(SendValues calldata sendValues) public {
+        _sendToL2(msg.sender, sendValues);
     }
-
-    receive() external payable {
-        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (msg.sender));
-        DepositValues memory depositValues = DepositValues({
+    
+    /// @inheritdoc ICommonBridge
+    function deposit(address l2Recipient) public payable {
+        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
+        SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
             value: msg.value,
             data: callData
         });
-        _deposit(L2_BRIDGE_ADDRESS, depositValues);
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    receive() external payable {
+        deposit(msg.sender);
     }
 
     /// @inheritdoc ICommonBridge

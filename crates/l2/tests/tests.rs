@@ -986,7 +986,7 @@ async fn wait_for_l2_deposit_receipt(
     eth_client: &EthClient,
     proposer_client: &EthClient,
 ) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
-    let topic = keccak(b"DepositInitiated(uint256,address,uint256,address,uint256,bytes,bytes32)");
+    let topic = keccak(b"L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)");
     let logs = eth_client
         .get_logs(
             U256::from(l1_receipt_block_number),
