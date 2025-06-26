@@ -3948,6 +3948,7 @@ dependencies = [
  "sha3",
  "spinoff",
  "thiserror 2.0.12",
+ "tracing",
  "walkdir",
 ]
 

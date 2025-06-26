@@ -6,9 +6,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::Address;
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, payload::PayloadBundle,
+    AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, payload::PayloadBundle,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -147,6 +148,38 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
+        todo!()
+    }
+    async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn get_current_account_info(&self, _: Address) -> Result<Option<AccountInfo>, StoreError> {
+        todo!()
+    }
+    async fn setup_genesis_flat_account_info(
+        &self,
+        _genesis_block_number: u64,
+        _genesis_block_hash: H256,
+        _: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        todo!()
+    }
+    fn get_current_storage(&self, _: Address, _: H256) -> Result<Option<U256>, StoreError> {
+        todo!()
+    }
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        _genesis_block_number: u64,
+        _genesis_block_hash: H256,
+        _: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner()?;
         if let Some(hash) = store.canonical_hashes.get(&block_number) {
