@@ -156,7 +156,7 @@ start_ethrex_hoodi: ## Start ethrex for hoodi
     		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
     		--bootnodes $(HOODI_BOOTNODES) \
     		--evm $(EVM) \
-    		--log.file logs/ethrex-sync-hoodi-$(EVM).log
+    		--log.filename ethrex-sync-hoodi-$(EVM).log
 
 start_ethrex_holesky: ## Start ethrex for holesky
 	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
@@ -172,23 +172,29 @@ start_ethrex_holesky: ## Start ethrex for holesky
     		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
     		--bootnodes $(HOLESKY_BOOTNODES) \
     		--evm $(EVM) \
-    		--log.file logs/ethrex-sync-holesky-$(EVM).log
+    		--log.filename ethrex-sync-holesky-$(EVM).log
 
 start_hoodi_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for hoodi
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
-	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 &
+	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 & echo $$! > lighthouse.pid
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && make start_ethrex_hoodi
+	cd $(ETHREX_DIR)/tooling/sync && nohup make start_ethrex_hoodi > /dev/null 2>&1 & echo $$! > ethrex.pid
+	@echo "Tailing logs... (Press Ctrl+C to stop all processes)"
+	@trap 'kill $$(cat lighthouse.pid ethrex.pid 2>/dev/null) 2>/dev/null; rm -f lighthouse.pid ethrex.pid; exit' INT TERM; \
+	cd $(ETHREX_DIR) && tail -n 100 -f ./logs/ethrex-sync-hoodi-$(EVM).log
 
 start_holesky_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
-	cd $(ETHREX_DIR)/tooling/sync && nohup make holesky-lighthouse > /dev/null 2>&1 &
+	cd $(ETHREX_DIR)/tooling/sync && nohup make holesky-lighthouse > /dev/null 2>&1 & echo $$! > lighthouse.pid
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && make start_ethrex_holesky
+	cd $(ETHREX_DIR)/tooling/sync && nohup make start_ethrex_holesky > /dev/null 2>&1 & echo $$! > ethrex.pid
+	@echo "Tailing logs... (Press Ctrl+C to stop all processes)"
+	@trap 'kill $$(cat lighthouse.pid ethrex.pid 2>/dev/null) 2>/dev/null; rm -f lighthouse.pid ethrex.pid; exit' INT TERM; \
+	cd $(ETHREX_DIR) && tail -n 100 -f ./logs/ethrex-sync-holesky-$(EVM).log
 
 tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME

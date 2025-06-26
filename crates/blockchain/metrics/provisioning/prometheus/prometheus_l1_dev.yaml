@@ -2,7 +2,7 @@ global:
   scrape_interval: 10s
 
 scrape_configs:
-  - job_name: "ethrex L1"
+  - job_name: "1-ethrex-l1"
     static_configs:
       # Use the name defined in the docker-compose.yaml
       - targets: ["ethrex:3701"]

@@ -42,20 +42,22 @@ pub fn init_tracing(opts: &Options) {
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
 
-    if let Some(log_file_path) = &opts.log_file {
-        // Create the directory if it doesn't exist
-        if let Some(parent) = log_file_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("Failed to create log directory: {}", e);
-                std::process::exit(1);
-            }
+    if let Some(log_filename) = &opts.log_filename {
+        // Create the log directory if it doesn't exist
+        let log_dir_path = Path::new(&opts.log_dir);
+        if let Err(e) = std::fs::create_dir_all(log_dir_path) {
+            eprintln!("Failed to create log directory '{}': {}", log_dir_path.display(), e);
+            std::process::exit(1);
         }
+
+        // Construct the full log file path
+        let log_file_path = log_dir_path.join(log_filename);
 
         // Open file for writing
         let file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_file_path)
+            .open(&log_file_path)
         {
             Ok(file) => file,
             Err(e) => {
