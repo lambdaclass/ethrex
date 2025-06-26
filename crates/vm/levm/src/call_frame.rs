@@ -16,6 +16,15 @@ use std::{
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
+///
+/// The specification says the stack is limited to 1024 items, aka. 32KiB, which is reasonable
+/// enough for allocating it all at once to make sense. Every time an item is pushed into the stack,
+/// its bounds have to be checked; by making the stack grow downwards, the underflow detection of
+/// the offset update operation can also be reused to check for stack overflow.
+///
+/// A few opcodes require pushing and/or popping multiple elements. The [`push`](Self::push) and
+/// [`pop`](Self::pop) methods support working with multiple elements instead of a single one,
+/// reducing the number of checks performed on the stack.
 pub struct Stack {
     pub values: Box<[U256; STACK_LIMIT]>,
     pub offset: usize,
