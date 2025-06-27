@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751057344728,
+  "lastUpdate": 1751057736029,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2586,6 +2586,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0097686664600124,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6d64350d80b39e755a771917f8fbd79e16db627b",
+          "message": "docs(l2): based docs outdated contract addresses (#3348)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThe contract addresses in the docs were outdated. \n\n**Description**\n\nTo avoid having to update the addresses of the contracts every time a\ncontract changes, placeholder were introduced.\n\nAlso removed the pico verifier from the contract deployment as it is no\nlonger needed.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-06-27T19:49:45Z",
+          "tree_id": "b0720e7467d3a80f93b7e9fea335bca7e7bf7c31",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6d64350d80b39e755a771917f8fbd79e16db627b"
+        },
+        "date": 1751057724511,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.009841885696439725,
             "unit": "Mgas/s"
           }
         ]
