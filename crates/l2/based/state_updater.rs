@@ -34,6 +34,8 @@ pub enum StateUpdaterError {
     InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
     #[error("Internal Error: {0}")]
     InternalError(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }

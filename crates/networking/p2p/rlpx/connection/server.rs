@@ -231,6 +231,7 @@ impl GenServer for RLPxConnection {
         if let InnerState::Established(mut established_state) = state.0.clone() {
             match message {
                 // TODO: handle all these "let _"
+                // See https://github.com/lambdaclass/ethrex/issues/3375
                 Self::CastMsg::PeerMessage(message) => {
                     log_peer_debug(
                         &established_state.node,

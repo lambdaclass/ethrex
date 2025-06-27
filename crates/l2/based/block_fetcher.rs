@@ -57,6 +57,8 @@ pub enum BlockFetcherError {
     BlobBundleError,
     #[error("Failed to compute deposit logs hash: {0}")]
     DepositError(#[from] ethrex_l2_common::deposits::DepositError),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }

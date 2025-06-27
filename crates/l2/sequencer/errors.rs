@@ -64,6 +64,8 @@ pub enum L1WatcherError {
     FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("{0}")]
     Custom(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -130,6 +132,8 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
@@ -194,6 +198,8 @@ pub enum BlockProducerError {
     FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -244,6 +250,8 @@ pub enum CommitterError {
     DepositError(#[from] DepositError),
     #[error("L1Message error: {0}")]
     L1MessageError(#[from] L1MessagingError),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -270,6 +278,8 @@ pub enum MetricsGathererError {
     EthClientError(#[from] EthClientError),
     #[error("MetricsGatherer: {0}")]
     TryInto(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -284,6 +294,8 @@ pub enum ExecutionCacheError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionHandlerError {
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
