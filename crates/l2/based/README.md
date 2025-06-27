@@ -158,7 +158,7 @@ This command will:
 > [!NOTE]
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
-After deploying the contracts, a env file will be created in `.env` containing the addresses of the new contracts. These have to be loaded with the folowing command:/
+After deploying the contracts, a `.env` file will be created, containing the addresses of the new contracts. These have to be loaded with the following command:
 ```bash
 export $(cat .env | xargs)
 ```
