@@ -2,7 +2,6 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
-#[cfg(feature = "l2")]
 use ethrex_levm::l2_precompiles::p_256_verify;
 use ethrex_levm::precompiles::bls12_pairing_check;
 
@@ -37,13 +36,10 @@ fn pairing_infinity() {
     assert_eq!(result.unwrap(), zero);
 }
 
-#[cfg(feature = "l2")]
 use serde::Deserialize;
 
-#[cfg(feature = "l2")]
 use std::fs;
 
-#[cfg(feature = "l2")]
 #[derive(Debug, Deserialize)]
 struct P256TestCase {
     input: String,
@@ -52,7 +48,6 @@ struct P256TestCase {
     name: String,
 }
 
-#[cfg(feature = "l2")]
 #[test]
 fn p_256_verify_test() {
     // Taken from https://github.com/ulerdogan/go-ethereum/tree/ulerdogan-secp256r1.
