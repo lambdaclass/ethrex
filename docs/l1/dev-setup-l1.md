@@ -1,20 +1,27 @@
-# Dev Setup L1
+# L1 dev setup
+
 ## Build
 
 ### Rust
+
 To build the node, you will need the rust toolchain. To do so, use `rustup` following [this link](https://www.rust-lang.org/tools/install)
 
 ## Database
+
 Currently, the database is `libmdbx`, it will be set up
 when you start the client. The location of the db's files will depend on your OS:
+
 - Mac: `~/Library/Application Support/ethrex`
 - Linux: `~/.config/ethrex`
 
 You can delete the db with:
+
 ```bash
 cargo run --bin ethrex -- removedb
 ```
+
 ## Dev Mode
+
 In order to run `ethrex` without a Consensus Client and with the `InMemory` engine, to start from scratch each time we fire it up, the following make target can be used:
 
 ```bash
@@ -46,14 +53,16 @@ The second kind are each crate's tests, you can run them like this:
 ```bash
 make test CRATE=<crate>
 ```
+
 For example:
+
 ```bash
 make test CRATE="ethrex-blockchain"
 ```
 
 ### Load tests
 
-More information in the [load test documentation](../developers/l2_load_tests.md).
+More information in the [load test documentation](../developers/l2/load_tests.md).
 
 ### Hive Tests
 
@@ -62,6 +71,7 @@ Hive is a system which simply sends RPC commands to our node,
 and expects a certain response. You can read more about it [here](https://github.com/ethereum/hive/blob/master/docs/overview.md).
 
 #### Prereqs
+
 We need to have go installed for the first time we run hive, an easy way to do this is adding the asdf go plugin:
 
 ```shell
@@ -71,30 +81,39 @@ asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 ```
 
 And uncommenting the golang line in the asdf `.tool-versions` file:
-```
+
+```text
 rust 1.87.0
 golang 1.23.2
 ```
 
 #### Running Simulations
+
 Hive tests are categorized by "simulations', and test instances can be filtered with a regex:
+
 ```bash
 make run-hive-debug SIMULATION=<simulation> TEST_PATTERN=<test-regex>
 ```
+
 This is an example of a Hive simulation called `ethereum/rpc-compat`, which will specificaly
 run chain id and transaction by hash rpc tests:
+
 ```bash
 make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_getTransactionByHash"
 ```
+
 If you want debug output from hive, use the run-hive-debug instead:
+
 ```bash
 make run-hive-debug SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
 ```
+
 This example runs **every** test under rpc, with debug output
 
 #### Assertoor
 
 We run some assertoot checks on our CI, to execute them locally you can run the following:
+
 ```bash
 make localnet-assertoor-tx
 # or
@@ -104,17 +123,20 @@ make localnet-assertoor-blob
 Those are two different set of assertoor checks the details are as follows:
 
 *assertoor-tx*
+
 - [eoa-transaction-test](https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml)
 
 *assertoor-blob*
+
 - [blob-transaction-test](https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml)
-- _Custom_ [el-stability-check](https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml)
+- *Custom* [el-stability-check](https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml)
 
 For reference on each individual check see the [assertoor-wiki](https://github.com/ethpandaops/assertoor/wiki#supported-tasks-in-assertoor)
 
 ## Run
 
 Example run:
+
 ```bash
 cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
 ```
@@ -276,7 +298,7 @@ lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --exe
 
 When using lighthouse directly from its repository, replace `lighthouse bn` with `cargo run --bin lighthouse -- bn`
 
-Aside from holesky, these steps can also be used to connect to other supported networks by replacing the `--network` argument by another supported network and looking up a checkpoint sync endpoint for that network [here](https://eth-clients.github.io/checkpoint-sync-endpoints/)
+Aside from holesky, these steps can also be used to connect to other supported networks by replacing the `--network` argument by another supported network and looking up a checkpoint sync endpoint for that network [in this community-maintained list](https://eth-clients.github.io/checkpoint-sync-endpoints/)
 
 If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the `--bootnodes` flag
 
@@ -289,6 +311,7 @@ INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated
 ```
 
 If you want to restart the sync from the very start you can do so by wiping the database using the following command:
+
 ```bash
 cargo run --bin ethrex -- removedb
 ```
