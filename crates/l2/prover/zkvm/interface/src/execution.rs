@@ -22,7 +22,6 @@ use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
     kzg_commitment_to_versioned_hash,
 };
-#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
     l1_messages::get_block_l1_messages,

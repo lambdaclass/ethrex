@@ -1,12 +1,11 @@
 use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
-use crate::utils::prover::errors::SaveStateError;
-use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::deposits::DepositError;
+use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
@@ -92,8 +91,6 @@ pub enum ProofCoordinatorError {
     WriteError(String),
     #[error("ProofCoordinator failed to get data from Store: {0}")]
     ItemNotFoundInStore(String),
-    #[error("ProofCoordinator encountered a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
@@ -120,8 +117,6 @@ pub enum ProofSenderError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("Failed with a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
     #[error("{0} proof is not present")]
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
@@ -149,9 +144,11 @@ pub enum ProofVerifierError {
     #[error("ProofVerifier failed to parse beacon url")]
     ParseBeaconUrl(String),
     #[error("Failed with a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
-    #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Store error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("Block Producer failed because of a rollup store error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
 }
 
 #[derive(Debug, thiserror::Error)]
