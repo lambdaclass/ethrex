@@ -15,6 +15,7 @@ use ethrex_common::types::{
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
+use ethrex_levm::vm::VMType;
 use levm::LEVM;
 use revm::REVM;
 use revm::db::EvmState;
@@ -53,8 +54,13 @@ impl TryFrom<String> for EvmEngine {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Evm {
-    REVM { state: EvmState },
-    LEVM { db: GeneralizedDatabase },
+    REVM {
+        state: EvmState,
+    },
+    LEVM {
+        db: GeneralizedDatabase,
+        vm_type: VMType,
+    },
 }
 
 impl std::fmt::Debug for Evm {
@@ -70,7 +76,7 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(engine: EvmEngine, db: impl VmDatabase + 'static) -> Self {
+    pub fn new(engine: EvmEngine, db: impl VmDatabase + 'static, vm_type: VMType) -> Self {
         let wrapped_db: DynVmDatabase = Box::new(db);
 
         match engine {
@@ -79,20 +85,22 @@ impl Evm {
             },
             EvmEngine::LEVM => Evm::LEVM {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
+                vm_type,
             },
         }
     }
 
-    pub fn new_from_db(store: Arc<impl LevmDatabase + 'static>) -> Self {
+    pub fn new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(store, CacheDB::new()),
+            vm_type,
         }
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
-            Evm::LEVM { db } => LEVM::execute_block(block, db),
+            Evm::LEVM { db, vm_type } => LEVM::execute_block(block, db, vm_type.clone()),
         }
     }
 
@@ -128,8 +136,9 @@ impl Evm {
 
                 Ok((receipt, execution_result.gas_used()))
             }
-            Evm::LEVM { db } => {
-                let execution_report = LEVM::execute_tx(tx, sender, block_header, db)?;
+            Evm::LEVM { db, vm_type } => {
+                let execution_report =
+                    LEVM::execute_tx(tx, sender, block_header, db, vm_type.clone())?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
@@ -150,7 +159,7 @@ impl Evm {
             Evm::REVM { .. } => Err(EvmError::InvalidEVM(
                 "Undoing transaction not supported in REVM".to_string(),
             )),
-            Evm::LEVM { db } => LEVM::undo_last_tx(db),
+            Evm::LEVM { db, .. } => LEVM::undo_last_tx(db),
         }
     }
 
@@ -172,16 +181,16 @@ impl Evm {
 
                 Ok(())
             }
-            Evm::LEVM { db } => {
+            Evm::LEVM { db, vm_type } => {
                 let chain_config = db.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    LEVM::beacon_root_contract_call(block_header, db)?;
+                    LEVM::beacon_root_contract_call(block_header, db, vm_type.clone())?;
                 }
 
                 if fork >= Fork::Prague {
-                    LEVM::process_block_hash_history(block_header, db)?;
+                    LEVM::process_block_hash_history(block_header, db, vm_type.clone())?;
                 }
 
                 Ok(())
@@ -200,7 +209,7 @@ impl Evm {
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
-            Evm::LEVM { db } => LEVM::get_state_transitions(db),
+            Evm::LEVM { db, .. } => LEVM::get_state_transitions(db),
         }
     }
 
@@ -209,7 +218,7 @@ impl Evm {
     pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
-            Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),
+            Evm::LEVM { db, .. } => LEVM::process_withdrawals(db, withdrawals),
         }
     }
 
@@ -219,7 +228,9 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
         match self {
-            Evm::LEVM { db } => levm::extract_all_requests_levm(receipts, db, header),
+            Evm::LEVM { db, vm_type } => {
+                levm::extract_all_requests_levm(receipts, db, header, vm_type.clone())
+            }
             Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
         }
     }
@@ -235,7 +246,9 @@ impl Evm {
                 let spec_id = fork_to_spec_id(fork);
                 self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
             }
-            Evm::LEVM { db } => LEVM::simulate_tx_from_generic(tx, header, db),
+            Evm::LEVM { db, vm_type } => {
+                LEVM::simulate_tx_from_generic(tx, header, db, vm_type.clone())
+            }
         }
     }
 
@@ -251,7 +264,9 @@ impl Evm {
                 self::revm::helpers::create_access_list(tx, header, state, spec_id)?
             }
 
-            Evm::LEVM { db } => LEVM::create_access_list(tx.clone(), header, db)?,
+            Evm::LEVM { db, vm_type } => {
+                LEVM::create_access_list(tx.clone(), header, db, vm_type.clone())?
+            }
         };
         match result {
             (

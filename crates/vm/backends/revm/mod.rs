@@ -58,17 +58,14 @@ impl REVM {
             &state.inner.database.get_chain_config()?,
             block_header.timestamp,
         );
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                    Self::beacon_root_contract_call(block_header, state)?;
-                }
 
-                //eip 2935: stores parent block hash in system contract
-                if spec_id >= SpecId::PRAGUE {
-                    Self::process_block_hash_history(block_header, state)?;
-                }
-            }
+        if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+            Self::beacon_root_contract_call(block_header, state)?;
+        }
+
+        //eip 2935: stores parent block hash in system contract
+        if spec_id >= SpecId::PRAGUE {
+            Self::process_block_hash_history(block_header, state)?;
         }
 
         let mut receipts = Vec::new();
@@ -93,13 +90,7 @@ impl REVM {
             Self::process_withdrawals(state, withdrawals)?;
         }
 
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                let requests = extract_all_requests(&receipts, state, block_header)?;
-            } else {
-                let requests = Default::default();
-            }
-        }
+        let requests = Default::default();
 
         Ok(BlockExecutionResult { receipts, requests })
     }
@@ -640,12 +631,6 @@ pub fn extract_all_requests(
 
     if spec_id < SpecId::PRAGUE {
         return Ok(Default::default());
-    }
-
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "l2")] {
-            return Ok(Default::default());
-        }
     }
 
     let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts)

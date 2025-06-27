@@ -28,7 +28,7 @@ ethrex-blockchain.workspace = true
 
 # l2
 ethrex-l2 = { path = "../", default-features = false }
-ethrex-l2-common = {workspace = true, optional = true }
+ethrex-l2-common = { workspace = true, optional = true }
 ethrex-sdk.workspace = true
 
 zkvm_interface = { path = "./zkvm/interface", default-features = false }
@@ -64,7 +64,6 @@ sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [
   "dep:ethrex-l2-common",
-  "ethrex-vm/l2",
   "zkvm_interface/l2",
   "ethrex-blockchain/l2",
   "ethrex-l2/l2",
