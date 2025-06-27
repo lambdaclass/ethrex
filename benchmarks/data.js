@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751063224146,
+  "lastUpdate": 1751063478792,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2009,6 +2009,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210057228422,
             "range": "± 561318655",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "25432a8606f153031410173b56c7a283fd08cc9e",
+          "message": "chore(l2): remove save state module (#3119)\n\n**Motivation**\n\nThe save state module was unnecessarily complex for what it achieved\n(storing incoming batch proofs). This PR replaces it with the rollup\nstore.\n\n**Description**\n\n- adds tables for storing batch proofs indexed by batch number and proof\ntype to the rollup store\n- removes the save state module\n- all places that used the save state module now use the rollup storage\n- had to move the prover interface into `ethex-l2-common` because\n`ethrex-storage-rollup` can't depend on the prover because of cyclic\ndependencies\n- because of the previous point had to move the `Value` type into\n`ethrex-l2-common` because `ethrex-l2-common` can't depend on\n`ethrex-sdk`\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-06-27T21:32:19Z",
+          "tree_id": "c551144c82bed4a41367a84ded8abb3732a39e43",
+          "url": "https://github.com/lambdaclass/ethrex/commit/25432a8606f153031410173b56c7a283fd08cc9e"
+        },
+        "date": 1751063470321,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209510267943,
+            "range": "± 509174897",
             "unit": "ns/iter"
           }
         ]
