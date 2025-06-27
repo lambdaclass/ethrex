@@ -89,6 +89,10 @@ impl Evm {
         }
     }
 
+    #[cfg_attr(
+        feature = "metrics",
+        intrument(level = "trace", name = "Block execution")
+    )]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),

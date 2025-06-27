@@ -70,6 +70,10 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    #[cfg_attr(
+        feature = "metrics",
+        intrument(level = "trace", name = "Block DB update")
+    )]
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }
@@ -348,6 +352,7 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
+    #[cfg_attr(feature = "metrics", instrument(level = "trace", name = "Trie update"))]
     pub async fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
