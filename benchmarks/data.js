@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751060659909,
+  "lastUpdate": 1751060980966,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1919,6 +1919,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210879737422,
             "range": "± 404546331",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2dd0e7b4e73f1578fbd2c43e2845bcfb2fd46e8c",
+          "message": "chore(levm): add push/mstore based bench (#3354)\n\n**Motivation**\n\nAdds a benchmark that mainly tests PUSH and MSTORE\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3364\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>",
+          "timestamp": "2025-06-27T20:49:14Z",
+          "tree_id": "92222d56d1d8b08b0d73e056fee5f4f6efcab91f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2dd0e7b4e73f1578fbd2c43e2845bcfb2fd46e8c"
+        },
+        "date": 1751060972531,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209882948866,
+            "range": "± 848066479",
             "unit": "ns/iter"
           }
         ]
