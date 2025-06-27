@@ -1183,11 +1183,11 @@ impl Store {
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    pub fn read_account_snapshot(
+    pub async fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        self.engine.read_account_snapshot(start)
+        self.engine.read_account_snapshot(start).await
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key

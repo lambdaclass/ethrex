@@ -386,7 +386,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn clear_snapshot(&self) -> Result<(), StoreError>;
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
+    async fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError>;
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
     async fn read_storage_snapshot(

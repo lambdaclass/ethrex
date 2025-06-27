@@ -1053,22 +1053,30 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StateSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let iter = cursor
-            .walk(Some(start.into()))
-            .map_while(|res| {
-                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
-                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
-                    _ => None,
+    async fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
+            let cursor = txn
+                .cursor::<StateSnapShot>()
+                .map_err(StoreError::LibmdbxError)?;
+            let iter = cursor
+                .walk(Some(start.into()))
+                .map_while(|res| {
+                    res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
+                        (Ok(hash), Ok(acc)) => Some((hash, acc)),
+                        _ => None,
+                    })
                 })
-            })
-            .flatten()
-            .take(MAX_SNAPSHOT_READS);
-        Ok(iter.collect::<Vec<_>>())
+                .flatten()
+                .take(MAX_SNAPSHOT_READS);
+            Ok(iter.collect::<Vec<_>>())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     async fn read_storage_snapshot(
@@ -1076,18 +1084,23 @@ impl StoreEngine for Store {
         account_hash: H256,
         start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = txn
-            .cursor::<StorageSnapShot>()
-            .map_err(StoreError::LibmdbxError)?;
-        let iter = cursor
-            .walk_key(account_hash.into(), Some(start.into()))
-            .map_while(|res| {
-                res.ok()
-                    .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
-            })
-            .take(MAX_SNAPSHOT_READS);
-        Ok(iter.collect::<Vec<_>>())
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
+            let cursor = txn
+                .cursor::<StorageSnapShot>()
+                .map_err(StoreError::LibmdbxError)?;
+            let iter = cursor
+                .walk_key(account_hash.into(), Some(start.into()))
+                .map_while(|res| {
+                    res.ok()
+                        .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
+                })
+                .take(MAX_SNAPSHOT_READS);
+            Ok(iter.collect::<Vec<_>>())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     async fn get_latest_valid_ancestor(
@@ -1114,9 +1127,10 @@ impl StoreEngine for Store {
         &self,
         changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
     ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
         let s = Instant::now();
-        let txn = self
-            .db
+        let txn =db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
         let txn_create = s.elapsed().as_millis();
@@ -1136,6 +1150,9 @@ impl StoreEngine for Store {
             "[apply_storage_trie_changes] put_batch: {total}ms: txn_create: {txn_create}ms; upserts: {total_upserts} in {data_upsert}ms; txn_commit: {txn_commit}ms"
         );
         Ok(())
+    })
+    .await
+    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 

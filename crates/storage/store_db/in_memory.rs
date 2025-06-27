@@ -711,7 +711,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn read_account_snapshot(
+    async fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {

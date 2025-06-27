@@ -176,7 +176,7 @@ async fn rebuild_state_trie_segment(
             break;
         }
         snapshot_reads_since_last_commit += 1;
-        let mut batch = store.read_account_snapshot(start)?;
+        let mut batch = store.read_account_snapshot(start).await?;
         // Remove out of bounds elements
         batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
