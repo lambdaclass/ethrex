@@ -64,11 +64,6 @@ where
         context.blockchain,
         context.client_version,
         context.broadcast,
-        #[cfg(feature = "l2")]
-        context.store_rollup.clone(),
-        context.based,
-        #[cfg(feature = "l2")]
-        context.committer_key,
     ))
 }
 
@@ -97,11 +92,6 @@ where
         context.blockchain,
         context.client_version,
         context.broadcast,
-        #[cfg(feature = "l2")]
-        context.store_rollup.clone(),
-        context.based,
-        #[cfg(feature = "l2")]
-        context.committer_key,
     ))
 }
 
