@@ -482,10 +482,10 @@ impl PeerData {
     }
 }
 
-pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
+pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 5000;
 
 #[derive(Debug, Clone)]
-/// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
+/// Holds the respective sender and receiver ends of the communication channels between the peer data and its active connection
 pub struct PeerChannels {
     pub(crate) sender: mpsc::Sender<RLPxMessage>,
     pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,

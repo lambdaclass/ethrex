@@ -40,6 +40,8 @@ const SIGNATURES_BY_BLOCK: TableDefinition<[u8; 32], [u8; 68]> =
 const SIGNATURES_BY_BATCH: TableDefinition<u64, [u8; 68]> =
     TableDefinition::new("SignaturesByBatch");
 
+const LATEST_BATCH_NUMBER: TableDefinition<u64, u64> = TableDefinition::new("LatestBatchNumber");
+
 #[derive(Debug)]
 pub struct RedBStoreRollup {
     db: Arc<Database>,
@@ -120,6 +122,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.open_table(SIGNATURES_BY_BLOCK)?;
     table_creation_txn.open_table(SIGNATURES_BY_BATCH)?;
+    table_creation_txn.open_table(LATEST_BATCH_NUMBER)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -342,5 +345,17 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(SIGNATURES_BY_BATCH, batch_number)
             .await?
             .map(|s| s.value()))
+    }
+
+    async fn get_latest_batch_number(&self) -> Result<u64, StoreError> {
+        Ok(self
+            .read(LATEST_BATCH_NUMBER, 0)
+            .await?
+            .map(|b| b.value())
+            .unwrap_or(0))
+    }
+
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.write(LATEST_BATCH_NUMBER, 0, batch_number).await
     }
 }

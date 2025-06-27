@@ -4,7 +4,7 @@ use super::{
     utils::log_peer_warn,
 };
 #[cfg(feature = "l2")]
-use crate::rlpx::based::BatchSealedMessage;
+use crate::rlpx::based::NewBatchSealedMessage;
 #[cfg(feature = "l2")]
 use crate::rlpx::based::get_hash_batch_sealed;
 use crate::rlpx::utils::get_pub_key;
@@ -74,7 +74,7 @@ const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration:
 const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 const PERIODIC_BATCH_BROADCAST_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(500);
+    std::time::Duration::from_millis(300);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(60);
@@ -140,7 +140,7 @@ pub(crate) struct RLPxConnection<S> {
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         signer: SigningKey,
         node: Node,
         stream: S,
@@ -153,6 +153,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         based: bool,
         #[cfg(feature = "l2")] committer_key: Option<SigningKeySecp256k1>,
     ) -> Self {
+        #[cfg(feature = "l2")]
+        let latest_batch_on_store = store_rollup.get_latest_batch_number().await.unwrap_or(0);
+        let latest_block_on_store = storage.get_latest_block_number().await.unwrap_or(0);
         Self {
             signer,
             node,
@@ -170,11 +173,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
             #[cfg(feature = "l2")]
-            latest_block_sent: 0,
+            latest_block_sent: latest_block_on_store,
             latest_block_added: 0,
             blocks_on_queue: BTreeMap::new(),
             #[cfg(feature = "l2")]
-            latest_batch_sent: 0,
+            latest_batch_sent: latest_batch_on_store,
             requested_pooled_txs: HashMap::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
@@ -423,6 +426,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     match message {
                         Ok(message) => {
                             log_peer_debug(&self.node, &format!("Received message {}", message));
+                            // self.handle_message(message, sender.clone()).await.inspect_err(|e| {log_peer_error(
+                            //     &self.node,
+                            //     &format!(
+                            //         "Error handling message, error: {e}"
+                            //     ),
+                            // );})?;
                             self.handle_message(message, sender.clone()).await?;
                         },
                         Err(e) => {
@@ -534,6 +543,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 return Ok(());
             }
             let latest_block_number = self.storage.get_latest_block_number().await?;
+            if !self.blockchain.is_synced() {
+                // We do this since we are syncing, we don't want to broadcast old blocks
+                self.latest_block_sent = latest_block_number;
+                // self.latest_block_added = latest_block_number;
+                return Ok(());
+            }
             for i in self.latest_block_sent + 1..=latest_block_number {
                 debug!(
                     "Broadcasting new block, current: {}, last broadcasted: {}",
@@ -602,6 +617,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
         #[cfg(feature = "l2")]
         {
+            if !self.blockchain.is_synced() {
+                // We do this since we are syncing, we don't want to broadcast old batches
+                self.latest_batch_sent = self.store_rollup.get_latest_batch_number().await?;
+                return Ok(());
+            }
             let next_batch_to_send = self.latest_batch_sent + 1;
             if !self
                 .store_rollup
@@ -613,6 +633,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let Some(batch) = self.store_rollup.get_batch(next_batch_to_send).await? else {
                 return Ok(());
             };
+            debug!(
+                "Broadcasting new batch, current: {}, last broadcasted: {}",
+                next_batch_to_send, self.latest_batch_sent
+            );
 
             let (signature, recovery_id) = if let Some(recovered_sig) = self
                 .store_rollup
@@ -640,7 +664,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 (signature, recovery_id)
             };
 
-            let msg = Message::BatchSealed(BatchSealedMessage {
+            let msg = Message::NewBatchSealed(NewBatchSealedMessage {
                 batch,
                 signature,
                 recovery_id,
@@ -816,19 +840,70 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::NewBlock(req) if peer_supports_based => {
                 if self.should_process_new_block(&req).await? {
-                    self.process_new_block(&req).await?;
-                    // for now we broadcast valid messages
-                    self.broadcast_message(Message::NewBlock(req))?;
+                    dbg!("adding block to queue", req.block.header.number);
+                    self.blocks_on_queue
+                        .entry(req.block.header.number)
+                        .or_insert_with(|| req.block.clone());
                 }
+                self.process_new_block(&req).await?;
+                self.broadcast_message(Message::NewBlock(req))?;
+                // if self.should_process_new_block(&req).await? {
+                //     self.process_new_block(&req).await?;
+                //     // for now we broadcast valid messages
+                //     #[cfg(feature = "l2")]
+                //     let new_latest_block_sent = req.block.header.number;
+                //     self.broadcast_message(Message::NewBlock(req))?;
+                //     #[cfg(feature = "l2")]
+                //     {
+                //         self.latest_block_sent = new_latest_block_sent;
+                //     }
+                // }
             }
-            Message::BatchSealed(_req) => {
+            Message::NewBatchSealed(_req) => {
                 #[cfg(feature = "l2")]
                 {
                     if self.should_process_batch_sealed(&_req).await? {
                         self.process_batch_sealed(&_req).await?;
                         // for now we broadcast valid messages
-                        self.broadcast_message(Message::BatchSealed(_req))?;
+                        let new_latest_batch_sent = _req.batch.number;
+                        self.broadcast_message(Message::NewBatchSealed(_req))?;
+                        self.latest_batch_sent = new_latest_batch_sent;
                     }
+                }
+            }
+            Message::GetBatchSealed(_req) => {
+                #[cfg(feature = "l2")]
+                {
+                    use crate::rlpx::based::GetBatchSealedResponseMessage;
+                    let mut batches = vec![];
+                    for batch_number in _req.first_batch..=_req.last_batch {
+                        let Some(batch) = self.store_rollup.get_batch(batch_number).await? else {
+                            return Err(RLPxError::InternalError(
+                                "CHANGE ERROR: Batch not found".to_string(),
+                            ));
+                        };
+                        batches.push(batch);
+                    }
+
+                    self.send(Message::GetBatchSealedResponse(
+                        GetBatchSealedResponseMessage {
+                            batches,
+                            // for now skipping signatures
+                        },
+                    ))
+                    .await?;
+                }
+            }
+            Message::GetBatchSealedResponse(_req) if peer_supports_based => {
+                #[cfg(feature = "l2")]
+                {
+                    if self.blockchain.is_synced() {
+                        return Ok(());
+                    }
+                    // if self.store_rollup.contains_batch(&_req.batch.number).await? {
+                    //     return Ok(());
+                    // }
+                    sender.send(Message::GetBatchSealedResponse(_req)).await?;
                 }
             }
 
@@ -864,8 +939,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     let new_msg = Message::NewBlock(block_msg.clone());
                     self.send(new_msg).await?;
                 }
-                Message::BatchSealed(batch_msg) => {
-                    let new_msg = Message::BatchSealed(batch_msg.clone());
+                Message::NewBatchSealed(batch_msg) => {
+                    let new_msg = Message::NewBatchSealed(batch_msg.clone());
                     self.send(new_msg).await?;
                 }
                 msg => {
@@ -879,15 +954,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
-        if !self.blockchain.is_synced() {
-            debug!("Not processing new block, blockchain is not synced");
-            return Ok(false);
-        }
-        if self.latest_block_added >= msg.block.header.number
-            || self.blocks_on_queue.contains_key(&msg.block.header.number)
-        {
+        // let latest_block_number = self.storage.get_latest_block_number().await?;
+        // if latest_block_number > self.latest_block_added {
+        //     self.latest_block_added = latest_block_number;
+        // }
+
+        // if self.latest_block_added >= msg.block.header.number
+        //     || self.blocks_on_queue.contains_key(&msg.block.header.number)
+        // {
+        //     debug!(
+        //         "Block {} received by peer already stored, ignoring it",
+        //         msg.block.header.number
+        //     );
+        //     return Ok(false);
+        // }
+        if self.blocks_on_queue.contains_key(&msg.block.header.number) {
             debug!(
-                "Block {} received by peer already stored, ignoring it",
+                "Block {} already in queue, ignoring it",
                 msg.block.header.number
             );
             return Ok(false);
@@ -909,10 +992,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         })?;
 
         if !Self::validate_signature(recovered_lead_sequencer) {
+            self.blocks_on_queue.remove(&msg.block.header.number);
             return Ok(false);
         }
         #[cfg(feature = "l2")]
         {
+            // TODO: signature creation should be moved to a correct place, when producing the block
             let mut signature = [0u8; 68];
             signature[..64].copy_from_slice(&msg.signature[..]);
             signature[64..].copy_from_slice(&msg.recovery_id[..]);
@@ -928,12 +1013,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         true
     }
 
-    async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
-        self.blocks_on_queue
-            .entry(msg.block.header.number)
-            .or_insert_with(|| msg.block.clone());
-
+    async fn process_new_block(&mut self, _msg: &NewBlockMessage) -> Result<(), RLPxError> {
+        if !self.blockchain.is_synced() {
+            return Ok(());
+        }
         let mut next_block_to_add = self.latest_block_added + 1;
+        let latest_block_in_storage = self.storage.get_latest_block_number().await?;
+        debug!(
+            "next block to add: {}, latest block ins storage: {}, does que block contain the block?: {}",
+            next_block_to_add,
+            latest_block_in_storage,
+            self.blocks_on_queue.contains_key(&next_block_to_add)
+        );
+        next_block_to_add = next_block_to_add.max(latest_block_in_storage + 1);
+        dbg!(next_block_to_add);
+        // TODO: clean old blocks that were added and then sync to a newer head
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
             // This check is necessary if a connection to another peer already applied the block but this connection
             // did not register that update.
@@ -942,6 +1036,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 next_block_to_add += 1;
                 continue;
             }
+            // log_peer_warn(&self.node, "here");
+            dbg!("going to add block", next_block_to_add);
             self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_error(
                     &self.node,
@@ -976,7 +1072,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     #[cfg(feature = "l2")]
     async fn should_process_batch_sealed(
         &mut self,
-        msg: &BatchSealedMessage,
+        msg: &NewBatchSealedMessage,
     ) -> Result<bool, RLPxError> {
         if !self.blockchain.is_synced() {
             debug!("Not processing new block, blockchain is not synced");
@@ -1023,7 +1119,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     #[cfg(feature = "l2")]
-    async fn process_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<(), RLPxError> {
+    async fn process_batch_sealed(&mut self, msg: &NewBatchSealedMessage) -> Result<(), RLPxError> {
         self.store_rollup.seal_batch(msg.batch.clone()).await?;
         info!(
             "Sealed batch {} with blocks from {} to {}",
@@ -1107,7 +1203,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 };
                 Ok(())
             }
-            batch_msg @ Message::BatchSealed(_) => {
+            batch_msg @ Message::NewBatchSealed(_) => {
                 let batch = Arc::new(batch_msg);
                 let task_id = tokio::task::id();
                 let Ok(_) = self.connection_broadcast_send.send((task_id, batch)) else {
@@ -1221,7 +1317,8 @@ mod tests {
             true,
             #[cfg(feature = "l2")]
             committer_key,
-        );
+        )
+        .await;
         connection.capabilities.push(SUPPORTED_BASED_CAPABILITIES);
         connection.negotiated_eth_capability = Some(SUPPORTED_ETH_CAPABILITIES[0].clone());
         connection.blockchain.set_synced();
@@ -1283,7 +1380,7 @@ mod tests {
             .serialize_compact();
         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
 
-        let message_to_send = Message::BatchSealed(BatchSealedMessage {
+        let message_to_send = Message::NewBatchSealed(NewBatchSealedMessage {
             batch,
             signature,
             recovery_id,
@@ -1486,11 +1583,11 @@ mod tests {
                             );
                         }
                     }
-                    Message::BatchSealed(msg) => {
+                    Message::NewBatchSealed(msg) => {
                         println!("Receiver task received sealed batch {}.", msg.batch.number);
                         // Process the message
                         match conn_b
-                            .handle_message(Message::BatchSealed(msg.clone()), dummy_tx)
+                            .handle_message(Message::NewBatchSealed(msg.clone()), dummy_tx)
                             .await
                         {
                             Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
@@ -1571,11 +1668,11 @@ mod tests {
                             );
                         }
                     }
-                    Message::BatchSealed(msg) => {
+                    Message::NewBatchSealed(msg) => {
                         println!("Receiver task received sealed batch {}.", msg.batch.number);
                         // Process the message
                         match conn_b
-                            .handle_message(Message::BatchSealed(msg.clone()), dummy_tx)
+                            .handle_message(Message::NewBatchSealed(msg.clone()), dummy_tx)
                             .await
                         {
                             Ok(_) | Err(RLPxError::BroadcastError(_)) => {}

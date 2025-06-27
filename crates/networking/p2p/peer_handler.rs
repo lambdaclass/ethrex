@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
+#[cfg(feature = "l2")]
+use ethrex_common::types::batch::Batch;
 use ethrex_common::{
     H256, U256,
     types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
@@ -167,6 +169,55 @@ impl PeerHandler {
             }
             warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
             self.record_peer_failure(peer_id).await;
+        }
+        None
+    }
+
+    #[cfg(feature = "l2")]
+    pub async fn request_batch(&self, first_batch: u64, last_batch: u64) -> Option<Vec<Batch>> {
+        use crate::rlpx::{based::GetBatchSealedMessage, p2p::SUPPORTED_BASED_CAPABILITIES};
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage {
+                first_batch,
+                last_batch,
+            });
+            let (peer_id, peer_channel) = self
+                .get_peer_channel_with_retry(
+                    &[SUPPORTED_ETH_CAPABILITIES, [SUPPORTED_BASED_CAPABILITIES]].concat(),
+                )
+                .await?;
+            let mut receiver = peer_channel.receiver.lock().await;
+            if let Err(err) = peer_channel.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                self.record_peer_failure(peer_id).await;
+                return None;
+            }
+            if let Some(batches) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                loop {
+                    use crate::rlpx::based::GetBatchSealedResponseMessage;
+                    match receiver.recv().await {
+                        Some(RLPxMessage::GetBatchSealedResponse(
+                            GetBatchSealedResponseMessage { batches },
+                        )) => {
+                            return Some(batches);
+                        }
+                        // Ignore replies that don't match the expected id (such as late responses)
+                        Some(_) => {
+                            continue;
+                        }
+                        None => {
+                            return None;
+                        } // Retry request
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten()
+            {
+                // TODO: penalize peer if the signature is incorrect or the batch is invalid
+                return Some(batches);
+            }
         }
         None
     }

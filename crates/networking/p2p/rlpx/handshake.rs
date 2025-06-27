@@ -69,7 +69,8 @@ where
         context.based,
         #[cfg(feature = "l2")]
         context.committer_key,
-    ))
+    )
+    .await)
 }
 
 pub(crate) async fn as_initiator<S>(
@@ -102,7 +103,8 @@ where
         context.based,
         #[cfg(feature = "l2")]
         context.committer_key,
-    ))
+    )
+    .await)
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(

@@ -37,6 +37,8 @@ struct StoreInner {
     signatures_by_block: HashMap<H256, [u8; 68]>,
     /// Map of signatures from the sequencer by batch numbers
     signatures_by_batch: HashMap<u64, [u8; 68]>,
+    /// Latest batch number stored
+    latest_batch_number: u64,
 }
 
 impl Store {
@@ -240,6 +242,15 @@ impl StoreEngineRollup for Store {
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.inner()?.lastest_sent_batch_proof = batch_number;
+        Ok(())
+    }
+
+    async fn get_latest_batch_number(&self) -> Result<u64, StoreError> {
+        Ok(self.inner()?.latest_batch_number)
+    }
+
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.inner()?.latest_batch_number = batch_number;
         Ok(())
     }
 }
