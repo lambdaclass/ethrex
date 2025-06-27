@@ -14,14 +14,14 @@ use serde::{Deserialize, Serialize};
 
 use lazy_static::lazy_static;
 
-use crate::{l1_messages::L1Message, privileged_transactions::DepositLog};
+use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransactionLog};
 
 lazy_static! {
     /// The serialized length of a default l1message log
     pub static ref L1MESSAGE_LOG_LEN: usize = L1Message::default().encode().len();
 
-    /// The serialized length of a default deposit log
-    pub static ref DEPOSITS_LOG_LEN: usize = DepositLog::default().encode().len();
+    /// The serialized length of a default privileged transaction log
+    pub static ref PRIVILEGED_TX_LOG_LEN: usize = PrivilegedTransactionLog::default().encode().len();
 
     /// The serialized lenght of a default block header
     pub static ref BLOCK_HEADER_LEN: usize = encode_block_header(&BlockHeader::default()).len();
@@ -83,7 +83,7 @@ pub struct StateDiff {
     pub last_header: BlockHeader,
     pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
     pub l1_messages: Vec<L1Message>,
-    pub privileged_transactions: Vec<DepositLog>,
+    pub privileged_transactions: Vec<PrivilegedTransactionLog>,
 }
 
 impl TryFrom<u8> for AccountStateDiffType {
@@ -177,11 +177,11 @@ impl StateDiff {
             encoded.extend(message_encoded);
         }
 
-        let deposits_len: u16 = self.privileged_transactions.len().try_into()?;
-        encoded.extend(deposits_len.to_be_bytes());
-        for deposit in self.privileged_transactions.iter() {
-            let deposit_encoded = deposit.encode();
-            encoded.extend(deposit_encoded);
+        let privileged_tx_len: u16 = self.privileged_transactions.len().try_into()?;
+        encoded.extend(privileged_tx_len.to_be_bytes());
+        for privileged_tx in self.privileged_transactions.iter() {
+            let privileged_tx_encoded = privileged_tx.encode();
+            encoded.extend(privileged_tx_encoded);
         }
 
         Ok(Bytes::from(encoded))
@@ -243,7 +243,7 @@ impl StateDiff {
             let address = decoder.get_address()?;
             let amount = decoder.get_u256()?;
 
-            privileged_transactions.push(DepositLog {
+            privileged_transactions.push(PrivilegedTransactionLog {
                 address,
                 amount,
                 nonce: Default::default(),
@@ -573,7 +573,7 @@ pub fn prepare_state_diff(
     last_header: BlockHeader,
     db: &impl VmDatabase,
     l1messages: &[L1Message],
-    deposits: &[PrivilegedL2Transaction],
+    privileged_transactions: &[PrivilegedL2Transaction],
     account_updates: Vec<AccountUpdate>,
 ) -> Result<StateDiff, StateDiffError> {
     let mut modified_accounts = BTreeMap::new();
@@ -597,9 +597,9 @@ pub fn prepare_state_diff(
         version: StateDiff::default().version,
         last_header,
         l1_messages: l1messages.to_vec(),
-        privileged_transactions: deposits
+        privileged_transactions: privileged_transactions
             .iter()
-            .map(|tx| DepositLog {
+            .map(|tx| PrivilegedTransactionLog {
                 address: match tx.to {
                     TxKind::Call(address) => address,
                     TxKind::Create => Address::zero(),
