@@ -443,7 +443,7 @@ impl StoreEngine for Store {
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+    fn open_state_trie(&self, state_root: H256, _dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError> {
         let trie_backend = self.inner()?.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         Ok(Trie::open(db, state_root))

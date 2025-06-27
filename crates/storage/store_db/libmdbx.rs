@@ -638,16 +638,26 @@ impl StoreEngine for Store {
         storage_root: H256,
         dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError> {
+        // Convert the dirty_storage_nodes from (H256, NodeHash) to ([u8; 32], NodeHash)
+        let converted_dirty_nodes = {
+            let guard = dirty_storage_nodes.read().unwrap();
+            let mut new_map = HashMap::with_capacity(guard.len());
+            for ((h256_key, node_hash), value) in guard.iter() {
+                new_map.insert((h256_key.0, *node_hash), value.clone());
+            }
+            Arc::new(RwLock::new(new_map))
+        };
+        
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
-            dirty_storage_nodes,
+            converted_dirty_nodes,
         ));
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
+    fn open_state_trie(&self, state_root: H256, dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError> {
+        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone(), dirty_state_nodes));
         Ok(Trie::open(db, state_root))
     }
 

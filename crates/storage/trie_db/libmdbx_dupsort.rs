@@ -3,7 +3,6 @@ use std::sync::RwLock;
 use std::{marker::PhantomData, sync::Arc};
 
 use super::utils::node_hash_to_fixed_size;
-use ethrex_common::H256;
 use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, DupSort, Encodable};

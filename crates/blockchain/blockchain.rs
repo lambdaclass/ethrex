@@ -361,9 +361,15 @@ impl Blockchain {
         validate_state_root(&block.header, new_state_root)?;
 
 
+        // Convert H256 storage roots to [u8; 32]
+        let storage_updates = accounts_updates
+            .into_iter()
+            .map(|(root, updates)| (root.0, updates))
+            .collect();
+            
         let trie_updates = TrieUpdates {
             account_updates: state_updates,
-            storage_updates: accounts_updates,
+            storage_updates,
         };
 
         self.trie_writer.write(trie_updates).await;
@@ -532,9 +538,15 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        // Convert H256 storage roots to [u8; 32]
+        let storage_updates_converted = storage_updates
+            .into_iter()
+            .map(|(root, updates)| (root.0, updates))
+            .collect();
+            
         let trie_updates = TrieUpdates {
             account_updates,
-            storage_updates,
+            storage_updates: storage_updates_converted,
         };
 
         self.trie_writer.write(trie_updates).await;

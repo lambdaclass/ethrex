@@ -87,8 +87,9 @@ impl Store {
             write_guard_state.insert(*node_hash, node_data.clone());
         }
         for (storage_root, storage_updates) in &trie_updates.storage_updates {
+            let storage_root_h256 = H256::from_slice(storage_root);
             for (node_hash, node_data) in storage_updates {
-                write_guard_storage.insert((*storage_root, *node_hash), node_data.clone());
+                write_guard_storage.insert((storage_root_h256, *node_hash), node_data.clone());
             }
         }
     }
@@ -521,7 +522,7 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
-        let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH, self.dirty_state_nodes.clone())?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
@@ -791,7 +792,7 @@ impl Store {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
-        Ok(Some(self.engine.open_state_trie(header.state_root)?))
+        Ok(Some(self.engine.open_state_trie(header.state_root, self.dirty_state_nodes.clone())?))
     }
 
     /// Obtain the storage trie for the given account on the given block
@@ -890,7 +891,7 @@ impl Store {
     ) -> Result<impl Iterator<Item = (H256, AccountState)>, StoreError> {
         Ok(self
             .engine
-            .open_state_trie(state_root)?
+            .open_state_trie(state_root, self.dirty_state_nodes.clone())?
             .into_iter()
             .content()
             .map_while(|(path, value)| {
@@ -905,7 +906,7 @@ impl Store {
         state_root: H256,
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root)?;
+        let state_trie = self.engine.open_state_trie(state_root, self.dirty_state_nodes.clone())?;
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
@@ -927,7 +928,7 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root)?;
+        let state_trie = self.engine.open_state_trie(state_root, self.dirty_state_nodes.clone())?;
         let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
         if let Some(last_hash) = last_hash {
             proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
@@ -942,7 +943,7 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root)?;
+        let state_trie = self.engine.open_state_trie(state_root, self.dirty_state_nodes.clone())?;
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
@@ -972,7 +973,7 @@ impl Store {
         let Some(account_path) = paths.first() else {
             return Ok(vec![]);
         };
-        let state_trie = self.engine.open_state_trie(state_root)?;
+        let state_trie = self.engine.open_state_trie(state_root, self.dirty_state_nodes.clone())?;
         // State Trie Nodes Request
         if paths.len() == 1 {
             // Fetch state trie node
@@ -1033,15 +1034,15 @@ impl Store {
 
     /// Creates a new state trie with an empty state root, for testing purposes only
     pub fn new_state_trie_for_test(&self) -> Result<Trie, StoreError> {
-        self.engine.open_state_trie(*EMPTY_TRIE_HASH)
+        self.engine.open_state_trie(*EMPTY_TRIE_HASH, self.dirty_state_nodes.clone())
     }
 
     // Methods exclusive for trie management during snap-syncing
 
     /// Obtain a state trie from the given state root.
     /// Doesn't check if the state root is valid
-    pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        self.engine.open_state_trie(state_root)
+    pub fn open_state_trie(&self, state_root: H256, dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError> {
+        self.engine.open_state_trie(state_root, dirty_state_nodes)
     }
 
     /// Obtain a storage trie from the given address and storage_root.
@@ -1058,7 +1059,7 @@ impl Store {
     pub fn contains_state_node(&self, node_hash: H256) -> Result<bool, StoreError> {
         // Root is irrelevant, we only care about the internal state
         Ok(self
-            .open_state_trie(*EMPTY_TRIE_HASH)?
+            .open_state_trie(*EMPTY_TRIE_HASH, self.dirty_state_nodes.clone())?
             .db()
             .get(node_hash.into())?
             .is_some())

@@ -270,7 +270,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
+    fn open_state_trie(&self, state_root: H256, dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError>;
 
     /// Set the canonical block hash for a given block number.
     async fn set_canonical_block(
