@@ -1,14 +1,11 @@
 use std::ops::AddAssign;
 
+use crate::kzg::KzgError;
 use crate::serde_utils;
 use crate::{Bytes, H256, types::constants::VERSIONED_HASH_VERSION_KZG};
 
 #[cfg(feature = "c-kzg")]
-use {
-    crate::types::transaction::EIP4844Transaction,
-    c_kzg::{KzgCommitment, KzgProof, KzgSettings, ethereum_kzg_settings},
-    lazy_static::lazy_static,
-};
+use crate::types::EIP4844Transaction;
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -24,11 +21,6 @@ pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
-
-#[cfg(feature = "c-kzg")]
-lazy_static! {
-    static ref KZG_SETTINGS: &'static KzgSettings = ethereum_kzg_settings();
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -82,39 +74,6 @@ pub fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
     versioned_hash.into()
 }
 
-#[cfg(feature = "c-kzg")]
-pub fn blob_to_kzg_commitment_and_proof(
-    blob: &Blob,
-) -> Result<(Commitment, Proof), BlobsBundleError> {
-    let blob: c_kzg::Blob = (*blob).into();
-
-    let commitment = KzgCommitment::blob_to_kzg_commitment(&blob, &KZG_SETTINGS)
-        .or(Err(BlobsBundleError::BlobToCommitmentAndProofError))?;
-
-    let commitment_bytes = commitment.to_bytes();
-
-    let proof = KzgProof::compute_blob_kzg_proof(&blob, &commitment_bytes, &KZG_SETTINGS)
-        .or(Err(BlobsBundleError::BlobToCommitmentAndProofError))?;
-
-    let proof_bytes = proof.to_bytes();
-
-    Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
-}
-
-#[cfg(feature = "c-kzg")]
-fn verify_blob_kzg_proof(
-    blob: Blob,
-    commitment: Commitment,
-    proof: Proof,
-) -> Result<bool, BlobsBundleError> {
-    let blob: c_kzg::Blob = blob.into();
-    let commitment: c_kzg::Bytes48 = commitment.into();
-    let proof: c_kzg::Bytes48 = proof.into();
-
-    KzgProof::verify_blob_kzg_proof(&blob, &commitment, &proof, &KZG_SETTINGS)
-        .or(Err(BlobsBundleError::BlobToCommitmentAndProofError))
-}
-
 impl BlobsBundle {
     pub fn empty() -> Self {
         Self::default()
@@ -128,6 +87,8 @@ impl BlobsBundle {
 
         // Populate the commitments and proofs
         for blob in blobs {
+            use crate::kzg::blob_to_kzg_commitment_and_proof;
+
             let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
             commitments.push(commitment);
             proofs.push(proof);
@@ -180,6 +141,8 @@ impl BlobsBundle {
             .zip(self.commitments.iter())
             .zip(self.proofs.iter())
         {
+            use crate::kzg::verify_blob_kzg_proof;
+
             if !verify_blob_kzg_proof(*blob, *commitment, *proof)? {
                 return Err(BlobsBundleError::BlobToCommitmentAndProofError);
             }
@@ -237,6 +200,8 @@ pub enum BlobsBundleError {
     BlobVersionedHashesError,
     #[error("Blob to commitment and proof generation error")]
     BlobToCommitmentAndProofError,
+    #[error("KZG related error: {0}")]
+    Kzg(#[from] KzgError),
 }
 
 #[cfg(test)]

@@ -8,7 +8,6 @@ edition = "2024"
 [dependencies]
 sp1-zkvm = "5.0.0"
 zkvm_interface = { path = "../" }
-kzg-rs = "0.2.6"
 
 ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../storage", default-features = false }

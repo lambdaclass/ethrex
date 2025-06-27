@@ -29,15 +29,15 @@ pub fn write_benchmark_file(gas_used: f64, elapsed: f64) {
     serde_json::to_writer(file, benchmark_json).expect("failed to write to bench_latest.json");
 }
 
-pub async fn run_and_measure<Ft, R>(write_to_file: bool, future: Ft) -> eyre::Result<R>
-where
-    Ft: std::future::Future<Output = eyre::Result<(f64, R)>>,
-{
+pub async fn run_and_measure(
+    run: impl Future<Output = eyre::Result<f64>>,
+    write_to_file: bool,
+) -> eyre::Result<()> {
     let now = std::time::Instant::now();
-    let (gas_used, ret) = future.await?;
+    let gas_used = run.await?;
     let elapsed = now.elapsed().as_secs();
     if write_to_file {
         write_benchmark_file(gas_used, elapsed as f64);
     }
-    Ok(ret)
+    Ok(())
 }
