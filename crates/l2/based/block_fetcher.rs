@@ -203,30 +203,10 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
             "Node is {l2_batches_behind} batches behind. Last batch number known: {last_l2_batch_number_known}, last committed batch number: {last_l2_committed_batch_number}"
         );
 
-        let batch_committed_logs = get_logs(state).await?;
+        let (batch_committed_logs, batch_verified_logs) = get_logs(state).await?;
 
-        let mut missing_batches_logs =
-            filter_logs(&batch_committed_logs, last_l2_batch_number_known).await?;
-
-        missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
-
-        for (batch_committed_log, batch_number) in missing_batches_logs {
-            let batch_commit_tx_calldata = state
-                .eth_client
-                .get_transaction_by_hash(batch_committed_log.transaction_hash)
-                .await?
-                .ok_or(BlockFetcherError::InternalError(format!(
-                    "Failed to get the receipt for transaction {:x}",
-                    batch_committed_log.transaction_hash
-                )))?
-                .data;
-
-            let batch = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
-
-            store_batch(state, &batch).await?;
-
-            seal_batch(state, &batch, batch_number).await?;
-        }
+        process_committed_logs(batch_committed_logs, state, last_l2_batch_number_known).await?;
+        process_verified_logs(batch_verified_logs, state).await?;
     }
 
     info!("Node is up to date");
@@ -234,13 +214,16 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     Ok(())
 }
 
-/// Fetch logs from the L1 chain for the BatchCommitted event.
+/// Fetch logs from the L1 chain for the BatchCommitted and BatchVerified events.
 /// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
 /// and going up to the current block number.
-async fn get_logs(state: &mut BlockFetcherState) -> Result<Vec<RpcLog>, BlockFetcherError> {
+async fn get_logs(
+    state: &mut BlockFetcherState,
+) -> Result<(Vec<RpcLog>, Vec<RpcLog>), BlockFetcherError> {
     let last_l1_block_number = state.eth_client.get_block_number().await?;
 
     let mut batch_committed_logs = Vec::new();
+    let mut batch_verified_logs = Vec::new();
     while state.last_l1_block_fetched < last_l1_block_number {
         let new_last_l1_fetched_block = min(
             state.last_l1_block_fetched + state.fetch_block_step,
@@ -254,7 +237,7 @@ async fn get_logs(state: &mut BlockFetcherState) -> Result<Vec<RpcLog>, BlockFet
         );
 
         // Fetch logs from the L1 chain for the BatchCommitted event.
-        let logs = state
+        let committed_logs = state
             .eth_client
             .get_logs(
                 state.last_l1_block_fetched + 1,
@@ -264,13 +247,64 @@ async fn get_logs(state: &mut BlockFetcherState) -> Result<Vec<RpcLog>, BlockFet
             )
             .await?;
 
+        // Fetch logs from the L1 chain for the BatchVerified event.
+        let verified_logs = state
+            .eth_client
+            .get_logs(
+                state.last_l1_block_fetched + 1,
+                new_last_l1_fetched_block,
+                state.on_chain_proposer_address,
+                keccak(b"BatchVerified(uint256)"),
+            )
+            .await?;
+
         // Update the last L1 block fetched.
         state.last_l1_block_fetched = new_last_l1_fetched_block;
 
-        batch_committed_logs.extend_from_slice(&logs);
+        batch_committed_logs.extend_from_slice(&committed_logs);
+        batch_verified_logs.extend_from_slice(&verified_logs);
     }
 
-    Ok(batch_committed_logs)
+    Ok((batch_committed_logs, batch_verified_logs))
+}
+
+/// Process the logs from the event `BatchCommitted`.
+/// Gets the committed batches that are missing in the local store from the logs,
+/// and seals the batch in the rollup store.
+async fn process_committed_logs(
+    batch_committed_logs: Vec<RpcLog>,
+    state: &mut BlockFetcherState,
+    last_l2_batch_number_known: u64,
+) -> Result<(), BlockFetcherError> {
+    let mut missing_batches_logs =
+        filter_logs(&batch_committed_logs, last_l2_batch_number_known).await?;
+
+    missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
+
+    for (batch_committed_log, batch_number) in missing_batches_logs {
+        let batch_commit_tx_calldata = state
+            .eth_client
+            .get_transaction_by_hash(batch_committed_log.transaction_hash)
+            .await?
+            .ok_or(BlockFetcherError::InternalError(format!(
+                "Failed to get the receipt for transaction {:x}",
+                batch_committed_log.transaction_hash
+            )))?
+            .data;
+
+        let batch = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
+
+        store_batch(state, &batch).await?;
+
+        seal_batch(
+            state,
+            &batch,
+            batch_number,
+            batch_committed_log.transaction_hash,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Given the logs from the event `BatchCommitted`,
@@ -391,8 +425,9 @@ async fn seal_batch(
     state: &mut BlockFetcherState,
     batch: &[Block],
     batch_number: U256,
+    commit_tx: H256,
 ) -> Result<(), BlockFetcherError> {
-    let batch = get_batch(state, batch, batch_number).await?;
+    let batch = get_batch(state, batch, batch_number, commit_tx).await?;
 
     state.rollup_store.seal_batch(batch).await?;
 
@@ -453,6 +488,7 @@ async fn get_batch(
     state: &mut BlockFetcherState,
     batch: &[Block],
     batch_number: U256,
+    commit_tx: H256,
 ) -> Result<Batch, BlockFetcherError> {
     let deposits: Vec<PrivilegedL2Transaction> = batch
         .iter()
@@ -539,5 +575,37 @@ async fn get_batch(
         deposit_logs_hash,
         message_hashes: get_batch_message_hashes(state, batch).await?,
         blobs_bundle,
+        commit_tx: Some(commit_tx),
+        verify_tx: None,
     })
+}
+
+/// Process the logs from the event `BatchVerified`.
+/// Gets the batch number from the logs and stores the verify transaction hash in the rollup store
+async fn process_verified_logs(
+    batch_verified_logs: Vec<RpcLog>,
+    state: &mut BlockFetcherState,
+) -> Result<(), BlockFetcherError> {
+    for batch_verified_log in batch_verified_logs {
+        let batch_number = U256::from_big_endian(
+            batch_verified_log
+                .log
+                .topics
+                .get(1)
+                .ok_or(BlockFetcherError::InternalError(
+                    "Failed to get verified batch number from BatchVerified log".to_string(),
+                ))?
+                .as_bytes(),
+        );
+
+        let verify_tx_hash = batch_verified_log.transaction_hash;
+
+        state
+            .rollup_store
+            .store_verify_tx_by_batch(batch_number.as_u64(), verify_tx_hash)
+            .await?;
+
+        info!("Stored verify transaction hash {verify_tx_hash:#x} for batch {batch_number}");
+    }
+    Ok(())
 }

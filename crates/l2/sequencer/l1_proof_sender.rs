@@ -331,6 +331,11 @@ pub async fn send_proof_to_contract(
     )
     .await?;
 
+    state
+        .rollup_storage
+        .store_verify_tx_by_batch(batch_number, verify_tx_hash)
+        .await?;
+
     info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
 
     Ok(())
