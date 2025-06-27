@@ -93,7 +93,9 @@ pub fn open_store(data_dir: &str) -> Store {
 #[cfg(feature = "l2")]
 pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_redb")] {
+        if #[cfg(feature = "rollup_storage_sql")] {
+            let engine_type = EngineTypeRollup::SQL;
+        } else if #[cfg(feature = "rollup_storage_redb")] {
             let engine_type = EngineTypeRollup::RedB;
         } else if #[cfg(feature = "rollup_storage_libmdbx")] {
             let engine_type = EngineTypeRollup::Libmdbx;
@@ -111,6 +113,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+    info!("Initiating blockchain with EVM: {}", evm_engine);
     Blockchain::new(evm_engine, store).into()
 }
 
