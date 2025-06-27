@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751042814870,
+  "lastUpdate": 1751043616099,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1799,6 +1799,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210457693357,
             "range": "± 708614294",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f57dd24e3a4b142f6de1f80bc2d9ee98692bb08f",
+          "message": "chore(levm): improve levm vs revm bench (#3255)\n\n**Motivation**\n\nCurrently the benchmark comparisson shown for levm is not very useful\nsince there is a lot of information distributed along different tables\nand it's not easy to see the change.\n\n**Description**\n\nThis pr introduces the following changes:\n\n- Instead of having the tables compare levm and revm, now they compare\nbetween pr's obtained mean time and main' obtained mean time for both\nvms. To do this we modify the `run_benchmark_ci` function that the\ntarget runned by the ci calls to have the benchmark comparison run for\nall cases.\n\n- If nothing changed between pr and main, no message is printed, using\nas a margin of error a porcentual difference higher than 10%.\n\n- If something changed, only output the tests where there was a change,\nnothing is printed if the test that stayed the same.\n\nThe tables always show the obtained metrics in the same order despite\nthe fact one of them is not shown:\n\n| Command | \n|--------|\n|`main_revm_`|\n|`main_levm_`|\n|`pr_revm_`|\n|`pr_levm_`|\n\nFor example, in the case you do an optimization in levm that improves\nfactorial but does nothing for revm, the table would look like this:\n| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |\n|--------|--------|--------|--------|--------|\n| `main_revm_Factorial` | 138.1 ± 0.5 | 137.4 | 139.2 | 1.00 |\n| `main_levm_Factorial` | 326.4 ± 6.3 | 321.4 | 340.2 | 2.36 ± 0.05 |\n| `pr_levm_Factorial` | 223.8 ± 6.3 | 216.4 | 234.1 | 2.04 ± 0.05 |\n\nCloses #3254\n\n---------\n\nCo-authored-by: cdiielsi <49721261+cdiielsi@users.noreply.github.com>\nCo-authored-by: Camila Di Ielsi <camila.diielsi@lambdaclass.com>",
+          "timestamp": "2025-06-27T16:03:04Z",
+          "tree_id": "e340415a97b05069af05234e55becf17585d535c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f57dd24e3a4b142f6de1f80bc2d9ee98692bb08f"
+        },
+        "date": 1751043607092,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 206190289334,
+            "range": "± 770356972",
             "unit": "ns/iter"
           }
         ]
