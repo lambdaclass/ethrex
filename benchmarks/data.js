@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751061624273,
+  "lastUpdate": 1751062535227,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1979,6 +1979,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209374061533,
             "range": "± 899896290",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4d6cbf6db95cff5b0fe11af74dd4c629a3e1be71",
+          "message": "feat(l1): embed genesis of public networks in binary (#3372)\n\n**Motivation**\n\nCurrently, users need to download the genesis to be able to run a\nnetwork without being in the repo's root.\n\n**Description**\n\nThis PR embeds the genesis file of known public networks inside the\ncompiled binary. It has the downside of increasing binary size from 23.6\nMb to 24.7 Mb.\n\nFurther code simplifications are left for other PRs.\n\nIn the future, a possible improvement could be to parse each genesis\nfile before embedding it in the binary. Now we just embed the plain\nJSON.\n\nRelated #3292",
+          "timestamp": "2025-06-27T21:16:21Z",
+          "tree_id": "22bbe2194dc8cf877b504540879f04fd9ffd8b9e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4d6cbf6db95cff5b0fe11af74dd4c629a3e1be71"
+        },
+        "date": 1751062516603,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210057228422,
+            "range": "± 561318655",
             "unit": "ns/iter"
           }
         ]
