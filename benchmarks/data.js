@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751063478792,
+  "lastUpdate": 1751066416718,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2039,6 +2039,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209510267943,
             "range": "± 509174897",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3f65132f7fb6d206f189754ace88340184811e7d",
+          "message": "fix(l2): update rpc job cache file (#3377)\n\n**Motivation**\n\nin #3370 i didn't update it after changing how the program input is\nserialized",
+          "timestamp": "2025-06-27T22:22:17Z",
+          "tree_id": "cdf056c0a40fbe670409308b79b3f0b9f5f937ba",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3f65132f7fb6d206f189754ace88340184811e7d"
+        },
+        "date": 1751066407966,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209395567112,
+            "range": "± 463770214",
             "unit": "ns/iter"
           }
         ]
