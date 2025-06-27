@@ -86,6 +86,9 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
+      - name: Build L1 docker image
+        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
+
       - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
@@ -134,6 +137,9 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          
+      - name: Build L1 docker image
+        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -212,6 +218,9 @@ jobs:
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Build L1 docker image
+        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
 
       - name: Install solc
         run: |
