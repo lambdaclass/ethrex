@@ -50,6 +50,7 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
+ETHREX_PROOF_COORDINATOR_DEV_MODE?=true
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -81,7 +82,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down -t 0
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
 	docker compose -f docker-compose-l2.yaml down
 
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
@@ -131,7 +132,8 @@ DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADD
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
+	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_sql,metrics" -- \
 	l2 init \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -147,8 +149,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS} \
-	--proof-coordinator.dev-mode
+	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d

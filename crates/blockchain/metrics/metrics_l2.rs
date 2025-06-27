@@ -129,7 +129,7 @@ pub enum MetricsL2BlockType {
 
 pub enum MetricsL2OperationType {
     Deposits,
-    Withdrawals,
+    L1Messages,
 }
 
 impl MetricsL2BlockType {
@@ -147,7 +147,7 @@ impl MetricsL2OperationType {
     fn to_str(&self) -> &str {
         match self {
             MetricsL2OperationType::Deposits => "processedDeposits",
-            MetricsL2OperationType::Withdrawals => "processedWithdrawals",
+            MetricsL2OperationType::L1Messages => "processedMessages",
         }
     }
 }

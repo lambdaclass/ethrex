@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
+use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
 
@@ -392,9 +393,11 @@ impl Blockchain {
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
             let base_log = format!(
-                "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
+                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.2} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.0}%, #Txs: {}.",
+                block.header.number,
                 throughput,
                 interval,
+                (block.header.gas_used as f64 / block.header.gas_limit as f64) * 100.0,
                 block.body.transactions.len()
             );
             let extra_log = if as_gigas > 0.0 {
@@ -422,6 +425,7 @@ impl Blockchain {
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
+        cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
@@ -451,6 +455,10 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
+            if cancellation_token.is_cancelled() {
+                info!("Received shutdown signal, aborting");
+                return Err((ChainError::Custom(String::from("shutdown signal")), None));
+            }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 find_parent_header(&block.header, &self.storage).map_err(|err| {

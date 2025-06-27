@@ -80,6 +80,7 @@ l2 = [
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
+rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = []
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports", "async_futures", "async_tokio"] }

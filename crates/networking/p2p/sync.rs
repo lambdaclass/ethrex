@@ -267,6 +267,7 @@ impl Syncer {
                         sync_head_found,
                         self.blockchain.clone(),
                         self.peers.clone(),
+                        self.cancel_token.clone(),
                     )
                     .await?;
             }
@@ -336,6 +337,7 @@ impl Syncer {
         blockchain: Arc<Blockchain>,
         blocks: Vec<Block>,
         sync_head_found: bool,
+        cancel_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
@@ -354,7 +356,7 @@ impl Syncer {
             }
             Ok(())
         } else {
-            blockchain.add_blocks_in_batch(blocks).await
+            blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
     }
 }
@@ -454,11 +456,18 @@ impl BlockSyncState {
         sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
+        cancel_token: CancellationToken,
     ) -> Result<(), SyncError> {
         match self {
             BlockSyncState::Full(state) => {
                 state
-                    .process_incoming_headers(block_headers, sync_head_found, blockchain, peers)
+                    .process_incoming_headers(
+                        block_headers,
+                        sync_head_found,
+                        blockchain,
+                        peers,
+                        cancel_token,
+                    )
                     .await
             }
             BlockSyncState::Snap(state) => state.process_incoming_headers(block_headers).await,
@@ -510,6 +519,7 @@ impl FullBlockSyncState {
         sync_head_found: bool,
         blockchain: Arc<Blockchain>,
         peers: PeerHandler,
+        cancel_token: CancellationToken,
     ) -> Result<(), SyncError> {
         self.current_headers.extend(block_headers);
         if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
@@ -560,8 +570,13 @@ impl FullBlockSyncState {
                 .cloned()
                 .ok_or(SyncError::InvalidRangeReceived)?;
             // Run the batch
-            if let Err((err, batch_failure)) =
-                Syncer::add_blocks(blockchain.clone(), block_batch, sync_head_found).await
+            if let Err((err, batch_failure)) = Syncer::add_blocks(
+                blockchain.clone(),
+                block_batch,
+                sync_head_found,
+                cancel_token.clone(),
+            )
+            .await
             {
                 if let Some(batch_failure) = batch_failure {
                     warn!("Failed to add block during FullSync: {err}");
