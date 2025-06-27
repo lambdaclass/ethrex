@@ -105,7 +105,7 @@ On L1:
 On L2:
 
 1. The privileged transaction performs a call to `mintERC20` on the `CommonBridgeL2` from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.
-2. The bridge calls `mint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
+2. The bridge calls `crosschainMint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
 3. If the call reverts, the L2 bridge automatically initiates a withdrawal.
 
 Back on L1:
@@ -145,7 +145,7 @@ sequenceDiagram
     CommonBridgeL2->>L2Token: calls l1Address
     L2Token->>CommonBridgeL2: returns address of L1Token
 
-    CommonBridgeL2->>L2Token: calls mint
+    CommonBridgeL2->>L2Token: calls crosschainMint
     L2Token-->>L2Alice: mints 42 tokens
 
     Sequencer->>OnChainProposer: publishes batch

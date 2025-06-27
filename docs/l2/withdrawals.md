@@ -72,7 +72,7 @@ On L2:
 
 1. The user calls `approve` on the L2 tokens to allow the bridge to transfer the asset.
 2. The user sends a transaction calling `withdrawERC20(address _token, address _receiverOnL1, uint256 _value)` on the `CommonBridgeL2` contract.
-3. The bridge calls `burn` on the L2 token, burning the amount to be withdrawn by the user.
+3. The bridge calls `crosschainBurn` on the L2 token, burning the amount to be withdrawn by the user.
 4. The bridge fetches the address of the L1 token by calling `l1Address()` on the L2 token contract.
 5. The bridge calls `sendMessageToL1(bytes32 data)` on the `L2ToL1Messenger` contract, with `data` being:
 
