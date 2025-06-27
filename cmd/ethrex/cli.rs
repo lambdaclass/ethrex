@@ -387,6 +387,7 @@ pub async fn import_blocks(
             ))
         })?;
 
+        println!("Finished adding block {number} with hash {hash:#x}");
         if block_number.is_some() {
             info!("Block {} is already in the blockchain", block.hash());
             continue;

@@ -1,8 +1,5 @@
 use crate::{
-    UpdateBatch,
-    api::StoreEngine,
-    error::StoreError,
-    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    api::StoreEngine, error::StoreError, store::{TrieUpdates, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS}, UpdateBatch
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -14,7 +11,7 @@ use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
@@ -87,34 +84,16 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn apply_trie_updates(&self, _trie_updates: TrieUpdates) -> Result<(), StoreError> {
+        todo!()
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
-        {
-            // store account updates
-            let mut state_trie_store = store
-                .state_trie_nodes
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(node_hash, node_data);
-            }
-        }
 
         // store code updates
         for (hashed_address, code) in update_batch.code_updates {
             store.account_codes.insert(hashed_address, code);
-        }
-
-        for (hashed_address, nodes) in update_batch.storage_updates {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(hashed_address)
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
-            }
         }
 
         for block in update_batch.blocks {
@@ -456,6 +435,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        _dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
@@ -463,7 +443,7 @@ impl StoreEngine for Store {
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+    fn open_state_trie(&self, state_root: H256, _dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError> {
         let trie_backend = self.inner()?.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         Ok(Trie::open(db, state_root))

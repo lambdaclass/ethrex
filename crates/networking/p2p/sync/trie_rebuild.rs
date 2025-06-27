@@ -162,7 +162,7 @@ async fn rebuild_state_trie_segment(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<(H256, H256), SyncError> {
-    let mut state_trie = store.open_state_trie(root)?;
+    let mut state_trie = store.open_state_trie(root, store.dirty_state_nodes.clone())?;
     let mut snapshot_reads_since_last_commit = 0;
     loop {
         if cancel_token.is_cancelled() {

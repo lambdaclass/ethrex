@@ -6,7 +6,7 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
     TriePathsRLP, TupleRLP,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::{TrieUpdates, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -32,10 +32,13 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 pub struct Store {
     db: Arc<Database>,
 }
+
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
@@ -126,24 +129,18 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
             // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            for (node_hash, node_data) in trie_updates.account_updates {
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
-            // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            for (hashed_address, nodes) in update_batch.storage_updates {
+            // store storage updates
+            for (hashed_address, nodes) in trie_updates.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
@@ -152,6 +149,23 @@ impl StoreEngine for Store {
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // store code updates
+            for (hashed_address, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
@@ -622,16 +636,28 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError> {
+        // Convert the dirty_storage_nodes from (H256, NodeHash) to ([u8; 32], NodeHash)
+        let converted_dirty_nodes = {
+            let guard = dirty_storage_nodes.read().unwrap();
+            let mut new_map = HashMap::with_capacity(guard.len());
+            for ((h256_key, node_hash), value) in guard.iter() {
+                new_map.insert((h256_key.0, *node_hash), value.clone());
+            }
+            Arc::new(RwLock::new(new_map))
+        };
+        
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
+            converted_dirty_nodes,
         ));
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
+    fn open_state_trie(&self, state_root: H256, dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError> {
+        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone(), dirty_state_nodes));
         Ok(Trie::open(db, state_root))
     }
 

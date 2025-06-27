@@ -65,7 +65,6 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
     assert_eq!(decoded_block.header, genesis_block_header);
 
     let store = build_store_for_test(test).await;
-
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 

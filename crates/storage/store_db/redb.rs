@@ -1,9 +1,8 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
-
 use crate::rlp::{
     AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP, TriePathsRLP,
 };
-use crate::store::MAX_SNAPSHOT_READS;
+use crate::store::{TrieUpdates, MAX_SNAPSHOT_READS};
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use crate::{
     error::StoreError,
@@ -305,6 +304,10 @@ impl RedBStore {
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
+    async fn apply_trie_updates(&self, _trie_updates: TrieUpdates) -> Result<(), StoreError> {
+        todo!()
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
