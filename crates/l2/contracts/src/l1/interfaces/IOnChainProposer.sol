@@ -82,13 +82,15 @@ interface IOnChainProposer {
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 
-    /// @notice Method used to verify a batch of L2 blocks in Aligned.
-    /// @param alignedPublicInputs The public inputs bytes of the proof.
-    /// @param alignedMerkleProof  The Merkle proof (sibling hashes) needed to reconstruct the Merkle root.
-    function verifyBatchAligned(
-        uint256 batchNumber,
-        bytes calldata alignedPublicInputs,
-        bytes32[] calldata alignedMerkleProof
+    /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
+    /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
+    /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
+    /// @param alignedPublicInputsList An array of public input bytes, one per proof.
+    /// @param alignedMerkleProofsList An array of Merkle proofs (sibling hashes), one per proof.
+    function verifyBatchesAligned(
+        uint256 firstBatchNumber,
+        bytes[] calldata alignedPublicInputsList,
+        bytes32[][] calldata alignedMerkleProofsList
     ) external;
 
     /// @notice Allows unverified batches to be reverted

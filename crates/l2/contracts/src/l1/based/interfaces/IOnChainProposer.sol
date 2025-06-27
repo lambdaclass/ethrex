@@ -84,7 +84,7 @@ interface IOnChainProposer {
     /// @param alignedPublicInputs The public inputs bytes of the proof.
     /// @param alignedProgramVKey The public verifying key.
     /// @param alignedMerkleProof  The Merkle proof (sibling hashes) needed to reconstruct the Merkle root.
-    function verifyBatchAligned(
+    function verifyBatchesAligned(
         uint256 batchNumber,
         bytes calldata alignedPublicInputs,
         bytes32 alignedProgramVKey,
