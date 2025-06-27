@@ -1,4 +1,4 @@
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -16,6 +16,8 @@ use crate::vm::VM;
 
 use super::CacheDB;
 use super::Database;
+use std::collections::HashSet;
+use std::collections::hash_map::Entry;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
@@ -23,6 +25,10 @@ pub struct GeneralizedDatabase {
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: HashMap<Address, Account>,
     pub tx_backup: Option<CallFrameBackup>,
+    /// For keeping track of all destroyed accounts during block execution.
+    /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
+    /// In that scenario we want to remove the previous storage of the account but we still want the account to exist.
+    pub destroyed_accounts: HashSet<Address>,
 }
 
 impl GeneralizedDatabase {
@@ -32,6 +38,7 @@ impl GeneralizedDatabase {
             current_accounts_state: current_accounts_state.clone(),
             initial_accounts_state: current_accounts_state,
             tx_backup: None,
+            destroyed_accounts: HashSet::new(),
         }
     }
 
@@ -40,9 +47,7 @@ impl GeneralizedDatabase {
     /// (caching in the second case)
     pub fn get_account(&mut self, address: Address) -> Result<&Account, InternalError> {
         if !self.current_accounts_state.contains_key(&address) {
-            let account = self.store.get_account(address)?;
-            self.initial_accounts_state.insert(address, account.clone());
-
+            let account = self.get_account_from_database(address)?;
             self.current_accounts_state.insert(address, account);
         }
 
@@ -66,7 +71,17 @@ impl GeneralizedDatabase {
         Ok((account, address_was_cold))
     }
 
-    /// Gets storage slot from Database, storing in Immutable Cache for efficiency when getting AccountUpdates.
+    /// Gets account from storage, storing in initial_accounts_state for efficiency when getting AccountUpdates.
+    pub fn get_account_from_database(
+        &mut self,
+        address: Address,
+    ) -> Result<Account, InternalError> {
+        let account = self.store.get_account(address)?;
+        self.initial_accounts_state.insert(address, account.clone());
+        Ok(account)
+    }
+
+    /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
     pub fn get_value_from_database(
         &mut self,
         address: Address,

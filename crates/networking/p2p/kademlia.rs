@@ -751,6 +751,8 @@ mod tests {
             .collect();
         let mut peer_ids = Vec::new();
 
+        let mut table = get_test_table();
+
         for key in &peer_keys {
             let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, *key);
             table.insert_node(node);
@@ -770,7 +772,7 @@ mod tests {
 
         // Test weighted selection distribution
         let mut selection_counts = [0; 3];
-        for _ in 0..300 {
+        for _ in 0..1000 {
             if let Some(selected) = table.get_peer_with_score_filter(&|_| true) {
                 for (i, &peer_id) in peer_ids.iter().enumerate() {
                     if selected.node.node_id() == peer_id {
