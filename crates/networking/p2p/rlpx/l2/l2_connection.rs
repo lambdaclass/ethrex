@@ -59,7 +59,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         msg: L2Message,
     ) -> Result<(), RLPxError> {
-        self.l2_state.connection_state_mut()?;
+        self.l2_state.connection_state()?;
         match msg {
             L2Message::BatchSealed(ref batch_sealed_msg) => {
                 if self.should_process_batch_sealed(&batch_sealed_msg).await? {
@@ -75,7 +75,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // for now we broadcast valid messages
         self.broadcast_message(msg.into()).await
     }
-    pub async fn send_new_block(&mut self) -> Result<(), RLPxError> {
+    pub async fn l2_periodic_tasks(&mut self) -> Result<(), RLPxError> {
+        let next_block_broadcast = self.l2_state.connection_state()?.next_block_broadcast;
+        let next_batch_broadcast = self.l2_state.connection_state()?.next_batch_broadcast;
+        if Instant::now() >= next_block_broadcast {
+            self.send_new_block().await?;
+            self.l2_state.connection_state_mut()?.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL
+        }
+        if Instant::now() >= next_batch_broadcast {
+            self.send_sealed_batch().await?;
+            self.l2_state.connection_state_mut()?.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
+        }
+        Ok(())
+    }
+    async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         let latest_block_number = self.storage.get_latest_block_number().await?;
         let latest_block_sent = self.l2_state.connection_state_mut()?.latest_block_sent;
         for block_number in latest_block_sent + 1..=latest_block_number {
@@ -142,7 +155,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    pub async fn should_process_new_block(&mut self, msg: &NewBlock) -> Result<bool, RLPxError> {
+    async fn should_process_new_block(&mut self, msg: &NewBlock) -> Result<bool, RLPxError> {
         let l2_state = self.l2_state.connection_state_mut()?;
         if !self.blockchain.is_synced() {
             debug!("Not processing new block, blockchain is not synced");
@@ -238,7 +251,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .await?;
         Ok(true)
     }
-    pub async fn process_new_block(&mut self, msg: &NewBlock) -> Result<(), RLPxError> {
+    async fn process_new_block(&mut self, msg: &NewBlock) -> Result<(), RLPxError> {
         let l2_state = self.l2_state.connection_state_mut()?;
         l2_state
             .blocks_on_queue
@@ -285,7 +298,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    pub async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
+    async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
         let (batch, signature, recovery_id) = {
             let l2_state = self.l2_state.connection_state_mut()?;
             let next_batch_to_send = l2_state.latest_batch_sent + 1;

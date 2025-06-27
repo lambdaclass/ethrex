@@ -463,16 +463,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
         };
         if self.l2_state.connection_state().is_ok() {
-            let next_block_broadcast = self.l2_state.connection_state()?.next_block_broadcast;
-            let next_batch_broadcast = self.l2_state.connection_state()?.next_batch_broadcast;
-            if Instant::now() >= next_block_broadcast {
-                self.send_new_block().await?;
-                self.l2_state.connection_state_mut()?.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL
-            }
-            if Instant::now() >= next_batch_broadcast {
-                self.send_sealed_batch().await?;
-                self.l2_state.connection_state_mut()?.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
-            }
+            self.l2_periodic_tasks().await?;
         }
         Ok(())
     }
