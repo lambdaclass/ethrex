@@ -42,7 +42,7 @@ serde_with = "3.11.0"
 spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha" }
 spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha" }
 lazy_static.workspace = true
-aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag="v0.16.1" }
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
 ethers = "2.0"
 cfg-if.workspace = true
 
@@ -65,4 +65,4 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics", "ethrex-metrics/l2"]
-l2 = ["ethrex-blockchain/l2", "ethrex-vm/l2", "zkvm_interface/l2"]
+l2 = ["ethrex-blockchain/l2", "zkvm_interface/l2"]

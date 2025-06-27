@@ -26,7 +26,7 @@ use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,6 +45,13 @@ use ethrex_common::types::BlobsBundle;
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
+#[derive(Debug, Clone, Default)]
+pub enum BlockchainType {
+    #[default]
+    L1,
+    L2,
+}
+
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
@@ -54,6 +61,7 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+    pub r#type: BlockchainType,
 }
 
 #[derive(Debug, Clone)]
@@ -62,12 +70,13 @@ pub struct BatchBlockProcessingFailure {
     pub failed_block_hash: H256,
 }
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
+    pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+            r#type: blockchain_type,
         }
     }
 
@@ -77,6 +86,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+            r#type: BlockchainType::default(),
         }
     }
 
@@ -98,7 +108,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.new_evm(vm_db)?;
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -170,7 +180,10 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
-            let mut vm = Evm::new_from_db(logger.clone());
+            let mut vm = match self.r#type {
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+            };
 
             // Re-execute block with logger
             vm.execute_block(block)?;
@@ -446,7 +459,7 @@ impl Blockchain {
             first_block_header.parent_hash,
             block_hash_cache,
         );
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
@@ -781,6 +794,14 @@ impl Blockchain {
         };
 
         Ok(result)
+    }
+
+    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+        let evm = match self.r#type {
+            BlockchainType::L1 => Evm::new_for_l1(self.evm_engine, vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
+        };
+        Ok(evm)
     }
 }
 

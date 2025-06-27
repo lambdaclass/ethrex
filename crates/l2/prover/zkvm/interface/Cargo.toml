@@ -34,7 +34,7 @@ methods = ["risc0"]
 default = []
 risc0 = ["dep:risc0-build"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
-l2 = ["ethrex-vm/l2"]
+l2 = []
 
 [lib]
 path = "./src/lib.rs"

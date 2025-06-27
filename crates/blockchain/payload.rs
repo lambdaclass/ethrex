@@ -30,7 +30,7 @@ use ethrex_metrics::metrics;
 use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
 
 use crate::{
-    Blockchain,
+    Blockchain, BlockchainType,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
@@ -185,7 +185,12 @@ pub struct PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
-    pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
+    pub fn new(
+        payload: Block,
+        evm_engine: EvmEngine,
+        storage: &Store,
+        blockchain_type: BlockchainType,
+    ) -> Result<Self, EvmError> {
         let config = storage
             .get_chain_config()
             .map_err(|e| EvmError::DB(e.to_string()))?;
@@ -198,7 +203,10 @@ impl PayloadBuildContext {
         );
 
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
-        let vm = Evm::new(evm_engine, vm_db);
+        let vm = match blockchain_type {
+            BlockchainType::L1 => Evm::new_for_l1(evm_engine, vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(evm_engine, vm_db)?,
+        };
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -276,10 +284,12 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
+        let mut context =
+            PayloadBuildContext::new(payload, self.evm_engine, &self.storage, self.r#type.clone())?;
 
-        #[cfg(not(feature = "l2"))]
-        self.apply_system_operations(&mut context)?;
+        if let BlockchainType::L1 = self.r#type {
+            self.apply_system_operations(&mut context)?;
+        }
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;

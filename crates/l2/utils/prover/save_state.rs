@@ -394,7 +394,7 @@ pub fn batch_number_has_all_needed_proofs(
 #[allow(clippy::expect_used)]
 mod tests {
     use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
-    use ethrex_levm::db::gen_db::GeneralizedDatabase;
+    use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         DynVmDatabase,
@@ -459,7 +459,7 @@ mod tests {
             let store: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(in_memory_db.clone(), block.hash()));
             let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
-            LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
+            LEVM::execute_block(blocks.last().unwrap(), &mut db, VMType::L2)?;
             let account_updates = LEVM::get_state_transitions(&mut db)?;
 
             account_updates_vec.push(account_updates.clone());

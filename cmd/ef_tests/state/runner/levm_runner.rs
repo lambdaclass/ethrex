@@ -16,7 +16,7 @@ use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
-    vm::VM,
+    vm::{VM, VMType},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
@@ -201,6 +201,7 @@ pub fn prepare_vm_for_tx<'a>(
         db,
         &tx,
         LevmCallTracer::disabled(),
+        VMType::L1, // TODO: Should be run the EF tests with L2?
     ))
 }
 
