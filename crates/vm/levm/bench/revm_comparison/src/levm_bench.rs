@@ -80,5 +80,5 @@ fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1) // TODO: Should we support this for L2?
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
 }
