@@ -380,23 +380,9 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    let base_size = U256::from_big_endian(
-        calldata
-            .get(0..32)
-            .ok_or(PrecompileError::ParsingInputError)?,
-    );
-
-    let exponent_size = U256::from_big_endian(
-        calldata
-            .get(32..64)
-            .ok_or(PrecompileError::ParsingInputError)?,
-    );
-
-    let modulus_size = U256::from_big_endian(
-        calldata
-            .get(64..96)
-            .ok_or(PrecompileError::ParsingInputError)?,
-    );
+    let base_size = U256::from_big_endian(calldata.get(0..32).ok_or(InternalError::Slicing)?);
+    let exponent_size = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    let modulus_size = U256::from_big_endian(calldata.get(64..96).ok_or(InternalError::Slicing)?);
 
     if base_size == U256::zero() && modulus_size == U256::zero() {
         // On Berlin or newer there is a floor cost for the modexp precompile
@@ -506,21 +492,11 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let calldata = fill_with_zeros(calldata, 128);
 
     increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
-    let first_point_x = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
 
-    let first_point_y = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    let second_point_x = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    let second_point_y = calldata
-        .get(96..128)
-        .ok_or(PrecompileError::ParsingInputError)?;
+    let first_point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let first_point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
+    let second_point_x = calldata.get(64..96).ok_or(InternalError::Slicing)?;
+    let second_point_y = calldata.get(96..128).ok_or(InternalError::Slicing)?;
 
     // If points are zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
@@ -583,19 +559,11 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
 
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let point_x = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
+    let point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
+    let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
 
-    let point_y = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    let scalar = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let scalar =
-        element::U256::from_bytes_be(scalar).map_err(|_| PrecompileError::ParsingInputError)?;
+    let scalar = element::U256::from_bytes_be(scalar).map_err(|_| InternalError::Slicing)?;
 
     // If point is zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
@@ -605,10 +573,8 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
 
-    let point_x = BN254FieldElement::from_bytes_be(point_x)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let point_y = BN254FieldElement::from_bytes_be(point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let point_x = BN254FieldElement::from_bytes_be(point_x).map_err(|_| InternalError::Slicing)?;
+    let point_y = BN254FieldElement::from_bytes_be(point_y).map_err(|_| InternalError::Slicing)?;
 
     let point = BN254Curve::create_point_from_affine(point_x, point_y)
         .map_err(|_| PrecompileError::ParsingInputError)?;
@@ -1577,21 +1543,11 @@ pub fn p_256_verify(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     let calldata = fill_with_zeros(calldata, 160);
 
     // Parse parameters
-    let message_hash = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let r = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let s = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let x = calldata
-        .get(96..128)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let y = calldata
-        .get(128..160)
-        .ok_or(PrecompileError::ParsingInputError)?;
+    let message_hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let r = calldata.get(32..64).ok_or(InternalError::Slicing)?;
+    let s = calldata.get(64..96).ok_or(InternalError::Slicing)?;
+    let x = calldata.get(96..128).ok_or(InternalError::Slicing)?;
+    let y = calldata.get(128..160).ok_or(InternalError::Slicing)?;
 
     if !validate_p256_parameters(r, s, x, y)? {
         return Ok(Bytes::new());
