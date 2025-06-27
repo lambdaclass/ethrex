@@ -1,21 +1,7 @@
-# ##############################################################################
-#
-# L2 Makefile
-#
-# This Makefile provides a streamlined interface for managing the L2 development
-# environment. It supports running services via Docker Compose or directly on
-# the host machine.
-#
-# ##############################################################################
-
-.DEFAULT_GOAL := help
-
 # ==============================================================================
 # Configuration
 # ==============================================================================
 
-# If a .env file exists, include it. This allows for easy local configuration.
-# For example, you can set L1_RPC_URL or other variables in a .env file.
 -include .env
 
 # Export all variables prefixed with ETHREX_ so they are available to sub-processes.
@@ -27,7 +13,7 @@ ETHREX_PATH ?= $(shell pwd)/../..
 ETHREX_BIN_PATH ?= $(ETHREX_PATH)/target/release/ethrex
 L1_DOCKER_COMPOSE ?= $(ETHREX_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
 L2_DOCKER_COMPOSE ?= ./docker-compose-l2.yaml
-PROVER_DOCKER_COMPOSE ?= ./docker-compose-prover.yaml # Assumed, to be created later
+# PROVER_DOCKER_COMPOSE ?= ./docker-compose-prover.yaml # TODO
 
 # L1 Configuration
 L1_GENESIS_FILE_PATH ?= ../../test_data/genesis-l1-dev.json
@@ -57,72 +43,65 @@ PROVER_LOG_LEVEL ?= debug
 
 .PHONY: help up down clean build
 
-help: ## 📚 Show help for each of the Makefile recipes
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+help: ## Show help for each of the Makefile recipes
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-up: up-l1-docker up-l2-docker ## 🚀 Start L1 and L2 services using Docker Compose.
+up: up-l1-docker up-l2-docker ## Start L1 and L2 services using Docker Compose.
 
-down: down-l1-docker down-l2-docker ## 🛑 Stop all Docker Compose services.
+down: down-l1-docker down-l2-docker ## Stop all Docker Compose services.
 
-clean: ## 🧹 Clean up project files.
-	@echo "Cleaning up..."
-	@echo "Clean complete."
-
-build: build-ethrex build-prover ## 🏗️ Build ethrex and prover binaries.
+build: build-ethrex build-prover ## Build ethrex and prover binaries.
 
 build-ethrex:
 	@echo "Building ethrex binary..."
 	@cargo build --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics,dev"
 
 build-prover:
-	@echo "Building prover binary..."
+	@echo "Building prover..."
 	@if [ -z "$(PROVER)" ]; then \
-		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
-		echo "Please provide it as an argument:"; \
-		echo "make build-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
-		echo "The prover can also be run with GPU (G)"; \
-		exit 1; \
-	fi;
-	@if [ -z "$$G" ]; then \
-		GPU=""; \
+		FEATURES="l2"; \
 	else \
-		GPU=",gpu"; \
-	fi;
+		FEATURES="$(PROVER),l2"; \
+	fi; \
 	RUSTFLAGS='-C target-cpu=native' \
-	cargo build --release --features "$$PROVER$$GPU,l2" \
-	--manifest-path ./prover/Cargo.toml  \
-	--bin ethrex_prover
+	cargo build --release --features "$$FEATURES" \
+		--manifest-path ./prover/Cargo.toml \
+		--bin ethrex_prover
+
+build-prover-gpu:
+	@if [ -z "$(PROVER)" ]; then \
+		echo "Error: PROVER is not set. Please specify a prover type for GPU build."; \
+		echo "Usage: make build-prover-gpu PROVER=<risc0|sp1>"; \
+		exit 1; \
+	fi
+	@echo "Building prover with features: $(PROVER),gpu,l2"
+	RUSTFLAGS='-C target-cpu=native' \
+	cargo build --release --features "$(PROVER),gpu,l2" \
+		--manifest-path ./prover/Cargo.toml \
+		--bin ethrex_prover
 
 
 # ==============================================================================
 # Docker Compose Targets
 # ==============================================================================
 
-.PHONY: up-l1-docker down-l1-docker up-l2-docker down-l2-docker up-prover-docker down-prover-docker
+.PHONY: up-l1-docker down-l1-docker up-l2-docker down-l2-docker
 
-up-l1-docker: ## 🐳 Start L1 in Docker.
+up-l1-docker: ## Start L1 in Docker.
 	@echo "Starting L1 Docker container..."
 	@docker compose -f $(L1_DOCKER_COMPOSE) up -d
 
-down-l1-docker: ## 🐳 Stop L1 in Docker.
+down-l1-docker: ## Stop L1 in Docker.
 	@echo "Stopping L1 Docker container..."
 	@docker compose -f $(L1_DOCKER_COMPOSE) down
 
-up-l2-docker: ## 🐳 Start L2 in Docker.
+up-l2-docker: ## Start L2 in Docker.
 	@echo "Starting L2 Docker container..."
 	@docker compose -f $(L2_DOCKER_COMPOSE) up -d
 
-down-l2-docker: ## 🐳 Stop L2 in Docker.
+down-l2-docker: ## Stop L2 in Docker.
 	@echo "Stopping L2 Docker container..."
 	@docker compose -f $(L2_DOCKER_COMPOSE) down
-
-up-prover-docker: ## 🐳 Start Prover in Docker.
-	@echo "Starting Prover Docker container..."
-	@docker compose -f $(PROVER_DOCKER_COMPOSE) up -d
-
-down-prover-docker: ## 🐳 Stop Prover in Docker.
-	@echo "Stopping Prover Docker container..."
-	@docker compose -f $(PROVER_DOCKER_COMPOSE) down
 
 
 # ==============================================================================
@@ -131,7 +110,7 @@ down-prover-docker: ## 🐳 Stop Prover in Docker.
 
 .PHONY: run-l1-host run-l2-host run-prover-host
 
-run-l1-host: ## 🏃 Run L1 node on the host.
+run-l1-host: ## Run L1 node on the host.
 	@echo "Starting L1 on host..."
 	@cargo run --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex --features "dev" -- \
 		--network $(L1_GENESIS_FILE_PATH) \
@@ -141,7 +120,7 @@ run-l1-host: ## 🏃 Run L1 node on the host.
 		--dev \
 		--datadir $(ETHREX_L1_DEV_LIBMDBX)
 
-run-l2-host: ## 🏃 Run L2 node on the host.
+run-l2-host: ## Run L2 node on the host.
 	@echo "Starting L2 on host..."
 	@cargo run --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
 	l2 init \
@@ -161,7 +140,7 @@ run-l2-host: ## 🏃 Run L2 node on the host.
 	--proof-coordinator.l1-private-key $$ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY \
 	--proof-coordinator.addr $(PROOF_COORDINATOR_ADDRESS)
 
-run-prover-host: ## 🏃 Run Prover on the host.
+run-prover-host: ## Run Prover on the host.
 	@echo "Starting Prover on host..."
 	@$(ETHREX_PATH)/target/release/ethrex_prover \
 	--http.addr $(PROVER_HTTP_ADDR) \
