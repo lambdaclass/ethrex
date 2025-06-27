@@ -98,7 +98,7 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 render-benches:
-	python ./bench/revm_comparison/create_bench_page.py > report.html
+	python3 ./bench/revm_comparison/create_bench_page.py > report.html
 
 flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
