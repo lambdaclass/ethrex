@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
 use ethrex_common::{
-    H160,
+    H160, U256,
     types::{Receipt, Transaction},
 };
 use keccak_hash::keccak;
@@ -23,6 +23,8 @@ pub struct L1Message {
     pub from: Address,
     /// Hash of the data given to the L1Messenger
     pub data_hash: H256,
+    /// Message id emitted by the bridge contract
+    pub message_id: U256,
 }
 
 impl L1Message {
@@ -31,6 +33,7 @@ impl L1Message {
         bytes.extend_from_slice(&self.tx_hash.0);
         bytes.extend_from_slice(&self.from.to_fixed_bytes());
         bytes.extend_from_slice(&self.data_hash.0);
+        bytes.extend_from_slice(&self.message_id.to_big_endian());
         bytes
     }
 }
@@ -48,7 +51,7 @@ pub fn get_block_l1_message_hashes(txs: &[Transaction], receipts: &[Receipt]) ->
 
 pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L1Message> {
     static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
-        LazyLock::new(|| keccak("L1Message(address,bytes32)".as_bytes()));
+        LazyLock::new(|| keccak("L1Message(address,bytes32,uint256)".as_bytes()));
 
     receipts
         .iter()
@@ -65,6 +68,7 @@ pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L
                     Some(L1Message {
                         from: Address::from_slice(&log.topics.get(1)?.0[12..32]),
                         data_hash: *log.topics.get(2)?,
+                        message_id: U256::from_big_endian(&log.topics.get(3)?.to_fixed_bytes()),
                         tx_hash: tx.compute_hash(),
                     })
                 })

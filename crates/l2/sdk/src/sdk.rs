@@ -203,7 +203,7 @@ pub async fn claim_withdraw(
         )),
         Value::Uint(amount),
         Value::Uint(message_proof.batch_number.into()),
-        Value::Uint(U256::from(message_proof.index)),
+        Value::Uint(message_proof.message_id),
         Value::Array(
             message_proof
                 .merkle_proof

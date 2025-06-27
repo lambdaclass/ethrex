@@ -9,7 +9,8 @@ use crate::{
 };
 
 use ethrex_l2_common::{
-    l1_messages::get_block_l1_message_hashes, merkle_tree::compute_merkle_proof,
+    l1_messages::{get_block_l1_messages, get_l1_message_hash},
+    merkle_tree::compute_merkle_proof,
 };
 
 pub struct GetL1MessageProof {
@@ -59,7 +60,11 @@ impl RpcHandler for GetL1MessageProof {
         };
 
         // Gets the message hashes from the transaction
-        let tx_message_hashes = get_block_l1_message_hashes(&[tx], &[tx_receipt]);
+        let tx_messages = get_block_l1_messages(&[tx], &[tx_receipt]);
+        let tx_message_hashes = tx_messages
+            .iter()
+            .map(get_l1_message_hash)
+            .collect::<Vec<_>>();
 
         // Gets the batch number for the block
         let batch_number = match context
@@ -83,9 +88,16 @@ impl RpcHandler for GetL1MessageProof {
 
         let mut proofs = vec![];
         for (index, message_hash) in batch_message_hashes.iter().enumerate() {
-            if !tx_message_hashes.contains(message_hash) {
+            let Some(message_idx) = tx_message_hashes
+                .iter()
+                .position(|hash| hash == message_hash)
+            else {
                 continue;
-            }
+            };
+
+            let Some(message) = tx_messages.get(message_idx) else {
+                continue;
+            };
 
             // Calculates the merkle proof of the batch
             let Some(path) = compute_merkle_proof(&batch_message_hashes, index) else {
@@ -94,7 +106,7 @@ impl RpcHandler for GetL1MessageProof {
 
             let proof = L1MessageProof {
                 batch_number,
-                index,
+                message_id: message.message_id,
                 message_hash: *message_hash,
                 merkle_proof: path,
             };
