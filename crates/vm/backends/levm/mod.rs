@@ -17,7 +17,6 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
@@ -138,32 +137,6 @@ impl LEVM {
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
 
         vm.execute().map_err(VMError::into)
-    }
-
-    pub fn execute_tx_l2(
-        // The transaction to execute.
-        tx: &Transaction,
-        // The transactions recovered address
-        tx_sender: Address,
-        // The block header for the current block.
-        block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
-    ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), VMType::L2);
-
-        let report_result = vm.execute().map_err(EvmError::from)?;
-
-        // Here we differ from the execute_tx function from the L1.
-        // We need to check if the transaction exceeded the blob size limit.
-        // If it did, we need to revert the state changes made by the transaction and return the error.
-        let call_frame_backup = vm
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CallFrame))?
-            .call_frame_backup;
-
-        Ok((report_result, call_frame_backup))
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
