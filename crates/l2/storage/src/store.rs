@@ -276,11 +276,11 @@ impl Store {
     pub async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .update_operations_count(transaction_inc, deposits_inc, messages_inc)
+            .update_operations_count(transaction_inc, privileged_tx_inc, messages_inc)
             .await
     }
 

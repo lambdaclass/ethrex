@@ -182,12 +182,12 @@ impl StoreEngineRollup for Store {
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         let mut values = self.inner()?.operations_counts;
         values[0] += transaction_inc;
-        values[1] += deposits_inc;
+        values[1] += privileged_tx_inc;
         values[2] += messages_inc;
         Ok(())
     }

@@ -17,7 +17,9 @@ use ethrex_l2_common::{
     calldata::Value,
     deposits::{compute_deposit_logs_hash, get_block_deposits},
     l1_messages::{compute_merkle_root, get_block_l1_messages, get_l1_message_hash},
-    privileged_transactions::{compute_privileged_transactions_hash, get_block_deposits},
+    privileged_transactions::{
+        compute_privileged_transactions_hash, get_block_privileged_transactions,
+    },
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
@@ -274,7 +276,7 @@ async fn prepare_batch_from_block(
     let mut blobs_bundle = BlobsBundle::default();
 
     let mut acc_messages = vec![];
-    let mut acc_deposits = vec![];
+    let mut acc_privileged_txs = vec![];
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut message_hashes = vec![];
     let mut privileged_transactions_hashes = vec![];
@@ -328,9 +330,9 @@ async fn prepare_batch_from_block(
                 .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
                 .unwrap_or(0)
         );
-        // Get block messages and deposits
+        // Get block messages and privileged transactions
         let messages = get_block_l1_messages(&txs, &receipts);
-        let deposits = get_block_deposits(&txs);
+        let privileged_transactions = get_block_privileged_transactions(&txs);
 
         // Get block account updates.
         let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
@@ -355,7 +357,7 @@ async fn prepare_batch_from_block(
 
         // Accumulate block data with the rest of the batch.
         acc_messages.extend(messages.clone());
-        acc_deposits.extend(deposits.clone());
+        acc_privileged_txs.extend(privileged_transactions.clone());
         for account in account_updates {
             let address = account.address;
             if let Some(existing) = acc_account_updates.get_mut(&address) {
@@ -380,7 +382,7 @@ async fn prepare_batch_from_block(
                 block_to_commit_header,
                 &parent_db,
                 &acc_messages,
-                &acc_deposits,
+                &acc_privileged_txs,
                 acc_account_updates.clone().into_values().collect(),
             )?;
             generate_blobs_bundle(&state_diff)
@@ -401,9 +403,9 @@ async fn prepare_batch_from_block(
         _blob_size = latest_blob_size;
 
         privileged_transactions_hashes.extend(
-            deposits
+            privileged_transactions
                 .iter()
-                .filter_map(|tx| tx.get_deposit_hash())
+                .filter_map(|tx| tx.get_privileged_hash())
                 .collect::<Vec<H256>>(),
         );
 
@@ -418,13 +420,13 @@ async fn prepare_batch_from_block(
         last_added_block_number += 1;
     }
 
-    metrics!(if let (Ok(deposits_count), Ok(messages_count)) = (
+    metrics!(if let (Ok(privileged_transaction_count), Ok(messages_count)) = (
             privileged_transactions_hashes.len().try_into(),
             message_hashes.len().try_into()
         ) {
             let _ = state
                 .rollup_store
-                .update_operations_count(tx_count, deposits_count, messages_count)
+                .update_operations_count(tx_count, privileged_transaction_count, messages_count)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("Failed to update operations metric: {}", e.to_string())

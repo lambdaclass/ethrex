@@ -56,7 +56,7 @@ pub struct ProgramOutput {
     /// merkle root of all messages in a batch
     pub l1messages_merkle_root: H256,
     #[cfg(feature = "l2")]
-    /// hash of all the deposit logs made in a batch
+    /// hash of all the privileged transactions made in a batch
     pub privileged_transactions_hash: H256,
     #[cfg(feature = "l2")]
     /// blob commitment versioned hash

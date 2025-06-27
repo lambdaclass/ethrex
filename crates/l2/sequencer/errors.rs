@@ -5,7 +5,7 @@ use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::l1_messages::L1MessagingError;
-use ethrex_l2_common::privileged_transactions::DepositError;
+use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
@@ -237,8 +237,8 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
-    #[error("Deposit error: {0}")]
-    DepositError(#[from] DepositError),
+    #[error("Privileged Transaction error: {0}")]
+    PrivilegedTransactionError(#[from] PrivilegedTransactionError),
     #[error("L1Message error: {0}")]
     L1MessageError(#[from] L1MessagingError),
     #[error("Spawned GenServer Error")]

@@ -75,7 +75,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(OperationsCount),
         table_info!(BlobsBundles),
         table_info!(StateRoots),
-        table_info!(DepositLogsHash),
+        table_info!(PrivilegedTransactionsHash),
         table_info!(LastSentBatchProof),
         table_info!(AccountUpdatesByBlockNumber),
         table_info!(BatchProofs),
@@ -165,7 +165,7 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
         privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError> {
-        self.write::<DepositLogsHash>(
+        self.write::<PrivilegedTransactionsHash>(
             batch_number,
             Rlp::from_bytes(privileged_transactions_hash.encode_to_vec()),
         )
@@ -177,7 +177,7 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
-            .read::<DepositLogsHash>(batch_number)
+            .read::<PrivilegedTransactionsHash>(batch_number)
             .await?
             .map(|hash| hash.to()))
     }
@@ -231,14 +231,14 @@ impl StoreEngineRollup for Store {
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
-        let (transaction_count, messages_count, deposits_count) = {
+        let (transaction_count, messages_count, privileged_tx_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
-                current_operations[1] + deposits_inc,
+                current_operations[1] + privileged_tx_inc,
                 current_operations[2] + messages_inc,
             )
         };
@@ -246,7 +246,7 @@ impl StoreEngineRollup for Store {
         self.write::<OperationsCount>(
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, privileged_tx_count].encode_to_vec(),
             ),
         )
         .await
@@ -335,7 +335,7 @@ impl StoreEngineRollup for Store {
         delete_starting_at::<BatchesByBlockNumber>(&txn, last_kept_block + 1)?;
         delete_starting_at::<MessageHashesByBatch>(&txn, batch_number + 1)?;
         delete_starting_at::<BlockNumbersByBatch>(&txn, batch_number + 1)?;
-        delete_starting_at::<DepositLogsHash>(&txn, batch_number + 1)?;
+        delete_starting_at::<PrivilegedTransactionsHash>(&txn, batch_number + 1)?;
         delete_starting_at::<StateRoots>(&txn, batch_number + 1)?;
         delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
         txn.commit().map_err(RollupStoreError::LibmdbxError)?;
@@ -372,7 +372,7 @@ table!(
 );
 
 table!(
-    /// Transaction, deposits, messages count
+    /// Transaction, privileged transaction, messages count
     ( OperationsCount ) u64 => OperationsCountRLP
 );
 
@@ -387,8 +387,8 @@ table!(
 );
 
 table!(
-    /// Deposit logs hash by batch number
-    ( DepositLogsHash ) u64 => Rlp<H256>
+    /// Privileged transactions hash by batch number
+    ( PrivilegedTransactionsHash ) u64 => Rlp<H256>
 );
 
 table!(

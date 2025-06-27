@@ -31,7 +31,7 @@ const BLOB_BUNDLES: TableDefinition<u64, Rlp<Vec<Blob>>> = TableDefinition::new(
 const STATE_ROOTS: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("StateRoots");
 
 const PRIVILEGED_TRANSACTIONS_HASHES: TableDefinition<u64, Rlp<H256>> =
-    TableDefinition::new("DepositLogsHashes");
+    TableDefinition::new("PrivilegedTransactionHashes");
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
 
@@ -265,15 +265,15 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
-        let (transaction_count, messages_count, deposits_count) = {
+        let (transaction_count, messages_count, privileged_tx_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
                 current_operations[1] + messages_inc,
-                current_operations[2] + deposits_inc,
+                current_operations[2] + privileged_tx_inc,
             )
         };
 
@@ -281,7 +281,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             OPERATIONS_COUNTS,
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, privileged_tx_count].encode_to_vec(),
             ),
         )
         .await

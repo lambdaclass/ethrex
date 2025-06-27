@@ -25,7 +25,7 @@ impl Debug for SQLStore {
 const DB_SCHEMA: [&str; 11] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, deposit_hash BLOB)",
+    "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE account_updates (block_number INT PRIMARY KEY, updates BLOB)",
@@ -538,7 +538,7 @@ mod tests {
                 ("messages", "idx") => "INT",
                 ("messages", "message_hash") => "BLOB",
                 ("privileged_transactions", "batch") => "INT",
-                ("privileged_transactions", "deposit_hash") => "BLOB",
+                ("privileged_transactions", "transactions_hash") => "BLOB",
                 ("state_roots", "batch") => "INT",
                 ("state_roots", "state_root") => "BLOB",
                 ("blob_bundles", "batch") => "INT",
