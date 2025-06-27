@@ -453,6 +453,14 @@ impl Blockchain {
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
+        let progress_marks = [
+            blocks_len / 5,
+            2 * blocks_len / 5,
+            3 * blocks_len / 5,
+            4 * blocks_len / 5,
+            blocks_len - 1,
+        ];
+
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
             if cancellation_token.is_cancelled() {
@@ -484,10 +492,15 @@ impl Blockchain {
                             failed_block_hash: block.hash(),
                             last_valid_hash,
                         }),
+                    ))
+                }
+            };
+            progress_marks
+                .iter()
+                .position(|val| *val == i)
+                .inspect(|pos| info!("Processed {}% of current batch", (pos + 1) * 20));
                     )
                 })?;
-
-            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
