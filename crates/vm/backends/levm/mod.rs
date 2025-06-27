@@ -283,6 +283,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "beacon_root_contract_call should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let beacon_root = match block_header.parent_beacon_block_root {
             None => {
                 return Err(EvmError::Header(
@@ -308,6 +314,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "process_block_hash_history should not be called for L2 VM".to_string(),
+            ));
+        }
+
         generic_system_contract_levm(
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
@@ -323,6 +335,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "read_withdrawal_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
@@ -351,11 +369,18 @@ impl LEVM {
             ))),
         }
     }
+
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "dequeue_consolidation_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
@@ -505,15 +530,16 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
     vm_type: VMType,
 ) -> Result<Vec<Requests>, EvmError> {
+    if let VMType::L2 = vm_type {
+        return Err(EvmError::InvalidEVM(
+            "extract_all_requests_levm should not be called for L2 VM".to_string(),
+        ));
+    }
+
     let chain_config = db.store.get_chain_config()?;
     let fork = chain_config.fork(header.timestamp);
 
     if fork < Fork::Prague {
-        return Ok(Default::default());
-    }
-
-    // TODO: I don't like deciding the behavior based on the VMType here.
-    if let VMType::L2 = vm_type {
         return Ok(Default::default());
     }
 
