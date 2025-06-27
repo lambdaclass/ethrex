@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750978466067,
+  "lastUpdate": 1751042645365,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1739,6 +1739,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208858247765,
             "range": "± 755486195",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b584bcc7e51507e5c943305e8d63dfc9f6f7ec68",
+          "message": "refactor(l1, l2): remove `l2` feature flag from `rpc` crate (first proposal) [RFC] (#3330)\n\n**Motivation**\n\nThe main goal is to decouple L2 logic from the crate `rpc`. \n\nThis PR proposes an initial solution to this.\n\n**Description**\n\nThis solution extends `ethrex-rpc` by wrapping it where needed, and\nadding new data structures. I think a better solution can be achieved\nfrom this one.\n\n- Adds `ethrex-l2-rpc` crate in `crates/l2/networking/rpc`.\n- Moves L2 logic from `ethrex-rpc` to `ethrex-l2-rpc`.\n- Refactors some functions in `ethrex-rpx` to be reusable in\n`ethrex-l2-rpc`.\n- Exposes some functions and types from `ethrex-rpc`.\n- Updates `cmd/ethrex` with this changes and moves L2 initializers from\n`cmd/ethrex/initializers.rs` to `cmd/ethrex/l2/initializers.rs`.\n\n**Pros and Cons**\n\n| Pros | Cons|\n| --- | --- |\n| L2 logic is decoupled from `ethrex-rpc` | L2 logic is decoupled from\n`ethrex-rpc` by wrapping `ethrex-rpc` functions and duplicating some\ntypes to extend them |\n| `ethrex-rpc` logic is reused by `ethrex-l2-rpc` | Some types and\nfunctions were exposed in `ethrex-rpc` public API |\n\nDespite the cons, this could be an acceptable first iteration to a\nproper solution as this implementation highlights somehow which parts of\nthe rpc crate need to be abstracted.\n\n**Next Steps**\n\n- Remove `l2` feature flag from `cmd/ethrex`.\n- Move `crates/networking/rpc/clients` module.\n- Cleanup `ethrex-rpc` public API.\n- The next iteration should include an more general abstraction of the\nRPC API implementation so it can be extended organically instead of by\nwrapping it.",
+          "timestamp": "2025-06-27T15:44:41Z",
+          "tree_id": "b6aa69359a73072b97acca21d9c2daa7abe8b880",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b584bcc7e51507e5c943305e8d63dfc9f6f7ec68"
+        },
+        "date": 1751042636898,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210953905193,
+            "range": "± 534112181",
             "unit": "ns/iter"
           }
         ]
