@@ -102,20 +102,15 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
-        println!("[Blockchain::execute_block] pre-execution validated block");
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = Evm::new(self.evm_engine, vm_db);
-        println!("[Blockchain::execute_block] created vm");
         let execution_result = vm.execute_block(block)?;
-        println!("[Blockchain::execute_block] get state transitions");
         let account_updates = vm.get_state_transitions()?;
-        println!("[Blockchain::execute_block] executed block");
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
-        println!("[Blockchain::execute_block] validated block");
 
         Ok((execution_result, account_updates))
     }
@@ -387,13 +382,10 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        println!("adding blocks");
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
-        println!("executed block");
         let executed = Instant::now();
         let result = self.store_block(block, res, &updates).await;
-        println!("stored block");
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
         result

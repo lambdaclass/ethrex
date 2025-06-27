@@ -674,7 +674,6 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        println!("[Store::get_storage_at_hash] block_hash: {:?}", block_hash);
         // Fall back to database lookup
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);

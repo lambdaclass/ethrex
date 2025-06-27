@@ -35,9 +35,7 @@ where
         }
 
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        println!("[LibmdbxTrieDB::get] key: {:?}", key);
         let node = txn.get::<T>(key).map_err(TrieError::DbError)?;
-        println!("[LibmdbxTrieDB::get] node: {:?}", node);
         Ok(node)
     }
 

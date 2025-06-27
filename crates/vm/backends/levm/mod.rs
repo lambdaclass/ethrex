@@ -45,10 +45,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
     ) -> Result<BlockExecutionResult, EvmError> {
-        println!("[LEVM::execute_block] block: {:?}", block);
         Self::prepare_block(block, db)?;
-
-        println!("[LEVM::execute_block] block prepared");
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
