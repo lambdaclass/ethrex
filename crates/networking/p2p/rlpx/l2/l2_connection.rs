@@ -55,7 +55,7 @@ fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    pub async fn handle_based_capability_message(
+    pub(crate) async fn handle_based_capability_message(
         &mut self,
         msg: L2Message,
     ) -> Result<(), RLPxError> {
@@ -75,7 +75,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // for now we broadcast valid messages
         self.broadcast_message(msg.into()).await
     }
-    pub async fn l2_periodic_tasks(&mut self) -> Result<(), RLPxError> {
+    pub(crate) async fn l2_periodic_tasks(&mut self) -> Result<(), RLPxError> {
         let next_block_broadcast = self.l2_state.connection_state()?.next_block_broadcast;
         let next_batch_broadcast = self.l2_state.connection_state()?.next_batch_broadcast;
         if Instant::now() >= next_block_broadcast {
