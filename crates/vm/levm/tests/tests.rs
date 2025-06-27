@@ -59,7 +59,8 @@ fn p_256_verify_test() {
     for test in tests {
         let calldata = hex::decode(&test.input).unwrap();
         let calldata = Bytes::from(calldata);
-        let mut remaining_gas = 10000;
+        let initial_remaining_gas = 10000;
+        let mut remaining_gas = initial_remaining_gas;
         let result = p_256_verify(&calldata, &mut remaining_gas).unwrap();
         let expected_result = Bytes::from(hex::decode(&test.expected).unwrap());
         assert_eq!(
@@ -68,7 +69,8 @@ fn p_256_verify_test() {
             test.name
         );
         assert_eq!(
-            remaining_gas, test.gas,
+            initial_remaining_gas - remaining_gas,
+            test.gas,
             "Gas assertion failed on test: {}.",
             test.name
         );
