@@ -426,12 +426,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     match message {
                         Ok(message) => {
                             log_peer_debug(&self.node, &format!("Received message {}", message));
-                            self.handle_message(message, sender.clone()).await.inspect_err(|e| {log_peer_error(
-                                &self.node,
-                                &format!(
-                                    "Error handling message, error: {e}"
-                                ),
-                            );})?;
+                            // self.handle_message(message, sender.clone()).await.inspect_err(|e| {log_peer_error(
+                            //     &self.node,
+                            //     &format!(
+                            //         "Error handling message, error: {e}"
+                            //     ),
+                            // );})?;
+                            self.handle_message(message, sender.clone()).await?;
                         },
                         Err(e) => {
                             log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
@@ -545,7 +546,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             if !self.blockchain.is_synced() {
                 // We do this since we are syncing, we don't want to broadcast old blocks
                 self.latest_block_sent = latest_block_number;
-                self.latest_block_added = latest_block_number;
+                // self.latest_block_added = latest_block_number;
                 return Ok(());
             }
             for i in self.latest_block_sent + 1..=latest_block_number {
@@ -839,6 +840,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::NewBlock(req) if peer_supports_based => {
                 if self.should_process_new_block(&req).await? {
+                    dbg!("adding block to queue", req.block.header.number);
                     self.blocks_on_queue
                         .entry(req.block.header.number)
                         .or_insert_with(|| req.block.clone());
@@ -952,16 +954,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
-        let latest_block_number = self.storage.get_latest_block_number().await?;
-        if latest_block_number > self.latest_block_added {
-            self.latest_block_added = latest_block_number;
-        }
+        // let latest_block_number = self.storage.get_latest_block_number().await?;
+        // if latest_block_number > self.latest_block_added {
+        //     self.latest_block_added = latest_block_number;
+        // }
 
-        if self.latest_block_added >= msg.block.header.number
-            || self.blocks_on_queue.contains_key(&msg.block.header.number)
-        {
+        // if self.latest_block_added >= msg.block.header.number
+        //     || self.blocks_on_queue.contains_key(&msg.block.header.number)
+        // {
+        //     debug!(
+        //         "Block {} received by peer already stored, ignoring it",
+        //         msg.block.header.number
+        //     );
+        //     return Ok(false);
+        // }
+        if self.blocks_on_queue.contains_key(&msg.block.header.number) {
             debug!(
-                "Block {} received by peer already stored, ignoring it",
+                "Block {} already in queue, ignoring it",
                 msg.block.header.number
             );
             return Ok(false);
@@ -1017,6 +1026,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.blocks_on_queue.contains_key(&next_block_to_add)
         );
         next_block_to_add = next_block_to_add.max(latest_block_in_storage + 1);
+        dbg!(next_block_to_add);
         // TODO: clean old blocks that were added and then sync to a newer head
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
             // This check is necessary if a connection to another peer already applied the block but this connection
@@ -1027,6 +1037,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 continue;
             }
             // log_peer_warn(&self.node, "here");
+            dbg!("going to add block", next_block_to_add);
             self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_error(
                     &self.node,
