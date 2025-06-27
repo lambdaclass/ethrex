@@ -697,7 +697,7 @@ fn parse_second_point_coordinates(
         || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
         || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::PointNotInTheCurve.into());
     }
 
     let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
@@ -739,12 +739,12 @@ fn handle_pairing_from_coordinates(
                 second_point_y.clone(),
             ) {
                 if !p2.is_in_subgroup() {
-                    Err(PrecompileError::DefaultError.into())
+                    Err(PrecompileError::PointNotInSubgroup.into())
                 } else {
                     Ok(true)
                 }
             } else {
-                Err(PrecompileError::DefaultError.into())
+                Err(PrecompileError::InvalidPoint.into())
             }
         }
         (false, true) => {
@@ -752,7 +752,7 @@ fn handle_pairing_from_coordinates(
             if BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
                 .is_err()
             {
-                Err(PrecompileError::DefaultError.into())
+                Err(PrecompileError::InvalidPoint.into())
             } else {
                 Ok(true)
             }
@@ -760,13 +760,13 @@ fn handle_pairing_from_coordinates(
         (false, false) => {
             // Define the pairing points
             let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::DefaultError)?;
+                .map_err(|_| PrecompileError::InvalidPoint)?;
 
             let second_point =
                 BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                    .map_err(|_| PrecompileError::DefaultError)?;
+                    .map_err(|_| PrecompileError::InvalidPoint)?;
             if !second_point.is_in_subgroup() {
-                return Err(PrecompileError::DefaultError.into());
+                return Err(PrecompileError::PointNotInSubgroup.into());
             }
 
             // Get the result of the pairing and affect the mul value with it

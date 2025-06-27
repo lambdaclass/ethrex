@@ -164,6 +164,10 @@ pub enum PrecompileError {
     DefaultError,
     #[error("Invalid point")]
     InvalidPoint,
+    #[error("The point is not in the curve")]
+    PointNotInTheCurve,
+    #[error("The point is not in the subgroup")]
+    PointNotInSubgroup,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
