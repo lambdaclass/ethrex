@@ -53,13 +53,13 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError>;
 
-    async fn store_deposit_logs_hash_by_batch_number(
+    async fn store_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
-        deposit_logs_hash: H256,
+        privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError>;
 
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError>;

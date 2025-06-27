@@ -36,7 +36,9 @@ pub fn get_block_deposits(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
         .collect()
 }
 
-pub fn compute_deposit_logs_hash(deposit_log_hashes: Vec<H256>) -> Result<H256, DepositError> {
+pub fn compute_privileged_transactions_hash(
+    deposit_log_hashes: Vec<H256>,
+) -> Result<H256, DepositError> {
     if deposit_log_hashes.is_empty() {
         return Ok(H256::zero());
     }

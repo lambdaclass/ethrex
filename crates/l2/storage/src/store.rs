@@ -72,7 +72,7 @@ impl Store {
             first_block: 0,
             last_block: 0,
             state_root: H256::zero(),
-            deposit_logs_hash: H256::zero(),
+            privileged_transactions_hash: H256::zero(),
             message_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
         })
@@ -133,22 +133,25 @@ impl Store {
             .await
     }
 
-    pub async fn get_deposit_logs_hash_by_batch(
+    pub async fn get_privileged_transactions_hash_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         self.engine
-            .get_deposit_logs_hash_by_batch_number(batch_number)
+            .get_privileged_transactions_hash_by_batch_number(batch_number)
             .await
     }
 
-    pub async fn store_deposit_logs_hash_by_batch(
+    pub async fn store_privileged_transactions_hash_by_batch(
         &self,
         batch_number: u64,
-        deposit_logs_hash: H256,
+        privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .store_deposit_logs_hash_by_batch_number(batch_number, deposit_logs_hash)
+            .store_privileged_transactions_hash_by_batch_number(
+                batch_number,
+                privileged_transactions_hash,
+            )
             .await
     }
 
@@ -229,8 +232,8 @@ impl Store {
             "Failed while trying to retrieve the message hashes of a known batch. This is a bug."
                 .to_owned(),
         ))?;
-        let deposit_logs_hash = self
-            .get_deposit_logs_hash_by_batch(batch_number)
+        let privileged_transactions_hash = self
+            .get_privileged_transactions_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
             "Failed while trying to retrieve the deposit logs hash of a known batch. This is a bug."
                 .to_owned(),
@@ -243,7 +246,7 @@ impl Store {
             state_root,
             blobs_bundle,
             message_hashes,
-            deposit_logs_hash,
+            privileged_transactions_hash,
         }))
     }
 
@@ -258,8 +261,11 @@ impl Store {
             .await?;
         self.store_message_hashes_by_batch(batch.number, batch.message_hashes)
             .await?;
-        self.store_deposit_logs_hash_by_batch(batch.number, batch.deposit_logs_hash)
-            .await?;
+        self.store_privileged_transactions_hash_by_batch(
+            batch.number,
+            batch.privileged_transactions_hash,
+        )
+        .await?;
         self.store_blobs_by_batch(batch.number, batch.blobs_bundle.blobs)
             .await?;
         self.store_state_root_by_batch(batch.number, batch.state_root)

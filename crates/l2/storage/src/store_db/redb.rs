@@ -30,7 +30,7 @@ const BLOB_BUNDLES: TableDefinition<u64, Rlp<Vec<Blob>>> = TableDefinition::new(
 
 const STATE_ROOTS: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("StateRoots");
 
-const DEPOSIT_LOGS_HASHES: TableDefinition<u64, Rlp<H256>> =
+const PRIVILEGED_TRANSACTIONS_HASHES: TableDefinition<u64, Rlp<H256>> =
     TableDefinition::new("DepositLogsHashes");
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
@@ -116,7 +116,7 @@ pub fn init_db() -> Result<Database, RollupStoreError> {
     table_creation_txn.open_table(OPERATIONS_COUNTS)?;
     table_creation_txn.open_table(BLOB_BUNDLES)?;
     table_creation_txn.open_table(STATE_ROOTS)?;
-    table_creation_txn.open_table(DEPOSIT_LOGS_HASHES)?;
+    table_creation_txn.open_table(PRIVILEGED_TRANSACTIONS_HASHES)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
@@ -201,21 +201,25 @@ impl StoreEngineRollup for RedBStoreRollup {
         Ok(exists)
     }
 
-    async fn store_deposit_logs_hash_by_batch_number(
+    async fn store_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
-        deposit_logs_hash: H256,
+        privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError> {
-        self.write(DEPOSIT_LOGS_HASHES, batch_number, deposit_logs_hash.into())
-            .await
+        self.write(
+            PRIVILEGED_TRANSACTIONS_HASHES,
+            batch_number,
+            privileged_transactions_hash.into(),
+        )
+        .await
     }
 
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
-            .read(DEPOSIT_LOGS_HASHES, batch_number)
+            .read(PRIVILEGED_TRANSACTIONS_HASHES, batch_number)
             .await?
             .map(|rlp| rlp.value().to()))
     }
@@ -372,7 +376,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         delete_starting_at(&txn, BATCHES_BY_BLOCK_NUMBER_TABLE, last_kept_block + 1)?;
         delete_starting_at(&txn, MESSAGES_BY_BATCH, batch_number + 1)?;
         delete_starting_at(&txn, BLOCK_NUMBERS_BY_BATCH, batch_number + 1)?;
-        delete_starting_at(&txn, DEPOSIT_LOGS_HASHES, batch_number + 1)?;
+        delete_starting_at(&txn, PRIVILEGED_TRANSACTIONS_HASHES, batch_number + 1)?;
         delete_starting_at(&txn, STATE_ROOTS, batch_number + 1)?;
         delete_starting_at(&txn, BLOB_BUNDLES, batch_number + 1)?;
         txn.commit()?;

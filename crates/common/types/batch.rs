@@ -8,7 +8,7 @@ pub struct Batch {
     pub first_block: u64,
     pub last_block: u64,
     pub state_root: H256,
-    pub deposit_logs_hash: H256,
+    pub privileged_transactions_hash: H256,
     pub message_hashes: Vec<H256>,
     pub blobs_bundle: BlobsBundle,
 }

@@ -23,8 +23,10 @@ use ethrex_common::types::{
     kzg_commitment_to_versioned_hash,
 };
 use ethrex_l2_common::{
-    deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
     l1_messages::{L1MessagingError, compute_merkle_root, get_block_l1_messages},
+    privileged_transactions::{
+        DepositError, compute_privileged_transactions_hash, get_block_deposits,
+    },
     state_diff::{StateDiff, StateDiffError, prepare_state_diff},
 };
 #[cfg(feature = "l2")]
@@ -139,7 +141,7 @@ pub fn stateless_validation_l1(
         #[cfg(feature = "l2")]
         l1messages_merkle_root: H256::zero(),
         #[cfg(feature = "l2")]
-        deposit_logs_hash: H256::zero(),
+        privileged_transactions_hash: H256::zero(),
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
         last_block_hash,
@@ -166,7 +168,7 @@ pub fn stateless_validation_l2(
     } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
     let (l1messages, deposits) = get_batch_l1messages_and_deposits(blocks, &receipts)?;
-    let (l1messages_merkle_root, deposit_logs_hash) =
+    let (l1messages_merkle_root, privileged_transactions_hash) =
         compute_l1messages_and_deposits_digests(&l1messages, &deposits)?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
@@ -193,7 +195,7 @@ pub fn stateless_validation_l2(
         initial_state_hash,
         final_state_hash,
         l1messages_merkle_root,
-        deposit_logs_hash,
+        privileged_transactions_hash,
         blob_versioned_hash,
         last_block_hash,
     })
@@ -355,10 +357,10 @@ fn compute_l1messages_and_deposits_digests(
         .collect::<Result<_, _>>()?;
 
     let l1message_merkle_root = compute_merkle_root(&message_hashes)?;
-    let deposit_logs_hash =
-        compute_deposit_logs_hash(deposit_hashes).map_err(StatelessExecutionError::DepositError)?;
+    let privileged_transactions_hash = compute_privileged_transactions_hash(deposit_hashes)
+        .map_err(StatelessExecutionError::DepositError)?;
 
-    Ok((l1message_merkle_root, deposit_logs_hash))
+    Ok((l1message_merkle_root, privileged_transactions_hash))
 }
 
 #[cfg(feature = "l2")]

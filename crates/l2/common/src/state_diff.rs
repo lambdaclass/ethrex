@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use lazy_static::lazy_static;
 
-use crate::{deposits::DepositLog, l1_messages::L1Message};
+use crate::{l1_messages::L1Message, privileged_transactions::DepositLog};
 
 lazy_static! {
     /// The serialized length of a default l1message log
@@ -83,7 +83,7 @@ pub struct StateDiff {
     pub last_header: BlockHeader,
     pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
     pub l1_messages: Vec<L1Message>,
-    pub deposit_logs: Vec<DepositLog>,
+    pub privileged_transactions: Vec<DepositLog>,
 }
 
 impl TryFrom<u8> for AccountStateDiffType {
@@ -127,7 +127,7 @@ impl Default for StateDiff {
             last_header: BlockHeader::default(),
             modified_accounts: BTreeMap::new(),
             l1_messages: Vec::new(),
-            deposit_logs: Vec::new(),
+            privileged_transactions: Vec::new(),
         }
     }
 }
@@ -177,9 +177,9 @@ impl StateDiff {
             encoded.extend(message_encoded);
         }
 
-        let deposits_len: u16 = self.deposit_logs.len().try_into()?;
+        let deposits_len: u16 = self.privileged_transactions.len().try_into()?;
         encoded.extend(deposits_len.to_be_bytes());
-        for deposit in self.deposit_logs.iter() {
+        for deposit in self.privileged_transactions.iter() {
             let deposit_encoded = deposit.encode();
             encoded.extend(deposit_encoded);
         }
@@ -236,14 +236,14 @@ impl StateDiff {
             });
         }
 
-        let deposit_logs_len = decoder.get_u16()?;
+        let privileged_transactions_len = decoder.get_u16()?;
 
-        let mut deposit_logs = Vec::with_capacity(deposit_logs_len.into());
-        for _ in 0..deposit_logs_len {
+        let mut privileged_transactions = Vec::with_capacity(privileged_transactions_len.into());
+        for _ in 0..privileged_transactions_len {
             let address = decoder.get_address()?;
             let amount = decoder.get_u256()?;
 
-            deposit_logs.push(DepositLog {
+            privileged_transactions.push(DepositLog {
                 address,
                 amount,
                 nonce: Default::default(),
@@ -255,7 +255,7 @@ impl StateDiff {
             last_header,
             modified_accounts,
             l1_messages: l1messages,
-            deposit_logs,
+            privileged_transactions,
         })
     }
 
@@ -597,7 +597,7 @@ pub fn prepare_state_diff(
         version: StateDiff::default().version,
         last_header,
         l1_messages: l1messages.to_vec(),
-        deposit_logs: deposits
+        privileged_transactions: deposits
             .iter()
             .map(|tx| DepositLog {
                 address: match tx.to {

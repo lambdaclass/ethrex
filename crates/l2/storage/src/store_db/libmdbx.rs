@@ -160,19 +160,19 @@ impl StoreEngineRollup for Store {
         .await
     }
 
-    async fn store_deposit_logs_hash_by_batch_number(
+    async fn store_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
-        deposit_logs_hash: H256,
+        privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError> {
         self.write::<DepositLogsHash>(
             batch_number,
-            Rlp::from_bytes(deposit_logs_hash.encode_to_vec()),
+            Rlp::from_bytes(privileged_transactions_hash.encode_to_vec()),
         )
         .await
     }
 
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {

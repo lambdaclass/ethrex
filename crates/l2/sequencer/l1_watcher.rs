@@ -137,7 +137,7 @@ impl GenServer for L1Watcher {
 }
 
 async fn watch(state: &mut L1WatcherState) {
-    let Ok(logs) = get_deposit_logs(state)
+    let Ok(logs) = get_privileged_transactions(state)
         .await
         .inspect_err(|err| error!("L1 Watcher Error: {err}"))
     else {
@@ -146,13 +146,15 @@ async fn watch(state: &mut L1WatcherState) {
 
     // We may not have a deposit nor a withdrawal, that means no events -> no logs.
     if !logs.is_empty() {
-        let _ = process_deposit_logs(state, logs)
+        let _ = process_privileged_transactions(state, logs)
             .await
             .inspect_err(|err| error!("L1 Watcher Error: {}", err));
     };
 }
 
-pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
+pub async fn get_privileged_transactions(
+    state: &mut L1WatcherState,
+) -> Result<Vec<RpcLog>, L1WatcherError> {
     if state.last_block_fetched.is_zero() {
         state.last_block_fetched = state
             .eth_client
@@ -194,8 +196,8 @@ pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>,
         state.last_block_fetched, new_last_block
     );
 
-    // Matches the event PrivilegedxSent from ICommonBridge.sol
-    let topic = keccak(b"PrivilegedxSent(address,address,uint256,uint256,uint256,bytes)");
+    // Matches the event PrivilegedTxSent from ICommonBridge.sol
+    let topic = keccak(b"PrivilegedTxSent(address,address,uint256,uint256,uint256,bytes)");
 
     let logs = state
         .eth_client
@@ -222,7 +224,7 @@ pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>,
     Ok(logs)
 }
 
-pub async fn process_deposit_logs(
+pub async fn process_privileged_transactions(
     state: &L1WatcherState,
     logs: Vec<RpcLog>,
 ) -> Result<Vec<H256>, L1WatcherError> {
@@ -297,7 +299,7 @@ async fn deposit_already_processed(
     // Check if the deposit is marked as pending in the contract.
     let pending_deposits = state
         .eth_client
-        .get_pending_deposit_logs(state.address)
+        .get_pending_privileged_transactions(state.address)
         .await?;
     Ok(!pending_deposits.contains(&deposit_hash))
 }
