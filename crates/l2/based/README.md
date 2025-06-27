@@ -219,7 +219,7 @@ Once registered, the node will be able to participate in the Sequencer election 
 
 > [!NOTE]
 >
-> 1. Replace `<REGISTRANT_PRIVATE_KEY>`, and `<SEQUENCER_ADDRESS>` with the appropriate values.
+> 1. Replace `<REGISTRANT_PRIVATE_KEY>` and `<SEQUENCER_ADDRESS>` with the appropriate values.
 > 2. The registrant is not necessarily related to the sequencer, one could pay the registration for some else.
 > 3. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
 
