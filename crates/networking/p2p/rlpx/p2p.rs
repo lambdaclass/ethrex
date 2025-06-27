@@ -14,9 +14,17 @@ use ethrex_rlp::{
 use k256::PublicKey;
 use serde::Serialize;
 
-pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
+pub const DEFAULT_P2P_PROTOCOL_VERSION: u8 = 5;
+
+pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 2] = [Capability::eth(68), Capability::eth(69)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
-pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
+pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] =
+    [Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION)];
+
+pub const PROTOCOL_P2P_5_LENGTH: u8 = 16;
+pub const PROTOCOL_ETH_68_LENGTH: u8 = 17;
+pub const PROTOCOL_ETH_69_LENGTH: u8 = 18;
+pub const PROTOCOL_SNAP_1_LENGTH: u8 = 8;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capability {
@@ -44,6 +52,31 @@ impl Capability {
             protocol: "snap",
             version,
         }
+    }
+
+    pub fn length(&self) -> u8 {
+        match self.protocol {
+            "p2p" => PROTOCOL_P2P_5_LENGTH,
+            "snap" => PROTOCOL_SNAP_1_LENGTH,
+            "eth" => match self.version {
+                68 => PROTOCOL_ETH_68_LENGTH,
+                69 => PROTOCOL_ETH_69_LENGTH,
+                _ => 0,
+            },
+            _ => 0,
+        }
+    }
+
+    pub fn is_p2p(&self) -> bool {
+        self.protocol == "p2p"
+    }
+
+    pub fn is_eth(&self) -> bool {
+        self.protocol == "eth"
+    }
+
+    pub fn is_snap(&self) -> bool {
+        self.protocol == "snap"
     }
 }
 

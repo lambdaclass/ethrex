@@ -229,8 +229,6 @@ impl PingMessage {
         }
     }
 
-    // TODO: remove when used
-    #[allow(unused)]
     pub fn with_enr_seq(self, enr_seq: u64) -> Self {
         Self {
             enr_seq: Some(enr_seq),

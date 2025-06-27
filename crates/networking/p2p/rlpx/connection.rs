@@ -10,8 +10,8 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts},
-            status::StatusMessage,
+            receipts::{GetReceipts, Receipts68, Receipts69},
+            status::{Status68Message, Status69Message},
             transactions::{GetPooledTransactions, Transactions},
         },
         frame::RLPxCodec,
@@ -321,11 +321,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
                 debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
                 self.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
+                self.framed
+                    .codec_mut()
+                    .set_eth_protocol(&Capability::eth(negotiated_eth_version))?;
 
                 if negotiated_snap_version != 0 {
                     debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
                     self.negotiated_snap_capability =
                         Some(Capability::snap(negotiated_snap_version));
+                    self.framed
+                        .codec_mut()
+                        .set_snap_protocol(&Capability::snap(negotiated_snap_version))?;
                 }
 
                 self.node.version = Some(hello_message.client_id);
@@ -505,9 +511,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::Pong(_) => {
                 // We ignore received Pong messages
             }
-            Message::Status(msg_data) => {
+            Message::Status68(msg_data) => {
                 if let Some(eth) = &self.negotiated_eth_capability {
-                    backend::validate_status(msg_data, &self.storage, eth).await?
+                    backend::validate_status(Box::new(msg_data), &self.storage, eth).await?
+                };
+            }
+            Message::Status69(msg_data) => {
+                if let Some(eth) = &self.negotiated_eth_capability {
+                    backend::validate_status(Box::new(msg_data), &self.storage, eth).await?
                 };
             }
             Message::GetAccountRange(req) => {
@@ -551,8 +562,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     for hash in block_hashes.iter() {
                         receipts.push(self.storage.get_receipts_for_block(hash)?);
                     }
-                    let response = Receipts::new(id, receipts, eth)?;
-                    self.send(Message::Receipts(response)).await?;
+                    match eth.version {
+                        68 => {
+                            let response = Message::Receipts68(Receipts68::new(id, receipts));
+                            self.send(response).await?;
+                        }
+                        69 => {
+                            let response = Message::Receipts69(Receipts69::new(id, receipts));
+                            self.send(response).await?
+                        }
+                        _ => return Err(RLPxError::IncompatibleProtocol),
+                    };
                 }
             }
             Message::BlockRangeUpdate(update) => {
@@ -625,7 +645,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             | message @ Message::TrieNodes(_)
             | message @ Message::BlockBodies(_)
             | message @ Message::BlockHeaders(_)
-            | message @ Message::Receipts(_) => sender.send(message).await?,
+            | message @ Message::Receipts68(_)
+            | message @ Message::Receipts69(_) => sender.send(message).await?,
             // TODO: Add new message types and handlers as they are implemented
             message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
         };
@@ -659,9 +680,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
         if let Some(eth) = self.negotiated_eth_capability.clone() {
-            let status = StatusMessage::new(&self.storage, &eth).await?;
+            let status = match eth.version {
+                68 => Message::Status68(Status68Message::new(&self.storage, &eth).await?),
+                69 => Message::Status69(Status69Message::new(&self.storage, &eth).await?),
+                _ => return Err(RLPxError::IncompatibleProtocol),
+            };
             log_peer_debug(&self.node, "Sending status");
-            self.send(Message::Status(status)).await?;
+            self.send(status).await?;
             // The next immediate message in the ETH protocol is the
             // status, reference here:
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
@@ -670,9 +695,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 None => return Err(RLPxError::Disconnected()),
             };
             match msg {
-                Message::Status(msg_data) => {
+                Message::Status68(msg_data) => {
                     log_peer_debug(&self.node, "Received Status");
-                    backend::validate_status(msg_data, &self.storage, &eth).await?
+                    backend::validate_status(Box::new(msg_data), &self.storage, &eth).await?
+                }
+                Message::Status69(msg_data) => {
+                    log_peer_debug(&self.node, "Received Status");
+                    backend::validate_status(Box::new(msg_data), &self.storage, &eth).await?
                 }
                 Message::Disconnect(disconnect) => {
                     return Err(RLPxError::HandshakeError(format!(
