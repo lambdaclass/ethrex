@@ -1,6 +1,9 @@
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
-    l2::{l2_connection::L2ConnState, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL, SUPPORTED_BASED_CAPABILITIES},
+    l2::{
+        PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
+        SUPPORTED_BASED_CAPABILITIES, l2_connection::L2ConnState,
+    },
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
@@ -785,4 +788,3 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 }
-

@@ -1,5 +1,5 @@
 use crate::rlpx::based::get_hash_batch_sealed;
-use crate::rlpx::l2::messages::{BatchSealed, NewBlock, L2Message};
+use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
 use crate::rlpx::{connection::RLPxConnection, error::RLPxError};
 use ethereum_types::Address;
@@ -80,11 +80,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let next_batch_broadcast = self.l2_state.connection_state()?.next_batch_broadcast;
         if Instant::now() >= next_block_broadcast {
             self.send_new_block().await?;
-            self.l2_state.connection_state_mut()?.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL
+            self.l2_state.connection_state_mut()?.next_block_broadcast =
+                Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL
         }
         if Instant::now() >= next_batch_broadcast {
             self.send_sealed_batch().await?;
-            self.l2_state.connection_state_mut()?.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
+            self.l2_state.connection_state_mut()?.next_batch_broadcast =
+                Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
         }
         Ok(())
     }
@@ -99,19 +101,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     block_number, l2_state.latest_block_sent
                 );
 
-                let new_block_body =
-                    self.storage
-                        .get_block_body(block_number)
-                        .await?
-                        .ok_or(RLPxError::InternalError(
-                            "Block body not found after querying for the block number".to_owned(),
-                        ))?;
-                let new_block_header =
-                    self.storage
-                        .get_block_header(block_number)?
-                        .ok_or(RLPxError::InternalError(
-                            "Block header not found after querying for the block number".to_owned(),
-                        ))?;
+                let new_block_body = self.storage.get_block_body(block_number).await?.ok_or(
+                    RLPxError::InternalError(
+                        "Block body not found after querying for the block number".to_owned(),
+                    ),
+                )?;
+                let new_block_header = self.storage.get_block_header(block_number)?.ok_or(
+                    RLPxError::InternalError(
+                        "Block header not found after querying for the block number".to_owned(),
+                    ),
+                )?;
                 let new_block = Block {
                     header: new_block_header,
                     body: new_block_body,
@@ -363,7 +362,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,20 +373,20 @@ mod tests {
     use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
     use crate::types::Node;
 
-    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
     use ethrex_blockchain::Blockchain;
+    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
     use ethrex_common::types::batch::Batch;
-    use ethrex_common::{H256, H512};
     use ethrex_common::{
         H160,
         types::{BlockHeader, ELASTICITY_MULTIPLIER},
     };
+    use ethrex_common::{H256, H512};
     use ethrex_storage::{EngineType, Store};
-    use k256::ecdsa::SigningKey;
-    use k256::SecretKey;
-    use secp256k1::SecretKey as SigningKeySecp256k1;
-    use secp256k1::Message as SignedMessage;
     use ethrex_storage_rollup::StoreRollup;
+    use k256::SecretKey;
+    use k256::ecdsa::SigningKey;
+    use secp256k1::Message as SignedMessage;
+    use secp256k1::SecretKey as SigningKeySecp256k1;
     use sha3::{Digest, Keccak256};
     use std::fs::File;
     use std::io::BufReader;
@@ -466,7 +464,9 @@ mod tests {
             "test-client/0.1.0".to_string(),
             broadcast,
         );
-        connection.capabilities.push(SUPPORTED_BASED_CAPABILITIES[0].clone());
+        connection
+            .capabilities
+            .push(SUPPORTED_BASED_CAPABILITIES[0].clone());
         connection.negotiated_eth_capability = Some(SUPPORTED_ETH_CAPABILITIES[0].clone());
         connection.blockchain.set_synced();
 
@@ -479,15 +479,15 @@ mod tests {
             store_rollup: StoreRollup::default(),
             committer_key: Some(
                 SigningKeySecp256k1::from_slice(
-                    &hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924")
-                        .unwrap(),
-                )
+                    &hex::decode(
+                        "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+                    )
                     .unwrap(),
+                )
+                .unwrap(),
             ),
-            next_block_broadcast: Instant::now()
-                + PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            next_batch_broadcast: Instant::now()
-                + PERIODIC_BATCH_BROADCAST_INTERVAL,
+            next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
         };
         connection.l2_state = L2ConnState::Connected(l2_state);
 
@@ -496,7 +496,13 @@ mod tests {
 
     /// Helper function to create and send a NewBlock message for the test.
     async fn send_block(_conn: &mut RLPxConnection<tokio::io::DuplexStream>, _block: &Block) {
-        let secret_key = _conn.l2_state.connection_state().unwrap().committer_key.as_ref().unwrap();
+        let secret_key = _conn
+            .l2_state
+            .connection_state()
+            .unwrap()
+            .committer_key
+            .as_ref()
+            .unwrap();
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(
                 &SignedMessage::from_digest(_block.hash().to_fixed_bytes()),
@@ -531,7 +537,13 @@ mod tests {
             last_block,
             ..Default::default()
         };
-        let secret_key = conn.l2_state.connection_state_mut().unwrap().committer_key.as_ref().unwrap();
+        let secret_key = conn
+            .l2_state
+            .connection_state_mut()
+            .unwrap()
+            .committer_key
+            .as_ref()
+            .unwrap();
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(
                 &SignedMessage::from_digest(get_hash_batch_sealed(&batch)),
@@ -635,10 +647,7 @@ mod tests {
 
                 // Process the message
                 let (dummy_tx, _) = mpsc::channel(1);
-                match conn_b
-                    .handle_message(msg.into(), dummy_tx)
-                    .await
-                {
+                match conn_b.handle_message(msg.into(), dummy_tx).await {
                     Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
                     Err(e) => panic!("handle_message failed: {:?}", e),
                 }
@@ -652,14 +661,38 @@ mod tests {
                         // Received block 2. Now check intermediate state.
                         println!("Receiver task: Checking intermediate state...");
                         assert_eq!(
-                            conn_b.l2_state.connection_state().unwrap().blocks_on_queue.len(),
+                            conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .blocks_on_queue
+                                .len(),
                             2,
                             "Queue should contain blocks 2 and 3"
                         );
-                        assert!(conn_b.l2_state.connection_state().unwrap().blocks_on_queue.contains_key(&2));
-                        assert!(conn_b.l2_state.connection_state().unwrap().blocks_on_queue.contains_key(&3));
+                        assert!(
+                            conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .blocks_on_queue
+                                .contains_key(&2)
+                        );
+                        assert!(
+                            conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .blocks_on_queue
+                                .contains_key(&3)
+                        );
                         assert_eq!(
-                            conn_b.l2_state.connection_state().unwrap().latest_block_added, 0,
+                            conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .latest_block_added,
+                            0,
                             "No blocks should be added to the chain yet"
                         );
                     }
@@ -667,11 +700,21 @@ mod tests {
                         // Received block 1. Now check final state.
                         println!("Receiver task: Checking final state...");
                         assert!(
-                            conn_b.l2_state.connection_state().unwrap().blocks_on_queue.is_empty(),
+                            conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .blocks_on_queue
+                                .is_empty(),
                             "Queue should be empty after processing"
                         );
                         assert_eq!(
-                            conn_b.l2_state.connection_state().unwrap().latest_block_added, 3,
+                            conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .latest_block_added,
+                            3,
                             "All blocks up to 3 should have been added"
                         );
                         break; // Test is complete, exit the loop
@@ -727,10 +770,7 @@ mod tests {
                         );
 
                         // Process the message
-                        match conn_b
-                            .handle_message(msg.clone().into(), dummy_tx)
-                            .await
-                        {
+                        match conn_b.handle_message(msg.clone().into(), dummy_tx).await {
                             Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
                             Err(e) => panic!("handle_message failed: {:?}", e),
                         }
@@ -738,7 +778,12 @@ mod tests {
                         if blocks_received_count == 3 {
                             println!("Receiver task: All blocks received, checking state...");
                             assert_eq!(
-                                conn_b.l2_state.connection_state().unwrap().latest_block_added, 3,
+                                conn_b
+                                    .l2_state
+                                    .connection_state()
+                                    .unwrap()
+                                    .latest_block_added,
+                                3,
                                 "All blocks up to 3 should have been added"
                             );
                         }
@@ -746,17 +791,21 @@ mod tests {
                     Message::L2Message(L2Message::BatchSealed(msg)) => {
                         println!("Receiver task received sealed batch {}.", msg.batch.number);
                         // Process the message
-                        match conn_b
-                            .handle_message(msg.into(), dummy_tx)
-                            .await
-                        {
+                        match conn_b.handle_message(msg.into(), dummy_tx).await {
                             Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
                             Err(e) => panic!("handle_message failed: {:?}", e),
                         }
 
                         println!("Receiver task: Checking for sealed batch...");
                         assert!(
-                            conn_b.l2_state.connection_state().unwrap().store_rollup.contains_batch(&1).await.unwrap(),
+                            conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .store_rollup
+                                .contains_batch(&1)
+                                .await
+                                .unwrap(),
                             "Batch 1 should be sealed in the store"
                         );
                         break; // Test complete
@@ -812,10 +861,7 @@ mod tests {
                         );
 
                         // Process the message
-                        match conn_b
-                            .handle_message(msg.into(), dummy_tx)
-                            .await
-                        {
+                        match conn_b.handle_message(msg.into(), dummy_tx).await {
                             Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
                             Err(e) => panic!("handle_message failed: {:?}", e),
                         }
@@ -823,7 +869,12 @@ mod tests {
                         if blocks_received_count == 3 {
                             println!("Receiver task: All blocks received, checking state...");
                             assert_eq!(
-                                conn_b.l2_state.connection_state().unwrap().latest_block_added, 3,
+                                conn_b
+                                    .l2_state
+                                    .connection_state()
+                                    .unwrap()
+                                    .latest_block_added,
+                                3,
                                 "All blocks up to 3 should have been added"
                             );
                         }
@@ -831,17 +882,21 @@ mod tests {
                     Message::L2Message(L2Message::BatchSealed(msg)) => {
                         println!("Receiver task received sealed batch {}.", msg.batch.number);
                         // Process the message
-                        match conn_b
-                            .handle_message(msg.into(), dummy_tx)
-                            .await
-                        {
+                        match conn_b.handle_message(msg.into(), dummy_tx).await {
                             Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
                             Err(e) => panic!("handle_message failed: {:?}", e),
                         }
 
                         println!("Receiver task: Checking for sealed batch...");
                         assert!(
-                            !conn_b.l2_state.connection_state().unwrap().store_rollup.contains_batch(&1).await.unwrap(),
+                            !conn_b
+                                .l2_state
+                                .connection_state()
+                                .unwrap()
+                                .store_rollup
+                                .contains_batch(&1)
+                                .await
+                                .unwrap(),
                             "Batch 1 should not be sealed in the store"
                         );
                         break; // Test complete
