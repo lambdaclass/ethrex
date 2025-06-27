@@ -23,4 +23,22 @@ interface ICommonBridgeL2 {
     /// @dev can claim those funds on L1.
     /// @param _receiverOnL1 the address that can claim the funds on L1.
     function withdraw(address _receiverOnL1) external payable;
+
+    /// @notice Tries to deposit an ERC20 token
+    /// @dev The msg.sender must be the bridge itself, using a privileged transaction
+    /// @param tokenL1 Address of the token on L1
+    /// @param tokenL2 Address of the token on L2
+    /// @param destination Address that should receive the tokens
+    /// @param amount Amount of tokens to give
+    function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external;
+
+    /// @notice Initiates the withdrawal of ERC20 tokens to the L1.
+    /// @dev This is the first step in the two step process of a user withdrawal.
+    /// @dev It burns tokens on L2 and sends a message to the L1 so users
+    /// @dev can claim those tokens on L1.
+    /// @param tokenL1 Address of the token on L1
+    /// @param tokenL2 Address of the token on L2
+    /// @param destination Address on L1 that should receive the tokens
+    /// @param amount Amount of tokens to withdraw
+    function withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external;
 }
