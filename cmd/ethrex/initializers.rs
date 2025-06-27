@@ -8,6 +8,7 @@ use ethrex_common::types::Genesis;
 
 #[cfg(feature = "execution_profile")]
 use ethrex_metrics::metrics_profiling::FunctionProfilingLayer;
+#[cfg(feature = "execution_profile")]
 use ethrex_metrics::metrics_profiling::initialize_profiling_metrics;
 
 use ethrex_p2p::{
