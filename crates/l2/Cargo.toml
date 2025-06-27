@@ -65,4 +65,4 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics", "ethrex-metrics/l2"]
-l2 = ["ethrex-blockchain/l2", "zkvm_interface/l2"]
+l2 = ["zkvm_interface/l2"]
