@@ -21,6 +21,7 @@ thiserror.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 eyre.workspace = true
+dotenvy = "0.15.7"
 
 ethrex-l2 = { path = "../../l2" }
 ethrex-sdk = { path = "../../l2/sdk" }
