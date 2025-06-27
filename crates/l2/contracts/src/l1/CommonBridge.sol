@@ -7,6 +7,7 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
+import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -32,8 +33,8 @@ contract CommonBridge is
     /// that the logs were published on L1, and that that batch was committed.
     mapping(uint256 => bytes32) public batchWithdrawalLogsMerkleRoots;
 
-    /// @notice Array of hashed pending deposit logs.
-    bytes32[] public pendingDepositLogs;
+    /// @notice Array of hashed pending privileged transactions
+    bytes32[] public pendingTxHashes;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -41,9 +42,9 @@ contract CommonBridge is
     /// @dev Used by the L1Watcher to fetch logs starting from this block.
     uint256 public lastFetchedL1Block;
 
-    /// @notice Global deposit identifier, it is incremented each time a new deposit is made.
+    /// @notice Global privileged transaction identifier, it is incremented each time a new privileged transaction is made.
     /// @dev It is used as the nonce of the mint transaction created by the L1Watcher.
-    uint256 public depositId;
+    uint256 public transactionId;
 
     /// @notice Address of the bridge on the L2
     /// @dev It's used to validate withdrawals
@@ -73,97 +74,109 @@ contract CommonBridge is
         ON_CHAIN_PROPOSER = onChainProposer;
 
         lastFetchedL1Block = block.number;
-        depositId = 0;
+        transactionId = 0;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingDepositLogs() public view returns (bytes32[] memory) {
-        return pendingDepositLogs;
+    function getPendingTransactionHashes()
+        public
+        view
+        returns (bytes32[] memory)
+    {
+        return pendingTxHashes;
     }
 
-    function _deposit(DepositValues memory depositValues) private {
-        require(msg.value > 0, "CommonBridge: amount to deposit is zero");
-
+    function _sendToL2(address from, SendValues memory sendValues) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
-                bytes20(depositValues.to),
-                bytes32(msg.value),
-                bytes32(depositId),
-                bytes20(depositValues.recipient),
-                bytes20(msg.sender),
-                bytes32(depositValues.gasLimit),
-                bytes32(keccak256(depositValues.data))
+                bytes20(sendValues.to),
+                bytes32(sendValues.value),
+                bytes32(transactionId),
+                bytes20(from),
+                bytes32(sendValues.gasLimit),
+                bytes32(keccak256(sendValues.data))
             )
         );
 
-        pendingDepositLogs.push(l2MintTxHash);
+        pendingTxHashes.push(l2MintTxHash);
 
-        emit DepositInitiated(
-            msg.value,
-            depositValues.to,
-            depositId,
-            depositValues.recipient,
-            msg.sender,
-            depositValues.gasLimit,
-            depositValues.data,
-            l2MintTxHash
+        emit PrivilegedTxSent(
+            from,
+            sendValues.to,
+            transactionId,
+            sendValues.value,
+            sendValues.gasLimit,
+            sendValues.data
         );
-        depositId += 1;
+        transactionId += 1;
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(DepositValues calldata depositValues) public payable {
-        _deposit(depositValues);
+    function sendToL2(SendValues calldata sendValues) public {
+        _sendToL2(msg.sender, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function deposit(address l2Recipient) public payable {
+        _deposit(l2Recipient);
+    }
+
+    function _deposit(address l2Recipient) private {
+        bytes memory callData = abi.encodeCall(
+            ICommonBridgeL2.mintETH,
+            (l2Recipient)
+        );
+        SendValues memory sendValues = SendValues({
+            to: L2_BRIDGE_ADDRESS,
+            gasLimit: 21000 * 5,
+            value: msg.value,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     receive() external payable {
-        DepositValues memory depositValues = DepositValues({
-            to: msg.sender,
-            recipient: msg.sender,
-            gasLimit: 21000 * 5,
-            data: bytes("")
-        });
-        _deposit(depositValues);
+        _deposit(msg.sender);
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingDepositLogsVersionedHash(
+    function getPendingTransactionsVersionedHash(
         uint16 number
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendingDepositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (get)"
+            uint256(number) <= pendingTxHashes.length,
+            "CommonBridge: number is greater than the length of pendingTxHashes (get)"
         );
 
-        bytes memory logs;
+        bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            logs = bytes.concat(logs, pendingDepositLogs[i]);
+            hashes = bytes.concat(hashes, pendingTxHashes[i]);
         }
 
         return
             bytes32(bytes2(number)) |
-            bytes32(uint256(uint240(uint256(keccak256(logs)))));
+            bytes32(uint256(uint240(uint256(keccak256(hashes)))));
     }
 
     /// @inheritdoc ICommonBridge
-    function removePendingDepositLogs(
+    function removePendingTransactionHashes(
         uint16 number
     ) public onlyOnChainProposer {
         require(
-            number <= pendingDepositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (remove)"
+            number <= pendingTxHashes.length,
+            "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
         );
 
-        for (uint i = 0; i < pendingDepositLogs.length - number; i++) {
-            pendingDepositLogs[i] = pendingDepositLogs[i + number];
+        for (uint i = 0; i < pendingTxHashes.length - number; i++) {
+            pendingTxHashes[i] = pendingTxHashes[i + number];
         }
 
         for (uint _i = 0; _i < number; _i++) {
-            pendingDepositLogs.pop();
+            pendingTxHashes.pop();
         }
     }
 
@@ -201,7 +214,9 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
-        bytes32 withdrawalId = keccak256(abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex));
+        bytes32 withdrawalId = keccak256(
+            abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex)
+        );
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
             "CommonBridge: the batch that emitted the withdrawal logs was not committed"
@@ -242,7 +257,9 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
-        bytes32 msgHash = keccak256(abi.encodePacked(msg.sender, claimedAmount));
+        bytes32 msgHash = keccak256(
+            abi.encodePacked(msg.sender, claimedAmount)
+        );
         bytes32 withdrawalLeaf = keccak256(
             abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
         );

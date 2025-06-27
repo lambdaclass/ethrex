@@ -986,14 +986,12 @@ impl EthClient {
     pub async fn build_privileged_transaction(
         &self,
         to: Address,
-        recipient: Address,
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
-            recipient,
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
@@ -1073,12 +1071,12 @@ impl EthClient {
             .await
     }
 
-    pub async fn get_pending_deposit_logs(
+    pub async fn get_pending_privileged_transactions(
         &self,
         common_bridge_address: Address,
     ) -> Result<Vec<H256>, EthClientError> {
         let response = self
-            ._generic_call(b"getPendingDepositLogs()", common_bridge_address)
+            ._generic_call(b"getPendingTransactionHashes()", common_bridge_address)
             .await?;
         Self::from_hex_string_to_h256_array(&response)
     }

@@ -23,4 +23,11 @@ interface ICommonBridgeL2 {
     /// @dev can claim those funds on L1.
     /// @param _receiverOnL1 the address that can claim the funds on L1.
     function withdraw(address _receiverOnL1) external payable;
+
+    /// @notice Transfers ETH to the given address.
+    /// @dev This is called by a privileged transaction from the L1 bridge
+    /// @dev The transaction itself is what mints the ETH, this is just a helper
+    /// @dev If the transfer fails, a withdrawal is initiated.
+    /// @param to the address to transfer the funds to
+    function mintETH(address to) external payable;
 }
