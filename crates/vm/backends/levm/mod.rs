@@ -17,7 +17,6 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
@@ -138,32 +137,6 @@ impl LEVM {
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
 
         vm.execute().map_err(VMError::into)
-    }
-
-    pub fn execute_tx_l2(
-        // The transaction to execute.
-        tx: &Transaction,
-        // The transactions recovered address
-        tx_sender: Address,
-        // The block header for the current block.
-        block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
-    ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), VMType::L2);
-
-        let report_result = vm.execute().map_err(EvmError::from)?;
-
-        // Here we differ from the execute_tx function from the L1.
-        // We need to check if the transaction exceeded the blob size limit.
-        // If it did, we need to revert the state changes made by the transaction and return the error.
-        let call_frame_backup = vm
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CallFrame))?
-            .call_frame_backup;
-
-        Ok((report_result, call_frame_backup))
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
@@ -310,6 +283,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "beacon_root_contract_call should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let beacon_root = match block_header.parent_beacon_block_root {
             None => {
                 return Err(EvmError::Header(
@@ -335,6 +314,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<(), EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "process_block_hash_history should not be called for L2 VM".to_string(),
+            ));
+        }
+
         generic_system_contract_levm(
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
@@ -350,6 +335,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "read_withdrawal_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
@@ -378,11 +369,18 @@ impl LEVM {
             ))),
         }
     }
+
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "dequeue_consolidation_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
@@ -532,15 +530,16 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
     vm_type: VMType,
 ) -> Result<Vec<Requests>, EvmError> {
+    if let VMType::L2 = vm_type {
+        return Err(EvmError::InvalidEVM(
+            "extract_all_requests_levm should not be called for L2 VM".to_string(),
+        ));
+    }
+
     let chain_config = db.store.get_chain_config()?;
     let fork = chain_config.fork(header.timestamp);
 
     if fork < Fork::Prague {
-        return Ok(Default::default());
-    }
-
-    // TODO: I don't like deciding the behavior based on the VMType here.
-    if let VMType::L2 = vm_type {
         return Ok(Default::default());
     }
 
