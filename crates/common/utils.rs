@@ -20,6 +20,8 @@ pub fn u256_from_big_endian(slice: &[u8]) -> U256 {
 ///
 /// Note: N should not exceed 32.
 pub fn u256_from_big_endian_const<const N: usize>(slice: [u8; N]) -> U256 {
+    const { assert!(N <= 32, "N must be less or equal to 32") };
+
     let mut padded = [0u8; 32];
     padded[32 - N..32].copy_from_slice(&slice);
 

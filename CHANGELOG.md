@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-27
+
+- Improve U256 decoding and PUSHX [#3332](https://github.com/lambdaclass/ethrex/pull/3332)
+
 ### 2025-06-20
 
 - Use a lookup table for opcode parsing [#3253](https://github.com/lambdaclass/ethrex/pull/3253)
