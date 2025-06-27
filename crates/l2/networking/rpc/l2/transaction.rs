@@ -1,8 +1,5 @@
 use crate::{
-    clients::eth::get_address_from_secret_key,
-    eth::{gas_price::GasPrice, transaction::EstimateGasRequest},
     rpc::{RpcApiContext, RpcHandler},
-    types::transaction::SendRawTransactionRequest,
     utils::RpcErr,
 };
 use bytes::Bytes;
@@ -13,6 +10,7 @@ use ethrex_common::{
         TxKind,
     },
 };
+use ethrex_rpc::types::transaction::SendRawTransactionRequest;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -36,15 +34,16 @@ pub struct SponsoredTx {
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
 impl RpcHandler for SponsoredTx {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
+            "No params provided".to_owned(),
+        ))?;
 
         if params.len() != 1 {
-            return Err(RpcErr::BadParams(format!(
+            return Err(ethrex_rpc::RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
                 params.len()
-            )));
+            ))
+            .into());
         };
         serde_json::from_value(
             params
@@ -80,9 +79,11 @@ impl RpcHandler for SponsoredTx {
             }
         } else {
             let dest_account = context
+                .l1_ctx
                 .storage
                 .get_account_info(
                     context
+                        .l1_ctx
                         .storage
                         .get_latest_block_number()
                         .await
@@ -93,6 +94,7 @@ impl RpcHandler for SponsoredTx {
                 .map_err(RpcErr::from)?
                 .unwrap_or_default();
             let code = context
+                .l1_ctx
                 .storage
                 .get_account_code(dest_account.code_hash)
                 .map_err(RpcErr::from)?
@@ -117,29 +119,39 @@ impl RpcHandler for SponsoredTx {
                 ));
             }
         }
-        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk).map_err(|_| {
-            RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string())
-        })?;
+        let sponsor_address =
+            ethrex_rpc::clients::eth::get_address_from_secret_key(&context.sponsor_pk).map_err(
+                |_| RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string()),
+            )?;
         let latest_block_number = context
+            .l1_ctx
             .storage
             .get_latest_block_number()
             .await
             .map_err(RpcErr::from)?;
-        let chain_config = context.storage.get_chain_config().map_err(RpcErr::from)?;
+        let chain_config = context
+            .l1_ctx
+            .storage
+            .get_chain_config()
+            .map_err(RpcErr::from)?;
         let chain_id = chain_config.chain_id;
         let nonce = context
+            .l1_ctx
             .storage
             .get_nonce_by_account_address(latest_block_number, sponsor_address)
             .await
             .map_err(RpcErr::from)?
             .ok_or(RpcErr::InvalidEthrexL2Message("Invalid nonce".to_string()))?;
         let max_priority_fee_per_gas = context
+            .l1_ctx
             .gas_tip_estimator
             .lock()
             .await
-            .estimate_gas_tip(&context.storage)
+            .estimate_gas_tip(&context.l1_ctx.storage)
             .await?;
-        let gas_price_request = GasPrice {}.handle(context.clone()).await?;
+        let gas_price_request =
+            ethrex_rpc::RpcHandler::handle(&ethrex_rpc::GasPrice {}, context.l1_ctx.clone())
+                .await?;
 
         let gas_price_request = gas_price_request
             .as_str()
@@ -191,11 +203,13 @@ impl RpcHandler for SponsoredTx {
         generic.nonce = Some(nonce);
         generic.from = sponsor_address;
 
-        let estimate_gas_request = EstimateGasRequest {
-            transaction: generic,
-            block: None,
-        }
-        .handle(context.clone())
+        let estimate_gas_request = ethrex_rpc::RpcHandler::handle(
+            &ethrex_rpc::EstimateGasRequest {
+                transaction: generic,
+                block: None,
+            },
+            context.l1_ctx.clone(),
+        )
         .await?;
 
         let estimate_gas_request = estimate_gas_request
@@ -238,6 +252,8 @@ impl RpcHandler for SponsoredTx {
             }
         }
 
-        tx.handle(context).await
+        ethrex_rpc::RpcHandler::handle(&tx, context.l1_ctx)
+            .await
+            .map_err(RpcErr::L1RpcErr)
     }
 }
