@@ -17,7 +17,7 @@ use tracing::{debug, info};
 use super::messages::L2Message;
 
 #[derive(Debug, Clone)]
-pub struct L2ConnState {
+pub struct L2ConnectedState {
     pub latest_block_sent: u64,
     pub latest_block_added: u64,
     pub latest_batch_sent: u64,
@@ -26,6 +26,22 @@ pub struct L2ConnState {
     pub commiter_key: Option<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub enum L2ConnState {
+    Disconnected,
+    Connected(L2ConnectedState)
+
+}
+
+impl L2ConnState {
+    pub(crate) fn connection_state_mut(&mut self) -> Result<&mut L2ConnectedState, RLPxError> {
+        match self {
+            Self::Disconnected => Err(RLPxError::L2CapabilityNotNegotiated),
+            Self::Connected(conn_state) => Ok(conn_state)
+        }
+    }
 }
 
 fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
@@ -38,7 +54,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         msg: L2Message,
     ) -> Result<(), RLPxError> {
-        // FIXME: Check the current connection actually supports the 'based' capability.
+        self.l2_state.connection_state_mut()?;
         match msg {
             L2Message::BatchSealed(ref batch_sealed_msg) => {
                 if self.should_process_batch_sealed(&batch_sealed_msg).await? {
@@ -119,9 +135,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     pub async fn should_process_new_block(&mut self, msg: &NewBlock) -> Result<bool, RLPxError> {
         // FIXME: See if we can avoid this check
-        let Some(ref mut l2_state) = self.l2_state else {
-            return Err(RLPxError::IncompatibleProtocol);
-        };
+        let l2_state = self.l2_state.connection_state_mut()?;
         if !self.blockchain.is_synced() {
             debug!("Not processing new block, blockchain is not synced");
             return Ok(false);
@@ -168,13 +182,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(true)
     }
 
-    pub async fn should_process_batch_sealed(
+    async fn should_process_batch_sealed(
         &mut self,
         msg: &BatchSealed,
     ) -> Result<bool, RLPxError> {
-        let Some(ref mut l2_state) = self.l2_state else {
-            return Err(RLPxError::IncompatibleProtocol);
-        };
+        let l2_state = self.l2_state.connection_state_mut()?;
         if !self.blockchain.is_synced() {
             debug!("Not processing new block, blockchain is not synced");
             return Ok(false);
@@ -217,9 +229,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let mut signature = [0u8; 68];
         signature[..64].copy_from_slice(&msg.signature[..]);
         signature[64..].copy_from_slice(&msg.recovery_id[..]);
-        self.l2_state
+        l2_state
             .clone()
-            .unwrap()
             .store_rollup
             .store_signature_by_batch(msg.batch.number, signature)
             .await?;
@@ -227,9 +238,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
     pub async fn process_new_block(&mut self, msg: &NewBlock) -> Result<(), RLPxError> {
         // FIXME: Remove this unwrap
-        let Some(ref mut l2_state) = self.l2_state else {
-            return Err(RLPxError::IncompatibleProtocol);
-        };
+        let l2_state = self.l2_state.connection_state_mut()?;
         l2_state
             .blocks_on_queue
             .entry(msg.block.header.number)
@@ -331,11 +340,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    pub async fn process_batch_sealed(&mut self, msg: &BatchSealed) -> Result<(), RLPxError> {
+    async fn process_batch_sealed(&mut self, msg: &BatchSealed) -> Result<(), RLPxError> {
         // FIXME: Avoid unwrap + clone
-        self.l2_state
-            .clone()
-            .unwrap()
+        let l2_state = self.l2_state.connection_state_mut()?;
+        l2_state
             .store_rollup
             .seal_batch(msg.batch.clone())
             .await?;

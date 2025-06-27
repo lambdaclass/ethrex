@@ -69,6 +69,8 @@ pub(crate) enum RLPxError {
     IncompatibleProtocol,
     #[error("Invalid block range")]
     InvalidBlockRange,
+    #[error("An L2 functionality was used but it was not previously negotiated")]
+    L2CapabilityNotNegotiated,
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly

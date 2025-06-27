@@ -4,7 +4,7 @@ use super::{
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
-use crate::rlpx::based::get_hash_batch_sealed;
+use crate::rlpx::{based::get_hash_batch_sealed, l2::l2_connection::L2ConnectedState};
 use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
 use crate::rlpx::l2::messages::BatchSealed;
 use crate::rlpx::utils::get_pub_key;
@@ -122,7 +122,7 @@ pub(crate) struct RLPxConnection<S> {
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
     connection_broadcast_send: RLPxConnBroadcastSender,
-    pub l2_state: Option<L2ConnState>,
+    pub l2_state: L2ConnState,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -154,7 +154,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             requested_pooled_txs: HashMap::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
-            l2_state: None,
+            l2_state: L2ConnState::Disconnected,
         }
     }
 
@@ -337,7 +337,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             }
                         }
                         "based" => {
-                            self.l2_state = Some(L2ConnState {
+                            let l2_state =
+                             L2ConnectedState {
                                 latest_block_sent: 0,
                                 latest_block_added: 0,
                                 blocks_on_queue: BTreeMap::new(),
@@ -348,7 +349,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                                     + PERIODIC_BLOCK_BROADCAST_INTERVAL,
                                 next_batch_broadcast: Instant::now()
                                     + PERIODIC_BATCH_BROADCAST_INTERVAL,
-                            })
+                            };
+                            self.l2_state = L2ConnState::Connected(l2_state);
                         }
                         unknown_protocol => {
                             warn!("Peer sent an unsupported protocol: {unknown_protocol}")
