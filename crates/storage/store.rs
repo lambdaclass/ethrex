@@ -36,7 +36,8 @@ pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with di
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
-    pub latest_trie_updates: Arc<RwLock<Option<TrieUpdates>>>,
+    pub dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>,
+    pub dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
 }
 
 #[allow(dead_code)]
@@ -79,8 +80,17 @@ pub struct AccountUpdatesList {
 
 impl Store {
     pub fn update_cache(&self, trie_updates: &TrieUpdates) {
-        let mut write_guard = self.latest_trie_updates.write().unwrap();
-        *write_guard = Some(trie_updates.clone());
+        let mut write_guard_state = self.dirty_state_nodes.write().unwrap();
+        let mut write_guard_storage = self.dirty_storage_nodes.write().unwrap();
+       
+        for (node_hash, node_data) in &trie_updates.account_updates {
+            write_guard_state.insert(*node_hash, node_data.clone());
+        }
+        for (storage_root, storage_updates) in &trie_updates.storage_updates {
+            for (node_hash, node_data) in storage_updates {
+                write_guard_storage.insert((*storage_root, *node_hash), node_data.clone());
+            }
+        }
     }
 
     pub async fn store_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError> {
@@ -97,11 +107,13 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
-                latest_trie_updates: Arc::new(RwLock::new(None)),
+                dirty_state_nodes: Arc::new(RwLock::new(HashMap::new())),
+                dirty_storage_nodes: Arc::new(RwLock::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                latest_trie_updates: Arc::new(RwLock::new(None)),
+                dirty_state_nodes: Arc::new(RwLock::new(HashMap::new())),
+                dirty_storage_nodes: Arc::new(RwLock::new(HashMap::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
@@ -417,6 +429,7 @@ impl Store {
                 let mut storage_trie = self.engine.open_storage_trie(
                     H256::from_slice(&hashed_address),
                     account_state.storage_root,
+                    self.dirty_storage_nodes.clone(),
                 )?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
@@ -480,6 +493,7 @@ impl Store {
                             let trie = self.engine.open_storage_trie(
                                 H256::from_slice(&hashed_address),
                                 account_state.storage_root,
+                                self.dirty_storage_nodes.clone(),
                             )?;
                             vacant.insert(TrieLogger::open_trie(trie))
                         }
@@ -516,7 +530,7 @@ impl Store {
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
-                .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
+                .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH, self.dirty_storage_nodes.clone())?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
@@ -800,6 +814,7 @@ impl Store {
         Ok(Some(self.engine.open_storage_trie(
             H256::from_slice(&hashed_address),
             storage_root,
+            self.dirty_storage_nodes.clone(),
         )?))
     }
 
@@ -822,37 +837,6 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        if let Ok(read_guard) = &self.latest_trie_updates.read() {
-            if read_guard.is_some() {
-                let latest_updates = read_guard.as_ref().unwrap();
-                // Check if the latest updates contain the account we're looking for
-                let hashed_address = hash_address(&address);
-
-                println!("looking into latest_updates");
-                // Search in account updates
-                for (node_hash, node_rlp) in &latest_updates.account_updates {
-                    if node_hash.as_ref() == &hashed_address {
-                        return Ok(Some(AccountState::decode(node_rlp.as_slice())?));
-                    }
-                }
-
-                // If we don't find it in account updates, it might be in storage updates
-                // but we need to check if it's a deletion (represented by None)
-                for (_, storage_nodes) in &latest_updates.storage_updates {
-                    for (key, value) in storage_nodes {
-                        if key.as_ref() == &hashed_address {
-                            return if value.is_empty() {
-                                // Empty value means deletion
-                                Ok(None)
-                            } else {
-                                Ok(Some(AccountState::decode(value.as_slice())?))
-                            };
-                        }
-                    }
-                }
-            }
-        }
-
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -894,7 +878,7 @@ impl Store {
     ) -> Result<Vec<Vec<u8>>, StoreError> {
         let trie = self
             .engine
-            .open_storage_trie(hash_address_fixed(&address), storage_root)?;
+            .open_storage_trie(hash_address_fixed(&address), storage_root, self.dirty_storage_nodes.clone())?;
         Ok(trie.get_proof(&hash_key(storage_key))?)
     }
 
@@ -928,7 +912,7 @@ impl Store {
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         Ok(Some(
             self.engine
-                .open_storage_trie(hashed_address, storage_root)?
+                .open_storage_trie(hashed_address, storage_root, self.dirty_storage_nodes.clone())?
                 .into_iter()
                 .content()
                 .map_while(|(path, value)| {
@@ -965,7 +949,7 @@ impl Store {
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let storage_trie = self
             .engine
-            .open_storage_trie(hashed_address, storage_root)?;
+            .open_storage_trie(hashed_address, storage_root, self.dirty_storage_nodes.clone())?;
         let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
         if let Some(last_hash) = last_hash {
             proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
@@ -1009,7 +993,7 @@ impl Store {
         };
         let storage_trie = self
             .engine
-            .open_storage_trie(hashed_address, account_state.storage_root)?;
+            .open_storage_trie(hashed_address, account_state.storage_root, self.dirty_storage_nodes.clone())?;
         // Fetch storage trie nodes
         let mut nodes = vec![];
         let mut bytes_used = 0;
@@ -1067,7 +1051,7 @@ impl Store {
         account_hash: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        self.engine.open_storage_trie(account_hash, storage_root)
+        self.engine.open_storage_trie(account_hash, storage_root, self.dirty_storage_nodes.clone())
     }
 
     /// Returns true if the given node is part of the state trie's internal storage

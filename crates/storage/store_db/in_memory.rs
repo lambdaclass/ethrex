@@ -11,7 +11,7 @@ use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
@@ -435,6 +435,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        _dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();

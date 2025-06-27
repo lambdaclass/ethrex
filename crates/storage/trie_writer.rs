@@ -5,20 +5,20 @@ use tokio::{
 
 use crate::{Store, TrieUpdates};
 
-// TODO: Revisit this constant, since this can lead to bugs.
-const WRITER_CHANNEL_SIZE: usize = 100;
+const WRITER_CHANNEL_SIZE: usize = 1000;
 
 #[derive(Debug)]
 pub struct TrieWriter {
     sender: mpsc::Sender<TrieUpdates>,
     handle: JoinHandle<()>,
+    store: Store,
 }
 
 impl TrieWriter {
     pub fn new(store: Store) -> Self {
         let (sender, receiver) = mpsc::channel(WRITER_CHANNEL_SIZE);
         let handle = tokio::spawn(Self::writer_loop(store.clone(), receiver));
-        Self { sender, handle }
+        Self { sender, handle, store }
     }
 
     pub async fn writer_loop(store: Store, mut receiver: mpsc::Receiver<TrieUpdates>) {
@@ -29,6 +29,9 @@ impl TrieWriter {
 
     /// Send a message to the TrieWriter task to persist the [`TrieUpdates`].
     pub async fn write(&self, update: TrieUpdates) {
+        // before sending the updates to the task, we need to update the dirty nodes
+        self.store.update_cache(&update);
+        // then we can send the updates to the task
         self.sender.send(update).await.unwrap();
     }
 

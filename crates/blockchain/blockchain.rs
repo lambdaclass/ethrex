@@ -365,8 +365,11 @@ impl Blockchain {
             account_updates: state_updates,
             storage_updates: accounts_updates,
         };
+
         self.storage.update_cache(&trie_updates);
+
         println!("trie_updates: {trie_updates:?}");
+        
         self.trie_writer.write(trie_updates).await;
         let update_batch = UpdateBatch {
             blocks: vec![block.clone()],

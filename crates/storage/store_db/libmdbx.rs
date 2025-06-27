@@ -32,10 +32,13 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 pub struct Store {
     db: Arc<Database>,
 }
+
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
@@ -633,10 +636,12 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
+            dirty_storage_nodes,
         ));
         Ok(Trie::open(db, storage_root))
     }
