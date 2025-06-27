@@ -1,7 +1,7 @@
 use crate::rlpx::based::get_hash_batch_sealed;
 use crate::rlpx::l2::messages::{BatchSealed, NewBlock, L2Message};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
-use crate::rlpx::{connection::RLPxConnection, error::RLPxError, message::Message};
+use crate::rlpx::{connection::RLPxConnection, error::RLPxError};
 use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
@@ -360,5 +360,515 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             msg.batch.number, msg.batch.first_block, msg.batch.last_block
         );
         Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::public_key_from_signing_key;
+    use crate::rlpx::connection::{LocalState, RemoteState};
+    use crate::rlpx::frame::RLPxCodec;
+    use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
+    use crate::rlpx::message::Message;
+    use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+    use crate::types::Node;
+
+    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    use ethrex_blockchain::Blockchain;
+    use ethrex_common::types::batch::Batch;
+    use ethrex_common::{H256, H512};
+    use ethrex_common::{
+        H160,
+        types::{BlockHeader, ELASTICITY_MULTIPLIER},
+    };
+    use ethrex_storage::{EngineType, Store};
+    use k256::ecdsa::SigningKey;
+    use k256::SecretKey;
+    use secp256k1::SecretKey as SigningKeySecp256k1;
+    use secp256k1::Message as SignedMessage;
+    use ethrex_storage_rollup::StoreRollup;
+    use sha3::{Digest, Keccak256};
+    use std::fs::File;
+    use std::io::BufReader;
+    use std::sync::Arc;
+    use tokio::io::duplex;
+    use tokio::sync::{broadcast, mpsc};
+
+    /// Creates a new in-memory store for testing purposes
+    /// Copied behavior from smoke_test.rs
+    async fn test_store(path: &str) -> Store {
+        // Get genesis
+        let file = File::open("../../../test_data/genesis-execution-api.json")
+            .expect("Failed to open genesis file");
+        let reader = BufReader::new(file);
+        let genesis = serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+
+        // Build store with genesis
+        let store = Store::new(path, EngineType::InMemory).expect("Failed to build DB for testing");
+
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis state");
+
+        store
+    }
+
+    /// Creates a new block using the blockchain's payload building logic,
+    /// Copied behavior from smoke_test.rs
+    async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
+        let args = BuildPayloadArgs {
+            parent: parent.hash(),
+            timestamp: parent.timestamp + 1, // Increment timestamp to be valid
+            fee_recipient: H160::random(),
+            random: H256::random(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::random()),
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        };
+
+        // Create a temporary blockchain instance to use its building logic
+        let blockchain = Blockchain::default_with_store(store.clone());
+
+        let block = create_payload(&args, store).unwrap();
+        let result = blockchain.build_payload(block).await.unwrap();
+        blockchain.add_block(&result.payload).await.unwrap();
+        result.payload
+    }
+
+    /// A helper function to create an RLPxConnection for testing
+    async fn create_rlpx_connection(
+        signer: SigningKey,
+        stream: tokio::io::DuplexStream,
+        codec: RLPxCodec,
+    ) -> RLPxConnection<tokio::io::DuplexStream> {
+        let node = Node::new(
+            "127.0.0.1".parse().unwrap(),
+            30303,
+            30303,
+            public_key_from_signing_key(&signer),
+        );
+        let storage = test_store("store.db").await;
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let (broadcast, _) = broadcast::channel(10);
+        let committer_key = Some(SigningKeySecp256k1::new(&mut rand::rngs::OsRng));
+
+        let mut connection = RLPxConnection::new(
+            signer,
+            node,
+            stream,
+            codec,
+            storage,
+            blockchain,
+            "test-client/0.1.0".to_string(),
+            broadcast,
+        );
+        connection.capabilities.push(SUPPORTED_BASED_CAPABILITIES[0].clone());
+        connection.negotiated_eth_capability = Some(SUPPORTED_ETH_CAPABILITIES[0].clone());
+        connection.blockchain.set_synced();
+
+        // Each connection has the same signing key, since for now the signature is not verified. In the future this will change
+        let l2_state = L2ConnectedState {
+            latest_block_sent: 0,
+            latest_block_added: 0,
+            blocks_on_queue: BTreeMap::new(),
+            latest_batch_sent: 0,
+            store_rollup: StoreRollup::default(),
+            committer_key: Some(
+                SigningKeySecp256k1::from_slice(
+                    &hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924")
+                        .unwrap(),
+                )
+                    .unwrap(),
+            ),
+            next_block_broadcast: Instant::now()
+                + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            next_batch_broadcast: Instant::now()
+                + PERIODIC_BATCH_BROADCAST_INTERVAL,
+        };
+        connection.l2_state = L2ConnState::Connected(l2_state);
+
+        connection
+    }
+
+    /// Helper function to create and send a NewBlock message for the test.
+    async fn send_block(_conn: &mut RLPxConnection<tokio::io::DuplexStream>, _block: &Block) {
+        let secret_key = _conn.l2_state.connection_state().unwrap().committer_key.as_ref().unwrap();
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(
+                &SignedMessage::from_digest(_block.hash().to_fixed_bytes()),
+                secret_key,
+            )
+            .serialize_compact();
+        let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+
+        let message_to_send = NewBlock {
+            block: _block.clone(),
+            signature,
+            recovery_id,
+        };
+        println!(
+            "Sender (conn_a) sending block {} with hash {:?}.",
+            _block.header.number,
+            _block.hash()
+        );
+        _conn.send(message_to_send.into()).await.unwrap();
+    }
+
+    /// Helper function to create and send a BatchSealed message for the test.
+    async fn send_sealed_batch(
+        conn: &mut RLPxConnection<tokio::io::DuplexStream>,
+        batch_number: u64,
+        first_block: u64,
+        last_block: u64,
+    ) {
+        let batch = Batch {
+            number: batch_number,
+            first_block,
+            last_block,
+            ..Default::default()
+        };
+        let secret_key = conn.l2_state.connection_state_mut().unwrap().committer_key.as_ref().unwrap();
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(
+                &SignedMessage::from_digest(get_hash_batch_sealed(&batch)),
+                secret_key,
+            )
+            .serialize_compact();
+        let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+
+        let message_to_send = BatchSealed {
+            batch,
+            signature,
+            recovery_id,
+        };
+        println!(
+            "Sender (conn_a) sending sealed batch {} for blocks {}-{}.",
+            batch_number, first_block, last_block
+        );
+        conn.send(message_to_send.into()).await.unwrap();
+    }
+
+    async fn test_connections() -> (
+        RLPxConnection<tokio::io::DuplexStream>,
+        RLPxConnection<tokio::io::DuplexStream>,
+    ) {
+        // Stream for testing
+        let (stream_a, stream_b) = duplex(4096);
+
+        let eph_sk_a = SecretKey::random(&mut rand::rngs::OsRng);
+        let nonce_a = H256::random();
+        let eph_sk_b = SecretKey::random(&mut rand::rngs::OsRng);
+        let nonce_b = H256::random();
+        let hashed_nonces = Keccak256::digest([nonce_b.0, nonce_a.0].concat()).into();
+
+        let local_state_a = LocalState {
+            nonce: nonce_a,
+            ephemeral_key: eph_sk_a.clone(),
+            init_message: vec![],
+        };
+        let remote_state_a = RemoteState {
+            nonce: nonce_b,
+            ephemeral_key: eph_sk_b.public_key(),
+            init_message: vec![],
+            public_key: H512::zero(),
+        };
+        let codec_a = RLPxCodec::new(&local_state_a, &remote_state_a, hashed_nonces).unwrap();
+
+        let local_state_b = LocalState {
+            nonce: nonce_b,
+            ephemeral_key: eph_sk_b,
+            init_message: vec![],
+        };
+        let remote_state_b = RemoteState {
+            nonce: nonce_a,
+            ephemeral_key: eph_sk_a.public_key(),
+            init_message: vec![],
+            public_key: H512::zero(),
+        };
+        let codec_b = RLPxCodec::new(&local_state_b, &remote_state_b, hashed_nonces).unwrap();
+
+        // Create the two RLPxConnection instances
+        let conn_a = create_rlpx_connection(
+            SigningKey::random(&mut rand::rngs::OsRng),
+            stream_a,
+            codec_a,
+        )
+        .await;
+        let conn_b = create_rlpx_connection(
+            SigningKey::random(&mut rand::rngs::OsRng),
+            stream_b,
+            codec_b,
+        )
+        .await;
+
+        (conn_a, conn_b)
+    }
+
+    #[tokio::test]
+    /// Tests to ensure that blocks are added in the correct order to the RLPxConnection when received out of order.
+    async fn add_block_in_correct_order() {
+        let (mut conn_a, mut conn_b) = test_connections().await;
+
+        let b_task = tokio::spawn(async move {
+            println!("Receiver task (conn_b) started.");
+            let mut blocks_received_count = 0;
+
+            loop {
+                let Some(Ok(message)) = conn_b.receive().await else {
+                    println!("Receiver task (conn_b) stream ended or failed.");
+                    break;
+                };
+
+                let Message::L2Message(L2Message::NewBlock(msg)) = message else {
+                    continue;
+                };
+
+                blocks_received_count += 1;
+                println!(
+                    "Receiver task received block {}. Total received: {}",
+                    msg.block.header.number, blocks_received_count
+                );
+
+                // Process the message
+                let (dummy_tx, _) = mpsc::channel(1);
+                match conn_b
+                    .handle_message(msg.into(), dummy_tx)
+                    .await
+                {
+                    Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                    Err(e) => panic!("handle_message failed: {:?}", e),
+                }
+
+                // Perform assertions based on how many blocks have been received
+                match blocks_received_count {
+                    1 => {
+                        // Received block 3. No checks yet.
+                    }
+                    2 => {
+                        // Received block 2. Now check intermediate state.
+                        println!("Receiver task: Checking intermediate state...");
+                        assert_eq!(
+                            conn_b.l2_state.connection_state().unwrap().blocks_on_queue.len(),
+                            2,
+                            "Queue should contain blocks 2 and 3"
+                        );
+                        assert!(conn_b.l2_state.connection_state().unwrap().blocks_on_queue.contains_key(&2));
+                        assert!(conn_b.l2_state.connection_state().unwrap().blocks_on_queue.contains_key(&3));
+                        assert_eq!(
+                            conn_b.l2_state.connection_state().unwrap().latest_block_added, 0,
+                            "No blocks should be added to the chain yet"
+                        );
+                    }
+                    3 => {
+                        // Received block 1. Now check final state.
+                        println!("Receiver task: Checking final state...");
+                        assert!(
+                            conn_b.l2_state.connection_state().unwrap().blocks_on_queue.is_empty(),
+                            "Queue should be empty after processing"
+                        );
+                        assert_eq!(
+                            conn_b.l2_state.connection_state().unwrap().latest_block_added, 3,
+                            "All blocks up to 3 should have been added"
+                        );
+                        break; // Test is complete, exit the loop
+                    }
+                    _ => panic!("Received more blocks than expected"),
+                }
+            }
+        });
+
+        // Here we create a new store for simulating another node and create blocks to be sent
+        let storage_2 = test_store("store_2.db").await;
+        let genesis_header = storage_2.get_block_header(0).unwrap().unwrap();
+        let block1 = new_block(&storage_2, &genesis_header).await;
+        let block2 = new_block(&storage_2, &block1.header).await;
+        let block3 = new_block(&storage_2, &block2.header).await;
+
+        // Send blocks in reverse order
+        send_block(&mut conn_a, &block3).await;
+        send_block(&mut conn_a, &block2).await;
+
+        // Send the final block that allows the queue to be processed
+        send_block(&mut conn_a, &block1).await;
+
+        // wait for the receiver task to finish
+        match b_task.await {
+            Ok(_) => println!("Receiver task completed successfully."),
+            Err(e) => panic!("Receiver task failed: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    /// Tests that a batch can be sealed after all its blocks have been received.
+    async fn test_seal_batch_with_blocks() {
+        let (mut conn_a, mut conn_b) = test_connections().await;
+
+        let b_task = tokio::spawn(async move {
+            println!("Receiver task (conn_b) started.");
+            let mut blocks_received_count = 0;
+
+            loop {
+                let Some(Ok(message)) = conn_b.receive().await else {
+                    println!("Receiver task (conn_b) stream ended or failed.");
+                    break;
+                };
+
+                let (dummy_tx, _) = mpsc::channel(1);
+                match message {
+                    Message::L2Message(L2Message::NewBlock(msg)) => {
+                        blocks_received_count += 1;
+                        println!(
+                            "Receiver task received block {}. Total received: {}",
+                            msg.block.header.number, blocks_received_count
+                        );
+
+                        // Process the message
+                        match conn_b
+                            .handle_message(msg.clone().into(), dummy_tx)
+                            .await
+                        {
+                            Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                            Err(e) => panic!("handle_message failed: {:?}", e),
+                        }
+
+                        if blocks_received_count == 3 {
+                            println!("Receiver task: All blocks received, checking state...");
+                            assert_eq!(
+                                conn_b.l2_state.connection_state().unwrap().latest_block_added, 3,
+                                "All blocks up to 3 should have been added"
+                            );
+                        }
+                    }
+                    Message::L2Message(L2Message::BatchSealed(msg)) => {
+                        println!("Receiver task received sealed batch {}.", msg.batch.number);
+                        // Process the message
+                        match conn_b
+                            .handle_message(msg.into(), dummy_tx)
+                            .await
+                        {
+                            Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                            Err(e) => panic!("handle_message failed: {:?}", e),
+                        }
+
+                        println!("Receiver task: Checking for sealed batch...");
+                        assert!(
+                            conn_b.l2_state.connection_state().unwrap().store_rollup.contains_batch(&1).await.unwrap(),
+                            "Batch 1 should be sealed in the store"
+                        );
+                        break; // Test complete
+                    }
+                    _ => panic!("Received unexpected message type in receiver task"),
+                }
+            }
+        });
+
+        let storage = test_store("store_for_sending.db").await;
+        let genesis_header = storage.get_block_header(0).unwrap().unwrap();
+        let block1 = new_block(&storage, &genesis_header).await;
+        let block2 = new_block(&storage, &block1.header).await;
+        let block3 = new_block(&storage, &block2.header).await;
+
+        // Send blocks in order
+        send_block(&mut conn_a, &block1).await;
+        send_block(&mut conn_a, &block2).await;
+        send_block(&mut conn_a, &block3).await;
+
+        // Now send the sealed batch message
+        send_sealed_batch(&mut conn_a, 1, 1, 3).await;
+
+        // Wait for the receiver task to finish
+        match b_task.await {
+            Ok(_) => println!("Receiver task completed successfully."),
+            Err(e) => panic!("Receiver task failed: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    /// Tests that a batch cannot be sealed after all its blocks have been received.
+    async fn test_batch_not_seal_with_missing_blocks() {
+        let (mut conn_a, mut conn_b) = test_connections().await;
+
+        let b_task = tokio::spawn(async move {
+            println!("Receiver task (conn_b) started.");
+            let mut blocks_received_count = 0;
+
+            loop {
+                let Some(Ok(message)) = conn_b.receive().await else {
+                    println!("Receiver task (conn_b) stream ended or failed.");
+                    break;
+                };
+
+                let (dummy_tx, _) = mpsc::channel(1);
+                match message {
+                    Message::L2Message(L2Message::NewBlock(msg)) => {
+                        blocks_received_count += 1;
+                        println!(
+                            "Receiver task received block {}. Total received: {}",
+                            msg.block.header.number, blocks_received_count
+                        );
+
+                        // Process the message
+                        match conn_b
+                            .handle_message(msg.into(), dummy_tx)
+                            .await
+                        {
+                            Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                            Err(e) => panic!("handle_message failed: {:?}", e),
+                        }
+
+                        if blocks_received_count == 3 {
+                            println!("Receiver task: All blocks received, checking state...");
+                            assert_eq!(
+                                conn_b.l2_state.connection_state().unwrap().latest_block_added, 3,
+                                "All blocks up to 3 should have been added"
+                            );
+                        }
+                    }
+                    Message::L2Message(L2Message::BatchSealed(msg)) => {
+                        println!("Receiver task received sealed batch {}.", msg.batch.number);
+                        // Process the message
+                        match conn_b
+                            .handle_message(msg.into(), dummy_tx)
+                            .await
+                        {
+                            Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                            Err(e) => panic!("handle_message failed: {:?}", e),
+                        }
+
+                        println!("Receiver task: Checking for sealed batch...");
+                        assert!(
+                            !conn_b.l2_state.connection_state().unwrap().store_rollup.contains_batch(&1).await.unwrap(),
+                            "Batch 1 should not be sealed in the store"
+                        );
+                        break; // Test complete
+                    }
+                    _ => panic!("Received unexpected message type in receiver task"),
+                }
+            }
+        });
+
+        let storage = test_store("store_for_sending.db").await;
+        let genesis_header = storage.get_block_header(0).unwrap().unwrap();
+        let block1 = new_block(&storage, &genesis_header).await;
+        let block2 = new_block(&storage, &block1.header).await;
+        // Skip the third block
+
+        // Send blocks in order
+        send_block(&mut conn_a, &block1).await;
+        send_block(&mut conn_a, &block2).await;
+        // Skip the third block
+
+        // Now send the sealed batch message
+        send_sealed_batch(&mut conn_a, 1, 1, 3).await;
+
+        // Wait for the receiver task to finish
+        match b_task.await {
+            Ok(_) => println!("Receiver task completed successfully."),
+            Err(e) => panic!("Receiver task failed: {:?}", e),
+        }
     }
 }
