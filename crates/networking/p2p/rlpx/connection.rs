@@ -39,15 +39,9 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-#[cfg(feature = "l2")]
-use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use rand::random;
-#[cfg(feature = "l2")]
-use secp256k1::Message as SignedMessage;
-#[cfg(feature = "l2")]
-use secp256k1::SecretKey as SigningKeySecp256k1;
 use std::collections::BTreeMap;
 use std::{
     collections::{HashMap, HashSet},
@@ -94,10 +88,10 @@ pub(crate) struct LocalState {
 /// Fully working RLPx connection.
 pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
-    pub node: Node,
+    pub(crate) node: Node,
     framed: Framed<S, RLPxCodec>,
-    pub storage: Store,
-    pub blockchain: Arc<Blockchain>,
+    pub(crate) storage: Store,
+    pub(crate) blockchain: Arc<Blockchain>,
     capabilities: Vec<Capability>,
     negotiated_eth_capability: Option<Capability>,
     negotiated_snap_capability: Option<Capability>,
