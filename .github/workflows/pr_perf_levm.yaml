@@ -50,6 +50,8 @@ jobs:
             cat FactorialRecursive.md || echo "No results";
             echo "#### Benchmark Results: Fibonacci";
             cat Fibonacci.md || echo "No results";
+            echo "#### Benchmark Results: Push";
+            cat Push.md || echo "No results";
             echo "#### Benchmark Results: ManyHashes";
             cat ManyHashes.md || echo "No results";
             echo "#### Benchmark Results: BubbleSort";
@@ -107,6 +109,8 @@ jobs:
             cat FactorialRecursive.md || echo "No results";
             echo "#### Benchmark Results: Fibonacci";
             cat Fibonacci.md || echo "No results";
+            echo "#### Benchmark Results: Push";
+            cat Push.md || echo "No results";
             echo "#### Benchmark Results: ManyHashes";
             cat ManyHashes.md || echo "No results";
             echo "#### Benchmark Results: BubbleSort";
