@@ -7,20 +7,19 @@ use ethrex::{
     },
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
-use ethrex_p2p::network::peer_table;
+use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::Mutex;
-use tokio_util::task::TaskTracker;
+use tokio::{
+    signal::unix::{SignalKind, signal},
+    sync::Mutex,
+};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::info;
 
-#[cfg(feature = "l2")]
-use ethrex::l2::L2Options;
-#[cfg(feature = "l2")]
-use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -41,6 +40,22 @@ async fn set_sync_block(store: &Store) {
             .await
             .expect("Failed to set latest canonical block");
     }
+}
+
+async fn server_shutdown(
+    data_dir: String,
+    cancel_token: &CancellationToken,
+    peer_table: Arc<Mutex<KademliaTable>>,
+    local_node_record: Arc<Mutex<NodeRecord>>,
+) {
+    info!("Server shut down started...");
+    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    info!("Storing config at {:?}...", node_config_path);
+    cancel_token.cancel();
+    let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+    store_node_config_file(node_config, node_config_path).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    info!("Server shutting down!");
 }
 
 #[tokio::main]
@@ -84,8 +99,6 @@ async fn main() -> eyre::Result<()> {
 
     init_rpc_api(
         &opts,
-        #[cfg(feature = "l2")]
-        &L2Options::default(),
         peer_table.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
@@ -93,8 +106,6 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
-        #[cfg(feature = "l2")]
-        StoreRollup::default(),
     )
     .await;
 
@@ -130,16 +141,14 @@ async fn main() -> eyre::Result<()> {
         }
     }
 
+    let mut signal_terminate = signal(SignalKind::terminate())?;
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            info!("Server shut down started...");
-            let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-            info!("Storing config at {:?}...", node_config_path);
-            cancel_token.cancel();
-            let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-            store_node_config_file(node_config, node_config_path).await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            info!("Server shutting down!");
+            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+        }
+        _ = signal_terminate.recv() => {
+            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
     }
 

@@ -2153,6 +2153,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "coins-bip32"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3763,6 +3772,7 @@ dependencies = [
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-rlp",
@@ -3810,6 +3820,7 @@ dependencies = [
  "sha3",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -3918,6 +3929,29 @@ dependencies = [
  "lazy_static",
  "serde",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "ethrex-l2-rpc"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.4",
+ "bytes",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-p2p",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "ethrex-storage-rollup",
+ "keccak-hash",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tower-http 0.6.6",
+ "tracing",
 ]
 
 [[package]]
@@ -6138,9 +6172,9 @@ dependencies = [
 
 [[package]]
 name = "libsql"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9f529b1afe0465e1f864fa34cdcad08fb463a1bf86b40267493db83508ee9d"
+checksum = "d41c1c2106d415b8bf929ca6e644e2bc9a44ce5aea9819350276e4d97e27f3b1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -6178,20 +6212,21 @@ dependencies = [
 
 [[package]]
 name = "libsql-ffi"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "739717a55160a200ef8a9122a17d559148ddd3f0c526b52b3908f9a80aca5284"
+checksum = "e0df681b059a8672691e60232e78967ba821edd37e959f4e9fa8a3de36e9ca29"
 dependencies = [
  "bindgen 0.66.1",
  "cc",
+ "cmake",
  "glob",
 ]
 
 [[package]]
 name = "libsql-hrana"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44633324952c32e3ab7da5e5cf36af9d7afe53e74f811e622ef23207b357ff18"
+checksum = "09754f239a048aff667f0f2f492a4011d2bdafa8e662c138ab2c86badf73aaf5"
 dependencies = [
  "base64 0.21.7",
  "bytes",
@@ -6201,9 +6236,9 @@ dependencies = [
 
 [[package]]
 name = "libsql-rusqlite"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d042d19c09bb858a4ca93c6ae346a8267215301e265097c2858a1c91f6384bd"
+checksum = "a33fde7ff52002bd1b8935a71ef0823472e19bb3a03c76862072467eb62c73eb"
 dependencies = [
  "bitflags 2.9.1",
  "fallible-iterator 0.2.0",
@@ -6233,9 +6268,9 @@ dependencies = [
 
 [[package]]
 name = "libsql-sys"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3760d2141b2ac78a24c303c53ee0720301bbbe5158db3fc016c26f3eeeb44712"
+checksum = "62d1e07a691696cb18c2faba98313a194f0804aa6a1ce8aa9919b7ecd290d458"
 dependencies = [
  "bytes",
  "libsql-ffi",
@@ -6247,9 +6282,9 @@ dependencies = [
 
 [[package]]
 name = "libsql_replication"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "039dccb52999803f36bc850be4e2ebc6987d1fe622994df1678b87c849c9dca1"
+checksum = "22587cf8791c63fac33f0ee19f225e4ff7922a2ee59dd97fa183869b9a57b32f"
 dependencies = [
  "aes",
  "async-stream",
