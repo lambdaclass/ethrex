@@ -52,6 +52,12 @@ down: down-l1-docker down-l2-docker ## Stop all Docker Compose services.
 
 build: build-ethrex build-prover ## Build ethrex and prover binaries.
 
+# ==============================================================================
+# Build Targets
+# ==============================================================================
+
+.PHONY: build-ethrex build-prover build-prover-gpu
+
 build-ethrex:
 	@echo "Building ethrex binary..."
 	@cargo build --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics,dev"
@@ -122,7 +128,7 @@ run-l1-host: ## Run L1 node on the host.
 
 run-l2-host: ## Run L2 node on the host.
 	@echo "Starting L2 on host..."
-	@cargo run --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
+	cargo run --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
 	l2 init \
 	--watcher.block-delay 0 \
 	--network $(L2_GENESIS_FILE_PATH) \
@@ -146,3 +152,53 @@ run-prover-host: ## Run Prover on the host.
 	--http.addr $(PROVER_HTTP_ADDR) \
   	--http.port $(PROVER_HTTP_PORT) \
 	--log.level $(PROVER_LOG_LEVEL)
+
+# ==============================================================================
+# Db Targets
+# ==============================================================================
+
+.PHONY: down-local-l1 restart-local-l1 rm-db-l1 init-l2 restart-l2 down-l2 rm-db-l2 init-metrics down-metrics
+
+rm-db-l1: ## 🛑 Removes the DB used by the L1
+	@cargo run --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex -- removedb --datadir $(ETHREX_L1_DEV_LIBMDBX) --force
+
+rm-db-l2: ## 🛑 Removes the DB used by the L2
+	@cargo run --release --manifest-path $(ETHREX_PATH)/Cargo.toml --bin ethrex -- removedb --datadir $(ETHREX_L2_DEV_LIBMDBX) --force
+
+# ==============================================================================
+# Contract Targets
+# ==============================================================================
+
+.PHONY: clean-contract-deps restart-contract-deps deploy-l1 deploy-l1-testnet update-system-contracts
+
+clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
+	@rm -rf contracts/solc_out
+	@rm -rf contracts/lib
+	@cd tee/contracts; make clean
+
+restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
+
+deploy-l1: ## 📜 Deploys the L1 contracts
+	@cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	--eth-rpc-url $(L1_RPC_URL) \
+	--private-key $$L1_PRIVATE_KEY \
+	--contracts-path contracts \
+	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
+	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
+	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--deposit-rich \
+	--private-keys-file-path $(ETHREX_PATH)/test_data/private_keys_l1.txt \
+	--genesis-l1-path $(L1_GENESIS_FILE_PATH) \
+	--genesis-l2-path $(L2_GENESIS_FILE_PATH)
+
+deploy-l1-testnet: ## 📜 Deploys the L1 contracts to a testnet
+	@cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	--contracts-path contracts
+
+update-system-contracts:
+	@cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
+	--contracts-path contracts \
+	--l2-genesis-path $(L2_GENESIS_FILE_PATH)

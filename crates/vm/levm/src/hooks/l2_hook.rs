@@ -1,5 +1,5 @@
 use crate::{
-    errors::{InternalError, TxValidationError, VMError},
+    errors::{ContextResult, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
     vm::VM,
 };
@@ -69,7 +69,7 @@ impl Hook for L2Hook {
         default_hook::validate_sufficient_max_fee_per_gas(vm)?;
 
         // (5) INITCODE_SIZE_EXCEEDED
-        if vm.is_create() {
+        if vm.is_create()? {
             default_hook::validate_init_code_size(vm)?;
         }
 
@@ -109,10 +109,10 @@ impl Hook for L2Hook {
 
     fn finalize_execution(
         &mut self,
-        vm: &mut crate::vm::VM<'_>,
-        report: &mut crate::errors::ExecutionReport,
+        vm: &mut VM<'_>,
+        ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
-        if !report.is_success() {
+        if !ctx_result.is_success() {
             if vm.env.is_privileged {
                 undo_value_transfer(vm)?;
             } else {
@@ -124,10 +124,10 @@ impl Hook for L2Hook {
         // 2. Return unused gas + gas refunds to the sender.
 
         if !vm.env.is_privileged {
-            let gas_refunded = default_hook::compute_gas_refunded(report)?;
+            let gas_refunded = default_hook::compute_gas_refunded(vm, ctx_result)?;
             let actual_gas_used =
-                default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
-            default_hook::refund_sender(vm, report, gas_refunded, actual_gas_used)?;
+                default_hook::compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+            default_hook::refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
             default_hook::pay_coinbase(vm, actual_gas_used)?;
         }
 
@@ -138,7 +138,7 @@ impl Hook for L2Hook {
 }
 
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
-    if !vm.is_create() {
+    if !vm.is_create()? {
         vm.decrease_account_balance(
             vm.current_call_frame()?.to,
             vm.current_call_frame()?.msg_value,

@@ -4,6 +4,7 @@ pragma solidity =0.8.29;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
@@ -17,7 +18,8 @@ contract OnChainProposer is
     IOnChainProposer,
     Initializable,
     UUPSUpgradeable,
-    Ownable2StepUpgradeable
+    Ownable2StepUpgradeable,
+    PausableUpgradeable
 {
     /// @notice Committed batches data.
     /// @dev This struct holds the information about the committed batches.
@@ -114,70 +116,33 @@ contract OnChainProposer is
 
         // Set the AlignedProofAggregator address
         require(
-            ALIGNEDPROOFAGGREGATOR == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             alignedProofAggregator != address(0),
             "OnChainProposer: alignedProofAggregator is the zero address"
         );
-        require(
-            alignedProofAggregator != address(this),
-            "OnChainProposer: alignedProofAggregator is the contract address"
-        );
-
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         // Set the Risc0Groth16Verifier address
         require(
-            R0VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             r0verifier != address(0),
             "OnChainProposer: r0verifier is the zero address"
-        );
-        require(
-            r0verifier != address(this),
-            "OnChainProposer: r0verifier is the contract address"
         );
         R0VERIFIER = r0verifier;
 
         // Set the SP1Groth16Verifier address
         require(
-            SP1VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             sp1verifier != address(0),
             "OnChainProposer: sp1verifier is the zero address"
-        );
-        require(
-            sp1verifier != address(this),
-            "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
 
         // Set the TDXVerifier address
         require(
-            TDXVERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             tdxverifier != address(0),
             "OnChainProposer: tdxverifier is the zero address"
-        );
-        require(
-            tdxverifier != address(this),
-            "OnChainProposer: tdxverifier is the contract address"
         );
         TDXVERIFIER = tdxverifier;
 
         // Set the SP1 program verification key
-        require(
-            SP1_VERIFICATION_KEY == bytes32(0),
-            "OnChainProposer: contract already initialized"
-        );
         SP1_VERIFICATION_KEY = sp1Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
@@ -198,16 +163,8 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
-            BRIDGE == address(0),
-            "OnChainProposer: bridge already initialized"
-        );
-        require(
             bridge != address(0),
             "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
         );
         BRIDGE = bridge;
     }
@@ -219,7 +176,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
         bytes32 lastBlockHash
-    ) external override onlySequencer {
+    ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
@@ -254,9 +211,15 @@ contract OnChainProposer is
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(blobVersionedHash == 0, "L2 running as validium but blob was published");
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
         } else {
-            require(blobVersionedHash != 0, "L2 running as rollup but blob was not published");
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -289,7 +252,7 @@ contract OnChainProposer is
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external override onlySequencer {
+    ) external override onlySequencer whenNotPaused {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
@@ -353,9 +316,8 @@ contract OnChainProposer is
     function verifyBatchAligned(
         uint256 batchNumber,
         bytes calldata alignedPublicInputs,
-        bytes32 alignedProgramVKey,
         bytes32[] calldata alignedMerkleProof
-    ) external override onlySequencer {
+    ) external override onlySequencer whenNotPaused {
         require(
             ALIGNEDPROOFAGGREGATOR != DEV_MODE,
             "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
@@ -375,7 +337,7 @@ contract OnChainProposer is
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
             alignedMerkleProof,
-            alignedProgramVKey,
+            SP1_VERIFICATION_KEY,
             alignedPublicInputs
         );
         (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
@@ -452,9 +414,36 @@ contract OnChainProposer is
         );
     }
 
+    /// @inheritdoc IOnChainProposer
+    function revertBatch(
+        uint256 batchNumber
+    ) external override onlySequencer whenPaused {
+        require(batchNumber >= lastVerifiedBatch, "OnChainProposer: can't revert verified batch");
+        require(batchNumber < lastCommittedBatch, "OnChainProposer: no batches are being reverted");
+
+        // Remove old batches
+        for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
+            delete batchCommitments[i + 1];
+        }
+
+        lastCommittedBatch = batchNumber;
+
+        emit BatchReverted(batchCommitments[lastCommittedBatch].newStateRoot);
+    }
+
     /// @notice Allow owner to upgrade the contract.
     /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyOwner {}
+
+    /// @inheritdoc IOnChainProposer
+    function pause() external override onlyOwner {
+        _pause();
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function unpause() external override onlyOwner {
+        _unpause();
+    }
 }

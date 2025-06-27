@@ -16,6 +16,7 @@ members = [
   "crates/l2/prover/zkvm/interface",
   "crates/l2/sdk",
   "crates/l2/storage",
+  "crates/l2/networking/rpc",
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
@@ -54,6 +55,7 @@ ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
+ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -64,7 +66,7 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { version = "=0.5.3", features = ["orm"] }
 bytes = { version = "1.6.0", features = ["serde"] }
-tokio = { version = "1.41.1"}
+tokio = { version = "1.41.1" }
 thiserror = "2.0.9"
 hex = "0.4.3"
 hex-literal = "0.4.1"
@@ -90,6 +92,8 @@ axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
+libsql = "0.9.10"
+futures = "0.3.31"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }

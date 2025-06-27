@@ -74,7 +74,9 @@ impl REVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, sender) in block.body.get_transactions_with_sender() {
+        for (tx, sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
             let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
@@ -304,6 +306,37 @@ impl REVM {
                 continue;
             }
 
+            // Edge case: Account was destroyed and created again afterwards with CREATE2.
+            if matches!(account.status, AccountStatus::DestroyedChanged) {
+                // Push to account updates the removal of the account and then push the new state of the account.
+                // This is for clearing the account's storage when it was selfdestructed in the first place.
+                account_updates.push(AccountUpdate::removed(address));
+                // This will always be Some though, because it is DestroyedChanged
+                if let Some(new_acc_info) = account.account_info() {
+                    let new_acc_update = AccountUpdate {
+                        address,
+                        removed: false,
+                        info: Some(AccountInfo {
+                            code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
+                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                            nonce: new_acc_info.nonce,
+                        }),
+                        code: new_acc_info.code.map(|c| c.original_bytes().0),
+                        added_storage: account
+                            .storage
+                            .iter()
+                            .map(|(key, slot)| {
+                                (
+                                    H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                                    U256::from_little_endian(slot.present_value().as_le_slice()),
+                                )
+                            })
+                            .collect(),
+                    };
+                    account_updates.push(new_acc_update);
+                }
+                continue;
+            }
             // Apply account changes to DB
             let mut account_update = AccountUpdate::new(address);
             // If the account was changed then both original and current info will be present in the bundle account

@@ -49,13 +49,19 @@ define run_benchmark
 endef
 
 define run_benchmark_ci
-	@printf "%s\n" "revm_$(1)"
-	@target/release/benchmark revm $(1) 1 $($(3))
-	@printf "%s\n" "levm_$(1)"
-	@target/release/benchmark levm $(1) 1 $($(3))
-	hyperfine -w 5 -r 10 -N --export-markdown $(1).md \
-		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
+	@printf "%s\n" "main_revm$(1)"
+	@../../../main/benchmark revm $(1) 1 $($(3))
+	@printf "%s\n" "main_levm$(1)"
+	@../../../main/benchmark levm $(1) 1 $($(3))
+	@printf "%s\n" "pr_revm$(1)"
+	@../../../pr/benchmark revm $(1) 1 $($(3))
+	@printf "%s\n" "pr_levm_$(1)"
+	@../../../pr/benchmark levm $(1) 1 $($(3))
+	hyperfine -w 5 -r 10 -N --export-markdown ../../../benchmark_comparison_results/$(1).md \
+		-n "main_revm_$(1)" "../../../main/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "main_levm_$(1)" "../../../main/benchmark levm $(1) $($(2)) $($(3))" \
+		-n "pr_revm_$(1)" "../../../pr/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "pr_levm_$(1)" "../../../pr/benchmark levm $(1) $($(2)) $($(3))"
 	@echo
 endef
 
@@ -77,7 +83,7 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 revm-comparison-ci: compile-contracts
-	$(MAKE) build-revm-comparison
+	mkdir -p ../../../benchmark_comparison_results
 	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
@@ -86,6 +92,20 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+
+flamegraph-levm-benchmark:
+	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=Factorial repetitions=$(REPETITIONS) iterations=$(BENCH_FACT_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=FactorialRecursive repetitions=$(REPETITIONS) iterations=$(BENCH_FACT_REC_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=ManyHashes repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_HASHES_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=BubbleSort repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_BUBBLESORT_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=ERC20Approval repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_APPROVAL_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=ERC20Transfer repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_TRANSFER_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=ERC20Mint repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_MINT_ITERATIONS)
+
+flamegraph-levm-bench-generic:
+	mkdir -p flamegraph_levm_benchmark
+	cargo flamegraph --root --package revm_comparison --bin benchmark --output flamegraph_levm_benchmark/flamegraph_levm_$(name).svg -- levm $(name) $(repetitions) $(iterations)
 
 build-revm-comparison:
 	cd bench/revm_comparison && \

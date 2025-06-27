@@ -1,101 +1,77 @@
-# Ethrex L2 Documentation
+# Ethrex L2
 
-This document provides instructions for setting up and managing the Ethrex L2 development environment. The system has been streamlined to offer a flexible workflow, allowing developers to run services using Docker or directly on the host machine.
+In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.
 
-For a high-level overview of the L2 architecture and its components, please refer to the following documents:
+The main differences between this mode and regular ethrex are:
 
-- [General Overview](./overview.md)
-- [Sequencer](./sequencer.md)
-- [Contracts](./contracts.md)
-- [Prover](./prover.md)
-- [State Diffs](./state_diffs.md)
-- [Withdrawals](./withdrawals.md)
+- In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the network. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.
+- Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.
+- A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.
+- Two new types of transactions are included: deposits (native token mints) and withdrawals.
+
+At a high level, the following new parts are added to the node:
+
+- A `proposer` component, in charge of continually creating new blocks from the mempool transactions. This replaces the regular flow that an Ethereum L1 node has, where new blocks come from the consensus layer through the `forkChoiceUpdate` -> `getPayload` -> `NewPayload` Engine API flow in communication with the consensus layer.
+- A `prover` subsystem, which itself consists of two parts:
+  - A `proverClient` that takes new blocks from the node, proves them, then sends the proof back to the node to send to the L1. This is a separate binary running outside the node, as proving has very different (and higher) hardware requirements than the sequencer.
+  - A `proverServer` component inside the node that communicates with the prover, sending witness data for proving and receiving proofs for settlement on L1.
+- L1 contracts with functions to commit to new state and then verify the state transition function, only advancing the state of the L2 if the proof verifies. It also has functionality to process deposits and withdrawals to/from the L2.
+- The EVM is lightly modified with new features to process deposits and withdrawals accordingly.
 
 ## Prerequisites
 
-Before you begin, ensure you have the following tools installed:
+For how to install our dependencies, go to their official documentation:
 
 - [Rust](https://www.rust-lang.org/tools/install)
+- [Solc 0.29](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 - [Docker](https://docs.docker.com/engine/install/)
 
-## Quick Start
+## How to run
 
-To get the entire L2 stack up and running with a single command, navigate to the `crates/l2` directory and run:
+### Initialize the network
 
-```bash
-make up
+> [!IMPORTANT]
+> Before this step:
+>
+> 1. Make sure you are inside the `crates/l2` directory.
+> 2. Make sure the Docker daemon is running.
+
+```sh
+make init
 ```
 
-This command will start both the L1 and L2 services using Docker Compose. To stop all services, use:
+This will setup a local Ethereum network as the L1, deploy all the needed contracts on it, then start an ethrex L2 node pointing to it.
 
-```bash
-make down
+### Restarting the network
+
+> [!WARNING]
+> This command will cleanup your running L1 and L2 nodes.
+
+```sh
+make restart
 ```
 
-## Advanced Usage
+### Local L1 Rich Wallets
 
-For more granular control, you can manage individual components separately. This is useful for debugging or focusing on a specific part of the stack.
+Most of them are specified in [ethereum-package](https://github.com/ethpandaops/ethereum-package/blob/main/src/prelaunch_data_generator/genesis_constants/genesis_constants.star), but there's an extra one:
 
-### Docker Compose Management
-
-You can start and stop individual services using the following `make` targets:
-
-- **Start L1:** `make up-l1-docker`
-- **Stop L1:** `make down-l1-docker`
-- **Start L2:** `make up-l2-docker`
-- **Stop L2:** `make down-l2-docker`
-- **Start Prover:** `make up-prover-docker`
-- **Stop Prover:** `make down-prover-docker`
-
-### Host Process Management
-
-If you prefer to run services directly on your host machine, use these targets. The process will run in the foreground of your current terminal. To stop a running process, press `Ctrl-C`.
-
-- **Run L1:** `make run-l1-host`
-- **Run L2:** `make run-l2-host`
-- **Run Prover:** `make run-prover-host`
-
-## Configuration
-
-The L2 environment can be configured in two ways, allowing for both persistent and temporary settings.
-
-### 1. Using a `.env` File
-
-For persistent configuration, create a `.env` file in the `crates/l2` directory. The `Makefile` will automatically include it and export any variables prefixed with `ETHREX_`.
-
-> **Note:** Your custom variables in the `.env` file are safe. When the contract deployer runs (e.g., as part of `make up`), it will intelligently add or update only the necessary contract addresses, preserving all other values.
-
-**Example `.env` file:**
-
-```env
-# L1 RPC URL for the L2 node to connect to
-L1_RPC_URL=http://localhost:8545
-
-# Private key for the L2 committer
-ETHREX_COMMITTER_L1_PRIVATE_KEY=0x...
-
-# Private key for the proof coordinator
-ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=0x...
+```json
+{
+    "address": "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
+    "private_key": "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
+}
 ```
 
-### 2. Passing Variables to `make`
+## Ethrex L2 documentation
 
-For temporary or one-off configurations, you can pass variables directly to the `make` command. These will override any values set in the `.env` file.
+For general documentation, see:
 
-**Example:**
+- [Getting started](./getting_started.md) contains guides on setting up and interacting with an ethrex L2 stack.
+- [General overview](./overview.md) for a high-level view of the ethrex L2 stack.
+- [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts.
+- [Components](./components.md) for more detailed documentation on each off-chain component.
+- [Based roadmap (draft)](./roadmap.md) contains ethrex's roadmap for becoming based.
 
-```bash
-# Run the L1 on a different port
-make up-l1-docker L1_PORT=8546
+## Developer documentation
 
-# Pass a private key directly to the L2 host process
-make run-l2-host ETHREX_COMMITTER_L1_PRIVATE_KEY=0x...
-```
-
-## Building Binaries
-
-To build the necessary binaries for running host processes, use the following targets:
-
-- **Build all:** `make build` (builds both `ethrex` and `prover`)
-- **Build Ethrex:** `make build-ethrex`
-- **Build Prover:** `make build-prover PROVER=<risc0|sp1>`
+Documentation useful for ethrex development can be found in the ["Developers"](../developers) section.

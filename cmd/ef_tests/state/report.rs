@@ -329,9 +329,12 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
         writeln!(f)?;
-        writeln!(f, "Failed tests:")?;
+        writeln!(f, "Passed tests:")?;
         writeln!(f)?;
         writeln!(f, "{}", test_dir_summary_for_shell(&self.0))?;
+        writeln!(f)?;
+        writeln!(f, "Failed tests:")?;
+        writeln!(f)?;
         for report in self.0.iter() {
             if report.passed() {
                 continue;
@@ -542,6 +545,17 @@ impl EFTestReportForkResult {
         self.failed_vectors.insert(
             failed_vector,
             EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason),
+        );
+    }
+
+    pub fn register_error_on_reverting_levm_state(
+        &mut self,
+        reason: String,
+        failed_vector: TestVector,
+    ) {
+        self.failed_vectors.insert(
+            failed_vector,
+            EFTestRunnerError::FailedToRevertLEVMState(reason),
         );
     }
 

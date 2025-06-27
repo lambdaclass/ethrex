@@ -16,7 +16,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.85.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
       - uses: actions/checkout@v4
         with:
           lfs: true
@@ -33,7 +35,7 @@ jobs:
         with:
           tool: "cargo"
           output-file-path: cmd/ethrex/output.txt
-          benchmark-data-dir-path: "."
+          benchmark-data-dir-path: "benchmarks"
           # Access token to deploy GitHub Pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically

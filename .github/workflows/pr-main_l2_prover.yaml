@@ -33,6 +33,9 @@ jobs:
       - name: Clippy sp1
         run: |
           cargo clippy -r -p ethrex-prover --all-targets -F sp1
+      - name: Check sp1 cargo.lock modified but not committed
+        run: |
+          git diff --exit-code -- crates/l2/prover/zkvm/interface/sp1/Cargo.lock
       - name: Check exec
         run: |
           cargo check -p ethrex-prover

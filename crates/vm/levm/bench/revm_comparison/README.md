@@ -37,3 +37,8 @@ These are the obtained results:
 |--------|---------------|---------|---------|-------------|
 | `revm` | 6.213 ± 0.029 |  6.169  |  6.253  |    1.00     |
 | `levm` | 8.303 ± 0.094 |  8.204  |  8.498  | 1.33 ± 0.02 |
+
+
+
+Additional Notes:
+- As it is done now, contracts should have the Benchmark public function that expects a `uint256`.

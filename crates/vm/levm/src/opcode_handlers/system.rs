@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
-    errors::{ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
@@ -30,19 +30,20 @@ impl<'a> VM<'a> {
             return_data_size,
         ) = {
             let current_call_frame = self.current_call_frame_mut()?;
-            let gas = current_call_frame.stack.pop()?;
-            let callee: Address = word_to_address(current_call_frame.stack.pop()?);
-            let value_to_transfer: U256 = current_call_frame.stack.pop()?;
-            let args_start_offset = current_call_frame.stack.pop()?;
-            let args_size = current_call_frame
-                .stack
-                .pop()?
+            let [
+                gas,
+                callee,
+                value_to_transfer,
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+            ] = *current_call_frame.stack.pop()?;
+            let callee: Address = word_to_address(callee);
+            let args_size = args_size
                 .try_into()
                 .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = current_call_frame.stack.pop()?;
-            let return_data_size: usize = current_call_frame
-                .stack
-                .pop()?
+            let return_data_size: usize = return_data_size
                 .try_into()
                 .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
@@ -79,9 +80,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -137,19 +136,20 @@ impl<'a> VM<'a> {
             return_data_size,
         ) = {
             let current_call_frame = self.current_call_frame_mut()?;
-            let gas = current_call_frame.stack.pop()?;
-            let code_address = word_to_address(current_call_frame.stack.pop()?);
-            let value_to_transfer = current_call_frame.stack.pop()?;
-            let args_start_offset = current_call_frame.stack.pop()?;
-            let args_size = current_call_frame
-                .stack
-                .pop()?
+            let [
+                gas,
+                code_address,
+                value_to_transfer,
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+            ] = *current_call_frame.stack.pop()?;
+            let code_address = word_to_address(code_address);
+            let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = current_call_frame.stack.pop()?;
-            let return_data_size = current_call_frame
-                .stack
-                .pop()?
+            let return_data_size = return_data_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
@@ -180,9 +180,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -227,10 +225,8 @@ impl<'a> VM<'a> {
     // RETURN operation
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
-        let offset = current_call_frame.stack.pop()?;
-        let size = current_call_frame
-            .stack
-            .pop()?
+        let [offset, size] = *current_call_frame.stack.pop()?;
+        let size = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
@@ -265,18 +261,19 @@ impl<'a> VM<'a> {
             return_data_size,
         ) = {
             let current_call_frame = self.current_call_frame_mut()?;
-            let gas = current_call_frame.stack.pop()?;
-            let code_address = word_to_address(current_call_frame.stack.pop()?);
-            let args_start_offset = current_call_frame.stack.pop()?;
-            let args_size = current_call_frame
-                .stack
-                .pop()?
+            let [
+                gas,
+                code_address,
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+            ] = *current_call_frame.stack.pop()?;
+            let code_address = word_to_address(code_address);
+            let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = current_call_frame.stack.pop()?;
-            let return_data_size = current_call_frame
-                .stack
-                .pop()?
+            let return_data_size = return_data_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
@@ -305,9 +302,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -362,18 +357,19 @@ impl<'a> VM<'a> {
             return_data_size,
         ) = {
             let current_call_frame = self.current_call_frame_mut()?;
-            let gas = current_call_frame.stack.pop()?;
-            let code_address = word_to_address(current_call_frame.stack.pop()?);
-            let args_start_offset = current_call_frame.stack.pop()?;
-            let args_size = current_call_frame
-                .stack
-                .pop()?
+            let [
+                gas,
+                code_address,
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+            ] = *current_call_frame.stack.pop()?;
+            let code_address = word_to_address(code_address);
+            let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-            let return_data_start_offset = current_call_frame.stack.pop()?;
-            let return_data_size = current_call_frame
-                .stack
-                .pop()?
+            let return_data_size = return_data_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
@@ -402,9 +398,7 @@ impl<'a> VM<'a> {
 
         let gas_left = self
             .current_call_frame()?
-            .gas_limit
-            .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::Underflow)?
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(InternalError::Underflow)?;
 
@@ -449,11 +443,12 @@ impl<'a> VM<'a> {
     pub fn op_create(&mut self) -> Result<OpcodeResult, VMError> {
         let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
-        let value_in_wei_to_send = current_call_frame.stack.pop()?;
-        let code_offset_in_memory = current_call_frame.stack.pop()?;
-        let code_size_in_memory: usize = current_call_frame
-            .stack
-            .pop()?
+        let [
+            value_in_wei_to_send,
+            code_offset_in_memory,
+            code_size_in_memory,
+        ] = *current_call_frame.stack.pop()?;
+        let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
@@ -478,14 +473,15 @@ impl<'a> VM<'a> {
     pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
         let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
-        let value_in_wei_to_send = current_call_frame.stack.pop()?;
-        let code_offset_in_memory = current_call_frame.stack.pop()?;
-        let code_size_in_memory: usize = current_call_frame
-            .stack
-            .pop()?
+        let [
+            value_in_wei_to_send,
+            code_offset_in_memory,
+            code_size_in_memory,
+            salt,
+        ] = *current_call_frame.stack.pop()?;
+        let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-        let salt = current_call_frame.stack.pop()?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -512,13 +508,10 @@ impl<'a> VM<'a> {
         //      The actual reversion of changes is made in the execute() function.
         let current_call_frame = self.current_call_frame_mut()?;
 
-        let offset = current_call_frame.stack.pop()?;
-
-        let size = current_call_frame
-            .stack
-            .pop()?
+        let [offset, size] = *current_call_frame.stack.pop()?;
+        let size = size
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
@@ -557,7 +550,7 @@ impl<'a> VM<'a> {
             if current_call_frame.is_static {
                 return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
             }
-            let target_address = word_to_address(current_call_frame.stack.pop()?);
+            let target_address = word_to_address(current_call_frame.stack.pop::<1>()?[0]);
             let to = current_call_frame.to;
             (target_address, to)
         };
@@ -694,7 +687,7 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.has_code_or_nonce() {
-            self.current_call_frame_mut()?.stack.push(FAIL)?;
+            self.current_call_frame_mut()?.stack.push(&[FAIL])?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
@@ -793,20 +786,20 @@ impl<'a> VM<'a> {
         self.backup_substate();
 
         if self.is_precompile(&code_address) && !is_delegation_7702 {
-            let report = self.execute_precompile()?;
-            self.handle_return(&report)?;
+            let ctx_result = self.execute_precompile()?;
+            self.handle_return(&ctx_result)?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
-    pub fn handle_state_backup(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+    pub fn handle_state_backup(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
         let backup = self
             .substate_backups
             .pop()
             .ok_or(InternalError::CallFrame)?;
-        if !tx_report.is_success() {
+        if !ctx_result.is_success() {
             self.substate = backup;
             self.restore_cache_state()?;
         }
@@ -814,15 +807,15 @@ impl<'a> VM<'a> {
     }
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
-    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
-        self.handle_state_backup(tx_report)?;
+    pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
+        self.handle_state_backup(ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
-        if executed_call_frame.create_op_called {
-            self.handle_return_create(executed_call_frame, tx_report)?;
+        if executed_call_frame.is_create {
+            self.handle_return_create(executed_call_frame, ctx_result)?;
         } else {
-            self.handle_return_call(executed_call_frame, tx_report)?;
+            self.handle_return_call(executed_call_frame, ctx_result)?;
         }
 
         // Increment PC of the parent callframe after execution of the child.
@@ -834,7 +827,7 @@ impl<'a> VM<'a> {
     pub fn handle_return_call(
         &mut self,
         executed_call_frame: CallFrame,
-        tx_report: &ExecutionReport,
+        ctx_result: &ContextResult,
     ) -> Result<(), VMError> {
         let CallFrame {
             gas_limit,
@@ -847,44 +840,41 @@ impl<'a> VM<'a> {
 
         // Return gas left from subcontext
         let child_unused_gas = gas_limit
-            .checked_sub(tx_report.gas_used)
+            .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
-        parent_call_frame.gas_used = parent_call_frame
-            .gas_used
-            .checked_sub(child_unused_gas)
-            .ok_or(InternalError::Underflow)?;
-
-        // Append logs
-        parent_call_frame.logs.extend(tx_report.logs.clone());
+        parent_call_frame.gas_remaining = parent_call_frame
+            .gas_remaining
+            .checked_add(child_unused_gas)
+            .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
         memory::try_store_range(
             &mut parent_call_frame.memory,
             ret_offset,
             ret_size,
-            &tx_report.output,
+            &ctx_result.output,
         )?;
-        parent_call_frame.sub_return_data = tx_report.output.clone();
+        parent_call_frame.sub_return_data = ctx_result.output.clone();
 
         // What to do, depending on TxResult
-        match &tx_report.result {
+        match &ctx_result.result {
             TxResult::Success => {
-                self.current_call_frame_mut()?.stack.push(SUCCESS)?;
+                self.current_call_frame_mut()?.stack.push(&[SUCCESS])?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
-                self.current_call_frame_mut()?.stack.push(FAIL)?;
+                self.current_call_frame_mut()?.stack.push(&[FAIL])?;
             }
         };
 
-        self.tracer.exit_report(tx_report, false)?;
+        self.tracer.exit_context(ctx_result, false)?;
         Ok(())
     }
 
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: CallFrame,
-        tx_report: &ExecutionReport,
+        ctx_result: &ContextResult,
     ) -> Result<(), VMError> {
         let CallFrame {
             gas_limit,
@@ -896,33 +886,30 @@ impl<'a> VM<'a> {
 
         // Return unused gas
         let unused_gas = gas_limit
-            .checked_sub(tx_report.gas_used)
+            .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
-        parent_call_frame.gas_used = parent_call_frame
-            .gas_used
-            .checked_sub(unused_gas)
-            .ok_or(InternalError::Underflow)?;
-
-        // Append logs
-        parent_call_frame.logs.extend(tx_report.logs.clone());
+        parent_call_frame.gas_remaining = parent_call_frame
+            .gas_remaining
+            .checked_add(unused_gas)
+            .ok_or(InternalError::Overflow)?;
 
         // What to do, depending on TxResult
-        match tx_report.result.clone() {
+        match ctx_result.result.clone() {
             TxResult::Success => {
-                parent_call_frame.stack.push(address_to_word(to))?;
+                parent_call_frame.stack.push(&[address_to_word(to)])?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // If revert we have to copy the return_data
-                if err == VMError::RevertOpcode {
-                    parent_call_frame.sub_return_data = tx_report.output.clone();
+                if err.is_revert_opcode() {
+                    parent_call_frame.sub_return_data = ctx_result.output.clone();
                 }
 
-                parent_call_frame.stack.push(FAIL)?;
+                parent_call_frame.stack.push(&[FAIL])?;
             }
         };
 
-        self.tracer.exit_report(tx_report, false)?;
+        self.tracer.exit_context(ctx_result, false)?;
         Ok(())
     }
 
@@ -936,11 +923,11 @@ impl<'a> VM<'a> {
         let callframe = self.current_call_frame_mut()?;
 
         // Return gas_limit to callframe.
-        callframe.gas_used = callframe
-            .gas_used
-            .checked_sub(gas_limit)
-            .ok_or(InternalError::Underflow)?;
-        callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
+        callframe.gas_remaining = callframe
+            .gas_remaining
+            .checked_add(gas_limit)
+            .ok_or(InternalError::Overflow)?;
+        callframe.stack.push(&[FAIL])?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;
         Ok(())
