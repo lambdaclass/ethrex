@@ -8,15 +8,19 @@ use ethrex_p2p::types::Node;
 use lazy_static::lazy_static;
 
 pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/networks/holesky/genesis.json";
+pub const HOLESKY_GENESIS_CONTENTS: &str = include_str!("networks/holesky/genesis.json");
 const HOLESKY_BOOTNODES_PATH: &str = "cmd/ethrex/networks/holesky/bootnodes.json";
 
 pub const SEPOLIA_GENESIS_PATH: &str = "cmd/ethrex/networks/sepolia/genesis.json";
+pub const SEPOLIA_GENESIS_CONTENTS: &str = include_str!("networks/sepolia/genesis.json");
 const SEPOLIA_BOOTNODES_PATH: &str = "cmd/ethrex/networks/sepolia/bootnodes.json";
 
 pub const HOODI_GENESIS_PATH: &str = "cmd/ethrex/networks/hoodi/genesis.json";
+pub const HOODI_GENESIS_CONTENTS: &str = include_str!("networks/hoodi/genesis.json");
 const HOODI_BOOTNODES_PATH: &str = "cmd/ethrex/networks/hoodi/bootnodes.json";
 
 pub const MAINNET_GENESIS_PATH: &str = "cmd/ethrex/networks/mainnet/genesis.json";
+pub const MAINNET_GENESIS_CONTENTS: &str = include_str!("networks/mainnet/genesis.json");
 const MAINNET_BOOTNODES_PATH: &str = "cmd/ethrex/networks/mainnet/bootnodes.json";
 
 lazy_static! {
@@ -42,7 +46,7 @@ pub enum Network {
     PublicNetwork(PublicNetwork),
     GenesisPath(PathBuf),
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum PublicNetwork {
     Hoodi,
     Holesky,
@@ -96,7 +100,22 @@ impl Network {
             Network::GenesisPath(s) => s,
         }
     }
+
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
-        Genesis::try_from(self.get_genesis_path())
+        match self {
+            Network::PublicNetwork(public_network) => {
+                Ok(serde_json::from_str(get_genesis_contents(*public_network))?)
+            }
+            Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
+        }
+    }
+}
+
+fn get_genesis_contents(network: PublicNetwork) -> &'static str {
+    match network {
+        PublicNetwork::Holesky => HOLESKY_GENESIS_CONTENTS,
+        PublicNetwork::Hoodi => HOODI_GENESIS_CONTENTS,
+        PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
+        PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
     }
 }
