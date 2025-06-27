@@ -4,10 +4,10 @@ use super::{
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
-use crate::rlpx::{based::get_hash_batch_sealed, l2::l2_connection::L2ConnectedState};
 use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
 use crate::rlpx::l2::messages::BatchSealed;
 use crate::rlpx::utils::get_pub_key;
+use crate::rlpx::{based::get_hash_batch_sealed, l2::l2_connection::L2ConnectedState};
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -122,7 +122,7 @@ pub(crate) struct RLPxConnection<S> {
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
     connection_broadcast_send: RLPxConnBroadcastSender,
-    pub l2_state: L2ConnState,
+    pub(crate) l2_state: L2ConnState,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -337,14 +337,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             }
                         }
                         "based" => {
-                            let l2_state =
-                             L2ConnectedState {
+                            let l2_state = L2ConnectedState {
                                 latest_block_sent: 0,
                                 latest_block_added: 0,
                                 blocks_on_queue: BTreeMap::new(),
                                 latest_batch_sent: 0,
                                 store_rollup: StoreRollup::default(),
-                                commiter_key: None,
+                                committer_key: None,
                                 next_block_broadcast: Instant::now()
                                     + PERIODIC_BLOCK_BROADCAST_INTERVAL,
                                 next_batch_broadcast: Instant::now()

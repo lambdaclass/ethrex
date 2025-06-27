@@ -3,7 +3,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{Block, batch::Batch};
+use ethrex_common::types::{batch::Batch, Block};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
 
@@ -109,11 +109,26 @@ impl RLPxMessage for BatchSealed {
         })
     }
 }
-
 #[derive(Debug, Clone)]
 pub enum L2Message {
     BatchSealed(BatchSealed),
     NewBlock(NewBlock),
+}
+
+// I don't really like doing ad-hoc 'from' implementations,
+// but this makes creating messages for the L2 variants
+// less verbose, if we ever end up with too many variants,
+// we could check into a more definitive solution (derive_more, strum, etc.).
+impl From<BatchSealed> for crate::rlpx::message::Message {
+    fn from(value: BatchSealed) -> Self {
+        L2Message::BatchSealed(value).into()
+    }
+}
+
+impl From<NewBlock> for crate::rlpx::message::Message {
+    fn from(value: NewBlock) -> Self {
+        L2Message::NewBlock(value).into()
+    }
 }
 
 impl From<L2Message> for crate::rlpx::message::Message {
