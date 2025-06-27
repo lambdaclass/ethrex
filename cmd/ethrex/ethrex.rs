@@ -20,10 +20,6 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::info;
 
-#[cfg(feature = "l2")]
-use ethrex::l2::L2Options;
-#[cfg(feature = "l2")]
-use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -103,8 +99,6 @@ async fn main() -> eyre::Result<()> {
 
     init_rpc_api(
         &opts,
-        #[cfg(feature = "l2")]
-        &L2Options::default(),
         peer_table.clone(),
         local_p2p_node.clone(),
         local_node_record.lock().await.clone(),
@@ -112,8 +106,6 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
-        #[cfg(feature = "l2")]
-        StoreRollup::default(),
     )
     .await;
 
