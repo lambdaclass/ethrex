@@ -1,6 +1,7 @@
-use crate::calldata::{self, Value};
+use crate::calldata::{self};
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
+use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
