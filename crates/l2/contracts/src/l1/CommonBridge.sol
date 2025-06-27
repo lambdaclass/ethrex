@@ -56,7 +56,7 @@ contract CommonBridge is
     /// of the L2 transaction that requested the withdrawal.
     /// @dev The key is the message id of the L1Message of the transaction.
     /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
-    mapping(uint256 => bool) public claimedWithdrawlIDs;
+    mapping(uint256 => bool) public claimedWithdrawalIDs;
 
     modifier onlyOnChainProposer() {
         require(
