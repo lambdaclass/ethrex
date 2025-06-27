@@ -14,6 +14,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::Instant;
 use tracing::{debug, info};
 
+use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
+
 #[derive(Debug, Clone)]
 pub struct L2ConnectedState {
     pub latest_block_sent: u64,
@@ -34,6 +36,12 @@ pub enum L2ConnState {
 
 impl L2ConnState {
     pub(crate) fn connection_state_mut(&mut self) -> Result<&mut L2ConnectedState, RLPxError> {
+        match self {
+            Self::Disconnected => Err(RLPxError::L2CapabilityNotNegotiated),
+            Self::Connected(conn_state) => Ok(conn_state),
+        }
+    }
+    pub(crate) fn connection_state(&self) -> Result<&L2ConnectedState, RLPxError> {
         match self {
             Self::Disconnected => Err(RLPxError::L2CapabilityNotNegotiated),
             Self::Connected(conn_state) => Ok(conn_state),

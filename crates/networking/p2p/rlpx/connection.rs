@@ -1,10 +1,9 @@
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
-    l2::l2_connection::L2ConnState,
+    l2::{l2_connection::L2ConnState, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL, SUPPORTED_BASED_CAPABILITIES},
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
-use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
 use crate::rlpx::l2::messages::BatchSealed;
 use crate::rlpx::utils::get_pub_key;
 use crate::rlpx::{based::get_hash_batch_sealed, l2::l2_connection::L2ConnectedState};
@@ -70,10 +69,6 @@ use tracing::info;
 use tracing::{debug, warn};
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
-const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(500);
-const PERIODIC_BATCH_BROADCAST_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(60);
@@ -289,6 +284,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
+            #[cfg(feature = "l2")]
             &SUPPORTED_BASED_CAPABILITIES[..],
         ]
         .concat();
@@ -466,17 +462,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send_block_range_update().await?;
             }
         };
-        // FIXME: Re-add this
-        // if let Some(ref mut l2_state) = self.l2_state {
-        //     if Instant::now() >= l2_state.next_block_broadcast {
-        //         self.send_new_block().await?;
-        //         l2_state.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
-        //     }
-        //     if Instant::now() >= l2_state.next_batch_broadcast {
-        //         self.send_sealed_batch().await?;
-        //         l2_state.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
-        //     }
-        // }
+        if self.l2_state.connection_state().is_ok() {
+            let next_block_broadcast = self.l2_state.connection_state()?.next_block_broadcast;
+            let next_batch_broadcast = self.l2_state.connection_state()?.next_batch_broadcast;
+            if Instant::now() >= next_block_broadcast {
+                self.send_new_block().await?;
+                self.l2_state.connection_state_mut()?.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL
+            }
+            if Instant::now() >= next_batch_broadcast {
+                self.send_sealed_batch().await?;
+                self.l2_state.connection_state_mut()?.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
+            }
+        }
         Ok(())
     }
 
