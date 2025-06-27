@@ -49,7 +49,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     #[cfg(feature = "l2")]
     let l1messages_merkle_root_bytes = output.l1messages_merkle_root.0.to_vec();
     #[cfg(feature = "l2")]
-    let deposit_logs_hash_bytes = output.deposit_logs_hash.0.to_vec();
+    let privileged_transactions_hash_bytes = output.privileged_transactions_hash.0.to_vec();
     #[cfg(feature = "l2")]
     let blob_versioned_hash_bytes = output.blob_versioned_hash.0.to_vec();
 
@@ -59,7 +59,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         #[cfg(feature = "l2")]
         Value::FixedBytes(l1messages_merkle_root_bytes.into()),
         #[cfg(feature = "l2")]
-        Value::FixedBytes(deposit_logs_hash_bytes.into()),
+        Value::FixedBytes(privileged_transactions_hash_bytes.into()),
         #[cfg(feature = "l2")]
         Value::FixedBytes(blob_versioned_hash_bytes.into()),
         Value::FixedBytes(last_block_hash_bytes.into()),
