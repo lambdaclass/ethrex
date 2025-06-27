@@ -85,7 +85,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_BRANCH ?= jere/use_execution_spec_tests_fork
+HIVE_BRANCH ?= master
 
 setup-hive: ## 🐝 Set up Hive testing framework
 	if [ -d "hive" ]; then \
