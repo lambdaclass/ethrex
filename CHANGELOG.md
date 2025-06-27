@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-27
+
+- Reduce handle_debug runtime cost [#3356](https://github.com/lambdaclass/ethrex/pull/3356)
+
 ### 2025-06-26
 
 - Refactor jump opcodes to use a blacklist on invalid targets.
