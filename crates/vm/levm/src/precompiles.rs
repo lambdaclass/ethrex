@@ -650,7 +650,7 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     if (U256::from_big_endian(first_point_x) == U256::zero())
         ^ (U256::from_big_endian(first_point_y) == U256::zero())
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::InvalidPoint.into());
     }
 
     let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
@@ -678,7 +678,7 @@ fn parse_second_point_coordinates(
     if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
         ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::InvalidPoint.into());
     }
 
     let second_point_y_first_part = input_data.get(160..192).ok_or(InternalError::Slicing)?;
@@ -688,7 +688,7 @@ fn parse_second_point_coordinates(
     if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
         ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::InvalidPoint.into());
     }
 
     // Check if the second point belongs to the curve (this happens if it's lower than the prime)

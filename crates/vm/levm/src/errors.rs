@@ -162,6 +162,8 @@ pub enum PrecompileError {
     KzgError(String),
     #[error("This is a default error")]
     DefaultError,
+    #[error("Invalid point")]
+    InvalidPoint,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
