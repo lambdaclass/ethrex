@@ -103,6 +103,7 @@ jobs:
 
       - name: Run test
         run: |
+          chmod -R u+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           docker logs --follow ethrex_l2 &
@@ -181,6 +182,7 @@ jobs:
 
       - name: Run test
         run: |
+          chmod -R u+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
