@@ -442,7 +442,7 @@ async fn test_deposit_not_enough_balance(
     let receiver_address = get_address_from_secret_key(receiver_private_key)?;
 
     let balance_sender = proposer_client
-        .get_balance(receiver_address, BlockByNumber::Latest)
+        .get_balance(rich_address, BlockByNumber::Latest)
         .await?;
     let balance_before = proposer_client
         .get_balance(receiver_address, BlockByNumber::Latest)
