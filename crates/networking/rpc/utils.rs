@@ -1,4 +1,3 @@
-use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -7,33 +6,38 @@ use serde_json::Value;
 use crate::authentication::AuthenticationError;
 use ethrex_blockchain::error::MempoolError;
 
-#[cfg(feature = "l2")]
-use ethrex_storage_rollup::RollupStoreError;
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
+    #[error("Method not found: {0}")]
     MethodNotFound(String),
+    #[error("Wrong parameter: {0}")]
     WrongParam(String),
+    #[error("Invalid params: {0}")]
     BadParams(String),
+    #[error("Missing parameter: {0}")]
     MissingParam(String),
+    #[error("Too large request")]
     TooLargeRequest,
+    #[error("Bad hex format: {0}")]
     BadHexFormat(u64),
+    #[error("Unsupported fork: {0}")]
     UnsuportedFork(String),
+    #[error("Internal Error: {0}")]
     Internal(String),
+    #[error("Vm execution error: {0}")]
     Vm(String),
-    Revert {
-        data: String,
-    },
-    Halt {
-        reason: String,
-        gas_used: u64,
-    },
+    #[error("execution reverted: data={data}")]
+    Revert { data: String },
+    #[error("execution halted: reason={reason}, gas_used={gas_used}")]
+    Halt { reason: String, gas_used: u64 },
+    #[error("Authentication error: {0:?}")]
     AuthenticationError(AuthenticationError),
+    #[error("Invalid forkchoice state: {0}")]
     InvalidForkChoiceState(String),
+    #[error("Invalid payload attributes: {0}")]
     InvalidPayloadAttributes(String),
+    #[error("Unknown payload: {0}")]
     UnknownPayload(String),
-    #[cfg(feature = "l2")]
-    InvalidEthrexL2Message(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -133,12 +137,6 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
-            #[cfg(feature = "l2")]
-            RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
-                code: -39000,
-                data: None,
-                message: format!("Invalid Ethex L2 message: {reason}",),
-            },
         }
     }
 }
@@ -174,8 +172,6 @@ pub enum RpcNamespace {
     Web3,
     Net,
     Mempool,
-    #[cfg(feature = "l2")]
-    EthrexL2,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -196,23 +192,24 @@ pub struct RpcRequest {
 impl RpcRequest {
     pub fn namespace(&self) -> Result<RpcNamespace, RpcErr> {
         let mut parts = self.method.split('_');
-        if let Some(namespace) = parts.next() {
-            match namespace {
-                "engine" => Ok(RpcNamespace::Engine),
-                "eth" => Ok(RpcNamespace::Eth),
-                "admin" => Ok(RpcNamespace::Admin),
-                "debug" => Ok(RpcNamespace::Debug),
-                "web3" => Ok(RpcNamespace::Web3),
-                "net" => Ok(RpcNamespace::Net),
-                // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
-                "txpool" => Ok(RpcNamespace::Mempool),
-                #[cfg(feature = "l2")]
-                "ethrex" => Ok(RpcNamespace::EthrexL2),
-                _ => Err(RpcErr::MethodNotFound(self.method.clone())),
-            }
-        } else {
-            Err(RpcErr::MethodNotFound(self.method.clone()))
-        }
+        let Some(namespace) = parts.next() else {
+            return Err(RpcErr::MethodNotFound(self.method.clone()));
+        };
+        resolve_namespace(namespace, self.method.clone())
+    }
+}
+
+pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
+    match maybe_namespace {
+        "engine" => Ok(RpcNamespace::Engine),
+        "eth" => Ok(RpcNamespace::Eth),
+        "admin" => Ok(RpcNamespace::Admin),
+        "debug" => Ok(RpcNamespace::Debug),
+        "web3" => Ok(RpcNamespace::Web3),
+        "net" => Ok(RpcNamespace::Net),
+        // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
+        "txpool" => Ok(RpcNamespace::Mempool),
+        _ => Err(RpcErr::MethodNotFound(method)),
     }
 }
 
@@ -256,13 +253,6 @@ impl From<StoreError> for RpcErr {
     }
 }
 
-#[cfg(feature = "l2")]
-impl From<RollupStoreError> for RpcErr {
-    fn from(value: RollupStoreError) -> Self {
-        RpcErr::Internal(value.to_string())
-    }
-}
-
 impl From<EvmError> for RpcErr {
     fn from(value: EvmError) -> Self {
         RpcErr::Vm(value.to_string())
@@ -287,33 +277,6 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     }
 }
 
-pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
-    if index >= data.len() {
-        return None;
-    }
-    use keccak_hash::keccak;
-
-    let mut proof = vec![];
-    let mut current = data.clone();
-    let mut first = true;
-    while current.len() > 1 || first {
-        first = false;
-        proof.push(*current.get(index ^ 1).or(current.get(index))?);
-        index /= 2;
-        current = current
-            .chunks(2)
-            .map(|chunk| -> H256 {
-                let left = *chunk.first().unwrap_or(&H256::zero());
-                let right = *chunk.get(1).unwrap_or(&left);
-                keccak([left.as_bytes(), right.as_bytes()].concat())
-                    .as_fixed_bytes()
-                    .into()
-            })
-            .collect();
-    }
-    Some(proof)
-}
-
 #[cfg(test)]
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
@@ -333,10 +296,6 @@ pub mod test_utils {
         eth::gas_tip_estimator::GasTipEstimator,
         rpc::{NodeData, RpcApiContext, start_api},
     };
-    #[cfg(feature = "l2")]
-    use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-    #[cfg(feature = "l2")]
-    use secp256k1::{SecretKey, rand};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
@@ -375,13 +334,6 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
-        #[cfg(feature = "l2")]
-        let valid_delegation_addresses = Vec::new();
-        #[cfg(feature = "l2")]
-        let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
-        #[cfg(feature = "l2")]
-        let rollup_store = StoreRollup::new("", EngineTypeRollup::InMemory)
-            .expect("Failed to create in-memory storage");
         start_api(
             http_addr,
             authrpc_addr,
@@ -393,12 +345,6 @@ pub mod test_utils {
             SyncManager::dummy(),
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses,
-            #[cfg(feature = "l2")]
-            sponsor_pk,
-            #[cfg(feature = "l2")]
-            rollup_store,
         )
         .await
         .unwrap();
@@ -419,13 +365,6 @@ pub mod test_utils {
                 client_version: "ethrex/test".to_string(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-            #[cfg(feature = "l2")]
-            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
-                .expect("Fail to create in-memory db test"),
         }
     }
 }
