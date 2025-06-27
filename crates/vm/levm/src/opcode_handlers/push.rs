@@ -20,7 +20,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(U256::from_big_endian(read_n_bytes))?;
+            .push(&[U256::from_big_endian(read_n_bytes)])?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
         let increment_pc_by = n_bytes.wrapping_add(1);
@@ -41,7 +41,7 @@ impl<'a> VM<'a> {
 
         let value = read_bytcode_slice_const::<1>(current_call_frame)?[0];
 
-        current_call_frame.stack.push(U256::from(value))?;
+        current_call_frame.stack.push(&[U256::from(value)])?;
 
         Ok(OpcodeResult::Continue {
             // The 1 byte that you push to the stack + 1 for the next instruction
@@ -58,7 +58,7 @@ impl<'a> VM<'a> {
 
         let value = u16::from_be_bytes(read_n_bytes);
 
-        current_call_frame.stack.push(U256::from(value))?;
+        current_call_frame.stack.push(&[U256::from(value)])?;
 
         Ok(OpcodeResult::Continue {
             // The 2 bytes that you push to the stack + 1 for the next instruction
@@ -76,7 +76,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
 
-        current_call_frame.stack.push(U256::zero())?;
+        current_call_frame.stack.push(&[U256::zero()])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
