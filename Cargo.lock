@@ -4207,6 +4207,7 @@ name = "ethrex-trie"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "cita_trie",
  "criterion",

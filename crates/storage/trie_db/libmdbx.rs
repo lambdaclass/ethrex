@@ -21,6 +21,7 @@ where
     }
 }
 
+#[async_trait::async_trait]
 impl<T> TrieDB for LibmdbxTrieDB<T>
 where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
@@ -36,6 +37,19 @@ where
             txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
+    }
+
+    async fn put_batch_async(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_readwrite().map_err(TrieError::DbError)?;
+            for (key, value) in key_values {
+                txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
+            }
+            txn.commit().map_err(TrieError::DbError)
+        })
+        .await
+        .map_err(|e| TrieError::DbError(e.into()))?
     }
 }
 

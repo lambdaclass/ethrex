@@ -1129,30 +1129,21 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-        let s = Instant::now();
-        let txn =db
-            .begin_readwrite()
-            .map_err(StoreError::LibmdbxError)?;
-        let txn_create = s.elapsed().as_millis();
-        let mut total_upserts = 0;
-        for (acc_hash, nodes) in changeset {
-            total_upserts += nodes.len();
-            for (hash, node) in nodes {
-                txn.upsert::<StorageTriesNodes>((acc_hash.0, node_hash_to_fixed_size(hash)), node)
+            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            for (acc_hash, nodes) in changeset {
+                for (hash, node) in nodes {
+                    txn.upsert::<StorageTriesNodes>(
+                        (acc_hash.0, node_hash_to_fixed_size(hash)),
+                        node,
+                    )
                     .map_err(StoreError::LibmdbxError)?;
+                }
             }
-        }
-        let data_upsert = s.elapsed().as_millis() - txn_create;
-        txn.commit().map_err(StoreError::LibmdbxError)?;
-        let total = s.elapsed().as_millis();
-        let txn_commit = total - txn_create - data_upsert;
-        info!(
-            "[apply_storage_trie_changes] put_batch: {total}ms: txn_create: {txn_create}ms; upserts: {total_upserts} in {data_upsert}ms; txn_commit: {txn_commit}ms"
-        );
-        Ok(())
-    })
-    .await
-    .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+            txn.commit().map_err(StoreError::LibmdbxError)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
