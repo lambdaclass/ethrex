@@ -14,8 +14,8 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_common::{
-    deposits::{compute_deposit_logs_hash, get_block_deposits},
     l1_messages::{compute_merkle_root, get_block_l1_messages, get_l1_message_hash},
+    privileged_transactions::{compute_privileged_transactions_hash, get_block_deposits},
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
@@ -196,7 +196,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 blobs_bundle,
                 new_state_root,
                 message_hashes,
-                deposit_logs_hash,
+                privileged_transactions_hash,
                 last_block_of_batch,
             ) = prepare_batch_from_block(state, *last_block).await?;
 
@@ -210,7 +210,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 first_block: first_block_to_commit,
                 last_block: last_block_of_batch,
                 state_root: new_state_root,
-                deposit_logs_hash,
+                privileged_transactions_hash,
                 message_hashes,
                 blobs_bundle,
             };
@@ -275,7 +275,7 @@ async fn prepare_batch_from_block(
     let mut acc_deposits = vec![];
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut message_hashes = vec![];
-    let mut deposit_logs_hashes = vec![];
+    let mut privileged_transactions_hashes = vec![];
     let mut new_state_root = H256::default();
 
     #[cfg(feature = "metrics")]
@@ -398,7 +398,7 @@ async fn prepare_batch_from_block(
         blobs_bundle = bundle;
         _blob_size = latest_blob_size;
 
-        deposit_logs_hashes.extend(
+        privileged_transactions_hashes.extend(
             deposits
                 .iter()
                 .filter_map(|tx| tx.get_deposit_hash())
@@ -417,7 +417,7 @@ async fn prepare_batch_from_block(
     }
 
     metrics!(if let (Ok(deposits_count), Ok(messages_count)) = (
-            deposit_logs_hashes.len().try_into(),
+            privileged_transactions_hashes.len().try_into(),
             message_hashes.len().try_into()
         ) {
             let _ = state
@@ -433,7 +433,8 @@ async fn prepare_batch_from_block(
         METRICS_L2.set_blob_usage_percentage(blob_usage_percentage);
     );
 
-    let deposit_logs_hash = compute_deposit_logs_hash(deposit_logs_hashes)?;
+    let privileged_transactions_hash =
+        compute_privileged_transactions_hash(privileged_transactions_hashes)?;
     for msg in &acc_messages {
         message_hashes.push(get_l1_message_hash(msg));
     }
@@ -441,7 +442,7 @@ async fn prepare_batch_from_block(
         blobs_bundle,
         new_state_root,
         message_hashes,
-        deposit_logs_hash,
+        privileged_transactions_hash,
         last_added_block_number,
     ))
 }
@@ -473,7 +474,7 @@ async fn send_commitment(
         Value::Uint(U256::from(batch.number)),
         Value::FixedBytes(batch.state_root.0.to_vec().into()),
         Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
-        Value::FixedBytes(batch.deposit_logs_hash.0.to_vec().into()),
+        Value::FixedBytes(batch.privileged_transactions_hash.0.to_vec().into()),
         Value::FixedBytes(last_block_hash.0.to_vec().into()),
     ];
 

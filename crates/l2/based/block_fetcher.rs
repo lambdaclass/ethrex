@@ -8,8 +8,8 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_common::{
-    deposits::compute_deposit_logs_hash,
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
+    privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -54,7 +54,7 @@ pub enum BlockFetcherError {
     #[error("Failed to produce the blob bundle")]
     BlobBundleError,
     #[error("Failed to compute deposit logs hash: {0}")]
-    DepositError(#[from] ethrex_l2_common::deposits::DepositError),
+    DepositError(#[from] ethrex_l2_common::privileged_transactions::DepositError),
     #[error("Spawned GenServer Error")]
     GenServerError(spawned_concurrency::GenServerError),
 }
@@ -476,7 +476,7 @@ async fn get_batch(
         let block_messages = extract_block_messages(state, block.header.number).await?;
         messages.extend(block_messages);
     }
-    let deposit_logs_hash = compute_deposit_logs_hash(deposit_log_hashes)?;
+    let privileged_transactions_hash = compute_privileged_transactions_hash(deposit_log_hashes)?;
 
     let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
         "Batch is empty. This shouldn't happen.".to_owned(),
@@ -536,7 +536,7 @@ async fn get_batch(
         first_block: first_block.header.number,
         last_block: last_block.header.number,
         state_root: new_state_root,
-        deposit_logs_hash,
+        privileged_transactions_hash,
         message_hashes: get_batch_message_hashes(state, batch).await?,
         blobs_bundle,
     })

@@ -103,7 +103,7 @@ contract CommonBridge is
 
         pendingTxHashes.push(l2MintTxHash);
 
-        emit PrivilegedxSent(
+        emit PrivilegedTxSent(
             from,
             sendValues.to,
             transactionId,
