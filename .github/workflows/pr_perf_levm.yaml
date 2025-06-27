@@ -164,9 +164,7 @@ jobs:
           echo -e "\n" >> ../../../result.md
           echo -e "<details>\n" >> ../../../result.md
           echo -e "<summary>Detailed Results</summary>\n \n" >> ../../../result.md
-          echo -e "\`\`\`\n" >> ../../../result.md
           cat ../../../detailed_result.md >> ../../../result.md
-          echo -e "\`\`\`\n" >> ../../../result.md
           echo -e "</details>\n" >> ../../../result.md
 
 
