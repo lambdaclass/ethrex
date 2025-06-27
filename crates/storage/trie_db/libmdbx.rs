@@ -27,7 +27,10 @@ where
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(key).map_err(TrieError::DbError)
+        println!("[LibmdbxTrieDB::get] key: {:?}", key);
+        let node = txn.get::<T>(key).map_err(TrieError::DbError)?;
+        println!("[LibmdbxTrieDB::get] node: {:?}", node);
+        Ok(node)
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {

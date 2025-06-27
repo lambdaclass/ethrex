@@ -23,6 +23,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::sync::RwLock;
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -35,6 +36,7 @@ pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with di
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    pub latest_trie_updates: Arc<RwLock<Option<TrieUpdates>>>,
 }
 
 #[allow(dead_code)]
@@ -49,8 +51,9 @@ pub enum EngineType {
 
 /// Contains the account and the storage updates.
 /// It is meant to be sent to the TrieUpdateTask that persist them async.
+#[derive(Clone, Debug)]
 pub struct TrieUpdates {
-     /// Nodes to be added to the state trie
+    /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
     /// Storage tries updated and their new nodes
     pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
@@ -75,8 +78,13 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    pub fn update_cache(&self, trie_updates: &TrieUpdates) {
+        let mut write_guard = self.latest_trie_updates.write().unwrap();
+        *write_guard = Some(trie_updates.clone());
+    }
+
     pub async fn store_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError> {
-        self.engine.apply_trie_updates(trie_updates).await
+        self.engine.apply_trie_updates(trie_updates.clone()).await
     }
 
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
@@ -89,13 +97,16 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
+                latest_trie_updates: Arc::new(RwLock::new(None)),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                latest_trie_updates: Arc::new(RwLock::new(None)),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+                latest_trie_updates: Arc::new(RwLock::new(None)),
             },
         };
         info!("Started store engine");
@@ -648,6 +659,8 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        println!("[Store::get_storage_at_hash] block_hash: {:?}", block_hash);
+        // Fall back to database lookup
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
@@ -809,6 +822,37 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        if let Ok(read_guard) = &self.latest_trie_updates.read() {
+            if read_guard.is_some() {
+                let latest_updates = read_guard.as_ref().unwrap();
+                // Check if the latest updates contain the account we're looking for
+                let hashed_address = hash_address(&address);
+
+                println!("looking into latest_updates");
+                // Search in account updates
+                for (node_hash, node_rlp) in &latest_updates.account_updates {
+                    if node_hash.as_ref() == &hashed_address {
+                        return Ok(Some(AccountState::decode(node_rlp.as_slice())?));
+                    }
+                }
+
+                // If we don't find it in account updates, it might be in storage updates
+                // but we need to check if it's a deletion (represented by None)
+                for (_, storage_nodes) in &latest_updates.storage_updates {
+                    for (key, value) in storage_nodes {
+                        if key.as_ref() == &hashed_address {
+                            return if value.is_empty() {
+                                // Empty value means deletion
+                                Ok(None)
+                            } else {
+                                Ok(Some(AccountState::decode(value.as_slice())?))
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -855,7 +899,7 @@ impl Store {
     }
 
     // Returns an iterator across all accounts in the state trie given by the state_root
-    // Does not check that the state_root is valid
+    // Does not check if the state root is valid
     pub fn iter_accounts(
         &self,
         state_root: H256,
@@ -871,7 +915,7 @@ impl Store {
     }
 
     // Returns an iterator across all accounts in the state trie given by the state_root
-    // Does not check that the state_root is valid
+    // Does not check if the state root is valid
     pub fn iter_storage(
         &self,
         state_root: H256,
@@ -1301,6 +1345,7 @@ mod tests {
         types::{Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
+    use ethrex_rlp::encode::RLPEncode;
     use std::{fs, str::FromStr};
 
     use super::*;
