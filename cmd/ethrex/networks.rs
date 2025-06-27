@@ -99,4 +99,12 @@ impl Network {
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         Genesis::try_from(self.get_genesis_path())
     }
+
+    /// Returns network specific subdirectory to store the application data
+    pub fn get_network_subdir(&self) -> PathBuf {
+        match self {
+            Network::PublicNetwork(_) => PathBuf::from(&self.to_string()),
+            Network::GenesisPath(_) => PathBuf::from("custom_network"),
+        }
+    }
 }

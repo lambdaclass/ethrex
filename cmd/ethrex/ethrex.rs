@@ -12,10 +12,10 @@ use ethrex_p2p::network::peer_table;
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]
 use std::env;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{error, info};
 
 #[cfg(feature = "l2")]
 use ethrex::l2::L2Options;
@@ -53,11 +53,16 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let data_dir = set_datadir(&opts.datadir);
-
     let network = get_network(&opts);
+    let data_dir = set_datadir(Some(Path::new(&opts.datadir)), Some(&opts.network));
 
-    let genesis = network.get_genesis()?;
+    let genesis = match network.get_genesis() {
+        Ok(genesis) => genesis,
+        Err(err) => {
+            error!("{}", err.to_string());
+            std::process::exit(1);
+        }
+    };
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
@@ -133,7 +138,7 @@ async fn main() -> eyre::Result<()> {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");
-            let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+            let node_config_path = data_dir.join("node_config.json");
             info!("Storing config at {:?}...", node_config_path);
             cancel_token.cancel();
             let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;

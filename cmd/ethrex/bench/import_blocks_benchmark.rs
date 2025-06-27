@@ -6,12 +6,13 @@ use ethrex::{
     utils::set_datadir,
 };
 use ethrex_vm::EvmEngine;
+use std::path::Path;
 
 #[inline]
 fn block_import() {
-    let data_dir = DEFAULT_DATADIR;
-    set_datadir(data_dir);
-    remove_db(data_dir, true);
+    let temp_datadir_path = Path::new(DEFAULT_DATADIR);
+    let data_dir_actual = set_datadir(Some(temp_datadir_path), None);
+    remove_db(&data_dir_actual, true);
 
     let evm_engine = EvmEngine::default();
 
@@ -21,8 +22,8 @@ fn block_import() {
         .expect("Failed to generate genesis from file");
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
-        "../../test_data/l2-1k-erc20.rlp",
-        data_dir,
+        Path::new("../../test_data/l2-1k-erc20.rlp"), // Assuming import_blocks also takes Path
+        &data_dir_actual,
         genesis,
         evm_engine,
     ))

@@ -21,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -61,7 +61,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 /// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
-pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
+pub async fn init_store(data_dir: &Path, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
     store
         .add_initial_state(genesis)
@@ -71,10 +71,13 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
 }
 
 /// Opens a Pre-exsisting Store or creates a new one
-pub fn open_store(data_dir: &str) -> Store {
-    let path = PathBuf::from(data_dir);
-    if path.ends_with("memory") {
-        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+pub fn open_store(data_dir: &Path) -> Store {
+    if data_dir.ends_with("memory") {
+        Store::new(
+            data_dir.to_str().expect("Invalid data directory path"),
+            EngineType::InMemory,
+        )
+        .expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
@@ -86,12 +89,16 @@ pub fn open_store(data_dir: &str) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
-        Store::new(data_dir, engine_type).expect("Failed to create Store")
+        Store::new(
+            data_dir.to_str().expect("Invalid data directory path"),
+            engine_type,
+        )
+        .expect("Failed to create Store")
     }
 }
 
 #[cfg(feature = "l2")]
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
+pub async fn init_rollup_store(data_dir: &Path) -> StoreRollup {
     cfg_if::cfg_if! {
         if #[cfg(feature = "rollup_storage_redb")] {
             let engine_type = EngineTypeRollup::RedB;
@@ -101,8 +108,11 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
             let engine_type = EngineTypeRollup::InMemory;
         }
     }
-    let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+    let rollup_store = StoreRollup::new(
+        data_dir.to_str().expect("Invalid rollup store path"),
+        engine_type,
+    )
+    .expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await
@@ -166,7 +176,7 @@ pub async fn init_rpc_api(
 pub async fn init_network(
     opts: &Options,
     network: &Network,
-    data_dir: &str,
+    data_dir: &Path,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
@@ -242,7 +252,7 @@ pub fn get_network(opts: &Options) -> Network {
 }
 
 #[allow(dead_code)]
-pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &Path) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
     match network {
@@ -269,7 +279,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
+    let config_file = data_dir.join("node_config.json");
 
     info!("Reading known peers from config file {:?}", config_file);
 
@@ -281,9 +291,9 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
     bootnodes
 }
 
-pub fn get_signer(data_dir: &str) -> SigningKey {
+pub fn get_signer(data_dir: &Path) -> SigningKey {
     // Get the signer from the default directory, create one if the key file is not present.
-    let key_path = Path::new(data_dir).join("node.key");
+    let key_path = data_dir.join("node.key");
     match fs::read(key_path.clone()) {
         Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
@@ -334,11 +344,11 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
 }
 
 pub fn get_local_node_record(
-    data_dir: &str,
+    data_dir: &Path,
     local_p2p_node: &Node,
     signer: &SigningKey,
 ) -> NodeRecord {
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
+    let config_file = data_dir.join("node_config.json");
 
     match read_node_config_file(config_file) {
         Ok(ref mut config) => {

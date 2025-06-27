@@ -34,7 +34,7 @@ use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
     future::IntoFuture,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -126,8 +126,8 @@ impl Command {
                     panic!("L2 Doesn't support REVM, use LEVM instead.");
                 }
 
-                let data_dir = set_datadir(&opts.node_opts.datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
+                let data_dir = set_datadir(Some(Path::new(&opts.node_opts.datadir)), None);
+                let rollup_store_dir = data_dir.join("rollup_store");
 
                 let network = get_network(&opts.node_opts);
 
@@ -211,7 +211,7 @@ impl Command {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Server shut down started...");
-                        let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+                        let node_config_path = PathBuf::from(data_dir).join("node_config.json");
                         info!("Storing config at {:?}...", node_config_path);
                         cancel_token.cancel();
                         let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
@@ -223,9 +223,10 @@ impl Command {
             }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
-                    ethrex_cli::Subcommand::RemoveDB { datadir, force }
-                        .run(&NodeOptions::default()) // This is not used by the RemoveDB command.
-                        .await
+                    let mut opts = NodeOptions::default();
+                    opts.datadir = datadir;
+                    opts.force = force;
+                    ethrex_cli::Subcommand::RemoveDB.run(&opts).await
                 })
                 .await?
             }
@@ -474,8 +475,8 @@ impl Command {
                 datadir,
                 network,
             } => {
-                let data_dir = set_datadir(&datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
+                let data_dir = set_datadir(Some(&Path::new(&datadir)), None);
+                let rollup_store_dir = data_dir.join("rollup_store");
 
                 let client = EthClient::new(rpc_url.as_str())?;
                 if let Some(private_key) = private_key {
