@@ -4,7 +4,7 @@ use crate::{
 };
 use ExceptionalHalt::OutOfBounds;
 use ExceptionalHalt::OutOfGas;
-use ethrex_common::U256;
+use ethrex_common::{U256, utils::u256_from_big_endian};
 
 /// Memory of the EVM, a volatile byte array.
 pub type Memory = Vec<u8>;
@@ -32,7 +32,7 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
 }
 
 pub fn load_word(memory: &mut Memory, offset: U256) -> Result<U256, VMError> {
-    load_range(memory, offset, WORD_SIZE_IN_BYTES_USIZE).map(U256::from_big_endian)
+    load_range(memory, offset, WORD_SIZE_IN_BYTES_USIZE).map(u256_from_big_endian)
 }
 
 pub fn load_range(memory: &mut Memory, offset: U256, size: usize) -> Result<&[u8], VMError> {
