@@ -21,6 +21,8 @@ thiserror.workspace = true
 lazy_static.workspace = true
 snap.workspace = true
 serde.workspace = true
+spawned-rt.workspace = true
+spawned-concurrency.workspace = true
 
 tokio-stream = "0.1.17"
 futures = "0.3.31"
