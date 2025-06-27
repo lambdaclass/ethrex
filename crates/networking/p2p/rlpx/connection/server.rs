@@ -307,7 +307,7 @@ where
             state.inbound,
         );
     }
-    init_peer_conn(state, &mut stream).await?;
+    init_capabilities(state, &mut stream).await?;
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
@@ -398,7 +398,7 @@ async fn should_send_block_range_update(state: &mut Established) -> Result<bool,
     Ok(false)
 }
 
-async fn init_peer_conn<S>(state: &mut Established, stream: &mut S) -> Result<(), RLPxError>
+async fn init_capabilities<S>(state: &mut Established, stream: &mut S) -> Result<(), RLPxError>
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
@@ -615,14 +615,18 @@ where
 {
     let node = node.clone();
     spawned_rt::tasks::spawn(async move {
-        while let Some(message) = stream.next().await {
-            match message {
-                Ok(message) => {
+        loop {
+            match stream.next().await {
+                Some(Ok(message)) => {
                     let _ = conn.cast(CastMessage::PeerMessage(message)).await;
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     log_peer_debug(&node, &format!("Received RLPX Error in msg {}", e));
+                    break;
                 }
+                // `None` does not neccessary means EOF, so we will keep the loop running
+                // (See Framed::new)
+                None => (),
             }
         }
     });
