@@ -32,7 +32,8 @@ pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 /// Max storages to rebuild in parallel
 const MAX_PARALLEL_REBUILDS: usize = 10;
 
-const MAX_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
+const MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
+const MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 10;
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
@@ -188,7 +189,7 @@ async fn rebuild_state_trie_segment(
         for (hash, account) in batch.iter() {
             state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
         }
-        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+        if snapshot_reads_since_last_commit > MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
             state_trie.hash()?;
         }
@@ -296,7 +297,8 @@ async fn rebuild_storage_trie(
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
-        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+        if snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT {
+            let h_s = Instant::now();
             snapshot_reads_since_last_commit = 0;
             storage_trie.hash()?;
         }
@@ -346,19 +348,36 @@ async fn rebuild_storage_tries(
             for (key, val) in batch {
                 storage_tries[i].insert(key.0.to_vec(), val.encode_to_vec())?;
             }
-            // Return if we have no more snapshot values to process for this storage
-            if unfilled_batch {
-                // Extract nodes and remove trie
+
+            // Commit nodes if needed
+            if unfilled_batch
+                || snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT
+            {
                 nodes
                     .entry(account_hashes[i])
                     .or_insert(Vec::new())
-                    .extend(storage_tries[i].commit_without_storing());
-                // Check root
-                if storage_tries[i].hash_no_commit() != expected_roots[i] {
-                    warn!("Mismatched storage root for account {}", account_hashes[i]);
-                    store
-                        .set_storage_heal_paths(vec![(account_hashes[i], vec![Nibbles::default()])])
-                        .await?;
+                    .extend(tracker.trie.commit_without_storing());
+
+                // If this is the last batch, check the root and mark it as complete
+                if unfilled_batch {
+                    if tracker.trie.hash_no_commit() != tracker.expected_root {
+                        warn!(
+                            "Mismatched storage root for account {}",
+                            tracker.account_hash
+                        );
+                        store
+                            .set_storage_heal_paths(vec![(
+                                tracker.account_hash,
+                                vec![Nibbles::default()],
+                            )])
+                            .await?;
+                    }
+                    // Mark as complete
+                    tracker.complete = true;
+                } else {
+                    // Trie is left in unusable after commiting, we must create a new one
+                    tracker.trie = store
+                        .open_storage_trie(tracker.account_hash, tracker.trie.hash_no_commit())?;
                 }
                 // Remove trie
                 storage_tries.remove(i);
@@ -367,8 +386,7 @@ async fn rebuild_storage_tries(
                 expected_roots.remove(i);
             }
         }
-
-        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+        if snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
             // Commit al tries we have available
             for i in 0..account_hashes.len() {
