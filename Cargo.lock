@@ -3850,6 +3850,7 @@ dependencies = [
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-rlp",
@@ -4006,6 +4007,29 @@ dependencies = [
  "lazy_static",
  "serde",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "ethrex-l2-rpc"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.4",
+ "bytes",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-p2p",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "ethrex-storage-rollup",
+ "keccak-hash",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tower-http 0.6.6",
+ "tracing",
 ]
 
 [[package]]
