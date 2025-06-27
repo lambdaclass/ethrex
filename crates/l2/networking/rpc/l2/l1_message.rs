@@ -3,7 +3,6 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::{
-    clients::eth::L1MessageProof,
     rpc::{RpcApiContext, RpcHandler},
     utils::RpcErr,
 };
@@ -19,21 +18,22 @@ pub struct GetL1MessageProof {
 
 impl RpcHandler for GetL1MessageProof {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetL1MessageProof, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
+            "No params provided".to_owned(),
+        ))?;
         if params.len() != 1 {
-            return Err(RpcErr::BadParams(format!(
+            return Err(ethrex_rpc::RpcErr::BadParams(format!(
                 "Expected one param and {} were provided",
                 params.len()
-            )));
+            ))
+            .into());
         };
         Ok(GetL1MessageProof {
             transaction_hash: serde_json::from_value(params[0].clone())?,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
+        let storage = &context.l1_ctx.storage;
         info!(
             "Requested l1message proof for transaction {:#x}",
             self.transaction_hash,
@@ -104,7 +104,7 @@ impl RpcHandler for GetL1MessageProof {
                 return Ok(Value::Null);
             };
 
-            let proof = L1MessageProof {
+            let proof = ethrex_rpc::clients::eth::L1MessageProof {
                 batch_number,
                 message_id: message.message_id,
                 message_hash: *message_hash,
@@ -112,6 +112,7 @@ impl RpcHandler for GetL1MessageProof {
             };
             proofs.push(proof);
         }
-        serde_json::to_value(proofs).map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(proofs)
+            .map_err(|error| ethrex_rpc::RpcErr::Internal(error.to_string()).into())
     }
 }

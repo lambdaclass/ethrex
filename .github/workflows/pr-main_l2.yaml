@@ -127,6 +127,9 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Build L1 docker image
+        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
+
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
@@ -203,6 +206,9 @@ jobs:
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Build L1 docker image
+        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
 
       - name: Install solc
         run: |
