@@ -104,7 +104,7 @@ pub struct BlockHeader {
     pub prev_randao: H256,
     #[serde(with = "crate::serde_utils::u64::hex_str_padding")]
     pub nonce: u64,
-    #[serde(with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub base_fee_per_gas: Option<u64>,
     pub withdrawals_root: Option<H256>,
     #[serde(
