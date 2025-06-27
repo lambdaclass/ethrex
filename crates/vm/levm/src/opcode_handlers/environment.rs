@@ -5,7 +5,7 @@ use crate::{
     utils::word_to_address,
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -20,7 +20,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[U256::from_big_endian(addr.as_bytes())])?;
+            .push(&[u256_from_big_endian_const(addr.to_fixed_bytes())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -49,7 +49,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[U256::from_big_endian(origin.as_bytes())])?;
+            .push(&[u256_from_big_endian_const(origin.to_fixed_bytes())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -62,7 +62,7 @@ impl<'a> VM<'a> {
         let caller = current_call_frame.msg_sender;
         current_call_frame
             .stack
-            .push(&[U256::from_big_endian(caller.as_bytes())])?;
+            .push(&[u256_from_big_endian_const(caller.to_fixed_bytes())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -111,7 +111,7 @@ impl<'a> VM<'a> {
                 *data_byte = *byte;
             }
         }
-        let result = U256::from_big_endian(&data);
+        let result = u256_from_big_endian_const(data);
 
         current_call_frame.stack.push(&[result])?;
 
@@ -402,7 +402,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let hash = U256::from_big_endian(&account_code_hash);
+        let hash = u256_from_big_endian_const(account_code_hash);
         current_call_frame.stack.push(&[hash])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })

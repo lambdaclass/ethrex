@@ -18,10 +18,13 @@ use crate::{
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
-use ethrex_common::types::{Account, TxKind};
 use ethrex_common::{
     Address, H256, U256,
     types::{Fork, tx_fields::*},
+};
+use ethrex_common::{
+    types::{Account, TxKind},
+    utils::u256_from_big_endian_const,
 };
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
@@ -43,7 +46,7 @@ pub fn address_to_word(address: Address) -> U256 {
         *word_byte = *address_byte;
     }
 
-    U256::from_big_endian(&word)
+    u256_from_big_endian_const(word)
 }
 
 /// Calculates the address of a new conctract using the CREATE
