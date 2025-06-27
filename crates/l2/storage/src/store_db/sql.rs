@@ -22,7 +22,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 10] = [
+const DB_SCHEMA: [&str; 12] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
