@@ -194,8 +194,8 @@ pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>,
         state.last_block_fetched, new_last_block
     );
 
-    // Matches the event L1ToL2Message from ICommonBridge.sol
-    let topic = keccak(b"L1ToL2Message(address,address,uint256,uint256,uint256,bytes)");
+    // Matches the event PrivilegedxSent from ICommonBridge.sol
+    let topic = keccak(b"PrivilegedxSent(address,address,uint256,uint256,uint256,bytes)");
 
     let logs = state
         .eth_client

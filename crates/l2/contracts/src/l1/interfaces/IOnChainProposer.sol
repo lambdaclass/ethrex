@@ -41,14 +41,14 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
-    /// @param processedDepositLogsRollingHash the rolling hash of the processed
-    /// deposits logs of the batch to be committed.
+    /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
+    /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash,
+        bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external;
 
