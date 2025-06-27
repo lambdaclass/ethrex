@@ -1,4 +1,4 @@
-.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests
+.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests render-benches
 
 all: test clippy fmt ## 🚀 Runs all tests, linter and formatter
 
@@ -90,6 +90,9 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+
+render-benches:
+	python ./bench/revm_comparison/create_bench_page.py > report.html
 
 flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
