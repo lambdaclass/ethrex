@@ -21,7 +21,7 @@ jobs:
           ref: ${{ github.head_ref }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@1.87.0
         with:
           toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
@@ -29,44 +29,15 @@ jobs:
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install hyperfine
-        uses: taiki-e/install-action@v2
-        with:
-          tool: hyperfine@1.16
-
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-
-      - name: Run PR benchmarks
+      - name: Build main benchmark
         run: |
           cd crates/vm/levm
-          make revm-comparison-ci
-          {
-            echo "#### Benchmark Results: Factorial";
-            cat Factorial.md || echo "No results";
-            echo "#### Benchmark Results: Factorial - Recursive";
-            cat FactorialRecursive.md || echo "No results";
-            echo "#### Benchmark Results: Fibonacci";
-            cat Fibonacci.md || echo "No results";
-            echo "#### Benchmark Results: ManyHashes";
-            cat ManyHashes.md || echo "No results";
-            echo "#### Benchmark Results: BubbleSort";
-            cat BubbleSort.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Transfer";
-            cat ERC20Transfer.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Mint";
-            cat ERC20Mint.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Approval";
-            cat ERC20Approval.md || echo "No results";
-          } > pr_result.md
-
-      - name: Upload PR results
+          make build-revm-comparison
+      - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
-          name: pr-result
-          path: crates/vm/levm/pr_result.md
+          name: pr-binary
+          path: crates/vm/levm/target/release/benchmark
 
   benchmark-main:
     name: Benchmark for Main
@@ -78,7 +49,7 @@ jobs:
           ref: main
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.81.0
+        uses: dtolnay/rust-toolchain@1.87.0
         with:
           toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
@@ -86,71 +57,53 @@ jobs:
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install hyperfine
-        uses: taiki-e/install-action@v2
-        with:
-          tool: hyperfine@1.16
-
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-
-      - name: Run main benchmarks
+      - name: Build main benchmark
         run: |
           cd crates/vm/levm
-          make revm-comparison-ci
-          {
-            echo "#### Benchmark Results: Factorial";
-            cat Factorial.md || echo "No results";
-            echo "#### Benchmark Results: Factorial - Recursive";
-            cat FactorialRecursive.md || echo "No results";
-            echo "#### Benchmark Results: Fibonacci";
-            cat Fibonacci.md || echo "No results";
-            echo "#### Benchmark Results: ManyHashes";
-            cat ManyHashes.md || echo "No results";
-            echo "#### Benchmark Results: BubbleSort";
-            cat BubbleSort.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Transfer";
-            cat ERC20Transfer.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Mint";
-            cat ERC20Mint.md || echo "No results";
-            echo "#### Benchmark Results: ERC20 - Approval";
-            cat ERC20Approval.md || echo "No results";
-          } > main_result.md
-
-      - name: Upload main results
+          make build-revm-comparison
+      - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
-          name: main-result
-          path: crates/vm/levm/main_result.md
+          name: main-binary
+          path: crates/vm/levm/target/release/benchmark
 
   combine-results:
     name: Combine Benchmark Results
     runs-on: ubuntu-latest
     needs: [benchmark-pr, benchmark-main]
     steps:
-      - name: Download PR results
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install hyperfine
+        uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine@1.19
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
+      - name: Download PR binaries
         uses: actions/download-artifact@v4
         with:
-          name: pr-result
-          path: .
+          name: pr-binary
+          path: ./pr
 
-      - name: Download main results
+      - name: Download main binaries
         uses: actions/download-artifact@v4
         with:
-          name: main-result
-          path: .
+          name: main-binary
+          path: ./main
 
-      - name: Create combined results
+      - name: Run benchmarks
         run: |
-          {
-            echo "# Benchmark Results Comparison";
-            echo "## PR Results";
-            cat pr_result.md;
-            echo "## Main Results";
-            cat main_result.md;
-          } > combined_result.md
+          chmod +x ./main/benchmark
+          chmod +x ./pr/benchmark
+          cd crates/vm/levm
+          make revm-comparison-ci
+          bash ../../../.github/scripts/compare_levm_and_revm_benchmarks.sh
 
       - name: Find comment
         continue-on-error: true
@@ -167,5 +120,5 @@ jobs:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: combined_result.md
+          body-path: result.md
           edit-mode: replace

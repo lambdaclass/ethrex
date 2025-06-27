@@ -5,6 +5,7 @@ use ethrex::{
     networks::Network,
     utils::set_datadir,
 };
+use ethrex_blockchain::BlockchainType;
 use ethrex_vm::EvmEngine;
 
 #[inline]
@@ -14,6 +15,8 @@ fn block_import() {
     remove_db(data_dir, true);
 
     let evm_engine = EvmEngine::default();
+
+    let blockchain_type = BlockchainType::default(); // TODO: Should we support L2?
 
     let network = Network::from("../../test_data/genesis-perf-ci.json");
     let genesis = network
@@ -25,6 +28,7 @@ fn block_import() {
         data_dir,
         genesis,
         evm_engine,
+        blockchain_type,
     ))
     .expect("Failed to import blocks on the Tokio runtime");
 }
