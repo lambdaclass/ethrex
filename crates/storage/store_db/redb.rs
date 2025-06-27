@@ -397,17 +397,12 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError> {
-        let key_values = block_hashes
+    async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let key_values = block_headers
             .into_iter()
-            .zip(block_headers)
-            .map(|(hash, header)| {
+            .map(|header| {
                 (
-                    <H256 as Into<BlockHashRLP>>::into(hash),
+                    <H256 as Into<BlockHashRLP>>::into(header.hash()),
                     <BlockHeader as Into<BlockHeaderRLP>>::into(header),
                 )
             })
@@ -492,15 +487,13 @@ impl StoreEngine for RedBStore {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        let key_values = blocks
+    async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(BlockNumber, BlockHash)],
+    ) -> Result<(), StoreError> {
+        let key_values = numbers_and_hashes
             .iter()
-            .map(|e| {
-                (
-                    e.header.number,
-                    <H256 as Into<BlockHashRLP>>::into(e.hash()),
-                )
-            })
+            .map(|(n, h)| (*n, <H256 as Into<BlockHashRLP>>::into(*h)))
             .collect();
 
         self.write_batch(CANONICAL_BLOCK_HASHES_TABLE, key_values)
