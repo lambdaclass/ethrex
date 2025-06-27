@@ -116,70 +116,33 @@ contract OnChainProposer is
 
         // Set the AlignedProofAggregator address
         require(
-            ALIGNEDPROOFAGGREGATOR == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             alignedProofAggregator != address(0),
             "OnChainProposer: alignedProofAggregator is the zero address"
         );
-        require(
-            alignedProofAggregator != address(this),
-            "OnChainProposer: alignedProofAggregator is the contract address"
-        );
-
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         // Set the Risc0Groth16Verifier address
         require(
-            R0VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             r0verifier != address(0),
             "OnChainProposer: r0verifier is the zero address"
-        );
-        require(
-            r0verifier != address(this),
-            "OnChainProposer: r0verifier is the contract address"
         );
         R0VERIFIER = r0verifier;
 
         // Set the SP1Groth16Verifier address
         require(
-            SP1VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             sp1verifier != address(0),
             "OnChainProposer: sp1verifier is the zero address"
-        );
-        require(
-            sp1verifier != address(this),
-            "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
 
         // Set the TDXVerifier address
         require(
-            TDXVERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             tdxverifier != address(0),
             "OnChainProposer: tdxverifier is the zero address"
-        );
-        require(
-            tdxverifier != address(this),
-            "OnChainProposer: tdxverifier is the contract address"
         );
         TDXVERIFIER = tdxverifier;
 
         // Set the SP1 program verification key
-        require(
-            SP1_VERIFICATION_KEY == bytes32(0),
-            "OnChainProposer: contract already initialized"
-        );
         SP1_VERIFICATION_KEY = sp1Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
@@ -200,16 +163,8 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
-            BRIDGE == address(0),
-            "OnChainProposer: bridge already initialized"
-        );
-        require(
             bridge != address(0),
             "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
         );
         BRIDGE = bridge;
     }
@@ -256,9 +211,15 @@ contract OnChainProposer is
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(blobVersionedHash == 0, "L2 running as validium but blob was published");
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
         } else {
-            require(blobVersionedHash != 0, "L2 running as rollup but blob was not published");
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -355,7 +316,6 @@ contract OnChainProposer is
     function verifyBatchAligned(
         uint256 batchNumber,
         bytes calldata alignedPublicInputs,
-        bytes32 alignedProgramVKey,
         bytes32[] calldata alignedMerkleProof
     ) external override onlySequencer whenNotPaused {
         require(
@@ -377,7 +337,7 @@ contract OnChainProposer is
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
             alignedMerkleProof,
-            alignedProgramVKey,
+            SP1_VERIFICATION_KEY,
             alignedPublicInputs
         );
         (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
