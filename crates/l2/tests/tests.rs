@@ -4,6 +4,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::{H160, types::BlockNumber};
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2::sequencer::l1_watcher::DepositData;
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
@@ -1236,7 +1237,7 @@ async fn wait_for_l2_deposit_receipt(
     eth_client: &EthClient,
     proposer_client: &EthClient,
 ) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
-    let topic = keccak(b"L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)");
+    let topic = keccak(b"L1ToL2Message(address,address,uint256,uint256,uint256,bytes)");
     let logs = eth_client
         .get_logs(
             U256::from(l1_receipt_block_number),
@@ -1245,8 +1246,18 @@ async fn wait_for_l2_deposit_receipt(
             topic,
         )
         .await?;
+    let data = DepositData::from_log(logs.first().unwrap().log.clone())?;
 
-    let l2_deposit_tx_hash = H256::from_slice(logs.first().unwrap().log.data.get(96..128).unwrap());
+    let l2_deposit_tx_hash = data
+        .into_tx(
+            eth_client,
+            proposer_client.get_chain_id().await?.try_into().unwrap(),
+            0,
+        )
+        .await
+        .unwrap()
+        .get_deposit_hash()
+        .unwrap();
 
     println!("Waiting for deposit transaction receipt on L2");
 

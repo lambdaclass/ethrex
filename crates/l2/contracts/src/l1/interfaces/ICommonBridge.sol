@@ -14,18 +14,13 @@ interface ICommonBridge {
     /// @param from the address that initiated the deposit.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
-    /// @param l2MintTxHash the hash of the transaction that will finalize the
-    /// deposit in L2. Could be used to track the status of the deposit finalization
-    /// on L2. You can use this hash to retrive the tx data.
-    /// It is the result of keccak(abi.encode(transaction)).
     event L1ToL2Message(
-        uint256 indexed amount,
+        address indexed from,
         address indexed to,
         uint256 indexed depositId,
-        address from,
+        uint256 amount,
         uint256 gasLimit,
-        bytes data,
-        bytes32 l2MintTxHash
+        bytes data
     );
 
     /// @notice L2 withdrawals have been published on L1.

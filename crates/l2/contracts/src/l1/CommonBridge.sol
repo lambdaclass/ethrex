@@ -114,13 +114,12 @@ contract CommonBridge is
         pendingDepositLogs.push(l2MintTxHash);
 
         emit L1ToL2Message(
-            sendValues.value,
+            from,
             sendValues.to,
             depositId,
-            from,
+            sendValues.value,
             sendValues.gasLimit,
-            sendValues.data,
-            l2MintTxHash
+            sendValues.data
         );
         depositId += 1;
     }

@@ -5,7 +5,9 @@ use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::PrivilegedL2Transaction;
 use ethrex_common::{H160, types::Transaction};
+use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
     clients::eth::{EthClient, eth_sender::Overrides},
@@ -193,7 +195,7 @@ pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>,
     );
 
     // Matches the event L1ToL2Message from ICommonBridge.sol
-    let topic = keccak(b"L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)");
+    let topic = keccak(b"L1ToL2Message(address,address,uint256,uint256,uint256,bytes)");
 
     let logs = state
         .eth_client
@@ -229,7 +231,25 @@ pub async fn process_deposit_logs(
     for log in logs {
         let deposit_data = DepositData::from_log(log.log)?;
 
-        if deposit_already_processed(state, deposit_data.deposit_tx_hash).await? {
+        let gas_price = state.l2_client.get_gas_price().await?;
+        // Avoid panicking when using as_u64()
+        let gas_price: u64 = gas_price
+            .try_into()
+            .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
+
+        let chain_id = state
+            .store
+            .get_chain_config()
+            .map_err(|e| L1WatcherError::FailedToRetrieveChainConfig(e.to_string()))?
+            .chain_id;
+
+        let mint_transaction = deposit_data
+            .into_tx(&state.eth_client, chain_id, gas_price)
+            .await?;
+
+        let tx = Transaction::PrivilegedL2Transaction(mint_transaction);
+
+        if deposit_already_processed(state, tx.compute_hash()).await? {
             warn!(
                 "Deposit already processed (to: {:x}, value: {:x}, depositId: {:#}), skipping.",
                 deposit_data.to_address, deposit_data.value, deposit_data.deposit_id
@@ -242,47 +262,9 @@ pub async fn process_deposit_logs(
             deposit_data.to_address, deposit_data.value, deposit_data.deposit_id
         );
 
-        let gas_price = state.l2_client.get_gas_price().await?;
-        // Avoid panicking when using as_u64()
-        let gas_price: u64 = gas_price
-            .try_into()
-            .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
-
-        let mint_transaction = state
-            .eth_client
-            .build_privileged_transaction(
-                deposit_data.to_address,
-                deposit_data.from,
-                Bytes::copy_from_slice(&deposit_data.calldata),
-                Overrides {
-                    chain_id: Some(
-                        state
-                            .store
-                            .get_chain_config()
-                            .map_err(|e| {
-                                L1WatcherError::FailedToRetrieveChainConfig(e.to_string())
-                            })?
-                            .chain_id,
-                    ),
-                    // Using the deposit_id as nonce.
-                    // If we make a transaction on the L2 with this address, we may break the
-                    // deposit workflow.
-                    nonce: Some(deposit_data.deposit_id.as_u64()),
-                    value: Some(deposit_data.value),
-                    gas_limit: Some(deposit_data.gas_limit.as_u64()),
-                    // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
-                    // Otherwise, the transaction is not included in the mempool.
-                    // We should override the blockchain to always include the transaction.
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
         let Ok(hash) = state
             .blockchain
-            .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
+            .add_transaction_to_pool(tx)
             .await
             .inspect_err(|e| warn!("Failed to add mint transaction to the mempool: {e:#?}"))
         else {
@@ -320,32 +302,26 @@ async fn deposit_already_processed(
     Ok(!pending_deposits.contains(&deposit_hash))
 }
 
-struct DepositData {
+pub struct DepositData {
     pub value: U256,
     pub to_address: H160,
     pub deposit_id: U256,
     pub from: H160,
     pub gas_limit: U256,
     pub calldata: Vec<u8>,
-    pub deposit_tx_hash: H256,
 }
 
 impl DepositData {
-    fn from_log(log: RpcLogInfo) -> Result<DepositData, L1WatcherError> {
-        let value = format!(
-            "{:#x}",
-            log.topics
-                .get(1)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Failed to parse mint value from log: log.topics[1] out of bounds".to_owned()
-                ))?
-        )
-        .parse::<U256>()
-        .map_err(|e| {
-            L1WatcherError::FailedToDeserializeLog(format!(
-                "Failed to parse mint value from log: {e:#?}"
-            ))
-        })?;
+    pub fn from_log(log: RpcLogInfo) -> Result<DepositData, L1WatcherError> {
+        let from = log
+            .topics
+            .get(1)
+            .ok_or(L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse mint value from log: log.topics[1] out of bounds".to_owned(),
+            ))?;
+
+        let from_address = hash_to_address(*from);
+
         let to_address_hash = log
             .topics
             .get(2)
@@ -368,17 +344,15 @@ impl DepositData {
         })?;
 
         // The previous values are indexed in the topic of the log. Data contains the rest.
-        // DATA = from: Address || gas_limit: uint256 || offset_calldata: uint256 || tx_hash: H256 || length_calldata: uint256 || calldata: bytes
-        // DATA = 0..32         || 32..64             || 64..96                   || 96..128       || 128..160                 || 160..(160+calldata_len)
+        // DATA = value: uint256 || gas_limit: uint256 || offset_calldata: uint256 || length_calldata: uint256 || calldata: bytes
+        // DATA = 0..32          || 32..64             || 64..96                   || 96..128                  || 128..(128+calldata_len)
         // Any value that is not 32 bytes is padded with zeros.
 
-        let from = log
-            .data
-            .get(12..32)
-            .ok_or(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse from from log: log.data[12..32] out of bounds".to_owned(),
-            ))?;
-        let from = Address::from_slice(from);
+        let value = U256::from_big_endian(log.data.get(0..32).ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
+            ),
+        )?);
 
         let gas_limit = U256::from_big_endian(log.data.get(32..64).ok_or(
             L1WatcherError::FailedToDeserializeLog(
@@ -386,28 +360,16 @@ impl DepositData {
             ),
         )?);
 
-        let deposit_tx_hash = H256::from_slice(
-            log.data
-                .get(96..128)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Failed to parse deposit_tx_hash from log: log.data[96..128] out of bounds"
-                        .to_owned(),
-                ))?,
-        );
-
-        let calldata_len = U256::from_big_endian(
-            log.data
-                .get(128..160)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Failed to parse calldata_len from log: log.data[128..160] out of bounds"
-                        .to_owned(),
-                ))?,
-        );
+        let calldata_len = U256::from_big_endian(log.data.get(96..128).ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse calldata_len from log: log.data[96..128] out of bounds".to_owned(),
+            ),
+        )?);
         let calldata = log
             .data
-            .get(160..160 + calldata_len.as_usize())
+            .get(128..128 + calldata_len.as_usize())
             .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse calldata from log: log.data[160..160 + calldata_len] out of bounds"
+            "Failed to parse calldata from log: log.data[128..128 + calldata_len] out of bounds"
                 .to_owned(),
         ))?;
 
@@ -415,10 +377,38 @@ impl DepositData {
             value,
             to_address,
             deposit_id,
-            from,
+            from: from_address,
             gas_limit,
             calldata: calldata.to_vec(),
-            deposit_tx_hash,
         })
+    }
+    pub async fn into_tx(
+        &self,
+        eth_client: &EthClient,
+        chain_id: u64,
+        gas_price: u64,
+    ) -> Result<PrivilegedL2Transaction, EthClientError> {
+        eth_client
+            .build_privileged_transaction(
+                self.to_address,
+                self.from,
+                Bytes::copy_from_slice(&self.calldata),
+                Overrides {
+                    chain_id: Some(chain_id),
+                    // Using the deposit_id as nonce.
+                    // If we make a transaction on the L2 with this address, we may break the
+                    // deposit workflow.
+                    nonce: Some(self.deposit_id.as_u64()),
+                    value: Some(self.value),
+                    gas_limit: Some(self.gas_limit.as_u64()),
+                    // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
+                    // Otherwise, the transaction is not included in the mempool.
+                    // We should override the blockchain to always include the transaction.
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
+            )
+            .await
     }
 }
