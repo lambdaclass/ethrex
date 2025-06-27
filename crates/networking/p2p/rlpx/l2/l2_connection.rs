@@ -68,64 +68,68 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.broadcast_message(msg.into()).await
     }
     pub async fn send_new_block(&mut self) -> Result<(), RLPxError> {
-        // FIXME: Re-add this
-        // let latest_block_number = self.storage.get_latest_block_number().await?;
-        // for i in self.latest_block_sent + 1..=latest_block_number {
-        //     debug!(
-        //         "Broadcasting new block, current: {}, last broadcasted: {}",
-        //         i, self.latest_block_sent
-        //     );
+        let latest_block_number = self.storage.get_latest_block_number().await?;
+        let latest_block_sent = self.l2_state.connection_state_mut()?.latest_block_sent;
+        for block_number in latest_block_sent + 1..=latest_block_number {
+            let new_block_msg = {
+                let l2_state = self.l2_state.connection_state_mut()?;
+                debug!(
+                    "Broadcasting new block, current: {}, last broadcasted: {}",
+                    block_number, l2_state.latest_block_sent
+                );
 
-        //     let new_block_body =
-        //         self.storage
-        //             .get_block_body(i)
-        //             .await?
-        //             .ok_or(RLPxError::InternalError(
-        //                 "Block body not found after querying for the block number".to_owned(),
-        //             ))?;
-        //     let new_block_header =
-        //         self.storage
-        //             .get_block_header(i)?
-        //             .ok_or(RLPxError::InternalError(
-        //                 "Block header not found after querying for the block number".to_owned(),
-        //             ))?;
-        //     let new_block = Block {
-        //         header: new_block_header,
-        //         body: new_block_body,
-        //     };
-        //     let (signature, recovery_id) = if let Some(recovered_sig) = self
-        //         .store_rollup
-        //         .get_signature_by_block(new_block.hash())
-        //         .await?
-        //     {
-        //         let mut signature = [0u8; 64];
-        //         let mut recovery_id = [0u8; 4];
-        //         signature.copy_from_slice(&recovered_sig[..64]);
-        //         recovery_id.copy_from_slice(&recovered_sig[64..68]);
-        //         (signature, recovery_id)
-        //     } else {
-        //         let Some(secret_key) = self.committer_key else {
-        //             return Err(RLPxError::InternalError(
-        //                 "Secret key is not set for based connection".to_string(),
-        //             ));
-        //         };
-        //         let (recovery_id, signature) = secp256k1::SECP256K1
-        //             .sign_ecdsa_recoverable(
-        //                 &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
-        //                 &secret_key,
-        //             )
-        //             .serialize_compact();
-        //         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
-        //         (signature, recovery_id)
-        //     };
-        //     self.send(Message::NewBlock(NewBlockMessage {
-        //         block: new_block,
-        //         signature,
-        //         recovery_id,
-        //     }))
-        //     .await?;
-        // }
-        // self.latest_block_sent = latest_block_number;
+                let new_block_body =
+                    self.storage
+                        .get_block_body(block_number)
+                        .await?
+                        .ok_or(RLPxError::InternalError(
+                            "Block body not found after querying for the block number".to_owned(),
+                        ))?;
+                let new_block_header =
+                    self.storage
+                        .get_block_header(block_number)?
+                        .ok_or(RLPxError::InternalError(
+                            "Block header not found after querying for the block number".to_owned(),
+                        ))?;
+                let new_block = Block {
+                    header: new_block_header,
+                    body: new_block_body,
+                };
+                let (signature, recovery_id) = if let Some(recovered_sig) = l2_state
+                    .store_rollup
+                    .get_signature_by_block(new_block.hash())
+                    .await?
+                {
+                    let mut signature = [0u8; 64];
+                    let mut recovery_id = [0u8; 4];
+                    signature.copy_from_slice(&recovered_sig[..64]);
+                    recovery_id.copy_from_slice(&recovered_sig[64..68]);
+                    (signature, recovery_id)
+                } else {
+                    let Some(secret_key) = l2_state.committer_key else {
+                        return Err(RLPxError::InternalError(
+                            "Secret key is not set for based connection".to_string(),
+                        ));
+                    };
+                    let (recovery_id, signature) = secp256k1::SECP256K1
+                        .sign_ecdsa_recoverable(
+                            &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
+                            &secret_key,
+                        )
+                        .serialize_compact();
+                    let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+                    (signature, recovery_id)
+                };
+                NewBlock {
+                    block: new_block,
+                    signature,
+                    recovery_id,
+                }
+            };
+
+            self.send(new_block_msg.into()).await?;
+            self.l2_state.connection_state_mut()?.latest_block_sent = block_number;
+        }
 
         Ok(())
     }
