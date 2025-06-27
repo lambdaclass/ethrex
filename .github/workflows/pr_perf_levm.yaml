@@ -104,7 +104,8 @@ jobs:
           error_margin=0.1
           for f in ../../../benchmark_comparison_results/*; do
             file_name="${f##../../../benchmark_comparison_results/}"
-            awk -F'|' -v file="${file_name%.md}" -v error_margin="$error_margin"'      
+            file="${file_name%.md}"
+            awk -F'|' -v file="$file" -v error_margin="$error_margin" '      
             /`main_revm_/ {
               main_revm_row = $0;
               gsub(/±.*/, "", $3); # Remove ± part from $3 position of the row
@@ -167,6 +168,7 @@ jobs:
           cat ../../../detailed_result.md >> ../../../result.md
           echo -e "\`\`\`\n" >> ../../../result.md
           echo -e "</details>\n" >> ../../../result.md
+
 
       - name: Find comment
         continue-on-error: true
