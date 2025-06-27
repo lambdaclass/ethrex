@@ -1085,35 +1085,25 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     // Parse inputs
-    let versioned_hash: [u8; 32] = calldata
-        .get(..32)
-        .ok_or(PrecompileError::ParsingInputError)?
+    let versioned_hash: [u8; 32] = calldata[..32]
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::Slicing)?;
 
-    let x: [u8; 32] = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?
+    let x: [u8; 32] = calldata[32..64]
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::Slicing)?;
 
-    let y: [u8; 32] = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?
+    let y: [u8; 32] = calldata[64..96]
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::Slicing)?;
 
-    let commitment: [u8; 48] = calldata
-        .get(96..144)
-        .ok_or(PrecompileError::ParsingInputError)?
+    let commitment: [u8; 48] = calldata[96..144]
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::Slicing)?;
 
-    let proof: [u8; 48] = calldata
-        .get(144..192)
-        .ok_or(PrecompileError::ParsingInputError)?
+    let proof: [u8; 48] = calldata[144..192]
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::Slicing)?;
 
     // Perform the evaluation
 
