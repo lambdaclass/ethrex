@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751042645365,
+  "lastUpdate": 1751042814870,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1769,6 +1769,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210953905193,
             "range": "± 534112181",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e4bc87ddb14b2e5215d40bada54dad384741747",
+          "message": "perf(core): improve u256 handling, improving PUSH and other opcodes (#3332)\n\n**Motivation**\n\nThe function `u265::from_big_endian(slice)` which is widely used in the\ncodebase can be made faster through more compile time information.\n\nWith this change, i could add a constant generic op_push\n\nBenchmarks:\n\nSeems like our current benchmarks don't measure this part of the code,\nthere is no difference in the levm bench, however external opcode\nbenchmarks show a 2-2.5x improvement on PUSH and MSTORE based benches\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3358",
+          "timestamp": "2025-06-27T15:46:44Z",
+          "tree_id": "ceac0361630c7d3402664dc9569e183fdae03ccb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2e4bc87ddb14b2e5215d40bada54dad384741747"
+        },
+        "date": 1751042806554,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210457693357,
+            "range": "± 708614294",
             "unit": "ns/iter"
           }
         ]
