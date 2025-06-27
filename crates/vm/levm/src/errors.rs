@@ -160,14 +160,14 @@ pub enum PrecompileError {
     NotEnoughGas,
     #[error("Kzg error: {0}")]
     KzgError(String),
-    #[error("This is a default error")]
-    DefaultError,
     #[error("Invalid point")]
     InvalidPoint,
     #[error("The point is not in the curve")]
     PointNotInTheCurve,
     #[error("The point is not in the subgroup")]
     PointNotInSubgroup,
+    #[error("BN254 ate pairing error")]
+    BN254AtePairingError,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]

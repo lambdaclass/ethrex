@@ -834,7 +834,7 @@ fn update_pairing_result(
     second_point: ShortWeierstrassProjectivePoint<BN254TwistCurve>,
 ) -> Result<(), VMError> {
     let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| PrecompileError::BN254AtePairingError)?;
 
     *mul *= pairing_result;
 
