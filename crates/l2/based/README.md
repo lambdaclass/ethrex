@@ -168,7 +168,7 @@ export $(cat .env | xargs)
 > [!IMPORTANT]
 > You need to have an L1 running with the contracts deployed to run the L2 node. See the previous steps.
 
-In a console in the sme directory (`crates/l2`), run the following command to start a based L2 node:
+In a console inside the same directory (`crates/l2`), run the following command to start a based L2 node:
 ```bash
 cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 init \
   --watcher.block-delay 0 \
