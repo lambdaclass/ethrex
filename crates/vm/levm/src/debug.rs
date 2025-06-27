@@ -36,7 +36,7 @@ impl DebugMode {
                 self.print_mode = true;
             } else {
                 if let Ok(s) = std::str::from_utf8(&self.print_buffer) {
-                    println!("PRINTED -> {}", s);
+                    println!("PRINTED -> {s}");
                 } else {
                     // Theoretically this shouldn't happen but I'll leave this JIC.
                     println!("PRINTED (failed) -> {:?}", self.print_buffer);

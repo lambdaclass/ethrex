@@ -37,7 +37,7 @@ impl RpcHandler for GasPrice {
         // To complete the gas price, we need to add the base fee to the estimated gas tip.
         let gas_price = base_fee + estimated_gas_tip;
 
-        let gas_as_hex = format!("0x{:x}", gas_price);
+        let gas_as_hex = format!("0x{gas_price:x}");
         Ok(serde_json::Value::String(gas_as_hex))
     }
 }

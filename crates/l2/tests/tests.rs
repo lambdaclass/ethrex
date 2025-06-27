@@ -1037,8 +1037,7 @@ fn private_keys_file_path() -> PathBuf {
         Ok(path) => PathBuf::from(path),
         Err(_) => {
             println!(
-                "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {}",
-                DEFAULT_PRIVATE_KEYS_FILE_PATH
+                "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {DEFAULT_PRIVATE_KEYS_FILE_PATH}",
             );
             PathBuf::from(DEFAULT_PRIVATE_KEYS_FILE_PATH)
         }

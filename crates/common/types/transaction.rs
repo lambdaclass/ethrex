@@ -1552,7 +1552,7 @@ mod serde_impl {
             S: serde::Serializer,
         {
             match self {
-                TxKind::Call(address) => serializer.serialize_str(&format!("{:#x}", address)),
+                TxKind::Call(address) => serializer.serialize_str(&format!("{address:#x}")),
                 TxKind::Create => serializer.serialize_none(),
             }
         }
@@ -1969,7 +1969,7 @@ mod serde_impl {
         T: serde::de::DeserializeOwned,
     {
         map.remove(key)
-            .ok_or_else(|| D::Error::custom(format!("Missing field: {}", key)))
+            .ok_or_else(|| D::Error::custom(format!("Missing field: {key}")))
             .and_then(|value| {
                 serde_json::from_value(value).map_err(|err| D::Error::custom(err.to_string()))
             })
