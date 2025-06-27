@@ -734,28 +734,22 @@ fn handle_pairing_from_coordinates(
         }
         (true, false) => {
             // If the first point is infinity, then do the checks for the second
-            if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
+            let p2 = BN254TwistCurve::create_point_from_affine(
                 second_point_x.clone(),
                 second_point_y.clone(),
-            ) {
-                if !p2.is_in_subgroup() {
-                    Err(PrecompileError::PointNotInSubgroup.into())
-                } else {
-                    Ok(true)
-                }
-            } else {
-                Err(PrecompileError::InvalidPoint.into())
+            )
+            .map_err(|_| PrecompileError::InvalidPoint)?;
+
+            if !p2.is_in_subgroup() {
+                return Err(PrecompileError::PointNotInSubgroup.into());
             }
+            Ok(true)
         }
         (false, true) => {
             // If the second point is infinity, then do the checks for the first
-            if BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
-                .is_err()
-            {
-                Err(PrecompileError::InvalidPoint.into())
-            } else {
-                Ok(true)
-            }
+            BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
+                .map_err(|_| PrecompileError::InvalidPoint)?;
+            Ok(true)
         }
         (false, false) => {
             // Define the pairing points
