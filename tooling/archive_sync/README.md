@@ -43,8 +43,9 @@ This executable takes 3 arguments:
 * The number of the block you want to sync to:
 
      Our most common use case for this tool will be to do fullsync on networks like mainnet and sepolia, but starting from the first post-merge blocks, so we will commonly be using the blocks right after the merge transition blocks for this tool which should be:
-        *Sepolia Next Block After Merge: 1450410
-        *Mainnet Next Block After Merge: 15537395
+
+  - Sepolia Next Block After Merge: 1450410
+  - Mainnet Next Block After Merge: 15537395
 
 * (Optional with flag --datadir):
 
