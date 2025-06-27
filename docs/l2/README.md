@@ -63,6 +63,8 @@ The L2 environment can be configured in two ways, allowing for both persistent a
 
 For persistent configuration, create a `.env` file in the `crates/l2` directory. The `Makefile` will automatically include it and export any variables prefixed with `ETHREX_`.
 
+> **Note:** Your custom variables in the `.env` file are safe. When the contract deployer runs (e.g., as part of `make up`), it will intelligently add or update only the necessary contract addresses, preserving all other values.
+
 **Example `.env` file:**
 
 ```env

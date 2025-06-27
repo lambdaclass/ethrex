@@ -3027,6 +3027,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf673e0848ef09fa4aeeba78e681cf651c0c7d35f76ee38cec8e55bc32fa111"
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4149,6 +4155,7 @@ dependencies = [
  "clap 4.5.40",
  "clap_complete",
  "colored",
+ "dotenvy",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-l2",
