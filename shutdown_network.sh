@@ -21,7 +21,7 @@ kill_processes() {
 }
 
 clean_datadirs() {
-    datadir_root="/Users/ivanlitteri/Library/Application Support"
+    datadir_root="/Users/tomasparadelo/Library/Application Support"
 
     if [ -s $datadirs_path ]; then
         while read datadir; do

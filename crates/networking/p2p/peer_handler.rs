@@ -153,6 +153,9 @@ impl PeerHandler {
                 }
             })
             .await
+            .inspect_err(|e| {
+                warn!("[SYNCING] Timeout while waiting for block headers: {e}");
+            })
             .ok()
             .flatten()
             .and_then(|headers| (!headers.is_empty()).then_some(headers))
@@ -176,7 +179,9 @@ impl PeerHandler {
     #[cfg(feature = "l2")]
     pub async fn request_batch(&self, first_batch: u64, last_batch: u64) -> Option<Vec<Batch>> {
         use crate::rlpx::{based::GetBatchSealedMessage, p2p::SUPPORTED_BASED_CAPABILITIES};
+        dbg!("entering request_batch");
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            dbg!("making one attempt to request batch");
             let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage {
                 first_batch,
                 last_batch,
@@ -192,7 +197,8 @@ impl PeerHandler {
                 self.record_peer_failure(peer_id).await;
                 return None;
             }
-            if let Some(batches) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            dbg!("waiting for response from peer {}", peer_id);
+            if let Some(batches) = tokio::time::timeout(PEER_REPLY_TIMEOUT * 2, async move {
                 loop {
                     use crate::rlpx::based::GetBatchSealedResponseMessage;
                     match receiver.recv().await {
@@ -218,6 +224,8 @@ impl PeerHandler {
                 // TODO: penalize peer if the signature is incorrect or the batch is invalid
                 return Some(batches);
             }
+            warn!("[SYNCING] Didn't receive batch from peer, penalizing peer {peer_id}...");
+            self.record_peer_failure(peer_id).await;
         }
         None
     }

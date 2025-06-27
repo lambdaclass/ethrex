@@ -7,7 +7,6 @@ use super::{
 use crate::rlpx::based::NewBatchSealedMessage;
 #[cfg(feature = "l2")]
 use crate::rlpx::based::get_hash_batch_sealed;
-use crate::rlpx::utils::get_pub_key;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -35,6 +34,7 @@ use crate::{
     },
     types::Node,
 };
+use crate::{kademlia::PeerData, rlpx::utils::get_pub_key};
 use ethrex_blockchain::{Blockchain, error::ChainError, fork_choice::apply_fork_choice};
 use ethrex_common::{
     Address, H256, H512,
@@ -50,7 +50,7 @@ use rand::random;
 use secp256k1::Message as SignedMessage;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey as SigningKeySecp256k1;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Debug};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -225,7 +225,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             return;
         }
 
-        if let Err(e) = self.exchange_hello_messages().await {
+        if let Err(e) = self.exchange_hello_messages(table.clone()).await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
         } else {
@@ -315,7 +315,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
+    async fn exchange_hello_messages(
+        &mut self,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) -> Result<(), RLPxError> {
         let mut supported_capabilities: Vec<Capability> = [
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
@@ -389,9 +392,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 self.node.version = Some(hello_message.client_id);
 
+                // let node_id = hello_message.node_id;
+                // let already_connected = {
+                //     let table_lock = table.lock().await;
+                //     let a = table_lock
+                //         .filter_peers(&|peer: &PeerData| peer.node.node_id() == node_id(node_id))
+                //         .collect();
+                // };
+
                 Ok(())
             }
             Message::Disconnect(disconnect) => {
+                debug!("Received disconnect message: {}", disconnect.reason());
                 Err(RLPxError::DisconnectReceived(disconnect.reason()))
             }
             _ => {
@@ -426,13 +438,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     match message {
                         Ok(message) => {
                             log_peer_debug(&self.node, &format!("Received message {}", message));
-                            // self.handle_message(message, sender.clone()).await.inspect_err(|e| {log_peer_error(
-                            //     &self.node,
-                            //     &format!(
-                            //         "Error handling message, error: {e}"
-                            //     ),
-                            // );})?;
-                            self.handle_message(message, sender.clone()).await?;
+                            self.handle_message(message.clone(), sender.clone()).await.inspect_err(|e| {log_peer_error(
+                                &self.node,
+                                &format!(
+                                    "Error handling message {message}, error: {e}"
+                                ),
+                            );})?;
                         },
                         Err(e) => {
                             log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
@@ -840,24 +851,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::NewBlock(req) if peer_supports_based => {
                 if self.should_process_new_block(&req).await? {
-                    dbg!("adding block to queue", req.block.header.number);
+                    debug!("adding block to queue: {}", req.block.header.number);
                     self.blocks_on_queue
                         .entry(req.block.header.number)
                         .or_insert_with(|| req.block.clone());
+                    self.broadcast_message(Message::NewBlock(req.clone()))?;
                 }
                 self.process_new_block(&req).await?;
-                self.broadcast_message(Message::NewBlock(req))?;
-                // if self.should_process_new_block(&req).await? {
-                //     self.process_new_block(&req).await?;
-                //     // for now we broadcast valid messages
-                //     #[cfg(feature = "l2")]
-                //     let new_latest_block_sent = req.block.header.number;
-                //     self.broadcast_message(Message::NewBlock(req))?;
-                //     #[cfg(feature = "l2")]
-                //     {
-                //         self.latest_block_sent = new_latest_block_sent;
-                //     }
-                // }
             }
             Message::NewBatchSealed(_req) => {
                 #[cfg(feature = "l2")]
@@ -1026,7 +1026,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.blocks_on_queue.contains_key(&next_block_to_add)
         );
         next_block_to_add = next_block_to_add.max(latest_block_in_storage + 1);
-        dbg!(next_block_to_add);
         // TODO: clean old blocks that were added and then sync to a newer head
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
             // This check is necessary if a connection to another peer already applied the block but this connection
@@ -1037,7 +1036,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 continue;
             }
             // log_peer_warn(&self.node, "here");
-            dbg!("going to add block", next_block_to_add);
             self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_error(
                     &self.node,

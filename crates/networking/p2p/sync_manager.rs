@@ -181,7 +181,10 @@ impl SyncManager {
                         error!("Failed to read latest batch number, unable to sync");
                         return;
                     };
-                    *last_batch_number
+                    let last_batch_number_value = *last_batch_number;
+                    let last_batch_number_on_store =
+                        rollup_store.get_latest_batch_number().await.unwrap_or(0);
+                    last_batch_number_value.max(last_batch_number_on_store)
                 };
                 #[cfg(feature = "l2")]
                 let new_batch_head = {
