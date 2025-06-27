@@ -6,7 +6,7 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 
-#[cfg(feature = "metrics")]
+#[cfg(feature = "execution_profile")]
 use ethrex_metrics::metrics_profiling::FunctionProfilingLayer;
 use ethrex_metrics::metrics_profiling::initialize_profiling_metrics;
 
@@ -51,9 +51,9 @@ pub fn init_tracing(opts: &Options) {
 
     let fmt_layer = fmt::layer().with_filter(log_filter);
     let subscriber = Registry::default().with(fmt_layer);
-    #[cfg(feature = "metrics")]
+    #[cfg(feature = "execution_profile")]
     let profiling_layer = FunctionProfilingLayer::default();
-    #[cfg(feature = "metrics")]
+    #[cfg(feature = "execution_profile")]
     let subscriber = subscriber.with(profiling_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
@@ -70,6 +70,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_port.clone(),
     );
 
+    #[cfg(feature = "execution_profile")]
     initialize_profiling_metrics();
 
     tracker.spawn(metrics_api);

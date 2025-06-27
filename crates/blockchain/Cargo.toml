@@ -36,6 +36,7 @@ default = []
 l2 = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+execution_profile = ["metrics"]
 
 [lints.clippy]
 unwrap_used = "deny"

@@ -6,6 +6,8 @@ use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{SpecId, fork_to_spec_id, spec_id};
+#[cfg(feature = "execution_profile")]
+use ::tracing::instrument;
 use ethrex_common::Address;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -90,8 +92,8 @@ impl Evm {
     }
 
     #[cfg_attr(
-        feature = "metrics",
-        intrument(level = "trace", name = "Block execution")
+        feature = "execution_profile",
+        instrument(level = "trace", name = "Block execution", skip_all)
     )]
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {

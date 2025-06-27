@@ -7,10 +7,9 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::span::EnteredSpan;
-#[cfg(feature = "metrics")]
-use ::tracing::trace_span;
-use ::tracing::{Level, Span, event, info, instrument, span, trace_span};
+use ::tracing::info;
+#[cfg(feature = "execution_profile")]
+use ::tracing::instrument;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -84,7 +83,7 @@ impl Blockchain {
         }
     }
 
-    #[cfg_attr(feature = "metrics", instrument(level = "trace" name = "VM Initialization"))]
+    #[cfg_attr(feature = "execution_profile", instrument(level = "trace" name = "VM Initialization", skip_all))]
     fn initialize_vm(
         &self,
         current_block_hash: BlockHash,
@@ -383,7 +382,7 @@ impl Blockchain {
             .await
             .map_err(|e| e.into())
     }
-    #[cfg_attr(feature = "metrics", instrument(level = "trace", skip_all))]
+    #[cfg_attr(feature = "execution_profile", instrument(level = "trace", skip_all))]
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
@@ -391,7 +390,6 @@ impl Blockchain {
         let result = self.store_block(block, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
-        metrics!(event!(Level::TRACE, "export_metrics"));
         result
     }
 
@@ -442,7 +440,7 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
-    #[instrument(level = "trace")]
+    #[cfg_attr(feature = "execution_profile", instrument(level = "trace", skip_all))]
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
@@ -574,8 +572,6 @@ impl Blockchain {
             total_gas_used,
             throughput
         );
-
-        event!(Level::TRACE, "export_metrics");
 
         Ok(())
     }

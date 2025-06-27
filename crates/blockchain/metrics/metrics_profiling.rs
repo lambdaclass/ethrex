@@ -4,8 +4,7 @@ use std::{
     sync::{LazyLock, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tracing::info;
-use tracing::{Event, Subscriber, span::Id};
+use tracing::{Subscriber, span::Id};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
@@ -69,13 +68,6 @@ where
             .and_modify(|v| *v += duration)
             .or_insert(duration);
         if name == "add_blocks_in_batch" || name == "add_block" {
-            self.export_and_clear();
-        }
-    }
-
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        if event.metadata().name() == "export_metrics" {
-            info!("Execution metrics exported to prometheus");
             self.export_and_clear();
         }
     }

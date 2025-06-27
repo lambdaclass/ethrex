@@ -5,6 +5,8 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
+#[cfg(feature = "execution_profile")]
+use ::tracing::instrument;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -71,8 +73,8 @@ pub struct AccountUpdatesList {
 
 impl Store {
     #[cfg_attr(
-        feature = "metrics",
-        intrument(level = "trace", name = "Block DB update")
+        feature = "execution_profile",
+        instrument(level = "trace", name = "Block DB update", skip_all)
     )]
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
@@ -352,7 +354,10 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
-    #[cfg_attr(feature = "metrics", instrument(level = "trace", name = "Trie update"))]
+    #[cfg_attr(
+        feature = "execution_profile",
+        instrument(level = "trace", name = "Trie update", skip_all)
+    )]
     pub async fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
