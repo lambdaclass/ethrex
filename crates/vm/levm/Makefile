@@ -39,11 +39,12 @@ BENCH_PUSH_ITERATIONS := 0 # unused, fixed size array to use stack
 
 # For manually testing you could add --show-output to hyperfine
 define run_benchmark
+	mkdir -p ./bench-results
 	@printf "%s\n" "revm_$(1)"
 	@target/release/benchmark revm $(1) 1 $($(3))
 	@printf "%s\n" "levm_$(1)"
 	@target/release/benchmark levm $(1) 1 $($(3))
-	hyperfine -w 5 -r 10 -N \
+	hyperfine -w 5 -r 10 -N --export-markdown ./bench-results/$(1).md --export-json ./bench-results/$(1).json \
 		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
 		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
 	@echo
