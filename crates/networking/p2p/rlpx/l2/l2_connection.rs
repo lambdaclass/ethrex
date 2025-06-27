@@ -188,7 +188,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             RLPxError::CryptographyError(e.to_string())
         })?;
 
-        if validate_signature(recovered_lead_sequencer) {
+        if !validate_signature(recovered_lead_sequencer) {
             return Ok(false);
         }
         let mut signature = [0u8; 68];
@@ -238,7 +238,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 RLPxError::CryptographyError(e.to_string())
             })?;
 
-        if validate_signature(recovered_lead_sequencer) {
+        if !validate_signature(recovered_lead_sequencer) {
             return Ok(false);
         }
 
