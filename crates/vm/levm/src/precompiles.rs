@@ -1383,16 +1383,11 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
     if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
         return Err(PrecompileError::ParsingInputError.into());
     }
-    let unpadded_coordinate = padded_coordinate
-        .get(16..64)
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
-    unpadded_coordinate
+    let unpadded_coordinate: [u8; 48] = padded_coordinate[16..64]
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError.into())
+        .map_err(|_| InternalError::Slicing)?;
+    Ok(unpadded_coordinate)
 }
-
 fn parse_g1_point(
     point_raw_bytes: Option<&[u8]>,
     unchecked: bool,
