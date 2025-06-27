@@ -131,6 +131,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function deposit(DepositValues calldata depositValues) public payable {
+        depositsERC20[ETH_TOKEN][ETH_TOKEN] += msg.value;
         _deposit(msg.sender, depositValues);
     }
 
