@@ -52,11 +52,11 @@ for root, dirs, files in os.walk("./bench-results"):
 
                     if row["change"] != 100.0:
                       if row["change"] < 100.0:
-                          value = 100.0 - row["change"]
-                          change_text = f"""(<span style="color: green;">{value:.2f} % faster</span>)"""
+                          value = (100.0 - row["change"]) / 100
+                          change_text = f"""(<span style="color: green;">{value:.2f} times faster</span>)"""
                       else:
-                          value = row["change"] - 100.0
-                          change_text = f"""(<span style="color: red;">{value:.2f} % slower</span>)"""
+                          value = (row["change"] - 100.0) / 100
+                          change_text = f"""(<span style="color: red;">{value:.2f} times slower</span>)"""
                     print(f"""
                           <tr>
                             <td class="title">{row["command"]}</td>
