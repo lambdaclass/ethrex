@@ -266,7 +266,10 @@ fn execute_stateless(
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
         // Execute block
+        #[cfg(feature = "l2")]
         let mut vm = Evm::new_for_l2(EvmEngine::LEVM, db.clone())?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(EvmEngine::LEVM, db.clone());
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;
