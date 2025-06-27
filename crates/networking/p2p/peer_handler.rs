@@ -819,7 +819,6 @@ impl PeerHandler {
                 {
                     self.record_snap_peer_success(peer_id, peer_ids).await;
                     return Some((storage_keys, storage_values, should_continue));
-                } else {
                 }
             }
         }
