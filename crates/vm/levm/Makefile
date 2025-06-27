@@ -35,6 +35,7 @@ BENCH_BUBBLESORT_ITERATIONS := 100 # Size of the array to sort
 BENCH_MINT_ITERATIONS := 500
 BENCH_TRANSFER_ITERATIONS := 500
 BENCH_APPROVAL_ITERATIONS := 500
+BENCH_PUSH_ITERATIONS := 0 # unused, fixed size array to use stack
 
 # For manually testing you could add --show-output to hyperfine
 define run_benchmark
@@ -70,6 +71,7 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
+	$(call run_benchmark,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
 	$(call run_benchmark,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
 	$(call run_benchmark,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
@@ -81,6 +83,7 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark_ci,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
 	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
 	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
@@ -96,6 +99,7 @@ flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=ERC20Approval repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_APPROVAL_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=ERC20Transfer repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_TRANSFER_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=ERC20Mint repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_MINT_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=Push repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_PUSH_ITERATIONS)
 
 flamegraph-levm-bench-generic:
 	mkdir -p flamegraph_levm_benchmark
