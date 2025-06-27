@@ -15,7 +15,7 @@ thiserror.workspace = true
 keccak-hash.workspace = true
 serde.workspace = true
 lazy_static.workspace = true
-lambdaworks-crypto = "0.11.0"
+lambdaworks-crypto.workspace = true
 sha3.workspace = true
 
 [lints.clippy]
