@@ -196,7 +196,7 @@ To do this, they compute a merkle proof for the included batch and call the L1 `
 
 This contract then:
 
-- Verifies that the batch is verified
+- Checks that the batch is verified
 - Ensures the withdrawal wasn't already claimed
 - Computes the expected leaf
 - Validates that the proof leads from the leaf to the root of the message tree
