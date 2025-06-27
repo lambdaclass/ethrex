@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751060980966,
+  "lastUpdate": 1751061624273,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1949,6 +1949,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209882948866,
             "range": "± 848066479",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b626fddc2a1556db2c61af9b76ce0e26dd352eb",
+          "message": "refactor(l2): remove blobs logic from payload_builder (#3326)\n\n**Motivation**\n\nRemoves unnecessary logic for handling blob transactions in\n`L2::payload_builder`, since these transactions are discarded just a few\nlines below.\n\n\nCloses None",
+          "timestamp": "2025-06-27T21:03:02Z",
+          "tree_id": "5d209dd66d6568c111588f3f7624f8553a67c85f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7b626fddc2a1556db2c61af9b76ce0e26dd352eb"
+        },
+        "date": 1751061615490,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209374061533,
+            "range": "± 899896290",
             "unit": "ns/iter"
           }
         ]
