@@ -1,0 +1,12 @@
+services:
+  ethereum-metrics-exporter:
+    image: samcm/ethereum-metrics-exporter:latest
+    command:
+      - --execution-url=http://host.docker.internal:8545
+      - --execution-modules="eth","net","web3","txpool"
+      - --consensus-url=http://host.docker.internal:5053
+      - --metrics-port=9093
+    ports:
+      - "9093:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

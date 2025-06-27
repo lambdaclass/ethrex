@@ -1,7 +1,7 @@
 services:
   prometheus:
     volumes:
-      - ../metrics/provisioning/prometheus/prometheus_l2.yaml:/etc/prometheus/prometheus.yaml
+      - ../metrics/provisioning/prometheus/prometheus_l2.yaml:/etc/prometheus/prometheus_docker.yaml
     ports:
       - "9092:9090"
   grafana:
