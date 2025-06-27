@@ -1,6 +1,8 @@
 - name: Database Setup
   hosts: database
   become: true
+  vars:
+    postgresql_version: 17
 
   tasks:
     - name: Add PostgreSQL GPG key
@@ -15,9 +17,9 @@
         state: present
         filename: pgdg
 
-    - name: Install PostgreSQL 17
+    - name: "Install PostgreSQL {{ postgresql_version }}"
       apt:
-        name: postgresql-17
+        name: "postgresql-{{ postgresql_version }}"
         state: present
         update_cache: yes
 

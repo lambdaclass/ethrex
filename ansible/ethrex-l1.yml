@@ -1,12 +1,14 @@
 - name: Ethrex L1 Setup
   hosts: l1
   vars:
+    rust_version: "1.88.0"
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     ethereum_metrics_exporter_version: "0.27.4"
-    lighthouse_version: "7.0.1"
+    lighthouse_version: "7.0.1"  
 
   tasks:
     - name: Install Clang and related tools
+      become: true
       apt:
         name:
           - libclang-dev
@@ -18,6 +20,8 @@
           - pkg-config
         state: present
         update_cache: yes
+      vars:
+        ansible_ssh_user: admin
 
     - name: Check if rustup is installed
       stat:
@@ -25,8 +29,13 @@
       register: rustup_check
 
     - name: Install rustup
-      shell: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      shell: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        rustup install {{ rust_version }}
+        rustup default {{ rust_version }}
       when: not rustup_check.stat.exists
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/home/{{ ansible_user }}/.cargo/bin"
 
     - name: Add Rust to PATH
       lineinfile:
@@ -57,27 +66,35 @@
 
     - name: Extract Lighthouse
       unarchive:
-        src: "/tmp/lighthouse-{{ lighthouse_version }}"
+        src: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
         dest: "/tmp/"
         remote_src: true
 
     - name: Move Lighthouse
+      become: true
       copy:
         remote_src: true
-        src: "/tmp/lighthouse-{{ lighthouse_version }}/lighthouse"
+        src: "/tmp/lighthouse"
         dest: "/usr/local/bin/lighthouse"
+        mode: u=rwx,g=rx,o=rx
+      vars:
+        ansible_ssh_user: admin
 
     - name: Create Lighthouse service
       template:
         src: services/lighthouse.service.j2
         dest: "/home/{{ ansible_user }}/.config/systemd/user/lighthouse.service"
-
+      vars:
+        network: "{{ lookup('env', 'NETWORK') | lower }}"
+        checkpoint_sync_url: "https://hoodi.beaconstate.ethstaker.cc"
+        
     - name: Start Lighthouse
       systemd:
         name: lighthouse
         state: started
         enabled: true
         daemon_reload: true
+        scope: user
 
     - name: Get architecture
       set_fact:
@@ -85,7 +102,7 @@
 
     - name: Download Ethereum Metrics Exporter
       get_url:
-        url: "https://github.com/ethpandaops/ethereum-metrics-exporter/releases/download/v{{ ethereum_metrics_exporter_version }}/ethereum-metrics-exporter_{{ ethereum_metrics_exporter_version }}.linux_{{ architecture }}.tar.gz "
+        url: "https://github.com/ethpandaops/ethereum-metrics-exporter/releases/download/v{{ ethereum_metrics_exporter_version }}/ethereum-metrics-exporter_{{ ethereum_metrics_exporter_version }}_linux_{{ architecture }}.tar.gz "
         dest: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}.tar.gz"
         mode: '0644'
 
@@ -96,16 +113,47 @@
         remote_src: yes
       
     - name: Move Ethereum Metrics Exporter
+      become: true
       copy:
         remote_src: true
-        src: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}_linux_{{ architecture }}"
-        dest: "/usr/local/bin/ethereum_metrics_exporter"
-        mode: '0755'
+        src: "/tmp/ethereum-metrics-exporter-{{ ethereum_metrics_exporter_version }}"
+        dest: "/usr/local/bin/ethereum-metrics-exporter"
+        mode: u=rwx,g=rx,o=rx
+      vars:
+        ansible_ssh_user: admin
 
     - name: Create Ethereum Metrics Exporter service
       template:
         src: services/ethereum-metrics-exporter.service.j2
         dest: "/home/{{ ansible_user }}/.config/systemd/user/ethereum-metrics-exporter.service"
+
+    - name: Remove downloads on /tmp
+      file:
+        path: "/tmp/{{ item }}"
+        state: absent
+      loop:
+        - lighthouse
+        - lighthouse-{{ lighthouse_version }}.tar.gz
+        - "ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}.tar.gz"
+        - "ethereum-metrics-exporter-{{ ethereum_metrics_exporter_version }}"
+
+    - name: Ensure user systemd directory exists
+      file:
+        path: "/home/{{ ansible_user }}/.local/share/{{ network  }}_data/"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+      vars:
+        network: "{{ lookup('env', 'NETWORK') | lower }}"
+
+    - name: Generate JWT secret
+      shell: "openssl rand -hex 32 | tr -d '\n' | tee {{ jwt_path }}"
+      vars:
+        network: "{{ lookup('env', 'NETWORK') | lower }}"
+        jwt_path: "/home/{{ ansible_user }}/.local/share/{{ network }}_data/jwt.hex"
+      args:
+        creates: "{{ jwt_path }}"
 
     - name: Start Ethereum Metrics Exporter
       systemd:
@@ -113,18 +161,21 @@
         state: started
         enabled: true
         daemon_reload: true
+        scope: user
 
     - name: Compile Ethrex
-      command: cargo build --release --features metrics,libmdbx
+      shell: cargo build --release --features metrics,libmdbx
       args:
         chdir: "{{ ethrex_dir }}"
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/home/{{ ansible_user }}/.cargo/bin"
 
     - name: Install Ethrex L1
       template:
         src: services/ethrex-l1.service.j2
         dest: /home/{{ ansible_user }}/.config/systemd/user/ethrex-l1.service
       vars:
-        network: "hoodi"
+        network: "{{ lookup('env', 'NETWORK') | lower }}"
         evm: "{{ lookup('env', 'EVM') }}"
         bootnodes: "{{ lookup('env', 'BOOTNODES') }}"
     
@@ -134,3 +185,4 @@
         state: started
         enabled: true
         daemon_reload: true
+        scope: user

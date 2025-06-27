@@ -3,11 +3,14 @@
 
   vars:
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
-    grafana_providers:
+    grafana_dashboards:
       - name: l1_dashboards
-        path: /home/admin/ethrex/crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/
+        path: "{{ ethrex_dir }}/crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/"
       - name: l2_dashboards
-        path: /home/admin/ethrex/crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/l2_dashboards/
+        path: "{{ ethrex_dir }}/crates/blockchain/metrics/praovisioning/grafana_provisioning/dashboards/l2_dashboards/"
+    grafana_alerts:
+      - name: alerts
+        path: "{{ ethrex_dir }}/crates/blockchain/metrics/provisioning/grafana_provisioning/alerting"
 
   tasks:
     - name: Enable SSH agent forwarding
@@ -17,7 +20,7 @@
         regexp: '^#?AllowAgentForwarding.*'
         line: 'AllowAgentForwarding yes'
         state: present
-      
+
     - name: Restart SSH service
       become: true
       systemd:
@@ -53,7 +56,7 @@
         chdir: /home/{{ ansible_user }}/monitoring-stack
         target: all
         params:
-          GRAFANA_PASSWORD: lambda
+          GRAFANA_PASSWORD: "{{ lookup('env', 'GRAFANA_PASSWORD') }}"
           TARGET: localhost
       when: not grafana.stat.exists
 
@@ -86,6 +89,15 @@
       become: true
       template:
         src: templates/config/dashboards.yml.j2
+        dest: /etc/grafana/provisioning/dashboards/dashboards.yml
+        owner: grafana
+        group: grafana
+        mode: '0644'
+
+    - name: Add alerts
+      become: true
+      template:
+        src: templates/config/grafana.ini.j2
         dest: /etc/grafana/provisioning/dashboards/dashboards.yml
         owner: grafana
         group: grafana

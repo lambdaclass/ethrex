@@ -1,6 +1,7 @@
 - name: Ethrex L2 Setup
   hosts: l2
   vars:
+    rust_version: "1.88.0"
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
 
   tasks:
@@ -10,8 +11,13 @@
       register: rustup_check
 
     - name: Install rustup
-      shell: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      shell: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        rustup install {{ rust_version }}
+        rustup default {{ rust_version }}
       when: not rustup_check.stat.exists
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/home/{{ ansible_user }}/.cargo/bin"
 
     - name: Add Rust to PATH
       lineinfile:
@@ -25,10 +31,11 @@
       args:
         chdir: "{{ ethrex_dir }}"
 
-    - name: Add Genesis JSON
+    - name: Add Genesis JSON (If set)
       copy:
-        src: "{{ lookup('env', 'GENESIS_JSON_DIRECTORY') }}"
+        src: "{{ lookup('env', 'GENESIS_JSON_FILE') }}"
         dest: "{{ ethrex_dir }}/genesis.json"
+      when: lookup('env', 'GENESIS_JSON_FILE') | length != 0
 
     - name: Ensure user systemd directory exists
       file:
@@ -43,6 +50,7 @@
         src: services/ethrex-l2.service.j2
         dest: /home/{{ ansible_user }}/.config/systemd/user/ethrex-l2.service
       vars:
+        netowrk: "{{ lookup('env', 'NETWORK') | default({{ ethrex_dir }}/genesis.json) }}"
         common_bridge_address: "{{ lookup('env', 'COMMON_BRIDGE_ADDRESS') }}"
         on_chain_proposer_address: "{{ lookup('env', 'ON_CHAIN_PROPOSER_ADDRESS') }}"
         committer_pk: "{{ lookup('env', 'COMMITTER_PK') }}"
@@ -50,6 +58,9 @@
         coinbase_address: "{{ lookup('env', 'COINBASE_ADDRESS') }}"
         eth_testnet_rpc: "{{ lookup('env', 'TESTNET_RPC') }}"
         infura_api_key: "{{ lookup('env', 'INFURA_API_KEY') }}"
+        eth_max_allowed_fee_per_gas: 10000000000000
+        eth_max_allowed_fee_per_blob_gas: 10000000000000
+        committer_commit_time: 3600000
 
     - name: Start Ethrex L2
       systemd:

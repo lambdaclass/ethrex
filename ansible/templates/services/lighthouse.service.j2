@@ -1,11 +1,17 @@
 [Unit]
-Description=Lighthouse Holesky
+Description=Lighthouse
 After=network-online.target
 
 [Service]
 Restart=on-failure
-ExecStart=lighthouse 
-
+ExecStart=/usr/local/bin/lighthouse bn \
+          --network {{ network }} \
+          --execution-endpoint http://127.0.0.1:8551 \
+          --execution-jwt /home/{{ ansible_user }}/.local/share/{{ network }}_data/jwt.hex \
+          --checkpoint-sync-url {{ checkpoint_sync_url }} \
+          --port 9000 \
+          --http --http-address 0.0.0.0 --http-allow-origin "*" \
+          --metrics --metrics-address 0.0.0.0 
 
 ExecReload=/bin/kill -HUP
 KillSignal=SIGTERM

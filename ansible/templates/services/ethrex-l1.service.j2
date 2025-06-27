@@ -1,24 +1,22 @@
 [Unit]
-Description=Ethrex L2
+Description=Ethrex L1
 After=network.target
 
 [Service]
-Environment="DATA_PATH=/home/{{ ansible_user }}/.local/share"
 Environment="RUST_LOG=3"
-
-ExecStart={{ ethrex_dir }}/target/release/ethrex l1 init \
-            --http.addr 0.0.0.0 \
-            --http.port 8545 \
-            --authrpc.port 8551 \
-            --p2p.port 30303\
-            --metrics \
-            --metrics.port 3701 \
-            --discovery.port 30303 \
-            --network {{ network }} \
-            --datadir "{{ network }}_data/ethrex/{{ evm }}" \
-            --authrpc.jwtsecret $DATA_PATH/{{ network }}_data/jwt.hex \
-            --bootnodes {{ bootnodes }} \
-            --evm {{ evm }}
+WorkingDirectory={{ ethrex_dir }}
+ExecStart={{ ethrex_dir }}/target/release/ethrex \
+          --http.addr 0.0.0.0 --http.port 8545 \
+          --authrpc.addr 0.0.0.0 --authrpc.port 8551 \
+          --p2p.addr 0.0.0.0 --p2p.port 30303 \
+          --metrics \
+          --metrics.port 3701 \
+          --discovery.port 30303 \
+          --network {{ network }} \
+          --datadir "/home/{{ ansible_user }}/.local/share/{{ network }}_data/ethrex/{{ evm }}" \
+          --authrpc.jwtsecret /home/{{ ansible_user }}/.local/share/{{ network }}_data/jwt.hex \
+          --bootnodes {{ bootnodes }} \
+          --evm {{ evm }}
 
 Restart=on-failure
 

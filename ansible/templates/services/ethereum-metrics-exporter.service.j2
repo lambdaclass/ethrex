@@ -1,0 +1,10 @@
+[Unit]
+Description=Ethereum Metrics Exporter
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ethereum-metrics-exporter
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

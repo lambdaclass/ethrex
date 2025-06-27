@@ -1,6 +1,6 @@
 apiVersion: 1
 providers:
-{% for provider in grafana_providers %}
+{% for provider in grafana_dashboards %}
   - name: {{ provider.name }}
     orgId: 1
     folder: ''
