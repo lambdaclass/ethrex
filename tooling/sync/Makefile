@@ -195,7 +195,7 @@ endif
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR) && cargo run --release --features "metrics" --bin ethrex -- \
+	cd $(ETHREX_DIR) && cargo run --release --features "metrics execution_profile" --bin ethrex -- \
 	--network cmd/ethrex/networks/hoodi/genesis.json \
 	--metrics \
     --metrics.port 3701 \

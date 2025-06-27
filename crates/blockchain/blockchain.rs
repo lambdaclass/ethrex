@@ -382,7 +382,10 @@ impl Blockchain {
             .await
             .map_err(|e| e.into())
     }
-    #[cfg_attr(feature = "execution_profile", instrument(level = "trace", skip_all))]
+    #[cfg_attr(
+        feature = "execution_profile",
+        instrument(name = "execution_context", level = "trace", skip_all)
+    )]
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
@@ -440,7 +443,10 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
-    #[cfg_attr(feature = "execution_profile", instrument(level = "trace", skip_all))]
+    #[cfg_attr(
+        feature = "execution_profile",
+        instrument(name = "execution_context", level = "trace", skip_all)
+    )]
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,

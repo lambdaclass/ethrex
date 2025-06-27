@@ -4,7 +4,7 @@ use std::{
     sync::{LazyLock, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tracing::{Subscriber, span::Id};
+use tracing::{Subscriber, info, span::Id};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;
@@ -49,25 +49,28 @@ impl<S> Layer<S> for FunctionProfilingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_enter(&self, id: &Id, _ctx: Context<'_, S>) {
-        self.functions
-            .lock()
-            .unwrap()
-            .insert(id.clone(), Instant::now());
+    fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
+        let name = ctx.span(id).unwrap().metadata().name();
+        if name != "execution_context" {
+            self.functions
+                .lock()
+                .unwrap()
+                .insert(id.clone(), Instant::now());
+        }
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        let start_time = self.functions.lock().unwrap().remove(id).unwrap();
-        let duration = start_time.elapsed().as_secs_f64();
-        let span = ctx.span(id).unwrap();
-        let name = span.metadata().name();
-        self.durations
-            .lock()
-            .unwrap()
-            .entry(name.to_string())
-            .and_modify(|v| *v += duration)
-            .or_insert(duration);
-        if name == "add_blocks_in_batch" || name == "add_block" {
+        let name = ctx.span(id).unwrap().metadata().name();
+        if name != "execution_context" {
+            let start_time = self.functions.lock().unwrap().remove(id).unwrap();
+            let duration = start_time.elapsed().as_secs_f64();
+            self.durations
+                .lock()
+                .unwrap()
+                .entry(name.to_string())
+                .and_modify(|v| *v += duration)
+                .or_insert(duration);
+        } else {
             self.export_and_clear();
         }
     }
@@ -101,5 +104,7 @@ pub fn gather_profiling_metrics() -> Result<String, MetricsError> {
 
 pub fn initialize_profiling_metrics() {
     METRICS_PROFILING.reset();
-    RUN_ID_GAUGE.with_label_values(&[&RUN_ID.to_string()]);
+    RUN_ID_GAUGE
+        .with_label_values(&[&RUN_ID.to_string()])
+        .set(0.0);
 }

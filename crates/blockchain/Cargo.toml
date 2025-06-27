@@ -21,7 +21,7 @@ tokio = { workspace = true, features = ["time", "rt"] }
 tokio-util.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
 
-ethrex-metrics = { path = "./metrics", default-features = false }
+ethrex-metrics = { path = "./metrics", default-features = false, features = ["execution_profile"] }
 
 [dev-dependencies]
 serde_json.workspace = true
@@ -36,7 +36,7 @@ default = []
 l2 = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
-execution_profile = ["metrics"]
+execution_profile = ["ethrex-metrics/execution_profile"]
 
 [lints.clippy]
 unwrap_used = "deny"

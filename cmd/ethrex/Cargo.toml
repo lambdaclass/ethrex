@@ -45,7 +45,7 @@ itertools = "0.14.0"
 cfg-if = "1.0.0"
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
-ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+ethrex-metrics = { path = "../../crates/blockchain/metrics", features = ["execution_profile"] }
 
 [[bin]]
 name = "ethrex"
@@ -81,7 +81,7 @@ l2 = [
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
-execution_profile = []
+execution_profile = ["ethrex-blockchain/execution_profile", "ethrex-vm/execution_profile", "ethrex-storage/execution_profile"]
 sync-test = []
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports", "async_futures", "async_tokio"] }
