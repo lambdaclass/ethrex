@@ -1,4 +1,4 @@
-use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
+use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use risc0_ethereum_contracts::encode_seal;
 use risc0_zkvm::{
@@ -47,16 +47,15 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn to_batch_proof(
-    proof: ProveOutput,
+    proof: Receipt,
     _aligned_mode: bool,
-) -> Result<ProofData, Box<dyn std::error::Error>> {
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
 
 fn to_calldata(receipt: Receipt) -> ProofCalldata {
-    let seal = encode_seal(&receipt)?;
+    let seal = encode_seal(&receipt).unwrap();
     let image_id = ZKVM_RISC0_PROGRAM_ID;
-    let journal = receipt.journal.bytes;
 
     // convert image_id into bytes
     let image_id = {
@@ -68,12 +67,10 @@ fn to_calldata(receipt: Receipt) -> ProofCalldata {
     };
 
     // bytes calldata seal,
-    // bytes32 imageId,
-    // bytes32 journal
+    // bytes32 imageId
     let calldata = vec![
         Value::Bytes(seal.into()),
         Value::FixedBytes(image_id.into()),
-        Value::Bytes(journal.into()),
     ];
 
     ProofCalldata {
