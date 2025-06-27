@@ -2800,7 +2800,7 @@ mod tests {
     #[test]
     fn serialize_deserialize_transaction() {
         let eip1559 = EIP1559Transaction {
-            chain_id: 1729,
+            chain_id: 65536999,
             nonce: 1,
             max_priority_fee_per_gas: 1000,
             max_fee_per_gas: 2000,
@@ -2832,7 +2832,7 @@ mod tests {
     #[test]
     fn serialize_deserialize_eip7702transaction() {
         let eip7702 = EIP7702Transaction {
-            chain_id: 1729,
+            chain_id: 65536999,
             nonce: 1,
             max_priority_fee_per_gas: 1000,
             max_fee_per_gas: 2000,
@@ -2845,7 +2845,7 @@ mod tests {
             signature_r: U256::one(),
             signature_s: U256::zero(),
             authorization_list: vec![AuthorizationTuple {
-                chain_id: U256::from(1729),
+                chain_id: U256::from(65536999),
                 address: H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B1").unwrap(),
                 nonce: 2,
                 y_parity: U256::one(),
@@ -2869,7 +2869,7 @@ mod tests {
     #[test]
     fn serialize_deserialize_privileged_l2_transaction() -> Result<(), RLPDecodeError> {
         let privileged_l2 = PrivilegedL2Transaction {
-            chain_id: 1729,
+            chain_id: 65536999,
             nonce: 0,
             max_priority_fee_per_gas: 875000000,
             max_fee_per_gas: 875000000,
