@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751060440750,
+  "lastUpdate": 1751060659909,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1889,6 +1889,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213513081609,
             "range": "± 2669531763",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c9c750d8b1c2b0ab8cba89a3657f123dabe6f3fc",
+          "message": "perf(levm): reduce handle_debug runtime cost (#3356)\n\n**Motivation**\n\nWith this handle_debug disappears from samplies on push/memory heavy\nbenches.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3355",
+          "timestamp": "2025-06-27T20:44:26Z",
+          "tree_id": "6ddd2bd3f702e9b92bede8dab5e830166d6e8827",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c9c750d8b1c2b0ab8cba89a3657f123dabe6f3fc"
+        },
+        "date": 1751060650667,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210879737422,
+            "range": "± 404546331",
             "unit": "ns/iter"
           }
         ]
