@@ -65,7 +65,6 @@ gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [
   "dep:ethrex-l2-common",
   "zkvm_interface/l2",
-  "ethrex-blockchain/l2",
   "ethrex-l2/l2",
 ] # the prover can work with either l1 or l2 blocks
 
