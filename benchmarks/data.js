@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751057736029,
+  "lastUpdate": 1751060021231,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2615,6 +2615,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.009841885696439725,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "510856b92b5aa4b9da070824ea10e28a7e5ec44c",
+          "message": "fix(l2): serde skip attributes incompatible with bincode (#3370)\n\n**Motivation**\n\nsame old problem which we brute fix by serializing into JSON first, was\nreintroduced with the addition of `ExecutionWitnessResult` (which has\ntwo fields that use `#[serde(skip)]`)",
+          "timestamp": "2025-06-27T20:38:17Z",
+          "tree_id": "80b73f14440435541056a670f63a1e8f6e4f8173",
+          "url": "https://github.com/lambdaclass/ethrex/commit/510856b92b5aa4b9da070824ea10e28a7e5ec44c"
+        },
+        "date": 1751060011879,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.009257849001175088,
             "unit": "Mgas/s"
           }
         ]
