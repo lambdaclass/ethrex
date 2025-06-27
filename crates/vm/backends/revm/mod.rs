@@ -90,7 +90,7 @@ impl REVM {
             Self::process_withdrawals(state, withdrawals)?;
         }
 
-        let requests = Default::default();
+        let requests = extract_all_requests(&receipts, state, block_header)?;
 
         Ok(BlockExecutionResult { receipts, requests })
     }
