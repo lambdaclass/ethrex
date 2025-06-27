@@ -57,7 +57,7 @@ pub struct TrieUpdates {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
     /// Storage tries updated and their new nodes
-    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    pub storage_updates: Vec<([u8; 32], Vec<TrieNode>)>,
 }
 
 pub struct UpdateBatch {
