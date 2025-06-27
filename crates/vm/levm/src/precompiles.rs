@@ -1051,23 +1051,33 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     // Parse inputs
-    let versioned_hash: [u8; 32] = calldata[..32]
+    let versioned_hash: [u8; 32] = calldata
+        .get(..32)
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| InternalError::Slicing)?;
 
-    let x: [u8; 32] = calldata[32..64]
+    let x: [u8; 32] = calldata
+        .get(32..64)
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| InternalError::Slicing)?;
 
-    let y: [u8; 32] = calldata[64..96]
+    let y: [u8; 32] = calldata
+        .get(64..96)
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| InternalError::Slicing)?;
 
-    let commitment: [u8; 48] = calldata[96..144]
+    let commitment: [u8; 48] = calldata
+        .get(96..144)
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| InternalError::Slicing)?;
 
-    let proof: [u8; 48] = calldata[144..192]
+    let proof: [u8; 48] = calldata
+        .get(144..192)
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| InternalError::Slicing)?;
 
@@ -1383,10 +1393,14 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
     if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
         return Err(PrecompileError::ParsingInputError.into());
     }
-    let unpadded_coordinate: [u8; 48] = padded_coordinate[16..64]
+    let unpadded_coordinate = padded_coordinate
+        .get(16..64)
+        .ok_or(ExceptionalHalt::Precompile(
+            PrecompileError::ParsingInputError,
+        ))?;
+    unpadded_coordinate
         .try_into()
-        .map_err(|_| InternalError::Slicing)?;
-    Ok(unpadded_coordinate)
+        .map_err(|_| PrecompileError::ParsingInputError.into())
 }
 fn parse_g1_point(
     point_raw_bytes: Option<&[u8]>,
