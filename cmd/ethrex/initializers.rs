@@ -29,14 +29,6 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
-#[cfg(feature = "l2")]
-use crate::l2::L2Options;
-#[cfg(feature = "l2")]
-use ::{
-    ethrex_common::Address,
-    ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-};
-
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
@@ -97,37 +89,14 @@ pub fn open_store(data_dir: &Path) -> Store {
     }
 }
 
-#[cfg(feature = "l2")]
-pub async fn init_rollup_store(data_dir: &Path) -> StoreRollup {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_redb")] {
-            let engine_type = EngineTypeRollup::RedB;
-        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-            let engine_type = EngineTypeRollup::Libmdbx;
-        } else {
-            let engine_type = EngineTypeRollup::InMemory;
-        }
-    }
-    let rollup_store = StoreRollup::new(
-        data_dir.to_str().expect("Invalid rollup store path"),
-        engine_type,
-    )
-    .expect("Failed to create StoreRollup");
-    rollup_store
-        .init()
-        .await
-        .expect("Failed to init rollup store");
-    rollup_store
-}
-
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+    info!("Initiating blockchain with EVM: {}", evm_engine);
     Blockchain::new(evm_engine, store).into()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    #[cfg(feature = "l2")] l2_opts: &L2Options,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -135,7 +104,6 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
-    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -160,12 +128,6 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
-        #[cfg(feature = "l2")]
-        get_valid_delegation_addresses(l2_opts),
-        #[cfg(feature = "l2")]
-        l2_opts.sponsor_private_key,
-        #[cfg(feature = "l2")]
-        rollup_store,
     );
 
     tracker.spawn(rpc_api);
@@ -374,23 +336,4 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
-}
-
-#[cfg(feature = "l2")]
-pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
-    let Some(ref path) = l2_opts.sponsorable_addresses_file_path else {
-        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
-        return Vec::new();
-    };
-    let addresses: Vec<Address> = fs::read_to_string(path)
-        .unwrap_or_else(|_| panic!("Failed to load file {}", path))
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string().parse::<Address>())
-        .filter_map(Result::ok)
-        .collect();
-    if addresses.is_empty() {
-        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
-    }
-    addresses
 }

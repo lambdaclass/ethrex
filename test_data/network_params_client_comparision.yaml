@@ -1,0 +1,40 @@
+participants:
+  - el_type: ethrex
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    el_extra_labels: {"evm": "levm"}
+    validator_count: 32
+    count: 1
+  - el_type: ethrex
+    el_extra_params: ["--evm revm"]
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    el_extra_labels: {"evm": "revm"}
+    validator_count: 32
+    count: 1
+  - el_type: reth
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    validator_count: 64
+    count: 1
+
+ethereum_metrics_exporter_enabled: true
+
+network_params:
+  # The address of the staking contract address on the Eth1 chain
+  deposit_contract_address: "0x4242424242424242424242424242424242424242"
+  electra_fork_epoch: 0
+
+additional_services:
+  - dora
+  - spamoor
+  - prometheus_grafana
+
+spamoor_params:
+  spammers:
+    - scenario: erctx
+      config:
+        throughput: 750
+
+grafana_params:
+  additional_dashboards: ["./ethrex_l1_perf.json"]

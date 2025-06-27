@@ -3,9 +3,9 @@ use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
+        init_metrics, init_network, init_store,
     },
-    l2::options::Options,
+    l2::{self, options::Options},
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
@@ -15,6 +15,7 @@ use ethrex_common::{
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
+use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
 use ethrex_l2_sdk::calldata::Value;
@@ -133,7 +134,7 @@ impl Command {
 
                 let genesis = network.get_genesis()?;
                 let store = init_store(&data_dir, genesis).await;
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
 
@@ -154,7 +155,7 @@ impl Command {
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
-                init_rpc_api(
+                l2::initializers::init_rpc_api(
                     &opts.node_opts,
                     &opts,
                     peer_table.clone(),
@@ -399,19 +400,10 @@ impl Command {
                             new_trie = store.open_state_trie(new_state_root).expect("Error opening new state trie");
 
                             // Get withdrawal hashes
-                            let withdrawal_hashes = state_diff
-                                .withdrawal_logs
+                            let message_hashes = state_diff
+                                .l1_messages
                                 .iter()
-                                .map(|w| {
-                                    keccak_hash::keccak(
-                                        [
-                                            w.address.as_bytes(),
-                                            &w.amount.to_big_endian(),
-                                            w.tx_hash.as_bytes(),
-                                        ]
-                                        .concat(),
-                                    )
-                                })
+                                .map(get_l1_message_hash)
                                 .collect();
 
                             // Get the first block of the batch
@@ -449,7 +441,7 @@ impl Command {
                                 last_block: new_block.number,
                                 state_root: new_block.state_root,
                                 deposit_logs_hash: H256::zero(),
-                                withdrawal_hashes,
+                                message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
                             };
 
@@ -496,7 +488,7 @@ impl Command {
                     info!("Private key not given, not updating contract.");
                 }
                 info!("Updating store...");
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
                 let last_kept_block = rollup_store
                     .get_block_numbers_by_batch(batch)
                     .await?
