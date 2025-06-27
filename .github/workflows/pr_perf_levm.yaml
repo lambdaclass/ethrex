@@ -103,8 +103,8 @@ jobs:
           make revm-comparison-ci
           error_margin=0.1
           for f in ../../../benchmark_comparison_results/*; do
-            f="${f##../../../benchmark_comparison_results/}"
-            awk -F'|' -v file="${f%.md}" '      
+            file_name="${f##../../../benchmark_comparison_results/}"
+            awk -F'|' -v file="${file_name%.md}" -v error_margin="$error_margin"'      
             /`main_revm_/ {
               main_revm_row = $0;
               gsub(/±.*/, "", $3); # Remove ± part from $3 position of the row
@@ -152,6 +152,7 @@ jobs:
               }
             }
             ' "$f" >> ../../../result.md
+            echo "#### Benchmark Results: $file" >> ../../../detailed_result.md
             cat $f >> ../../../detailed_result.md
           done
 
