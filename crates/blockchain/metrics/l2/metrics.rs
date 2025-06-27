@@ -3,9 +3,9 @@ use std::sync::LazyLock;
 
 use crate::MetricsError;
 
-pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
+pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 
-pub struct MetricsL2 {
+pub struct Metrics {
     status_tracker: IntGaugeVec,
     operations_tracker: IntGaugeVec,
     l1_gas_price: IntGauge,
@@ -13,15 +13,15 @@ pub struct MetricsL2 {
     blob_usage: Gauge,
 }
 
-impl Default for MetricsL2 {
+impl Default for Metrics {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MetricsL2 {
+impl Metrics {
     pub fn new() -> Self {
-        MetricsL2 {
+        Metrics {
             status_tracker: IntGaugeVec::new(
                 Opts::new(
                     "l2_blocks_tracker",
