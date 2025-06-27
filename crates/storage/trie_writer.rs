@@ -5,6 +5,7 @@ use tokio::{
 
 use crate::{Store, TrieUpdates};
 
+// TODO: Revisit this constant, since this can lead to bugs.
 const WRITER_CHANNEL_SIZE: usize = 100;
 
 #[derive(Debug)]
