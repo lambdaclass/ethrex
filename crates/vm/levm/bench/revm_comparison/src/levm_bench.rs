@@ -6,7 +6,11 @@ use ethrex_common::{
     types::{Account, EIP1559Transaction, Transaction, TxKind},
 };
 use ethrex_levm::{
-    Environment, db::gen_db::GeneralizedDatabase, errors::TxResult, tracing::LevmCallTracer, vm::VM,
+    Environment,
+    db::gen_db::GeneralizedDatabase,
+    errors::TxResult,
+    tracing::LevmCallTracer,
+    vm::{VM, VMType},
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
@@ -76,5 +80,5 @@ fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled())
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1) // TODO: Should we support this for L2?
 }

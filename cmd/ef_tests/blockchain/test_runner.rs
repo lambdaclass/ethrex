@@ -5,7 +5,7 @@ use crate::{
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
@@ -52,7 +52,10 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::new(evm, store.clone());
+    // Blockchain EF tests are meant for L1.
+    let blockchain_type = BlockchainType::L1;
+
+    let blockchain = Blockchain::new(evm, store.clone(), blockchain_type);
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();

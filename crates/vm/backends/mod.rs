@@ -76,7 +76,7 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(engine: EvmEngine, db: impl VmDatabase + 'static, vm_type: VMType) -> Self {
+    pub fn new_for_l1(engine: EvmEngine, db: impl VmDatabase + 'static) -> Self {
         let wrapped_db: DynVmDatabase = Box::new(db);
 
         match engine {
@@ -85,12 +85,37 @@ impl Evm {
             },
             EvmEngine::LEVM => Evm::LEVM {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
-                vm_type,
+                vm_type: VMType::L1,
             },
         }
     }
 
-    pub fn new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
+    pub fn new_for_l2(engine: EvmEngine, db: impl VmDatabase + 'static) -> Result<Self, EvmError> {
+        if let EvmEngine::REVM = engine {
+            return Err(EvmError::InvalidEVM(
+                "REVM is not supported for L2".to_string(),
+            ));
+        }
+
+        let wrapped_db: DynVmDatabase = Box::new(db);
+
+        let evm = Evm::LEVM {
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
+            vm_type: VMType::L2,
+        };
+
+        Ok(evm)
+    }
+
+    pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {
+        Self::_new_from_db(store, VMType::L1)
+    }
+
+    pub fn new_from_db_for_l2(store: Arc<impl LevmDatabase + 'static>) -> Self {
+        Self::_new_from_db(store, VMType::L2)
+    }
+
+    fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(store, CacheDB::new()),
             vm_type,
