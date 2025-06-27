@@ -285,7 +285,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_updates(&self, mut update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite()?;
@@ -356,7 +356,9 @@ impl StoreEngine for Store {
             }
 
             let mut storage_tries_cursor = tx.cursor::<StorageTriesNodes>()?;
-            for (hashed_address, nodes) in update_batch.storage_updates {
+            update_batch.storage_updates.sort_by_key(|x| x.0);
+            for (hashed_address, mut nodes) in update_batch.storage_updates {
+                nodes.sort_by_key(|x| x.0);
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
