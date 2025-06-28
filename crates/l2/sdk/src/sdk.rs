@@ -17,7 +17,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
-pub mod merkle_tree;
 
 pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 
@@ -205,7 +204,7 @@ pub async fn claim_withdraw(
         )),
         Value::Uint(amount),
         Value::Uint(message_proof.batch_number.into()),
-        Value::Uint(U256::from(message_proof.index)),
+        Value::Uint(message_proof.message_id),
         Value::Array(
             message_proof
                 .merkle_proof

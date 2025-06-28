@@ -7,10 +7,14 @@ import "./interfaces/IL1Messenger.sol";
 /// @title CommonBridge L2 contract.
 /// @author LambdaClass
 contract CommonBridgeL2 is ICommonBridgeL2 {
-    address public constant L1_MESSENGER = 
+    address public constant L1_MESSENGER =
         0x000000000000000000000000000000000000FFFE;
     address public constant BURN_ADDRESS =
         0x0000000000000000000000000000000000000000;
+
+    /// @notice Id of the last initiated withdrawal.
+    /// @dev Message Id that should be incremented before a message is sent
+    uint256 public lastWithdrawalId;
 
     function withdraw(address _receiverOnL1) external payable {
         require(msg.value > 0, "Withdrawal amount must be positive");
@@ -18,9 +22,10 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
         require(success, "Failed to burn Ether");
 
-        IL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
-            _receiverOnL1,
-            msg.value
-        )));
+        lastWithdrawalId += 1;
+        IL1Messenger(L1_MESSENGER).sendMessageToL1(
+            keccak256(abi.encodePacked(_receiverOnL1, msg.value)),
+            lastWithdrawalId
+        );
     }
 }

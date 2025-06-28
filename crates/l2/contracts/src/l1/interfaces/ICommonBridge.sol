@@ -41,11 +41,11 @@ interface ICommonBridge {
 
     /// @notice A withdrawal has been claimed.
     /// @dev Event emitted when a withdrawal is claimed.
-    /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
+    /// @param l2WithdrawalMessageId the id of the L2 withdrawal message.
     /// @param claimee the address that claimed the withdrawal.
     /// @param claimedAmount the amount that was claimed.
     event WithdrawalClaimed(
-        bytes32 indexed l2WithdrawalTxHash,
+        uint256 indexed l2WithdrawalMessageId,
         address indexed claimee,
         uint256 indexed claimedAmount
     );
