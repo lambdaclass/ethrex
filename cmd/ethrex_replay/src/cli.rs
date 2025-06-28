@@ -293,7 +293,7 @@ fn print_transition(update: AccountUpdate) {
         println!("  Updated Storage:");
     }
     for (key, value) in update.added_storage {
-        println!("    {:#x} = {:#x}", key, value);
+        println!("    {key:#x} = {value:#x}");
     }
 }
 

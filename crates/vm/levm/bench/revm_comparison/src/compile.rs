@@ -50,6 +50,6 @@ fn run_solc(args: &[&str]) {
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    println!("{}", stdout);
-    println!("{}", stderr);
+    println!("{stdout}");
+    println!("{stderr}");
 }

@@ -119,5 +119,5 @@ pub async fn start_block_producer(
         ))
         .await;
     }
-    Err(EngineClientError::SystemFailed(format!("{}", max_tries)))
+    Err(EngineClientError::SystemFailed(format!("{max_tries}")))
 }

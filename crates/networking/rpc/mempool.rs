@@ -49,8 +49,8 @@ pub async fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
     let queued = 0;
 
     let response = MempoolStatus {
-        pending: format!("{:#x}", pending),
-        queued: format!("{:#x}", queued),
+        pending: format!("{pending:#x}"),
+        queued: format!("{queued:#x}"),
     };
 
     Ok(serde_json::to_value(response)?)

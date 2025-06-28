@@ -18,7 +18,7 @@ fn main() {
         "levm" => VM::Levm,
         "revm" => VM::Revm,
         _ => {
-            eprintln!("{}", usage);
+            eprintln!("{usage}");
             std::process::exit(1);
         }
     };
@@ -49,7 +49,7 @@ fn main() {
 // Auxiliary functions for getting calldata and bytecode.
 
 fn generate_calldata(function: &str, n: u64) -> String {
-    let function_signature = format!("{}(uint256)", function);
+    let function_signature = format!("{function}(uint256)");
     let hash = Keccak256::digest(function_signature.as_bytes());
     let function_selector = &hash[..4];
 
@@ -69,12 +69,11 @@ fn generate_calldata(function: &str, n: u64) -> String {
 
 fn load_contract_bytecode(bench_name: &str) -> String {
     let path = format!(
-        "{}/contracts/bin/{}.bin-runtime",
+        "{}/contracts/bin/{bench_name}.bin-runtime",
         env!("CARGO_MANIFEST_DIR"),
-        bench_name
     );
 
-    println!("Loading bytecode from file {}", path);
+    println!("Loading bytecode from file {path}");
 
     let mut file = File::open(path).unwrap();
     let mut contents = String::new();

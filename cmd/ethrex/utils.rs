@@ -76,9 +76,9 @@ pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
 
 pub fn read_block_file(block_file_path: &str) -> Block {
     let encoded_block = std::fs::read(block_file_path)
-        .unwrap_or_else(|_| panic!("Failed to read block file with path {}", block_file_path));
+        .unwrap_or_else(|_| panic!("Failed to read block file with path {block_file_path}"));
     Block::decode(&encoded_block)
-        .unwrap_or_else(|_| panic!("Failed to decode block file {}", block_file_path))
+        .unwrap_or_else(|_| panic!("Failed to decode block file {block_file_path}"))
 }
 
 pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
@@ -119,13 +119,13 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {
-            error!("Could not store config in file: {:?}", e);
+            error!("Could not store config in file: {e:?}");
             return;
         }
     };
 
     if let Err(e) = std::fs::write(file_path, json) {
-        error!("Could not store config in file: {:?}", e);
+        error!("Could not store config in file: {e:?}");
     };
 }
 
@@ -133,9 +133,9 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
 pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
     match std::fs::File::open(file_path) {
         Ok(file) => {
-            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {}", e))
+            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {e}"))
         }
-        Err(e) => Err(format!("No config file found: {}", e)),
+        Err(e) => Err(format!("No config file found: {e}")),
     }
 }
 

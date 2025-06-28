@@ -477,7 +477,7 @@ impl RpcHandler for EstimateGasRequest {
                     fork,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
-                    return serde_json::to_value(format!("{:#x}", TRANSACTION_GAS))
+                    return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 }
             }
@@ -546,7 +546,7 @@ impl RpcHandler for EstimateGasRequest {
             middle_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        serde_json::to_value(format!("{:#x}", highest_gas_limit))
+        serde_json::to_value(format!("{highest_gas_limit:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -582,7 +582,7 @@ fn simulate_tx(
             gas_used: _,
             output,
         } => Err(RpcErr::Revert {
-            data: format!("0x{:#x}", output),
+            data: format!("0x{output:#x}"),
         }),
         ExecutionResult::Halt { reason, gas_used } => Err(RpcErr::Halt { reason, gas_used }),
         success => Ok(success),
@@ -618,7 +618,7 @@ impl RpcHandler for SendRawTransactionRequest {
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;
-        serde_json::to_value(format!("{:#x}", hash))
+        serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

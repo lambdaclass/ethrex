@@ -1187,7 +1187,7 @@ impl EthClient {
         ))?;
 
         let bytes = hex::decode(hex)
-            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {}", e)))?;
+            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {e}")))?;
 
         let arr: [u8; 32] = bytes.try_into().map_err(|_| {
             EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned())

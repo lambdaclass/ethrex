@@ -200,11 +200,11 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
-            format!("{}", total_passed).green()
+            format!("{total_passed}").green()
         } else if total_passed > 0 {
-            format!("{}", total_passed).yellow()
+            format!("{total_passed}").yellow()
         } else {
-            format!("{}", total_passed).red()
+            format!("{total_passed}").red()
         },
         // NOTE: Keep in order, see the Fork Enum to check
         // NOTE: Uncomment the summaries if EF tests for those specific forks exist.
@@ -225,11 +225,11 @@ fn fork_summary_shell(reports: &[EFTestReport], fork: Fork) -> String {
         "{}: {}/{fork_tests} ({fork_success_percentage:.2}%)",
         fork_str.bold(),
         if fork_passed_tests == fork_tests {
-            format!("{}", fork_passed_tests).green()
+            format!("{fork_passed_tests}").green()
         } else if fork_passed_tests > 0 {
-            format!("{}", fork_passed_tests).yellow()
+            format!("{fork_passed_tests}").yellow()
         } else {
-            format!("{}", fork_passed_tests).red()
+            format!("{fork_passed_tests}").red()
         },
     )
 }
@@ -278,17 +278,15 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
                 total_fork_test_run(&reports.iter().map(|&r| r.clone()).collect::<Vec<_>>());
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
             let test_dir_summary = format!(
-                "{}: {}/{} ({:.2}%)\n",
+                "{}: {}/{total_run} ({success_percentage:.2}%)\n",
                 dir.bold(),
                 if total_passed == total_run {
-                    format!("{}", total_passed).green()
+                    format!("{total_passed}").green()
                 } else if total_passed > 0 {
-                    format!("{}", total_passed).yellow()
+                    format!("{total_passed}").yellow()
                 } else {
-                    format!("{}", total_passed).red()
+                    format!("{total_passed}").red()
                 },
-                total_run,
-                success_percentage
             );
             test_dirs_summary.push_str(&test_dir_summary);
         });
@@ -345,7 +343,7 @@ impl Display for EFTestsReport {
                 if result.failed_vectors.is_empty() {
                     continue;
                 }
-                writeln!(f, "\tFork: {:?}", fork)?;
+                writeln!(f, "\tFork: {fork:?}")?;
                 for (failed_vector, error) in &result.failed_vectors {
                     writeln!(
                         f,
@@ -391,13 +389,13 @@ impl Display for EFTestsReport {
                                             log.address, log.topics, log.data
                                         ))
                                         .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{}", levm_log_report)?;
+                                writeln!(f, "{levm_log_report}")?;
                                 writeln!(f, "\t\t\t\tRevm Logs: ")?;
                                 let revm_log_report = revm_logs
                                     .iter()
-                                    .map(|log| format!("\t\t\t\t {:?} \n", log))
+                                    .map(|log| format!("\t\t\t\t {log:?} \n"))
                                     .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{}", revm_log_report)?;
+                                writeln!(f, "{revm_log_report}")?;
                             }
                             if let Some((levm_result, revm_error)) =
                                 &execution_report.re_runner_error
@@ -687,8 +685,7 @@ impl fmt::Display for ComparisonReport {
                     let initial_value = base_account.storage.get(key).cloned().unwrap_or_default();
                     writeln!(
                         f,
-                        "\t\t\t\t\tStorage slot: {key:#x}: {} -> {}",
-                        initial_value, value
+                        "\t\t\t\t\tStorage slot: {key:#x}: {initial_value} -> {value}",
                     )?;
                 }
             }
@@ -778,8 +775,7 @@ impl fmt::Display for ComparisonReport {
                     if levm_value != revm_value {
                         writeln!(
                             f,
-                            "\t\t\t\tStorage slot mismatch at key {key:#x}: LEVM: {}, REVM: {}",
-                            levm_value, revm_value
+                            "\t\t\t\tStorage slot mismatch at key {key:#x}: LEVM: {levm_value}, REVM: {revm_value}",
                         )?;
                     }
                 }

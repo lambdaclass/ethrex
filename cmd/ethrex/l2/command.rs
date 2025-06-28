@@ -305,11 +305,11 @@ impl Command {
                             .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
                         {
                             let blob_path =
-                                data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
+                                data_dir.join(format!("{target_slot}-{}.blob", blob.index));
                             std::fs::write(blob_path, blob.blob)?;
                         }
 
-                        println!("Saved blobs for slot {}", target_slot);
+                        println!("Saved blobs for slot {target_slot}");
                     }
 
                     current_block += U256::one();
