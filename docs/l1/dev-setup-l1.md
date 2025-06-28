@@ -122,7 +122,7 @@ make localnet-assertoor-blob
 
 Those are two different set of assertoor checks the details are as follows:
 
-_assertoor-tx_
+*assertoor-tx*
 
 - [eoa-transaction-test](https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml)
 
