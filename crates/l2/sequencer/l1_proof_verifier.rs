@@ -116,6 +116,9 @@ impl L1ProofVerifier {
             .await?
         {
             Some(verify_tx_hash) => {
+                self.rollup_store
+                    .store_verify_tx_by_batch(batch_to_verify, verify_tx_hash)
+                    .await?;
                 info!(
                     "Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}"
                 );
