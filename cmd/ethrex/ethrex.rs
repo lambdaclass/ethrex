@@ -18,7 +18,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::info;
+use tracing::{error, info};
 
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
@@ -68,11 +68,16 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let data_dir = set_datadir(&opts.datadir);
-
     let network = get_network(&opts);
+    let data_dir = set_datadir(Some(std::path::Path::new(&opts.datadir)), Some(&opts.network));
 
-    let genesis = network.get_genesis()?;
+    let genesis = match network.get_genesis() {
+        Ok(genesis) => genesis,
+        Err(err) => {
+            error!("{}", err.to_string());
+            std::process::exit(1);
+        }
+    };
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
@@ -145,10 +150,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(data_dir.to_str().unwrap().to_string(), &cancel_token, peer_table, local_node_record).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(data_dir.to_str().unwrap().to_string(), &cancel_token, peer_table, local_node_record).await;
         }
     }
 

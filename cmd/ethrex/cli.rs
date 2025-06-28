@@ -225,12 +225,7 @@ impl Default for Options {
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
-    RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
-        datadir: String,
-        #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
-        force: bool,
-    },
+    RemoveDB,
     #[command(name = "import", about = "Import blocks to the database")]
     Import {
         #[arg(
@@ -287,28 +282,26 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         match self {
-            Subcommand::RemoveDB { datadir, force } => {
-                remove_db(&datadir, force);
+            Subcommand::RemoveDB => {
+                remove_db(Path::new(&opts.datadir), opts.force);
             }
             Subcommand::Import { path, removedb } => {
                 if removedb {
-                    Box::pin(async {
-                        Self::RemoveDB {
-                            datadir: opts.datadir.clone(),
-                            force: opts.force,
-                        }
-                        .run(opts)
-                        .await
-                    })
-                    .await?;
+                    Box::pin(async { Self::RemoveDB.run(opts).await }).await?;
                 }
 
                 let network = &opts.network;
                 let genesis = network.get_genesis()?;
-                import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
+                import_blocks(
+                    Path::new(&path),
+                    Path::new(&opts.datadir),
+                    genesis,
+                    opts.evm,
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last).await
+                export_blocks(Path::new(&path), Path::new(&opts.datadir), first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -322,13 +315,12 @@ impl Subcommand {
     }
 }
 
-pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = set_datadir(datadir);
-    let path = Path::new(&data_dir);
+pub fn remove_db(datadir: &Path, force: bool) {
+    let data_dir = set_datadir(Some(datadir), None);
 
-    if path.exists() {
+    if data_dir.exists() {
         if force {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            std::fs::remove_dir_all(&data_dir).expect("Failed to remove data directory");
             info!("Database removed successfully.");
         } else {
             print!("Are you sure you want to remove the database? (y/n): ");
@@ -338,25 +330,25 @@ pub fn remove_db(datadir: &str, force: bool) {
             io::stdin().read_line(&mut input).unwrap();
 
             if input.trim().eq_ignore_ascii_case("y") {
-                std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                std::fs::remove_dir_all(&data_dir).expect("Failed to remove data directory");
                 println!("Database removed successfully.");
             } else {
                 println!("Operation canceled.");
             }
         }
     } else {
-        warn!("Data directory does not exist: {}", data_dir);
+        warn!("Data directory does not exist: {:?}", data_dir);
     }
 }
 
 pub async fn import_blocks(
-    path: &str,
-    data_dir: &str,
+    path: &Path,
+    data_dir: &Path,
     genesis: Genesis,
     evm: EvmEngine,
 ) -> Result<(), ChainError> {
-    let data_dir = set_datadir(data_dir);
-    let store = init_store(&data_dir, genesis).await;
+    let data_dir_actual = set_datadir(Some(data_dir), None);
+    let store = init_store(&data_dir_actual, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
@@ -364,15 +356,12 @@ pub async fn import_blocks(
         let dir_reader = read_dir(path).expect("Failed to read blocks directory");
         for file_res in dir_reader {
             let file = file_res.expect("Failed to open file in directory");
-            let path = file.path();
-            let s = path
-                .to_str()
-                .expect("Path could not be converted into string");
-            blocks.push(utils::read_block_file(s));
+            let block_file_path = file.path();
+            blocks.push(utils::read_block_file(&block_file_path));
         }
         blocks
     } else {
-        info!("Importing blocks from chain file: {path}");
+        info!("Importing blocks from chain file: {:?}", path);
         utils::read_chain_file(path)
     };
     let size = blocks.len();
@@ -419,15 +408,15 @@ pub async fn import_blocks(
 }
 
 pub async fn export_blocks(
-    path: &str,
-    data_dir: &str,
+    path: &Path,
+    data_dir: &Path,
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
-    let data_dir = set_datadir(data_dir);
-    let store = open_store(&data_dir);
+    let data_dir_actual = set_datadir(Some(data_dir), None);
+    let store = open_store(&data_dir_actual);
     let start = first_number.unwrap_or_default();
-    // If we have no latest block then we don't have any blocks to export
+    // If we have no latest block then we don\'t have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
         Ok(number) => number,
         Err(StoreError::MissingLatestBlockNumber) => {
@@ -436,7 +425,7 @@ pub async fn export_blocks(
         }
         Err(_) => panic!("Internal DB Error"),
     };
-    // Check that the requested range doesn't exceed our current chain length
+    // Check that the requested range doesn\'t exceed our current chain length
     if last_number.is_some_and(|number| number > latest_number) {
         warn!(
             "The requested block range exceeds the current amount of blocks in the chain {latest_number}"
@@ -469,5 +458,5 @@ pub async fn export_blocks(
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
-    info!("Exported {} blocks to file {path}", end - start);
+    info!("Exported {} blocks to file {:?}", end - start, path);
 }

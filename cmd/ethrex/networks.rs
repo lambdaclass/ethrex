@@ -118,4 +118,12 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
         PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
         PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
     }
+
+    /// Returns network specific subdirectory to store the application data
+    pub fn get_network_subdir(&self) -> PathBuf {
+        match self {
+            Network::PublicNetwork(_) => PathBuf::from(&self.to_string()),
+            Network::GenesisPath(_) => PathBuf::from("custom_network"),
+        }
+    }
 }
