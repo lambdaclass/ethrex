@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751078032961,
+  "lastUpdate": 1751079782474,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2999,6 +2999,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00935680463182898,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3f65132f7fb6d206f189754ace88340184811e7d",
+          "message": "fix(l2): update rpc job cache file (#3377)\n\n**Motivation**\n\nin #3370 i didn't update it after changing how the program input is\nserialized",
+          "timestamp": "2025-06-27T22:22:17Z",
+          "tree_id": "cdf056c0a40fbe670409308b79b3f0b9f5f937ba",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3f65132f7fb6d206f189754ace88340184811e7d"
+        },
+        "date": 1751079782054,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006880061855670103,
             "unit": "Mgas/s"
           }
         ]
