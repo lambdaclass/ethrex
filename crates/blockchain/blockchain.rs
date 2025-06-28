@@ -8,6 +8,8 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::info;
+#[cfg(feature = "execution_profile")]
+use ::tracing::instrument;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -61,6 +63,7 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
+
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
@@ -80,6 +83,23 @@ impl Blockchain {
         }
     }
 
+    #[cfg_attr(feature = "execution_profile", instrument(level = "trace" name = "VM Initialization", skip_all))]
+    fn initialize_vm(
+        &self,
+        current_block_hash: BlockHash,
+        block_hash_cache: Option<HashMap<u64, BlockHash>>,
+    ) -> Evm {
+        let vm_db = match block_hash_cache {
+            Some(cache) => StoreVmDatabase::new_with_block_hash_cache(
+                self.storage.clone(),
+                current_block_hash,
+                cache,
+            ),
+            None => StoreVmDatabase::new(self.storage.clone(), current_block_hash),
+        };
+        Evm::new(self.evm_engine, vm_db)
+    }
+
     /// Executes a block withing a new vm instance and state
     async fn execute_block(
         &self,
@@ -97,8 +117,8 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.initialize_vm(block.header.parent_hash, None);
+
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -120,9 +140,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-
         let execution_result = vm.execute_block(block)?;
-
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -364,7 +382,10 @@ impl Blockchain {
             .await
             .map_err(|e| e.into())
     }
-
+    #[cfg_attr(
+        feature = "execution_profile",
+        instrument(name = "execution_context", level = "trace", skip_all)
+    )]
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
@@ -422,6 +443,10 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
+    #[cfg_attr(
+        feature = "execution_profile",
+        instrument(name = "execution_context", level = "trace", skip_all)
+    )]
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
@@ -441,12 +466,7 @@ impl Blockchain {
         // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
-        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
-            first_block_header.parent_hash,
-            block_hash_cache,
-        );
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.initialize_vm(first_block_header.parent_hash, Some(block_hash_cache));
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);

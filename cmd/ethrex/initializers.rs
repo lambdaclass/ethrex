@@ -5,6 +5,12 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
+
+#[cfg(feature = "execution_profile")]
+use ethrex_metrics::metrics_profiling::FunctionProfilingLayer;
+#[cfg(feature = "execution_profile")]
+use ethrex_metrics::metrics_profiling::initialize_profiling_metrics;
+
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{P2PContext, public_key_from_signing_key},
@@ -27,15 +33,22 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
-use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
+use tracing_subscriber::{
+    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
+};
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(log_filter)
-        .finish();
+
+    let fmt_layer = fmt::layer().with_filter(log_filter);
+    let subscriber = Registry::default().with(fmt_layer);
+    #[cfg(feature = "execution_profile")]
+    let profiling_layer = FunctionProfilingLayer::default();
+    #[cfg(feature = "execution_profile")]
+    let subscriber = subscriber.with(profiling_layer);
+
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
@@ -49,6 +62,10 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
     );
+
+    #[cfg(feature = "execution_profile")]
+    initialize_profiling_metrics();
+
     tracker.spawn(metrics_api);
 }
 
