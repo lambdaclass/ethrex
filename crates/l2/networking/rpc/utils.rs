@@ -85,4 +85,3 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     let maybe_parsed = u64::from_str_radix(trimmed, 16);
     maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
 }
-
