@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751066416718,
+  "lastUpdate": 1751068848385,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2883,6 +2883,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.009323585207100592,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2dd0e7b4e73f1578fbd2c43e2845bcfb2fd46e8c",
+          "message": "chore(levm): add push/mstore based bench (#3354)\n\n**Motivation**\n\nAdds a benchmark that mainly tests PUSH and MSTORE\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3364\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>",
+          "timestamp": "2025-06-27T20:49:14Z",
+          "tree_id": "92222d56d1d8b08b0d73e056fee5f4f6efcab91f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2dd0e7b4e73f1578fbd2c43e2845bcfb2fd46e8c"
+        },
+        "date": 1751068837352,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.009318071555292726,
             "unit": "Mgas/s"
           }
         ]
