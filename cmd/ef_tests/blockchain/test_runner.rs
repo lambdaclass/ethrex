@@ -21,26 +21,43 @@ use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
 use zkvm_interface::io::ProgramInput;
 
-pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
+pub fn parse_and_execute(
+    path: &Path,
+    evm: EvmEngine,
+    skipped_tests: Option<&[&str]>,
+) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_test_file(path);
+    let tests = parse_tests(path);
+
+    let mut failures = Vec::new();
 
     for (test_key, test) in tests {
         let should_skip_test = test.network < Network::Merge
             || skipped_tests
-                .map(|skipped| skipped.contains(&test_key.as_str()))
+                .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
 
         if should_skip_test {
-            // Discard this test
             continue;
         }
 
-        rt.block_on(run_ef_test(&test_key, &test, evm));
+        let result = rt.block_on(run_ef_test(&test_key, &test, evm));
+
+        if let Err(e) = result {
+            eprintln!("Test {} failed: {:?}", test_key, e);
+            failures.push(format!("{}: {:?}", test_key, e));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        // \n doesn't print new lines on terminal, so this alternative is for making it readable
+        Err(failures.join("     -------     ").into())
     }
 }
 
-pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
+pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
     let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
@@ -57,7 +74,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
         if exception_in_rlp_decoding(block_fixture) {
-            return;
+            return Ok(());
         }
 
         // Won't panic because test has been validated
@@ -68,27 +85,29 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
         let chain_result = blockchain.add_block(block).await;
         match chain_result {
             Err(error) => {
-                assert!(
-                    expects_exception,
-                    "Transaction execution unexpectedly failed on test: {}, with error {:?}",
-                    test_key, error
-                );
+                if !expects_exception {
+                    return Err(format!(
+                        "Transaction execution unexpectedly failed on test: {}, with error {:?}",
+                        test_key, error
+                    ));
+                }
                 let expected_exception = block_fixture.expect_exception.clone().unwrap();
-                assert!(
-                    exception_is_expected(expected_exception.clone(), &error),
-                    "Returned exception {:?} does not match expected {:?}",
-                    error,
-                    expected_exception,
-                );
+                if !exception_is_expected(expected_exception.clone(), &error) {
+                    return Err(format!(
+                        "Returned exception {:?} does not match expected {:?}",
+                        error, expected_exception,
+                    ));
+                }
                 break;
             }
             Ok(_) => {
-                assert!(
-                    !expects_exception,
-                    "Expected transaction execution to fail in test: {} with error: {:?}",
-                    test_key,
-                    block_fixture.expect_exception.clone()
-                );
+                if expects_exception {
+                    return Err(format!(
+                        "Expected transaction execution to fail in test: {} with error: {:?}",
+                        test_key,
+                        block_fixture.expect_exception.clone()
+                    ));
+                }
                 apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
@@ -97,6 +116,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     if evm == EvmEngine::LEVM {
         re_run_stateless(blockchain, test, test_key).await;
     }
+    Ok(())
 }
 
 fn exception_is_expected(
@@ -232,10 +252,34 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
     }
 }
 
-pub fn parse_test_file(path: &Path) -> HashMap<String, TestUnit> {
-    let s: String = std::fs::read_to_string(path).expect("Unable to read file");
-    let tests: HashMap<String, TestUnit> = serde_json::from_str(&s).expect("Unable to parse JSON");
-    tests
+pub fn parse_tests(path: &Path) -> HashMap<String, TestUnit> {
+    let mut all_tests = HashMap::new();
+
+    if path.is_file() {
+        let file_tests = parse_json_file(path);
+        all_tests.extend(file_tests);
+    } else if path.is_dir() {
+        for entry in std::fs::read_dir(path).expect("Failed to read directory") {
+            let entry = entry.expect("Failed to get DirEntry");
+            let path = entry.path();
+            if path.is_dir() {
+                let sub_tests = parse_tests(&path); // recursion
+                all_tests.extend(sub_tests);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                let file_tests = parse_json_file(&path);
+                all_tests.extend(file_tests);
+            }
+        }
+    } else {
+        panic!("Invalid path: not a file or directory");
+    }
+
+    all_tests
+}
+
+fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
+    let s = std::fs::read_to_string(path).expect("Unable to read file");
+    serde_json::from_str(&s).expect("Unable to parse JSON")
 }
 
 /// Creats a new in-memory store and adds the genesis state
