@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
 use ethrex_common::{Address, U256};
-use ethrex_l2_sdk::calldata::{Value, encode_calldata};
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProverType},
+};
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
@@ -18,10 +22,6 @@ use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::errors::ProofSenderError,
-    utils::prover::{
-        proving_systems::ProverType,
-        save_state::{StateFileType, batch_number_has_all_needed_proofs, read_proof},
-    },
 };
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
@@ -43,7 +43,7 @@ pub struct L1ProofSenderState {
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
     sequencer_state: SequencerState,
-    rollup_storage: StoreRollup,
+    rollup_store: StoreRollup,
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
@@ -57,7 +57,7 @@ impl L1ProofSenderState {
         eth_cfg: &EthConfig,
         sequencer_state: SequencerState,
         aligned_cfg: &AlignedConfig,
-        rollup_storage: StoreRollup,
+        rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
@@ -76,7 +76,7 @@ impl L1ProofSenderState {
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
                 sequencer_state,
-                rollup_storage,
+                rollup_store,
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
                 fee_estimate,
@@ -92,7 +92,7 @@ impl L1ProofSenderState {
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             sequencer_state,
-            rollup_storage,
+            rollup_store,
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
@@ -179,7 +179,7 @@ impl GenServer for L1ProofSender {
 async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSenderError> {
     let batch_to_send = 1 + get_latest_sent_batch(
         state.needed_proof_types.clone(),
-        &state.rollup_storage,
+        &state.rollup_store,
         &state.eth_client,
         state.on_chain_proposer_address,
     )
@@ -199,41 +199,57 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         return Ok(());
     }
 
-    if batch_number_has_all_needed_proofs(batch_to_send, &state.needed_proof_types)
-        .inspect_err(|_| info!("Missing proofs for batch {batch_to_send}, skipping sending"))
-        .unwrap_or_default()
-    {
-        send_proof(state, batch_to_send).await?;
+    let mut proofs = HashMap::new();
+    let mut missing_proof_types = Vec::new();
+    for proof_type in &state.needed_proof_types {
+        if let Some(proof) = state
+            .rollup_store
+            .get_proof_by_batch_and_type(batch_to_send, *proof_type)
+            .await?
+        {
+            proofs.insert(*proof_type, proof);
+        } else {
+            missing_proof_types.push(proof_type);
+        }
+    }
+
+    if missing_proof_types.is_empty() {
+        // TODO: we should put in code that if the prover is running with Aligned, then there
+        // shouldn't be any other required types.
+        if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
+            send_proof_to_aligned(state, batch_to_send, aligned_proof).await?;
+        } else {
+            send_proof_to_contract(state, batch_to_send, proofs).await?;
+        }
         state
-            .rollup_storage
+            .rollup_store
             .set_lastest_sent_batch_proof(batch_to_send)
             .await?;
+    } else {
+        let missing_proof_types: Vec<String> = missing_proof_types
+            .iter()
+            .map(|proof_type| format!("{:?}", proof_type))
+            .collect();
+        info!(
+            "Missing {} batch proof(s), will not send",
+            missing_proof_types.join(", ")
+        );
     }
 
     Ok(())
 }
 
-pub async fn send_proof(
-    state: &L1ProofSenderState,
-    batch_number: u64,
-) -> Result<(), ProofSenderError> {
-    if state.needed_proof_types.contains(&ProverType::Aligned) {
-        return send_proof_to_aligned(state, batch_number).await;
-    }
-    send_proof_to_contract(state, batch_number).await
-}
-
 async fn send_proof_to_aligned(
     state: &L1ProofSenderState,
     batch_number: u64,
+    aligned_proof: BatchProof,
 ) -> Result<(), ProofSenderError> {
-    let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
     let elf = std::fs::read(state.aligned_sp1_elf_path.clone())
         .map_err(|e| ProofSenderError::InternalError(format!("Failed to read ELF file: {e}")))?;
 
     let verification_data = VerificationData {
         proving_system: ProvingSystemId::SP1,
-        proof: proof.proof(),
+        proof: aligned_proof.proof(),
         proof_generator_addr: state.l1_address.0.into(),
         vm_program_code: Some(elf),
         verification_key: None,
@@ -286,36 +302,29 @@ async fn send_proof_to_aligned(
 pub async fn send_proof_to_contract(
     state: &L1ProofSenderState,
     batch_number: u64,
+    proofs: HashMap<ProverType, BatchProof>,
 ) -> Result<(), ProofSenderError> {
-    // TODO: change error
-    // TODO: If the proof is not needed, a default calldata is used,
-    // the structure has to match the one defined in the OnChainProposer.sol contract.
-    // It may cause some issues, but the ethrex_prover_lib cannot be imported,
-    // this approach is straight-forward for now.
-    let mut proofs = HashMap::with_capacity(state.needed_proof_types.len());
-    for prover_type in state.needed_proof_types.iter() {
-        let proof = read_proof(batch_number, StateFileType::BatchProof(*prover_type))?;
-        if proof.prover_type() != *prover_type {
-            return Err(ProofSenderError::ProofNotPresent(*prover_type));
-        }
-        proofs.insert(prover_type, proof.calldata());
-    }
-
-    debug!("Sending proof for batch number: {batch_number}");
+    info!(
+        ?batch_number,
+        "Sending batch verification transaction to L1"
+    );
 
     let calldata_values = [
         &[Value::Uint(U256::from(batch_number))],
         proofs
             .get(&ProverType::RISC0)
-            .unwrap_or(&ProverType::RISC0.empty_calldata())
+            .map(|proof| proof.calldata())
+            .unwrap_or(ProverType::RISC0.empty_calldata())
             .as_slice(),
         proofs
             .get(&ProverType::SP1)
-            .unwrap_or(&ProverType::SP1.empty_calldata())
+            .map(|proof| proof.calldata())
+            .unwrap_or(ProverType::SP1.empty_calldata())
             .as_slice(),
         proofs
             .get(&ProverType::TDX)
-            .unwrap_or(&ProverType::TDX.empty_calldata())
+            .map(|proof| proof.calldata())
+            .unwrap_or(ProverType::TDX.empty_calldata())
             .as_slice(),
     ]
     .concat();
@@ -331,7 +340,11 @@ pub async fn send_proof_to_contract(
     )
     .await?;
 
-    info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
+    info!(
+        ?batch_number,
+        ?verify_tx_hash,
+        "Sent batch verification transaction to L1"
+    );
 
     Ok(())
 }

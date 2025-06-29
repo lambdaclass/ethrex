@@ -3,7 +3,6 @@ use crate::{
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
-    utils::*,
     vm::VM,
 };
 
@@ -17,7 +16,13 @@ impl<'a> VM<'a> {
         match precompile_result {
             Ok(output) => Ok(ContextResult {
                 result: TxResult::Success,
-                gas_used: self.current_call_frame()?.gas_used,
+                gas_used: {
+                    let callframe = self.current_call_frame()?;
+                    callframe
+                        .gas_limit
+                        .checked_sub(callframe.gas_remaining)
+                        .ok_or(InternalError::Underflow)?
+                },
                 output,
             }),
             Err(error) => {
@@ -75,13 +80,38 @@ impl<'a> VM<'a> {
             Opcode::BLOBHASH => self.op_blobhash(),
             Opcode::BLOBBASEFEE => self.op_blobbasefee(),
             Opcode::PUSH0 => self.op_push0(),
-            Opcode::PUSH1 => self.op_push1(),
-            Opcode::PUSH2 => self.op_push2(),
-            // PUSHn
-            op if (Opcode::PUSH3..=Opcode::PUSH32).contains(&op) => {
-                let n_bytes = get_n_value(op, Opcode::PUSH1)?;
-                self.op_push(n_bytes)
-            }
+            Opcode::PUSH1 => self.op_push::<1>(),
+            Opcode::PUSH2 => self.op_push::<2>(),
+            Opcode::PUSH3 => self.op_push::<3>(),
+            Opcode::PUSH4 => self.op_push::<4>(),
+            Opcode::PUSH5 => self.op_push::<5>(),
+            Opcode::PUSH6 => self.op_push::<6>(),
+            Opcode::PUSH7 => self.op_push::<7>(),
+            Opcode::PUSH8 => self.op_push::<8>(),
+            Opcode::PUSH9 => self.op_push::<9>(),
+            Opcode::PUSH10 => self.op_push::<10>(),
+            Opcode::PUSH11 => self.op_push::<11>(),
+            Opcode::PUSH12 => self.op_push::<12>(),
+            Opcode::PUSH13 => self.op_push::<13>(),
+            Opcode::PUSH14 => self.op_push::<14>(),
+            Opcode::PUSH15 => self.op_push::<15>(),
+            Opcode::PUSH16 => self.op_push::<16>(),
+            Opcode::PUSH17 => self.op_push::<17>(),
+            Opcode::PUSH18 => self.op_push::<18>(),
+            Opcode::PUSH19 => self.op_push::<19>(),
+            Opcode::PUSH20 => self.op_push::<20>(),
+            Opcode::PUSH21 => self.op_push::<21>(),
+            Opcode::PUSH22 => self.op_push::<22>(),
+            Opcode::PUSH23 => self.op_push::<23>(),
+            Opcode::PUSH24 => self.op_push::<24>(),
+            Opcode::PUSH25 => self.op_push::<25>(),
+            Opcode::PUSH26 => self.op_push::<26>(),
+            Opcode::PUSH27 => self.op_push::<27>(),
+            Opcode::PUSH28 => self.op_push::<28>(),
+            Opcode::PUSH29 => self.op_push::<29>(),
+            Opcode::PUSH30 => self.op_push::<30>(),
+            Opcode::PUSH31 => self.op_push::<31>(),
+            Opcode::PUSH32 => self.op_push::<32>(),
             Opcode::AND => self.op_and(),
             Opcode::OR => self.op_or(),
             Opcode::XOR => self.op_xor(),
@@ -92,19 +122,22 @@ impl<'a> VM<'a> {
             Opcode::SAR => self.op_sar(),
             // DUPn
             op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
-                let depth = get_n_value(op, Opcode::DUP1)?;
-                self.op_dup(depth)
+                // The following conversions and operation cannot fail due to known operand ranges.
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                self.op_dup(op as usize - Opcode::DUP1 as usize)
             }
             // SWAPn
             op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
-                let depth = get_n_value(op, Opcode::SWAP1)?;
-                self.op_swap(depth)
+                // The following conversions and operation cannot fail due to known operand ranges.
+                #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                self.op_swap(op as usize - Opcode::SWAP1 as usize + 1)
             }
             Opcode::POP => self.op_pop(),
-            op if (Opcode::LOG0..=Opcode::LOG4).contains(&op) => {
-                let number_of_topics = get_number_of_topics(op)?;
-                self.op_log(number_of_topics)
-            }
+            Opcode::LOG0 => self.op_log::<0>(),
+            Opcode::LOG1 => self.op_log::<1>(),
+            Opcode::LOG2 => self.op_log::<2>(),
+            Opcode::LOG3 => self.op_log::<3>(),
+            Opcode::LOG4 => self.op_log::<4>(),
             Opcode::MLOAD => self.op_mload(),
             Opcode::MSTORE => self.op_mstore(),
             Opcode::MSTORE8 => self.op_mstore8(),
@@ -154,11 +187,14 @@ impl<'a> VM<'a> {
 
                 // Consume all gas because error was exceptional.
                 let callframe = self.current_call_frame_mut()?;
-                callframe.gas_used = callframe.gas_limit;
+                callframe.gas_remaining = 0;
 
                 return Ok(ContextResult {
                     result: TxResult::Revert(error),
-                    gas_used: callframe.gas_used,
+                    gas_used: callframe
+                        .gas_limit
+                        .checked_sub(callframe.gas_remaining)
+                        .ok_or(InternalError::Underflow)?,
                     output: Bytes::new(),
                 });
             }
@@ -171,7 +207,13 @@ impl<'a> VM<'a> {
 
         Ok(ContextResult {
             result: TxResult::Success,
-            gas_used: self.current_call_frame()?.gas_used,
+            gas_used: {
+                let callframe = self.current_call_frame()?;
+                callframe
+                    .gas_limit
+                    .checked_sub(callframe.gas_remaining)
+                    .ok_or(InternalError::Underflow)?
+            },
             output: std::mem::take(&mut self.current_call_frame_mut()?.output),
         })
     }
@@ -185,12 +227,15 @@ impl<'a> VM<'a> {
 
         // Unless error is caused by Revert Opcode, consume all gas left.
         if !error.is_revert_opcode() {
-            callframe.gas_used = callframe.gas_limit;
+            callframe.gas_remaining = 0;
         }
 
         Ok(ContextResult {
             result: TxResult::Revert(error),
-            gas_used: callframe.gas_used,
+            gas_used: callframe
+                .gas_limit
+                .checked_sub(callframe.gas_remaining)
+                .ok_or(InternalError::Underflow)?,
             output: std::mem::take(&mut callframe.output),
         })
     }

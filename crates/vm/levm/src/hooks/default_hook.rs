@@ -228,6 +228,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
     for address in selfdestruct_set {
         let account_to_remove = vm.get_account_mut(address)?;
         *account_to_remove = Account::default();
+        vm.db.destroyed_accounts.insert(address);
     }
     Ok(())
 }

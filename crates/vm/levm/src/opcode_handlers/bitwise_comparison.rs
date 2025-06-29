@@ -14,10 +14,9 @@ impl<'a> VM<'a> {
     pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::LT)?;
-        let lho = current_call_frame.stack.pop()?;
-        let rho = current_call_frame.stack.pop()?;
+        let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho < rho);
-        current_call_frame.stack.push(result)?;
+        current_call_frame.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -26,10 +25,9 @@ impl<'a> VM<'a> {
     pub fn op_gt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::GT)?;
-        let lho = current_call_frame.stack.pop()?;
-        let rho = current_call_frame.stack.pop()?;
+        let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho > rho);
-        current_call_frame.stack.push(result)?;
+        current_call_frame.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -38,8 +36,7 @@ impl<'a> VM<'a> {
     pub fn op_slt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
-        let lho = current_call_frame.stack.pop()?;
-        let rho = current_call_frame.stack.pop()?;
+        let [lho, rho] = *current_call_frame.stack.pop()?;
         let lho_is_negative = lho.bit(255);
         let rho_is_negative = rho.bit(255);
         let result = if lho_is_negative == rho_is_negative {
@@ -49,7 +46,7 @@ impl<'a> VM<'a> {
             // Negative is smaller if signs differ
             u256_from_bool(lho_is_negative)
         };
-        current_call_frame.stack.push(result)?;
+        current_call_frame.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -58,8 +55,7 @@ impl<'a> VM<'a> {
     pub fn op_sgt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
-        let lho = current_call_frame.stack.pop()?;
-        let rho = current_call_frame.stack.pop()?;
+        let [lho, rho] = *current_call_frame.stack.pop()?;
         let lho_is_negative = lho.bit(255);
         let rho_is_negative = rho.bit(255);
         let result = if lho_is_negative == rho_is_negative {
@@ -69,7 +65,7 @@ impl<'a> VM<'a> {
             // Positive is bigger if signs differ
             u256_from_bool(rho_is_negative)
         };
-        current_call_frame.stack.push(result)?;
+        current_call_frame.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -78,11 +74,10 @@ impl<'a> VM<'a> {
     pub fn op_eq(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
-        let lho = current_call_frame.stack.pop()?;
-        let rho = current_call_frame.stack.pop()?;
+        let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho == rho);
 
-        current_call_frame.stack.push(result)?;
+        current_call_frame.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -92,10 +87,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
 
-        let operand = current_call_frame.stack.pop()?;
+        let [operand] = current_call_frame.stack.pop()?;
         let result = u256_from_bool(operand.is_zero());
 
-        current_call_frame.stack.push(result)?;
+        current_call_frame.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -104,9 +99,8 @@ impl<'a> VM<'a> {
     pub fn op_and(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::AND)?;
-        let a = current_call_frame.stack.pop()?;
-        let b = current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(a & b)?;
+        let [a, b] = *current_call_frame.stack.pop()?;
+        current_call_frame.stack.push(&[a & b])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -115,9 +109,8 @@ impl<'a> VM<'a> {
     pub fn op_or(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::OR)?;
-        let a = current_call_frame.stack.pop()?;
-        let b = current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(a | b)?;
+        let [a, b] = *current_call_frame.stack.pop()?;
+        current_call_frame.stack.push(&[a | b])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -126,9 +119,8 @@ impl<'a> VM<'a> {
     pub fn op_xor(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
-        let a = current_call_frame.stack.pop()?;
-        let b = current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(a ^ b)?;
+        let [a, b] = *current_call_frame.stack.pop()?;
+        current_call_frame.stack.push(&[a ^ b])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -137,8 +129,8 @@ impl<'a> VM<'a> {
     pub fn op_not(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
-        let a = current_call_frame.stack.pop()?;
-        current_call_frame.stack.push(!a)?;
+        let [a] = *current_call_frame.stack.pop()?;
+        current_call_frame.stack.push(&[!a])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -147,13 +139,12 @@ impl<'a> VM<'a> {
     pub fn op_byte(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BYTE)?;
-        let op1 = current_call_frame.stack.pop()?;
-        let op2 = current_call_frame.stack.pop()?;
+        let [op1, op2] = *current_call_frame.stack.pop()?;
         let byte_index = match op1.try_into() {
             Ok(byte_index) => byte_index,
             Err(_) => {
                 // Index is out of bounds, then push 0
-                current_call_frame.stack.push(U256::zero())?;
+                current_call_frame.stack.push(&[U256::zero()])?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
@@ -166,9 +157,9 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::Underflow)?; // Same case as above
             current_call_frame
                 .stack
-                .push(U256::from(op2.byte(byte_to_push)))?;
+                .push(&[U256::from(op2.byte(byte_to_push))])?;
         } else {
-            current_call_frame.stack.push(U256::zero())?;
+            current_call_frame.stack.push(&[U256::zero()])?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -179,13 +170,12 @@ impl<'a> VM<'a> {
     pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
-        let shift = current_call_frame.stack.pop()?;
-        let value = current_call_frame.stack.pop()?;
+        let [shift, value] = *current_call_frame.stack.pop()?;
 
         if shift < U256::from(256) {
-            current_call_frame.stack.push(value << shift)?;
+            current_call_frame.stack.push(&[value << shift])?;
         } else {
-            current_call_frame.stack.push(U256::zero())?;
+            current_call_frame.stack.push(&[U256::zero()])?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -196,13 +186,12 @@ impl<'a> VM<'a> {
     pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
-        let shift = current_call_frame.stack.pop()?;
-        let value = current_call_frame.stack.pop()?;
+        let [shift, value] = *current_call_frame.stack.pop()?;
 
         if shift < U256::from(256) {
-            current_call_frame.stack.push(value >> shift)?;
+            current_call_frame.stack.push(&[value >> shift])?;
         } else {
-            current_call_frame.stack.push(U256::zero())?;
+            current_call_frame.stack.push(&[U256::zero()])?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -213,8 +202,7 @@ impl<'a> VM<'a> {
     pub fn op_sar(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
-        let shift = current_call_frame.stack.pop()?;
-        let value = current_call_frame.stack.pop()?;
+        let [shift, value] = *current_call_frame.stack.pop()?;
 
         // In 2's complement arithmetic, the most significant bit being one means the number is negative
         let is_negative = value.bit(255);
@@ -230,7 +218,7 @@ impl<'a> VM<'a> {
         } else {
             U256::zero()
         };
-        current_call_frame.stack.push(res)?;
+        current_call_frame.stack.push(&[res])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

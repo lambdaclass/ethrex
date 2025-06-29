@@ -548,6 +548,17 @@ impl EFTestReportForkResult {
         );
     }
 
+    pub fn register_error_on_reverting_levm_state(
+        &mut self,
+        reason: String,
+        failed_vector: TestVector,
+    ) {
+        self.failed_vectors.insert(
+            failed_vector,
+            EFTestRunnerError::FailedToRevertLEVMState(reason),
+        );
+    }
+
     pub fn register_failed_vector(&mut self, vector: TestVector, error: EFTestRunnerError) {
         self.failed_vectors.insert(vector, error);
     }

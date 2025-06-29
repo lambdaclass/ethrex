@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 
-use crate::api::StoreEngineRollup;
-use crate::error::RollupStoreError;
+use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use libsql::{
     Builder, Connection, Row, Rows, Value,
@@ -22,7 +22,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 10] = [
+const DB_SCHEMA: [&str; 11] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
@@ -33,6 +33,7 @@ const DB_SCHEMA: [&str; 10] = [
     "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
     "INSERT INTO latest_sent VALUES (0, 0)",
+    "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
 ];
 
 impl SQLStore {
@@ -337,7 +338,7 @@ impl StoreEngineRollup for SQLStore {
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.execute(
-            "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, messages = withdrawals + ?3", 
+            "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, messages = withdrawals + ?3",
             (transaction_inc, deposits_inc, messages_inc)).await?;
         Ok(())
     }
@@ -441,9 +442,55 @@ impl StoreEngineRollup for SQLStore {
                 "DELETE FROM blob_bundles WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
+            (
+                "DELETE FROM batch_proofs WHERE batch > ?1",
+                [batch_number].into_params()?,
+            ),
         ])
         .await?;
         Ok(())
+    }
+
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        prover_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), RollupStoreError> {
+        let serialized_proof = bincode::serialize(&proof)?;
+        let prover_type: u32 = prover_type.into();
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM batch_proofs WHERE batch = ?1 AND prover_type = ?2",
+                (batch_number, prover_type).into_params()?,
+            ),
+            (
+                "INSERT INTO batch_proofs VALUES (?1, ?2, ?3)",
+                (batch_number, prover_type, serialized_proof).into_params()?,
+            ),
+        ])
+        .await?;
+        Ok(())
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        prover_type: ProverType,
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
+        let prover_type: u32 = prover_type.into();
+        let mut rows = self
+            .query(
+                "SELECT proof from batch_proofs WHERE batch = ?1 AND prover_type = ?2",
+                (batch_number, prover_type),
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+            return Ok(Some(bincode::deserialize(&vec)?));
+        }
+        Ok(None)
     }
 }
 
@@ -463,6 +510,7 @@ mod tests {
             "account_updates",
             "operation_count",
             "latest_sent",
+            "batch_proofs",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -500,6 +548,9 @@ mod tests {
                 ("operation_count", "messages") => "INT",
                 ("latest_sent", "_id") => "INT",
                 ("latest_sent", "batch") => "INT",
+                ("batch_proofs", "batch") => "INT",
+                ("batch_proofs", "prover_type") => "INT",
+                ("batch_proofs", "proof") => "BLOB",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",
