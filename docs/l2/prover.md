@@ -159,10 +159,13 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       export CHAIN_KEY="ethrex"
       export RPC_URL="http://localhost:8545"
       ```
+   1. cd into `risc0-ethereum/`
    1. run the deployment script
       ```bash
       bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
       ```
+   1. if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
+   if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
 
 ## Configuration
 
