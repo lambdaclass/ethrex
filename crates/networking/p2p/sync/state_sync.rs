@@ -59,7 +59,6 @@ pub(crate) async fn state_sync(
             storage_trie_rebuilder_sender.clone(),
         ));
     }
-    show_progress_handle.abort();
     // Check for pivot staleness
     let mut stale_pivot = false;
     let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
@@ -68,6 +67,7 @@ pub(crate) async fn state_sync(
         stale_pivot |= is_stale;
         state_trie_checkpoint[index] = last_key;
     }
+    show_progress_handle.abort();
     // Update state trie checkpoint
     store
         .set_state_trie_key_checkpoint(state_trie_checkpoint)
