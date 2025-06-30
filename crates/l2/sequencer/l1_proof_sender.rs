@@ -228,7 +228,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
     } else {
         let missing_proof_types: Vec<String> = missing_proof_types
             .iter()
-            .map(|proof_type| format!("{:?}", proof_type))
+            .map(|proof_type| format!("{proof_type:?}"))
             .collect();
         info!(
             "Missing {} batch proof(s), will not send",
