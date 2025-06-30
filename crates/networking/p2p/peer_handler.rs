@@ -179,9 +179,7 @@ impl PeerHandler {
     #[cfg(feature = "l2")]
     pub async fn request_batch(&self, first_batch: u64, last_batch: u64) -> Option<Vec<Batch>> {
         use crate::rlpx::{based::GetBatchSealedMessage, p2p::SUPPORTED_BASED_CAPABILITIES};
-        dbg!("entering request_batch");
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            dbg!("making one attempt to request batch");
             let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage {
                 first_batch,
                 last_batch,
@@ -197,7 +195,6 @@ impl PeerHandler {
                 self.record_peer_failure(peer_id).await;
                 return None;
             }
-            dbg!("waiting for response from peer {}", peer_id);
             if let Some(batches) = tokio::time::timeout(PEER_REPLY_TIMEOUT * 2, async move {
                 loop {
                     use crate::rlpx::based::GetBatchSealedResponseMessage;

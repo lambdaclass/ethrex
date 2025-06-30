@@ -344,7 +344,6 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
 
     let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
 
-    dbg!(state.store.get_latest_block_number().await?);
     info!(
         "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
     );
@@ -352,12 +351,10 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
         .store
         .update_latest_block_number(*last_l2_committed_block_number)
         .await?;
-    dbg!(state.store.get_latest_block_number().await?);
     state
         .store
         .unset_canonical_block(*last_l2_committed_block_number + 1)
         .await?;
-    dbg!(state.store.get_latest_block_number().await?);
     let _ = apply_fork_choice(
         &state.store,
         last_l2_committed_batch_block_hash,
@@ -366,6 +363,5 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
     )
     .await
     .map_err(StateUpdaterError::InvalidForkChoice)?;
-    dbg!(state.store.get_latest_block_number().await?);
     Ok(())
 }

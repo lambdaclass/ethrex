@@ -1058,7 +1058,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             //     continue;
             // }
             // log_peer_warn(&self.node, "here");
-            dbg!("adding block", block.hash(), block.header.number);
             self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_error(
                     &self.node,
@@ -1067,34 +1066,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         block.header.number,
                         block.hash()
                     ),
-                );
-                if let Some(a) = self
-                    .storage
-                    .get_block_header(block.header.number - 1)
-                    .unwrap_or_else(|_| {
-                        panic!(
-                            "Failed to get block header for number {}",
-                            block.header.number - 1
-                        )
-                    })
-                {
-                    dbg!(
-                        a.hash(),
-                        a.number,
-                        block.hash(),
-                        block.header.number,
-                        block.header.parent_hash
-                    );
-                } else {
-                    dbg!(
-                        "Block header for number {} not found",
-                        block.header.number - 1
-                    );
-                }
-
-                dbg!(
-                    self.blocks_on_queue
-                        .contains_key(&(block.header.number - 1)),
                 );
             })?;
             let block_hash = block.hash();
