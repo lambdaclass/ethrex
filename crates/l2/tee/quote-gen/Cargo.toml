@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 configfs-tsm = "0.0.1"
-tokio = { workspace = true, features = ["full"] }
+tokio = { version = "1.41.1", features = ["full"] }
 keccak-hash = "0.11"
 hex = "0.4"
 zerocopy = "0.8"
