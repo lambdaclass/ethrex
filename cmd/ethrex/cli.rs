@@ -360,16 +360,24 @@ pub async fn import_blocks(
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
-        let mut blocks = vec![];
-        let dir_reader = read_dir(path).expect("Failed to read blocks directory");
-        for file_res in dir_reader {
-            let file = file_res.expect("Failed to open file in directory");
-            let path = file.path();
-            let s = path
-                .to_str()
-                .expect("Path could not be converted into string");
-            blocks.push(utils::read_block_file(s));
-        }
+        let mut entries: Vec<_> = read_dir(path)
+            .expect("Failed to read blocks directory")
+            .map(|res| res.expect("Failed to open file in directory").path())
+            .collect();
+
+        entries.sort(); // Sort entries so that we execute 1.rlp, 2.rlp, 3... in the correct order
+
+        let blocks: Vec<_> = entries
+            .iter()
+            .map(|path| {
+                let s = path
+                    .to_str()
+                    .expect("Path could not be converted into string");
+                info!("Block path string: {}", s);
+                utils::read_block_file(s)
+            })
+            .collect();
+
         blocks
     } else {
         info!("Importing blocks from chain file: {path}");
