@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751316624329,
+  "lastUpdate": 1751320690817,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2459,6 +2459,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208263508263,
             "range": "± 1490572123",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "68f360fc345e8064a67f266c68c00e7439db961b",
+          "message": "feat(l2): exchange commit hash in node-prover communication (#3339)\n\n**Motivation**\n\nWe want to prevent a divergence between the code that is running in the\nL2 node and the prover.\n\n**Description**\n\n- Updates the client version to use `GIT_BRANCH` and `GIT_SHA` instead\nof `RUSTC_COMMIT_HASH`.\n- Adds a `build.rs` script for both the node and prover, using\n`vergen_git2` to export the git env vars.\n- Adds a `code_version` field to the `BatchRequest` message.\n- Introduces a new `ProofData` message: `InvalidCodeVersion`.\n\n## How to test\n\nYou can create an empty commit with:\n\n```bash\ngit commit --allow-empty -m \"empty commit\"\n```\n\nThen run the node and the prover using different commits.\n\n> [!WARNING]\n> Remember to run `make build-prover` whenever you change the commit\n\nCloses #3311",
+          "timestamp": "2025-06-30T20:59:41Z",
+          "tree_id": "d5078c5b0bbbe506fab9ce26a087572ff05c0971",
+          "url": "https://github.com/lambdaclass/ethrex/commit/68f360fc345e8064a67f266c68c00e7439db961b"
+        },
+        "date": 1751320681708,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207836514670,
+            "range": "± 617500350",
             "unit": "ns/iter"
           }
         ]
