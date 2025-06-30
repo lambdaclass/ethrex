@@ -69,6 +69,8 @@ where
         context.based,
         #[cfg(feature = "l2")]
         context.committer_key,
+        #[cfg(feature = "l2")]
+        context.shared_state.clone(),
     )
     .await)
 }
@@ -103,6 +105,8 @@ where
         context.based,
         #[cfg(feature = "l2")]
         context.committer_key,
+        #[cfg(feature = "l2")]
+        context.shared_state.clone(),
     )
     .await)
 }

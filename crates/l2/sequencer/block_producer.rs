@@ -8,6 +8,7 @@ use ethrex_blockchain::{
     Blockchain,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
+    sequencer_state::{SequencerState, SequencerStatus},
     validate_block,
 };
 use ethrex_common::Address;
@@ -19,11 +20,7 @@ use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg,
 use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
-use crate::{
-    BlockProducerConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::execution_cache::ExecutionCache,
-};
+use crate::{BlockProducerConfig, SequencerConfig, sequencer::execution_cache::ExecutionCache};
 
 use super::errors::BlockProducerError;
 

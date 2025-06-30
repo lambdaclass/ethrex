@@ -4,6 +4,8 @@ use crate::{
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
 use ethrex_blockchain::Blockchain;
+#[cfg(feature = "l2")]
+use ethrex_blockchain::sequencer_state::SequencerState;
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -180,6 +182,7 @@ pub async fn init_network(
     based: bool,
     #[cfg(feature = "l2")] store_rollup: StoreRollup,
     committer_key: Option<SecretKey>,
+    #[cfg(feature = "l2")] shared_state: SequencerState,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -203,6 +206,8 @@ pub async fn init_network(
         #[cfg(feature = "l2")]
         store_rollup,
         committer_key,
+        #[cfg(feature = "l2")]
+        shared_state,
     );
 
     context.set_fork_id().await.expect("Set fork id");

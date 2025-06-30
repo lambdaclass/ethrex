@@ -730,6 +730,8 @@ pub(super) mod tests {
         types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
+    #[cfg(feature = "l2")]
+    use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
     use ethrex_common::H32;
     use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
     use ethrex_storage::EngineType;
@@ -802,6 +804,8 @@ pub(super) mod tests {
             #[cfg(feature = "l2")]
             store_rollup: StoreRollup::default(),
             committer_key: None,
+            #[cfg(feature = "l2")]
+            shared_state: SequencerState::from(SequencerStatus::default()),
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;

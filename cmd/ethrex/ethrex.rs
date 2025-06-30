@@ -7,6 +7,8 @@ use ethrex::{
     },
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
+#[cfg(feature = "l2")]
+use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_p2p::network::peer_table;
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
@@ -126,6 +128,8 @@ async fn main() -> eyre::Result<()> {
                     #[cfg(feature = "l2")]
                     StoreRollup::default(),
                     None,
+                    #[cfg(feature = "l2")]
+                    SequencerState::from(SequencerStatus::default()),
                 )
                 .await;
             } else {

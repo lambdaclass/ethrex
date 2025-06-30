@@ -9,6 +9,8 @@ use crate::{
     rlpx::utils::log_peer_debug,
 };
 use ethrex_blockchain::Blockchain;
+#[cfg(feature = "l2")]
+use ethrex_blockchain::sequencer_state::SequencerState;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 #[cfg(feature = "l2")]
@@ -56,6 +58,8 @@ pub struct P2PContext {
     #[cfg(feature = "l2")]
     pub store_rollup: StoreRollup,
     pub committer_key: Option<SecretKey>,
+    #[cfg(feature = "l2")]
+    pub shared_state: SequencerState,
 }
 
 impl P2PContext {
@@ -72,6 +76,7 @@ impl P2PContext {
         based: bool,
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
         committer_key: Option<SecretKey>,
+        #[cfg(feature = "l2")] shared_state: SequencerState,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -92,6 +97,8 @@ impl P2PContext {
             #[cfg(feature = "l2")]
             store_rollup,
             committer_key,
+            #[cfg(feature = "l2")]
+            shared_state,
         }
     }
 

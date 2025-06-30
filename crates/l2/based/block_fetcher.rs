@@ -1,6 +1,11 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
-use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
+use ethrex_blockchain::{
+    Blockchain,
+    fork_choice::apply_fork_choice,
+    sequencer_state::{SequencerState, SequencerStatus},
+    vm::StoreVmDatabase,
+};
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
@@ -19,7 +24,6 @@ use tracing::{debug, error, info};
 
 use crate::{
     SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{l1_committer::generate_blobs_bundle, utils::node_is_up_to_date},
     utils::helpers::is_withdrawal_l2,
 };

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_rpc::EthClient;
@@ -16,7 +17,6 @@ use super::{
 };
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::errors::ProofSenderError,
     utils::prover::{
         proving_systems::ProverType,

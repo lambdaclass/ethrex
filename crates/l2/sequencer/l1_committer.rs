@@ -1,11 +1,10 @@
-use crate::{
-    CommitterConfig, EthConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::errors::CommitterError,
-};
+use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::CommitterError};
 
 use bytes::Bytes;
-use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_blockchain::{
+    sequencer_state::{SequencerState, SequencerStatus},
+    vm::StoreVmDatabase,
+};
 use ethrex_common::{
     Address, H256, U256,
     types::{

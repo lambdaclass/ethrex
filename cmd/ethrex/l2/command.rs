@@ -9,6 +9,7 @@ use crate::{
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
+use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -138,6 +139,14 @@ impl Command {
 
                 let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
+                let initial_status = if l2_sequencer_cfg.based.based {
+                    SequencerStatus::default()
+                } else {
+                    SequencerStatus::Sequencing
+                };
+
+                let shared_state = SequencerState::from(initial_status);
+
                 if opts.node_opts.p2p_enabled {
                     init_network(
                         &opts.node_opts,
@@ -154,6 +163,8 @@ impl Command {
                         #[cfg(feature = "l2")]
                         rollup_store.clone(),
                         Some(l2_sequencer_cfg.l1_committer.l1_private_key),
+                        #[cfg(feature = "l2")]
+                        shared_state.clone(),
                     )
                     .await;
                 } else {
@@ -177,6 +188,7 @@ impl Command {
                     blockchain.clone(),
                     l2_sequencer_cfg,
                     sync_manager.await,
+                    shared_state,
                     #[cfg(feature = "metrics")]
                     format!(
                         "http://{}:{}",

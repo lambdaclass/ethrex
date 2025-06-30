@@ -7,6 +7,7 @@ use super::{
 use crate::rlpx::based::NewBatchSealedMessage;
 #[cfg(feature = "l2")]
 use crate::rlpx::based::get_hash_batch_sealed;
+use crate::rlpx::utils::get_pub_key;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -34,8 +35,11 @@ use crate::{
     },
     types::Node,
 };
-use crate::{kademlia::PeerData, rlpx::utils::get_pub_key};
-use ethrex_blockchain::{Blockchain, error::ChainError, fork_choice::apply_fork_choice};
+#[cfg(feature = "l2")]
+use ethrex_blockchain::sequencer_state::SequencerState;
+use ethrex_blockchain::{
+    Blockchain, error::ChainError, fork_choice::apply_fork_choice, sequencer_state::SequencerStatus,
+};
 use ethrex_common::{
     Address, H256, H512,
     types::{Block, MempoolTransaction, Transaction},
@@ -50,7 +54,7 @@ use rand::random;
 use secp256k1::Message as SignedMessage;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey as SigningKeySecp256k1;
-use std::{collections::BTreeMap, fmt::Debug};
+use std::collections::BTreeMap;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -136,6 +140,8 @@ pub(crate) struct RLPxConnection<S> {
     based: bool,
     #[cfg(feature = "l2")]
     committer_key: Option<SigningKeySecp256k1>,
+    #[cfg(feature = "l2")]
+    shared_state: SequencerState,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -152,6 +158,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
         based: bool,
         #[cfg(feature = "l2")] committer_key: Option<SigningKeySecp256k1>,
+        #[cfg(feature = "l2")] shared_state: SequencerState,
     ) -> Self {
         #[cfg(feature = "l2")]
         let latest_batch_on_store = store_rollup.get_latest_batch_number().await.unwrap_or(0);
@@ -186,6 +193,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             based,
             #[cfg(feature = "l2")]
             committer_key,
+            #[cfg(feature = "l2")]
+            shared_state,
         }
     }
 
@@ -225,7 +234,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             return;
         }
 
-        if let Err(e) = self.exchange_hello_messages(table.clone()).await {
+        if let Err(e) = self.exchange_hello_messages().await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
         } else {
@@ -315,10 +324,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    async fn exchange_hello_messages(
-        &mut self,
-        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
-    ) -> Result<(), RLPxError> {
+    async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
         let mut supported_capabilities: Vec<Capability> = [
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
@@ -852,12 +858,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewBlock(req) if peer_supports_based => {
                 if self.should_process_new_block(&req).await? {
                     debug!("adding block to queue: {}", req.block.header.number);
-                    self.blocks_on_queue
-                        .entry(req.block.header.number)
-                        .or_insert_with(|| req.block.clone());
-                    self.broadcast_message(Message::NewBlock(req.clone()))?;
+                    #[cfg(feature = "l2")]
+                    if let SequencerStatus::Following = self.shared_state.status().await {
+                        self.blocks_on_queue
+                            .entry(req.block.header.number)
+                            .or_insert_with(|| req.block.clone());
+                        self.broadcast_message(Message::NewBlock(req.clone()))?;
+                    }
                 }
-                self.process_new_block(&req).await?;
+                #[cfg(feature = "l2")]
+                if let SequencerStatus::Following = self.shared_state.status().await {
+                    // If the sequencer is following, we process the new block immediately
+                    // to keep the state updated.
+                    self.process_new_block(&req).await?;
+                }
             }
             Message::NewBatchSealed(_req) => {
                 #[cfg(feature = "l2")]
@@ -1015,27 +1029,36 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn process_new_block(&mut self, _msg: &NewBlockMessage) -> Result<(), RLPxError> {
         if !self.blockchain.is_synced() {
+            let latest_block_in_storage = self.storage.get_latest_block_number().await?;
+            self.latest_block_added = latest_block_in_storage;
             return Ok(());
         }
         let mut next_block_to_add = self.latest_block_added + 1;
-        let latest_block_in_storage = self.storage.get_latest_block_number().await?;
-        debug!(
-            "next block to add: {}, latest block ins storage: {}, does que block contain the block?: {}",
-            next_block_to_add,
-            latest_block_in_storage,
-            self.blocks_on_queue.contains_key(&next_block_to_add)
-        );
-        next_block_to_add = next_block_to_add.max(latest_block_in_storage + 1);
+        // debug!(
+        //     "next block to add: {}, latest block ins storage: {}, does que block contain the block?: {}",
+        //     next_block_to_add,
+        //     latest_block_in_storage,
+        //     self.blocks_on_queue.contains_key(&next_block_to_add)
+        // );
+        #[cfg(feature = "l2")]
+        {
+            let latest_batch_number = self.store_rollup.get_latest_batch_number().await?;
+            if let Some(latest_batch) = self.store_rollup.get_batch(latest_batch_number).await? {
+                next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
+            }
+        }
+
         // TODO: clean old blocks that were added and then sync to a newer head
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
             // This check is necessary if a connection to another peer already applied the block but this connection
             // did not register that update.
-            if let Ok(Some(_)) = self.storage.get_block_body(next_block_to_add).await {
-                self.latest_block_added = next_block_to_add;
-                next_block_to_add += 1;
-                continue;
-            }
+            // if let Ok(Some(_)) = self.storage.get_block_body(next_block_to_add).await {
+            //     self.latest_block_added = next_block_to_add;
+            //     next_block_to_add += 1;
+            //     continue;
+            // }
             // log_peer_warn(&self.node, "here");
+            dbg!("adding block", block.hash(), block.header.number);
             self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_error(
                     &self.node,
@@ -1044,6 +1067,34 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         block.header.number,
                         block.hash()
                     ),
+                );
+                if let Some(a) = self
+                    .storage
+                    .get_block_header(block.header.number - 1)
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "Failed to get block header for number {}",
+                            block.header.number - 1
+                        )
+                    })
+                {
+                    dbg!(
+                        a.hash(),
+                        a.number,
+                        block.hash(),
+                        block.header.number,
+                        block.header.parent_hash
+                    );
+                } else {
+                    dbg!(
+                        "Block header for number {} not found",
+                        block.header.number - 1
+                    );
+                }
+
+                dbg!(
+                    self.blocks_on_queue
+                        .contains_key(&(block.header.number - 1)),
                 );
             })?;
             let block_hash = block.hash();
@@ -1227,6 +1278,7 @@ mod tests {
     use crate::network::public_key_from_signing_key;
 
     use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    use ethrex_blockchain::sequencer_state::SequencerStatus;
     use ethrex_common::types::batch::Batch;
     use ethrex_common::{
         H160,
@@ -1315,6 +1367,8 @@ mod tests {
             true,
             #[cfg(feature = "l2")]
             committer_key,
+            #[cfg(feature = "l2")]
+            SequencerState::from(SequencerStatus::default()),
         )
         .await;
         connection.capabilities.push(SUPPORTED_BASED_CAPABILITIES);

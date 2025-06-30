@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use crate::based::sequencer_state::SequencerStatus;
+use crate::utils::prover::proving_systems::ProverType;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
-use crate::{based::sequencer_state::SequencerState, utils::prover::proving_systems::ProverType};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::sequencer_state::SequencerState;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -39,17 +39,10 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     sync_manager: SyncManager,
+    shared_state: SequencerState,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    let initial_status = if cfg.based.based {
-        SequencerStatus::default()
-    } else {
-        SequencerStatus::Sequencing
-    };
-
-    info!("Starting Sequencer in {initial_status} mode");
-
-    let shared_state = SequencerState::from(initial_status);
+    info!("Starting Sequencer in {} mode", shared_state.status().await);
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
