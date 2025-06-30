@@ -101,7 +101,7 @@ async fn state_sync_segment(
     // Skip state sync if we are already on healing
     if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
         // Update sync progress (this task is not vital so we can detach it)
-        tokio::task::spawn(StateSyncProgress::end_segment(
+        tokio::task::spawn(StateSyncProgress::update_key(
             state_sync_progress.clone(),
             segment_number,
             start_account_hash,
@@ -205,7 +205,7 @@ async fn state_sync_segment(
         "[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process"
     );
     // Update sync progress (this task is not vital so we can detach it)
-    tokio::task::spawn(StateSyncProgress::end_segment(
+    tokio::task::spawn(StateSyncProgress::update_key(
         state_sync_progress.clone(),
         segment_number,
         start_account_hash,
@@ -232,7 +232,6 @@ struct StateSyncProgressData {
     cycle_start: Instant,
     initial_keys: [H256; STATE_TRIE_SEGMENTS],
     current_keys: [H256; STATE_TRIE_SEGMENTS],
-    ended: [bool; STATE_TRIE_SEGMENTS],
 }
 
 impl StateSyncProgress {
@@ -242,7 +241,6 @@ impl StateSyncProgress {
                 cycle_start,
                 initial_keys: Default::default(),
                 current_keys: Default::default(),
-                ended: Default::default(),
             })),
         }
     }
@@ -253,14 +251,9 @@ impl StateSyncProgress {
     async fn update_key(progress: StateSyncProgress, segment_number: usize, current_key: H256) {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
-    async fn end_segment(progress: StateSyncProgress, segment_number: usize, last_key: H256) {
-        let mut data = progress.data.lock().await;
-        data.ended[segment_number] = true;
-        data.current_keys[segment_number] = last_key;
-    }
 
     // Returns true if the state sync ended
-    async fn show_progress(&self) -> bool {
+    async fn show_progress(&self) {
         // Copy the current data so we don't read while it is being written
         let data = self.data.lock().await.clone();
         // Calculate the total amount of accounts synced
@@ -298,17 +291,17 @@ impl StateSyncProgress {
             completion_rate,
             seconds_to_readable(time_to_finish_secs)
         );
-        data.ended.iter().all(|e| *e)
     }
 }
 
+/// Continously shows the progress of state sync at set intervals
+/// This task is endless, called will need to abort it once it is no longer needed
 async fn show_state_sync_progress(progress: StateSyncProgress) {
     // Rest for one interval so we don't start computing on empty progress
     sleep(SHOW_PROGRESS_INTERVAL_DURATION).await;
     let mut interval = tokio::time::interval(SHOW_PROGRESS_INTERVAL_DURATION);
-    let mut complete = false;
-    while !complete {
+    loop {
         interval.tick().await;
-        complete = progress.show_progress().await
+        progress.show_progress().await
     }
 }
