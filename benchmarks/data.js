@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751314501497,
+  "lastUpdate": 1751314862735,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2399,6 +2399,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209706714945,
             "range": "± 441054948",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3d375136a47d1e74bfe5db3ad5e21fd3481c3e55",
+          "message": "feat(l2): implement ERC20 bridge (#3241)\n\n**Motivation**\n\nWe want to be able to bridge ERC20 tokens.\n\n**Description**\n\nThe inner workings are explained on #3223\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-06-30T19:19:40Z",
+          "tree_id": "7b4fb4915fb461d10b28a55ed7755a3c5f692e1d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3d375136a47d1e74bfe5db3ad5e21fd3481c3e55"
+        },
+        "date": 1751314853812,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211730397039,
+            "range": "± 580301151",
             "unit": "ns/iter"
           }
         ]
