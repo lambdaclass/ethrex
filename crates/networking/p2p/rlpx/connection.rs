@@ -1,8 +1,6 @@
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
-    l2::{
-        l2_connection::{L2ConnState, P2PBasedContext},
-    },
+    l2::l2_connection::{L2ConnState, P2PBasedContext},
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
