@@ -45,8 +45,7 @@ fn get_block_hashes(
     for block_number in first_block..=last_block {
         let Some(header) = store.get_block_header(block_number)? else {
             return Err(RpcErr::Internal(format!(
-                "Failed to retrieve block header for block number {}",
-                block_number
+                "Failed to retrieve block header for block number {block_number}"
             )));
         };
         let hash = header.hash();
