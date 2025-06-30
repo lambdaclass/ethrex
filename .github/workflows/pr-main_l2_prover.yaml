@@ -14,7 +14,6 @@ jobs:
     name: Lint ${{ matrix.backend }} backend
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
       matrix:
         backend: ["sp1", "risc0"]
     steps:
