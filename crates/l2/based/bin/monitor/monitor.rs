@@ -40,29 +40,28 @@ impl<'a> TabsState<'a> {
 
 pub struct GlobalChainStatusTable {
     pub state: TableState,
-    pub items: [(String, String); 8],
+    pub items: Vec<(String, String)>,
     pub on_chain_proposer_address: Address,
-    pub sequencer_registry_address: Address,
+    pub sequencer_registry_address: Option<Address>,
 }
 
 impl GlobalChainStatusTable {
     pub async fn new(
         eth_client: &EthClient,
         rollup_client: &EthClient,
-        on_chain_proposer_address: Address,
-        sequencer_registry_address: Address,
+        opts: &MonitorOptions,
     ) -> Self {
         Self {
             state: TableState::default(),
             items: Self::refresh_items(
                 eth_client,
                 rollup_client,
-                on_chain_proposer_address,
-                sequencer_registry_address,
+                opts.on_chain_proposer_address,
+                opts.sequencer_registry_address,
             )
             .await,
-            on_chain_proposer_address,
-            sequencer_registry_address,
+            on_chain_proposer_address: opts.on_chain_proposer_address,
+            sequencer_registry_address: opts.sequencer_registry_address,
         }
     }
 
@@ -80,10 +79,10 @@ impl GlobalChainStatusTable {
         eth_client: &EthClient,
         rollup_client: &EthClient,
         on_chain_proposer_address: Address,
-        sequencer_registry_address: Address,
-    ) -> [(String, String); 8] {
+        sequencer_registry_address: Option<Address>,
+    ) -> Vec<(String, String)> {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let lead_sequencer = {
+        let lead_sequencer = if let Some(sequencer_registry_address) = sequencer_registry_address {
             let calldata = encode_calldata("leaderSequencer()", &[])
                 .expect("Failed to encode leadSequencer calldata");
 
@@ -99,6 +98,8 @@ impl GlobalChainStatusTable {
                 .unwrap_or_default();
 
             Address::from_slice(&raw_lead_sequencer.as_fixed_bytes()[12..])
+        } else {
+            Address::default()
         };
         let last_committed_batch = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
@@ -108,7 +109,11 @@ impl GlobalChainStatusTable {
             .get_last_verified_batch(on_chain_proposer_address)
             .await
             .expect("Failed to get last verified batch");
-        let current_batch = "NaN"; // TODO: Implement current batch retrieval (should be last known + 1)
+        let current_batch = if sequencer_registry_address.is_some() {
+            "NaN".to_string() // TODO: Implement current batch retrieval (should be last known + 1)
+        } else {
+            (last_committed_batch + 1).to_string()
+        };
         let last_committed_block = "NaN"; // TODO: Implement committed block retrieval
         let last_verified_block = "NaN"; // TODO: Implement verified block retrieval
         let current_block = rollup_client
@@ -117,31 +122,55 @@ impl GlobalChainStatusTable {
             .expect("Failed to get latest L2 block")
             + 1;
 
-        [
-            ("Last Update:".to_string(), last_update),
-            (
-                "Lead Sequencer:".to_string(),
-                format!("{lead_sequencer:#x}"),
-            ),
-            ("Current Batch:".to_string(), current_batch.to_string()),
-            ("Current Block:".to_string(), current_block.to_string()),
-            (
-                "Last Committed Batch:".to_string(),
-                last_committed_batch.to_string(),
-            ),
-            (
-                "Last Committed Block:".to_string(),
-                last_committed_block.to_string(),
-            ),
-            (
-                "Last Verified Batch:".to_string(),
-                last_verified_batch.to_string(),
-            ),
-            (
-                "Last Verified Block:".to_string(),
-                last_verified_block.to_string(),
-            ),
-        ]
+        if sequencer_registry_address.is_some() {
+            vec![
+                ("Last Update:".to_string(), last_update),
+                (
+                    "Lead Sequencer:".to_string(),
+                    format!("{lead_sequencer:#x}"),
+                ),
+                ("Current Batch:".to_string(), current_batch.to_string()),
+                ("Current Block:".to_string(), current_block.to_string()),
+                (
+                    "Last Committed Batch:".to_string(),
+                    last_committed_batch.to_string(),
+                ),
+                (
+                    "Last Committed Block:".to_string(),
+                    last_committed_block.to_string(),
+                ),
+                (
+                    "Last Verified Batch:".to_string(),
+                    last_verified_batch.to_string(),
+                ),
+                (
+                    "Last Verified Block:".to_string(),
+                    last_verified_block.to_string(),
+                ),
+            ]
+        } else {
+            vec![
+                ("Last Update:".to_string(), last_update),
+                ("Current Batch:".to_string(), current_batch.to_string()),
+                ("Current Block:".to_string(), current_block.to_string()),
+                (
+                    "Last Committed Batch:".to_string(),
+                    last_committed_batch.to_string(),
+                ),
+                (
+                    "Last Committed Block:".to_string(),
+                    last_committed_block.to_string(),
+                ),
+                (
+                    "Last Verified Batch:".to_string(),
+                    last_verified_batch.to_string(),
+                ),
+                (
+                    "Last Verified Block:".to_string(),
+                    last_verified_block.to_string(),
+                ),
+            ]
+        }
     }
 }
 
@@ -200,19 +229,15 @@ pub struct CommittedBatchesTable {
 }
 
 impl CommittedBatchesTable {
-    pub async fn new(
-        eth_client: &EthClient,
-        common_bridge_address: Address,
-        on_chain_proposer_address: Address,
-    ) -> Self {
+    pub async fn new(eth_client: &EthClient, opts: &MonitorOptions) -> Self {
         let mut last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(common_bridge_address)
+            .get_last_fetched_l1_block(opts.common_bridge_address)
             .await
             .expect("Failed to get last fetched L1 block")
             .into();
         let items = Self::refresh_items(
             &mut last_l1_block_fetched,
-            on_chain_proposer_address,
+            opts.on_chain_proposer_address,
             eth_client,
         )
         .await;
@@ -220,7 +245,7 @@ impl CommittedBatchesTable {
             state: TableState::default(),
             items,
             last_l1_block_fetched,
-            on_chain_proposer_address,
+            on_chain_proposer_address: opts.on_chain_proposer_address,
         }
     }
 
@@ -503,37 +528,23 @@ pub struct EthrexMonitor<'a> {
 
 impl<'a> EthrexMonitor<'a> {
     pub async fn new(opts: &MonitorOptions) -> Self {
-        let title = if opts.based {
-            "Based Ethrex Monitor"
-        } else {
-            "Ethrex Monitor"
-        };
         let eth_client = EthClient::new(&opts.l1_rpc_url).expect("Failed to create EthClient");
         let rollup_client =
             EthClient::new(&opts.l2_rpc_url).expect("Failed to create RollupClient");
-        let on_chain_proposer_address = opts.on_chain_proposer_address;
-        let common_bridge_address = opts.common_bridge_address;
-        let sequencer_registry_address = opts.sequencer_registry_address.unwrap_or_default();
 
         EthrexMonitor {
-            title,
+            title: if opts.based {
+                "Based Ethrex Monitor"
+            } else {
+                "Ethrex Monitor"
+            },
             should_quit: false,
             tabs: TabsState::new(vec!["Overview"]),
-            global_chain_status: GlobalChainStatusTable::new(
-                &eth_client,
-                &rollup_client,
-                on_chain_proposer_address,
-                sequencer_registry_address,
-            )
-            .await,
+            global_chain_status: GlobalChainStatusTable::new(&eth_client, &rollup_client, opts)
+                .await,
             node_status: NodeStatusTable::new(&rollup_client).await,
             mempool: MempoolTable::new(&rollup_client).await,
-            committed_batches: CommittedBatchesTable::new(
-                &eth_client,
-                common_bridge_address,
-                on_chain_proposer_address,
-            )
-            .await,
+            committed_batches: CommittedBatchesTable::new(&eth_client, opts).await,
             blocks_table: BlocksTable::new(&rollup_client).await,
             eth_client,
             rollup_client,
