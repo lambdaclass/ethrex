@@ -105,4 +105,5 @@ name = "build_block_benchmark"
 harness = false
 
 [build-dependencies]
-vergen = { version = "9.0.0", features = ["rustc"] }
+vergen-git2 = { version = "1.0.7", features = ["rustc"] }
+
