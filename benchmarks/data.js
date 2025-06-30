@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751290387430,
+  "lastUpdate": 1751292197639,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2069,6 +2069,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209395567112,
             "range": "± 463770214",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a51ad76d5dc1ca9ad6bb371037c9894a01af356a",
+          "message": "chore(core): update Rust version to 1.88 (#3382)",
+          "timestamp": "2025-06-30T13:04:49Z",
+          "tree_id": "7b9134c67f0cd8bbceeb6285c954f84e85063274",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a51ad76d5dc1ca9ad6bb371037c9894a01af356a"
+        },
+        "date": 1751292189402,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207103992446,
+            "range": "± 297046142",
             "unit": "ns/iter"
           }
         ]
