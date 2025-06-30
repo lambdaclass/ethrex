@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-30
+
+- Move stack from call frames to vm, reusing it [#3384](https://github.com/lambdaclass/ethrex/pull/3384)
+
 ### 2025-06-27
 
 - Reduce handle_debug runtime cost [#3356](https://github.com/lambdaclass/ethrex/pull/3356)
