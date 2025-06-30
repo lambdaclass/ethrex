@@ -145,7 +145,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 - If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions [here](https://github.com/risc0/risc0-ethereum/tree/main/contracts/script).
 - For a local L1 running with ethrex, we do the following:
    1. clone the risc0-ethereum repo
-   1. edit the `risc0-ethereum/contracts/script/deployment.toml` file by adding
+   1. edit the `risc0-ethereum/contracts/deployment.toml` file by adding
       ```toml
       [chains.ethrex]
       name = "Ethrex local devnet"
