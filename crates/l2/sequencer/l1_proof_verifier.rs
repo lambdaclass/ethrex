@@ -194,17 +194,15 @@ impl L1ProofVerifier {
         mut batch_number: u64,
     ) -> Result<Vec<(u64, BatchProof)>, ProofVerifierError> {
         let mut proofs = Vec::new();
-        loop {
-            let Some(proof) = self
-                .rollup_store
-                .get_proof_by_batch_and_type(batch_number, ProverType::Aligned)
-                .await?
-            else {
-                return Ok(proofs);
-            };
+        while let Some(proof) = self
+            .rollup_store
+            .get_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+            .await?
+        {
             proofs.push((batch_number, proof));
             batch_number += 1;
         }
+        Ok(proofs)
     }
 
     /// Receives an array of proofs.
