@@ -876,6 +876,11 @@ impl<'a> VM<'a> {
         };
 
         self.tracer.exit_context(ctx_result, false)?;
+
+        let mut stack = executed_call_frame.stack;
+        stack.clear();
+        self.stack_pool.push(stack);
+
         Ok(())
     }
 
@@ -918,6 +923,11 @@ impl<'a> VM<'a> {
         };
 
         self.tracer.exit_context(ctx_result, false)?;
+
+        let mut stack = executed_call_frame.stack;
+        stack.clear();
+        self.stack_pool.push(stack);
+
         Ok(())
     }
 
