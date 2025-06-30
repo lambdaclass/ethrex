@@ -5,7 +5,7 @@ pragma solidity =0.8.29;
 /// @author LambdaClass
 /// @notice The L1Messenger contract is a contract that allows L2->L1 communication
 /// It handles message sending to L1, which is used to handle withdrawals.
-interface IL1Messenger {
+interface IL2ToL1Messenger {
     /// @notice A withdrawal to L1 has initiated.
     /// @dev Event emitted when a withdrawal is initiated.
     /// @param senderOnL2 the caller on L2
