@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751314862735,
+  "lastUpdate": 1751315120935,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3649,6 +3649,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006775289340101523,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "damian.ramirez@lambdaclass.com",
+            "name": "Damian Ramirez",
+            "username": "damiramirez"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f32b20294993af9eb01f152ff1861ce17bad180e",
+          "message": "docs(core): add LaTex support (#3398)\n\n**Motivation**\n\nhttps://docs.ethrex.xyz/, isn't rendering LaTex expression \n\n**Description**\n\nThis PR adds the [mdbook-katex](https://github.com/lzanini/mdbook-katex)\npreprocessor to `book.toml` to enable LaTeX rendering.\n\nRun the following command to check how the documentation looks\n\n```bash\nmake docs-deps && make docs-serve\n```\n\n**Before**\n\n![image](https://github.com/user-attachments/assets/393cf3f8-bd4a-455a-bba0-4e46cc4e42f0)\n\n**After**\n\n![image](https://github.com/user-attachments/assets/8e6954ad-9050-4161-ada2-2f3d0e13a804)",
+          "timestamp": "2025-06-30T18:04:46Z",
+          "tree_id": "f67ea03499eb83538e48885b04d35ce1c113c2a4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f32b20294993af9eb01f152ff1861ce17bad180e"
+        },
+        "date": 1751315111768,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006741070707070708,
             "unit": "Mgas/s"
           }
         ]
