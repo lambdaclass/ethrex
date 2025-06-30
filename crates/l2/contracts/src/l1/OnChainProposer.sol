@@ -326,14 +326,14 @@ contract OnChainProposer is
             alignedPublicInputsList.length == alignedMerkleProofsList.length,
             "OnChainProposer: input/proof array length mismatch"
         );
+        require(
+            firstBatchNumber == lastVerifiedBatch + 1,
+            "OnChainProposer: incorrect first batch number"
+        );
 
         uint256 batchNumber = firstBatchNumber;
 
         for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
-            require(
-                batchNumber == lastVerifiedBatch + 1,
-                "OnChainProposer: incorrect batch number"
-            );
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
                 "OnChainProposer: cannot verify an uncommitted batch"
