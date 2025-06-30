@@ -12,9 +12,9 @@ use ethrex_common::Bytes;
 const SERVER_URL: &str = "172.17.0.1:3900";
 const SERVER_URL_DEV: &str = "localhost:3900";
 
-pub async fn get_batch(code_version: String) -> Result<(u64, ProgramInput), String> {
+pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), String> {
     let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
-        code_version: code_version.clone(),
+        commit_hash: commit_hash.clone(),
     })
     .await
     .map_err(|e| format!("Failed to get Response: {e}"))?;
@@ -38,10 +38,10 @@ pub async fn get_batch(code_version: String) -> Result<(u64, ProgramInput), Stri
             _ => Err("No blocks to prove.".to_owned()),
         },
         ProofData::InvalidCodeVersion {
-            code_version: server_code_version,
+            commit_hash: server_code_version,
         } => Err(format!(
             "Invalid code version received. Server code: {}, Prover code: {}",
-            server_code_version, code_version
+            server_code_version, commit_hash
         )),
         _ => Err("Expecting ProofData::Response".to_owned()),
     }

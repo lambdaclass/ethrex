@@ -61,13 +61,13 @@ pub enum ProofData {
     /// 3.
     /// The Client initiates the connection with a BatchRequest.
     /// Asking for the ProverInputData the prover_server considers/needs.
-    /// Code version is used to ensure the client and server are compatible.
-    BatchRequest { code_version: String },
+    /// The commit hash is used to ensure the client and server are compatible.
+    BatchRequest { commit_hash: String },
 
     /// 4.
     /// The Server responds with an InvalidCodeVersion if the code version is not compatible.
     /// The Client should then update its code to match the server's version.
-    InvalidCodeVersion { code_version: String },
+    InvalidCodeVersion { commit_hash: String },
 
     /// 5.
     /// The Server responds with a BatchResponse containing the ProverInputData.
@@ -105,13 +105,13 @@ impl ProofData {
     }
 
     /// Builder function for creating a BatchRequest
-    pub fn batch_request(code_version: String) -> Self {
-        ProofData::BatchRequest { code_version }
+    pub fn batch_request(commit_hash: String) -> Self {
+        ProofData::BatchRequest { commit_hash }
     }
 
     /// Builder function for creating a InvalidCodeVersion
-    pub fn invalid_code_version(code_version: String) -> Self {
-        ProofData::InvalidCodeVersion { code_version }
+    pub fn invalid_code_version(commit_hash: String) -> Self {
+        ProofData::InvalidCodeVersion { commit_hash }
     }
 
     /// Builder function for creating a BatchResponse
@@ -143,8 +143,8 @@ impl ProofData {
     }
 }
 
-pub fn get_code_version() -> String {
-    format!("{}-{}", env!("VERGEN_GIT_BRANCH"), env!("VERGEN_GIT_SHA"))
+pub fn get_commit_hash() -> String {
+    format!("{}", env!("VERGEN_GIT_SHA"))
 }
 
 #[derive(Clone)]
@@ -161,7 +161,7 @@ pub struct ProofCoordinatorState {
     blockchain: Arc<Blockchain>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
-    code_version: String,
+    commit_hash: String,
 }
 
 impl ProofCoordinatorState {
@@ -208,7 +208,7 @@ impl ProofCoordinatorState {
             blockchain,
             validium: config.validium,
             needed_proof_types,
-            code_version: get_code_version(),
+            commit_hash: get_commit_hash(),
         })
     }
 }
@@ -386,8 +386,8 @@ async fn handle_connection(
 
     let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
     match data {
-        Ok(ProofData::BatchRequest { code_version }) => {
-            if let Err(e) = handle_request(state, &mut stream, code_version).await {
+        Ok(ProofData::BatchRequest { commit_hash }) => {
+            if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
                 error!("Failed to handle BatchRequest: {e}");
             }
         }
@@ -422,17 +422,17 @@ async fn handle_connection(
 async fn handle_request(
     state: &ProofCoordinatorState,
     stream: &mut TcpStream,
-    code_version: String,
+    commit_hash: String,
 ) -> Result<(), ProofCoordinatorError> {
     info!("BatchRequest received");
 
-    if code_version != state.code_version {
+    if commit_hash != state.commit_hash {
         error!(
             "Code version mismatch: expected {}, got {}",
-            state.code_version, code_version
+            state.commit_hash, commit_hash
         );
 
-        let response = ProofData::invalid_code_version(state.code_version.clone());
+        let response = ProofData::invalid_code_version(state.commit_hash.clone());
         send_response(stream, &response).await?;
         info!("InvalidCodeVersion sent");
         return Ok(());

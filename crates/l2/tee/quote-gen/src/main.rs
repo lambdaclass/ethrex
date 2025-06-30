@@ -2,7 +2,7 @@ mod sender;
 
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
-use ethrex_l2::sequencer::proof_coordinator::get_code_version;
+use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
@@ -83,8 +83,8 @@ fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {
         .map(Bytes::from)
 }
 
-async fn do_loop(private_key: &SecretKey, code_version: String) -> Result<u64, String> {
-    let (batch_number, input) = get_batch(code_version).await?;
+async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, String> {
+    let (batch_number, input) = get_batch(commit_hash).await?;
     let output = calculate_transition(input)?;
     let signature = sign_eip191(&output, private_key);
     let calldata = ProofCalldata {
@@ -106,14 +106,14 @@ async fn setup(private_key: &SecretKey) -> Result<(), String> {
 #[tokio::main]
 async fn main() {
     let (private_key, _) = generate_keypair(&mut rand::rngs::OsRng);
-    let code_version = get_code_version();
+    let commit_hash = get_commit_hash();
     while let Err(err) = setup(&private_key).await {
         println!("Error sending quote: {}", err);
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
     loop {
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
-        match do_loop(&private_key, code_version.clone()).await {
+        match do_loop(&private_key, commit_hash.clone()).await {
             Ok(batch_number) => println!("Processed batch {}", batch_number),
             Err(err) => println!("Error: {}", err),
         };
