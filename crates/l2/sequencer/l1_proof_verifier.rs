@@ -121,9 +121,6 @@ impl L1ProofVerifier {
             .await?
         {
             Some(verify_tx_hash) => {
-                self.rollup_store
-                    .store_verify_tx_by_batch(batch_to_verify, verify_tx_hash)
-                    .await?;
                 info!(
                     "Batches verified in OnChainProposer, with transaction hash {verify_tx_hash:#x}"
                 );
@@ -187,6 +184,14 @@ impl L1ProofVerifier {
             &self.l1_private_key,
         )
         .await?;
+
+        // Store the verify transaction hash for each batch that was aggregated.
+        for i in 0..aggregated_proofs_count {
+            let batch_number = first_batch_number + i;
+            self.rollup_store
+                .store_verify_tx_by_batch(batch_number, verify_tx_hash)
+                .await?;
+        }
 
         Ok(Some(verify_tx_hash))
     }
