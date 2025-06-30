@@ -1,30 +1,51 @@
 use crate::{
-    errors::{ContextResult, InternalError, TxValidationError, VMError},
+    errors::{ContextResult, InternalError, TxValidationError},
     hooks::{default_hook, hook::Hook},
+    opcodes::Opcode,
     vm::VM,
 };
 
-use ethrex_common::{Address, U256, types::Fork};
+use ethrex_common::{Address, H160, U256, types::Fork};
 
-pub struct L2Hook {
-    pub recipient: Option<Address>,
-}
+pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xff,
+]);
+
+pub struct L2Hook {}
 
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
-        if vm.env.is_privileged {
-            let Some(recipient) = self.recipient else {
-                return Err(InternalError::RecipientNotFoundForPrivilegedTransaction.into());
-            };
-            vm.increase_account_balance(recipient, vm.current_call_frame()?.msg_value)?;
-            vm.current_call_frame_mut()?.msg_value = U256::from(0);
-        }
-
         let sender_address = vm.env.origin;
         let (sender_balance, sender_nonce) = {
             let sender_account = vm.db.get_account(sender_address)?;
             (sender_account.info.balance, sender_account.info.nonce)
         };
+
+        let mut privileged_had_insufficient_balance = false;
+
+        // The bridge is allowed to mint ETH.
+        // This is done by not decreasing it's balance when it's the source of a transfer.
+        // For other privileged transactions, insufficient balance can't cause an error
+        // since they must always be accepted, and an error would mark them as invalid
+        // Instead, we make them revert by inserting a revert2
+        if vm.env.is_privileged && sender_address != COMMON_BRIDGE_L2_ADDRESS {
+            let value = vm.current_call_frame()?.msg_value;
+            if value > sender_balance {
+                privileged_had_insufficient_balance = true;
+                vm.current_call_frame_mut()?.msg_value = U256::zero();
+                vm.current_call_frame_mut()?
+                    .set_code(vec![Opcode::INVALID.into()].into())?;
+            } else {
+                // This should never fail, since we just checked the balance is enough.
+                vm.decrease_account_balance(sender_address, value)
+                    .map_err(|_| {
+                        InternalError::Custom(
+                            "Insufficient funds in privileged transaction".to_string(),
+                        )
+                    })?;
+            }
+        }
 
         if vm.env.config.fork >= Fork::Prague {
             default_hook::validate_min_gas_limit(vm)?;
@@ -100,7 +121,13 @@ impl Hook for L2Hook {
             default_hook::validate_type_4_tx(vm)?;
         }
 
-        default_hook::transfer_value_if_applicable(vm)?;
+        if privileged_had_insufficient_balance {
+            // If the transaction is privileged and had insufficient balance, we already set the bytecode
+            // to INVALID and we need to return here to avoid setting the bytecode again.
+            return Ok(());
+        }
+
+        default_hook::transfer_value(vm)?;
 
         default_hook::set_bytecode_and_code_address(vm)?;
 
@@ -113,12 +140,7 @@ impl Hook for L2Hook {
         ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
         if !ctx_result.is_success() {
-            if vm.env.is_privileged {
-                undo_value_transfer(vm)?;
-            } else {
-                default_hook::undo_value_transfer(vm)?;
-            }
-            vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)?;
+            default_hook::undo_value_transfer(vm)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -135,14 +157,4 @@ impl Hook for L2Hook {
 
         Ok(())
     }
-}
-
-pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
-    if !vm.is_create()? {
-        vm.decrease_account_balance(
-            vm.current_call_frame()?.to,
-            vm.current_call_frame()?.msg_value,
-        )?;
-    }
-    Ok(())
 }
