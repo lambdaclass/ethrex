@@ -86,6 +86,14 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, RollupStoreError>;
 
+    async fn store_block_hash_by_batch(
+        &self,
+        last_block_hash: H256,
+        batch_number: u64,
+    ) -> Result<(), RollupStoreError>;
+
+    async fn get_block_hash_by_batch(&self, batch_number: u64) -> Result<H256, RollupStoreError>;
+
     async fn update_operations_count(
         &self,
         transaction_inc: u64,

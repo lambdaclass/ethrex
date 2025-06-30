@@ -29,10 +29,13 @@ use aligned_sdk::{
 };
 
 // TODO: Remove this import once it's no longer required by the SDK.
-use ethers::signers::{Signer, Wallet};
+use ethers::{
+    signers::{Signer, Wallet},
+    types::H256,
+};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
+    "verifyBatch(uint256,bytes32,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
@@ -199,6 +202,8 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         return Ok(());
     }
 
+    let last_block_hash = state.rollup_store.get_block_hash_by_batch(batch_to_send);
+
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();
     for proof_type in &state.needed_proof_types {
@@ -219,7 +224,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
             send_proof_to_aligned(state, batch_to_send, aligned_proof).await?;
         } else {
-            send_proof_to_contract(state, batch_to_send, proofs).await?;
+            send_proof_to_contract(state, batch_to_send, last_block_hash, proofs).await?;
         }
         state
             .rollup_store
@@ -302,6 +307,7 @@ async fn send_proof_to_aligned(
 pub async fn send_proof_to_contract(
     state: &L1ProofSenderState,
     batch_number: u64,
+    last_block_hash: H256,
     proofs: HashMap<ProverType, BatchProof>,
 ) -> Result<(), ProofSenderError> {
     info!(
@@ -311,6 +317,7 @@ pub async fn send_proof_to_contract(
 
     let calldata_values = [
         &[Value::Uint(U256::from(batch_number))],
+        &[Value::FixedBytes(last_block_hash.0.to_vec().into())],
         proofs
             .get(&ProverType::RISC0)
             .map(|proof| proof.calldata())

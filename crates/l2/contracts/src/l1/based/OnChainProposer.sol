@@ -57,10 +57,10 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
-    /// @notice Commited and verified batches
-    /// @dev This mapping contains the batch hashes and tells if they are commited or verified.
-    /// @dev If the value is false, the batch has been commited but not verified yet.
-    /// @dev If the value is true, the batch has been commited and verified by the proporser.
+    /// @notice Committed and verified batches
+    /// @dev This mapping contains the batch hashes and tells if they are committed or verified.
+    /// @dev If the value is false, the batch has been committed but not verified yet.
+    /// @dev If the value is true, the batch has been committed and verified by the proporser.
     mapping(uint256 => bool) public verifiedBatches;
 
     address public BRIDGE;

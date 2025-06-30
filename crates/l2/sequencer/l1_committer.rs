@@ -469,6 +469,10 @@ async fn send_commitment(
 ) -> Result<H256, CommitterError> {
     let messages_merkle_root = compute_merkle_root(&batch.message_hashes)?;
     let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
+    state
+        .rollup_store
+        .store_block_hash_by_batch(last_block_hash, batch.number)
+        .await?;
 
     let mut calldata_values = vec![
         Value::Uint(U256::from(batch.number)),
