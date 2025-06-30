@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
-use crate::based::sequencer_state::SequencerStatus;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -15,7 +14,7 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use tokio::task::JoinSet;
-use tracing::{error, info};
+use tracing::error;
 use utils::get_needed_proof_types;
 
 pub mod block_producer;
@@ -36,19 +35,10 @@ pub async fn start_l2(
     store: Store,
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
+    shared_state: SequencerState,
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    let initial_status = if cfg.based.based {
-        SequencerStatus::default()
-    } else {
-        SequencerStatus::Sequencing
-    };
-
-    info!("Starting Sequencer in {initial_status} mode");
-
-    let shared_state = SequencerState::from(initial_status);
-
     let Ok(needed_proof_types) = get_needed_proof_types(
         cfg.proof_coordinator.dev_mode,
         cfg.eth.rpc_url.clone(),

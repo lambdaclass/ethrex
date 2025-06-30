@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
+use ethrex_l2::based::sequencer_state::SequencerState;
 use ethrex_p2p::kademlia::KademliaTable;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -31,6 +32,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     rollup_store: StoreRollup,
+    initial_state: SequencerState,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -58,6 +60,7 @@ pub async fn init_rpc_api(
         get_valid_delegation_addresses(l2_opts),
         l2_opts.sponsor_private_key,
         rollup_store,
+        initial_state,
     );
 
     tracker.spawn(rpc_api);

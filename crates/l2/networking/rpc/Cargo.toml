@@ -13,6 +13,8 @@ ethrex-p2p.workspace = true
 ethrex-storage-rollup.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-rpc.workspace = true
+ethrex-l2.workspace = true
+
 
 axum.workspace = true
 tower-http = { version = "0.6.2", features = ["cors"] }

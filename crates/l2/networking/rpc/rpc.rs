@@ -1,3 +1,4 @@
+use crate::based::node_status::NodeStatus;
 use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
@@ -5,6 +6,7 @@ use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
+use ethrex_l2::based::sequencer_state::SequencerState;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -39,6 +41,7 @@ pub struct RpcApiContext {
     pub valid_delegation_addresses: Vec<Address>,
     pub sponsor_pk: SecretKey,
     pub rollup_store: StoreRollup,
+    pub sequencer_state: SequencerState,
 }
 
 pub trait RpcHandler: Sized {
@@ -75,6 +78,7 @@ pub async fn start_api(
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
+    sequencer_state: SequencerState,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -97,6 +101,7 @@ pub async fn start_api(
         valid_delegation_addresses,
         sponsor_pk,
         rollup_store,
+        sequencer_state,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
