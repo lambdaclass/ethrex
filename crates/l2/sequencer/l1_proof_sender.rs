@@ -203,7 +203,9 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         .rollup_store
         .get_block_hash_by_batch(batch_to_send)
         .await?
-        .unwrap();
+        .ok_or(ProofSenderError::InternalError(
+            "Block hash not found in db".to_string(),
+        ))?;
 
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();
