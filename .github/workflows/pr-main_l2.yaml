@@ -6,7 +6,7 @@ on:
     branches: ["**"]
     paths:
       - "crates/l2/**"
-      - "test_data/**"
+      - "fixtures/**"
       - "crates/blockchain/dev/**"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_l2.yaml"
