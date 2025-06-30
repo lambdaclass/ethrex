@@ -86,7 +86,7 @@ pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
-pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
+pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, H256, Arc<Message>)>;
 
 pub(crate) struct RemoteState {
     pub(crate) public_key: H512,
@@ -481,8 +481,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn maybe_wait_for_broadcaster(
-        receiver: &mut Option<broadcast::Receiver<(task::Id, Arc<Message>)>>,
-    ) -> Option<Result<(task::Id, Arc<Message>), RecvError>> {
+        receiver: &mut Option<broadcast::Receiver<(task::Id, H256, Arc<Message>)>>,
+    ) -> Option<Result<(task::Id, H256, Arc<Message>), RecvError>> {
         match receiver {
             None => None,
             Some(rec) => Some(rec.recv().await),
@@ -868,7 +868,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
                 #[cfg(feature = "l2")]
                 if let SequencerStatus::Following = self.shared_state.status().await {
-                    // If the sequencer is following, we process the new block immediately
+                    // If the sequencer is following, we process the new block
                     // to keep the state updated.
                     self.process_new_block(&req).await?;
                 }
@@ -937,9 +937,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn handle_broadcast(
         &mut self,
-        (id, broadcasted_msg): (task::Id, Arc<Message>),
+        (id, node_id, broadcasted_msg): (task::Id, H256, Arc<Message>),
     ) -> Result<(), RLPxError> {
-        if id != tokio::task::id() {
+        if id != tokio::task::id() && node_id != self.node.node_id() {
             match broadcasted_msg.as_ref() {
                 Message::Transactions(txs) => {
                     // TODO(#1131): Avoid cloning this vector.
@@ -1052,12 +1052,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
             // This check is necessary if a connection to another peer already applied the block but this connection
             // did not register that update.
-            // if let Ok(Some(_)) = self.storage.get_block_body(next_block_to_add).await {
-            //     self.latest_block_added = next_block_to_add;
-            //     next_block_to_add += 1;
-            //     continue;
-            // }
-            // log_peer_warn(&self.node, "here");
+            if let Ok(Some(_)) = self.storage.get_block_body(next_block_to_add).await {
+                self.latest_block_added = next_block_to_add;
+                next_block_to_add += 1;
+                continue;
+            }
             self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_error(
                     &self.node,
@@ -1202,11 +1201,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
+        let node_id = self.node.node_id();
         match msg {
             txs_msg @ Message::Transactions(_) => {
                 let txs = Arc::new(txs_msg);
                 let task_id = tokio::task::id();
-                let Ok(_) = self.connection_broadcast_send.send((task_id, txs)) else {
+                let Ok(_) = self.connection_broadcast_send.send((task_id, node_id, txs)) else {
                     let error_message = "Could not broadcast received transactions";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));
@@ -1216,7 +1216,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             block_msg @ Message::NewBlock(_) => {
                 let block = Arc::new(block_msg);
                 let task_id = tokio::task::id();
-                let Ok(_) = self.connection_broadcast_send.send((task_id, block)) else {
+                let Ok(_) = self
+                    .connection_broadcast_send
+                    .send((task_id, node_id, block))
+                else {
                     let error_message = "Could not broadcast received block";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));
@@ -1226,7 +1229,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             batch_msg @ Message::NewBatchSealed(_) => {
                 let batch = Arc::new(batch_msg);
                 let task_id = tokio::task::id();
-                let Ok(_) = self.connection_broadcast_send.send((task_id, batch)) else {
+                let Ok(_) = self
+                    .connection_broadcast_send
+                    .send((task_id, node_id, batch))
+                else {
                     let error_message = "Could not broadcast received batch";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));

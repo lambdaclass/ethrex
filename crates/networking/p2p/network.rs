@@ -78,10 +78,10 @@ impl P2PContext {
         committer_key: Option<SecretKey>,
         #[cfg(feature = "l2")] shared_state: SequencerState,
     ) -> Self {
-        let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
-            tokio::task::Id,
-            Arc<RLPxMessage>,
-        )>(MAX_MESSAGES_TO_BROADCAST);
+        let (channel_broadcast_send_end, _) =
+            tokio::sync::broadcast::channel::<(tokio::task::Id, H256, Arc<RLPxMessage>)>(
+                MAX_MESSAGES_TO_BROADCAST,
+            );
 
         P2PContext {
             local_node,
