@@ -923,7 +923,7 @@ async fn test_call_to_contract_with_deposit(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         caller_address,
         Some(0),
-        Some(21000 * 5),
+        Some(21000 * 10),
         L1ToL2TransactionData::new(
             deployed_contract_address,
             21000 * 5,
