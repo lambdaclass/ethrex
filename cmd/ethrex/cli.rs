@@ -313,7 +313,7 @@ impl Subcommand {
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
-                println!("{:#x}", state_root);
+                println!("{state_root:#x}");
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -396,15 +396,13 @@ pub async fn import_blocks(
             .add_block(block)
             .await
             .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
-    }
 
-    _ = store
-        .mark_chain_as_canonical(&blocks)
-        .await
-        .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
+        // Set executed block as canonical
+        store
+            .set_canonical_block(number, hash)
+            .await
+            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error))?;
 
-    // Make head canonical and label all special blocks correctly.
-    if let Some(block) = blocks.last() {
         store
             .update_finalized_block_number(block.header.number)
             .await?;
