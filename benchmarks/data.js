@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751306449665,
+  "lastUpdate": 1751306807413,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2309,6 +2309,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209701210784,
             "range": "± 390615335",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6e15e05062457168e668c3bd58f9c7cc4017f3f4",
+          "message": "docs(l2): document ETH and ERC20 deposits/withdrawals (#3223)\n\n**Description**\n\nThis PR updates the withdrawals documentation with native ERC20\nwithdrawals and adds documentation for L2 deposits.\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-06-30T17:06:43Z",
+          "tree_id": "55ba012f1c1de7304da9e0753767a034e0176a79",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6e15e05062457168e668c3bd58f9c7cc4017f3f4"
+        },
+        "date": 1751306798098,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209338782689,
+            "range": "± 392301260",
             "unit": "ns/iter"
           }
         ]
