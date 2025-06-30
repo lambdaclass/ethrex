@@ -261,7 +261,7 @@ async fn test_erc20_roundtrip(
         .expect("Failed to get address");
 
     let init_code_l1 = hex::decode(std::fs::read(
-        "../../test_data/ERC20/ERC20.bin/TestToken.bin",
+        "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
     )?)?;
     let token_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
 
