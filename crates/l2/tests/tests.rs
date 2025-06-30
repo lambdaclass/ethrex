@@ -104,6 +104,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    test_gas_burning(&eth_client).await?;
+
     test_deposit_with_contract_call(&proposer_client, &eth_client).await?;
 
     test_deposit_with_contract_call_revert(&proposer_client, &eth_client).await?;
@@ -428,6 +430,33 @@ async fn test_transfer_with_deposit(
         receiver_balance_after,
         receiver_balance_before + transfer_value
     );
+    Ok(())
+}
+
+async fn test_gas_burning(eth_client: &EthClient) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Transferring funds on L2 through a deposit");
+    let rich_private_key = l1_rich_wallet_private_key();
+    let rich_address = get_address_from_secret_key(&rich_private_key)?;
+    let l2_gas_limit = 2_000_000;
+    let l1_extra_gas_limit = 400_000;
+
+    let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
+        rich_address,
+        Some(0),
+        Some(l2_gas_limit + l1_extra_gas_limit),
+        L1ToL2TransactionData::new(rich_address, l2_gas_limit, U256::zero(), Bytes::new()),
+        &rich_private_key,
+        common_bridge_address(),
+        eth_client,
+    )
+    .await?;
+
+    println!("Waiting for L1 to L2 transaction receipt on L1");
+
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, eth_client, 5).await?;
+
+    assert!(l1_to_l2_tx_receipt.tx_info.gas_used > l2_gas_limit);
+    assert!(l1_to_l2_tx_receipt.tx_info.gas_used < l2_gas_limit + l1_extra_gas_limit);
     Ok(())
 }
 
