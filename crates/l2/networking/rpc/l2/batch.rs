@@ -20,9 +20,20 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
                 "Expected 2 params".to_owned(),
             ))?;
         };
-        Ok(GetBatchByBatchNumberRequest {
-            batch_number: serde_json::from_value(params[0].clone())?,
-        })
+        // Parse BatchNumber
+        let hex_str = serde_json::from_value::<String>(params[0].clone())
+            .map_err(|e| ethrex_rpc::RpcErr::BadParams(e.to_string()))?;
+
+        // Check that the BatchNumber is 0x prefixed
+        let hex_str = hex_str
+            .strip_prefix("0x")
+            .ok_or(ethrex_rpc::RpcErr::BadHexFormat(0))?;
+
+        // Parse hex string
+        let batch_number =
+            u64::from_str_radix(hex_str, 16).map_err(|_| ethrex_rpc::RpcErr::BadHexFormat(0))?;
+
+        Ok(GetBatchByBatchNumberRequest { batch_number })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
