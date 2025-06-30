@@ -23,7 +23,7 @@ impl IsMerkleTreeBackend for TreeData {
     ///
     /// Source: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/1a87de932664d9b905612f4d9d1655fd27a41722/contracts/utils/cryptography/Hashes.sol#L17-L19
     ///
-    /// Compliant with OpenZeppelin's `processProofCalldata` function from MerkleProof.sol.
+    /// Compliant with OpenZeppelin's `verify` function from MerkleProof.sol.
     ///
     /// See: https://docs.openzeppelin.com/contracts/5.x/api/utils#MerkleProof
     ///
