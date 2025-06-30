@@ -8,11 +8,14 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_common::{
+    calldata::Value,
     deposits::compute_deposit_logs_hash,
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
     state_diff::prepare_state_diff,
 };
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rpc::clients::{Overrides, eth::errors::CalldataEncodeError};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
@@ -57,6 +60,8 @@ pub enum BlockFetcherError {
     DepositError(#[from] ethrex_l2_common::deposits::DepositError),
     #[error("Spawned GenServer Error")]
     GenServerError(spawned_concurrency::GenServerError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataDecodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Clone)]
@@ -223,9 +228,13 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
 
             let batch = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 
-            store_batch(state, &batch).await?;
+            if verify_batch_is_safe(&batch, &state.eth_client, state.on_chain_proposer_address)
+                .await?
+            {
+                store_batch(state, &batch).await?;
 
-            seal_batch(state, &batch, batch_number).await?;
+                seal_batch(state, &batch, batch_number).await?;
+            }
         }
     }
 
@@ -540,4 +549,30 @@ async fn get_batch(
         message_hashes: get_batch_message_hashes(state, batch).await?,
         blobs_bundle,
     })
+}
+
+async fn verify_batch_is_safe(
+    batch: &Vec<Block>,
+    eth_client: &EthClient,
+    on_chain_proposer_address: Address,
+) -> Result<bool, BlockFetcherError> {
+    let Some(batch_last_block) = batch.last() else {
+        return Ok(false);
+    };
+    let batch_last_block_hash = batch_last_block.hash();
+
+    let values = vec![Value::FixedBytes(batch_last_block_hash.0.to_vec().into())];
+    let calldata = encode_calldata("verifiedBatches(uint256)", &values)?;
+
+    let result = eth_client
+        .call(
+            on_chain_proposer_address,
+            calldata.into(),
+            Overrides::default(),
+        )
+        .await?;
+
+    info!("result {result}");
+
+    Ok(false)
 }
