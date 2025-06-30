@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
 

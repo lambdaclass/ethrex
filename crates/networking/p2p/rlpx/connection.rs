@@ -1,13 +1,11 @@
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
     l2::{
-        PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
         l2_connection::{L2ConnState, P2PBasedContext},
     },
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
-use crate::rlpx::l2::l2_connection::L2ConnectedState;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -39,11 +37,9 @@ use ethrex_common::{
     types::{MempoolTransaction, Transaction},
 };
 use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use rand::random;
-use std::collections::BTreeMap;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
