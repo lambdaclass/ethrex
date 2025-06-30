@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use ethrex_common::Bytes;
-use ethrex_l2_sdk::calldata::{Value, encode_tuple};
+use ethrex_l2_sdk::calldata::encode_tuple;
 use ethrex_l2_sdk::get_address_from_secret_key;
 use zkvm_interface::io::ProgramInput;
 
@@ -13,9 +13,10 @@ use secp256k1::{Message, SecretKey, generate_keypair, rand};
 mod sender;
 use sender::{get_batch, submit_proof, submit_quote};
 
-use ethrex_l2::{
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProofCalldata, ProverType},
     sequencer::proof_coordinator::get_code_version,
-    utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType},
 };
 
 const POLL_INTERVAL_MS: u64 = 5000;
