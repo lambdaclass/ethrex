@@ -798,10 +798,7 @@ pub(super) mod tests {
             blockchain,
             broadcast,
             client_version: "ethrex/test".to_string(),
-            based: false,
-            #[cfg(feature = "l2")]
-            store_rollup: StoreRollup::default(),
-            committer_key: None,
+            based_context: None
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;

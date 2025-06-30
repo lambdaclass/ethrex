@@ -484,6 +484,10 @@ mod tests {
             blockchain,
             "test-client/0.1.0".to_string(),
             broadcast,
+            Some(P2PBasedContext {
+                store_rollup: StoreRollup::default(),
+                committer_key: Arc::new(committer_key)
+            })
         );
         connection
             .capabilities
