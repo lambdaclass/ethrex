@@ -26,7 +26,11 @@ where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable + Eq + std::hash::Hash,
 {
-    pub fn new(db: Arc<Database>, fixed_key: T::SeekKey, dirty_nodes: Arc<RwLock<HashMap<(SK, NodeHash), Vec<u8>>>>) -> Self {
+    pub fn new(
+        db: Arc<Database>,
+        fixed_key: T::SeekKey,
+        dirty_nodes: Arc<RwLock<HashMap<(SK, NodeHash), Vec<u8>>>>,
+    ) -> Self {
         Self {
             db,
             fixed_key,
@@ -79,7 +83,11 @@ mod test {
     #[test]
     fn simple_addition() {
         let inner_db = new_db::<Nodes>();
-        let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32], Arc::new(RwLock::new(HashMap::new())));
+        let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(
+            inner_db,
+            [5; 32],
+            Arc::new(RwLock::new(HashMap::new())),
+        );
         let key = NodeHash::from_encoded_raw(b"hello");
         assert_eq!(db.get(key).unwrap(), None);
         db.put(key, "value".into()).unwrap();
@@ -89,8 +97,16 @@ mod test {
     #[test]
     fn different_keys() {
         let inner_db = new_db::<Nodes>();
-        let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32], Arc::new(RwLock::new(HashMap::new())));
-        let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32], Arc::new(RwLock::new(HashMap::new())));
+        let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(
+            inner_db.clone(),
+            [5; 32],
+            Arc::new(RwLock::new(HashMap::new())),
+        );
+        let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(
+            inner_db,
+            [7; 32],
+            Arc::new(RwLock::new(HashMap::new())),
+        );
         let key = NodeHash::from_encoded_raw(b"hello");
         db_a.put(key, "hello!".into()).unwrap();
         db_b.put(key, "go away!".into()).unwrap();

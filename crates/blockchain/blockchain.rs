@@ -7,7 +7,6 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ethrex_storage::{TrieUpdates, TrieWriter};
 use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
@@ -26,6 +25,7 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
+use ethrex_storage::{TrieUpdates, TrieWriter};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
@@ -355,13 +355,12 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-
         // Convert H256 storage roots to [u8; 32]
         let storage_updates = accounts_updates
             .into_iter()
             .map(|(root, updates)| (root.0, updates))
             .collect();
-            
+
         let trie_updates = TrieUpdates {
             account_updates: state_updates,
             storage_updates,
@@ -535,7 +534,7 @@ impl Blockchain {
             .into_iter()
             .map(|(root, updates)| (root.0, updates))
             .collect();
-            
+
         let trie_updates = TrieUpdates {
             account_updates,
             storage_updates: storage_updates_converted,

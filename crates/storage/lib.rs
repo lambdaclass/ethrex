@@ -5,11 +5,12 @@ mod rlp;
 mod store;
 mod store_db;
 mod trie_db;
-mod utils;
 pub mod trie_writer;
+mod utils;
 
 pub mod error;
 pub use store::{
-    EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch, TrieUpdates, hash_address, hash_key,
+    EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, TrieUpdates, UpdateBatch,
+    hash_address, hash_key,
 };
 pub use trie_writer::TrieWriter;

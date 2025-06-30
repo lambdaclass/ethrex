@@ -1,8 +1,7 @@
-use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 use crate::rlp::{
     AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP, TriePathsRLP,
 };
-use crate::store::{TrieUpdates, MAX_SNAPSHOT_READS};
+use crate::store::{MAX_SNAPSHOT_READS, TrieUpdates};
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use crate::{
     error::StoreError,
@@ -24,6 +23,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
+use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;

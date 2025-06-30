@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use crate::store::TrieUpdates;
 use crate::UpdateBatch;
+use crate::store::TrieUpdates;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 
@@ -264,13 +264,17 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: H256,
         storage_root: H256,
-        dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
+        dirty_storage_nodes: Arc<RwLock<HashMap<([u8; 32], NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
-    fn open_state_trie(&self, state_root: H256, dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError>;
+    fn open_state_trie(
+        &self,
+        state_root: H256,
+        dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>,
+    ) -> Result<Trie, StoreError>;
 
     /// Set the canonical block hash for a given block number.
     async fn set_canonical_block(

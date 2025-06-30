@@ -1,7 +1,4 @@
-use tokio::{
-    sync::mpsc,
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{Store, TrieUpdates};
 
@@ -18,12 +15,29 @@ impl TrieWriter {
     pub fn new(store: Store) -> Self {
         let (sender, receiver) = mpsc::channel(WRITER_CHANNEL_SIZE);
         let handle = tokio::spawn(Self::writer_loop(store.clone(), receiver));
-        Self { sender, handle, store }
+        Self {
+            sender,
+            handle,
+            store,
+        }
     }
 
     pub async fn writer_loop(store: Store, mut receiver: mpsc::Receiver<TrieUpdates>) {
+        let mut update_batch = Vec::with_capacity(1024);
         while let Some(update) = receiver.recv().await {
-            store.store_trie_updates(update).await.unwrap();
+            update_batch.push(update);
+            if update_batch.len() == 1024 {
+                let mut update = update_batch.drain(..1).next().unwrap();
+                for update_item in update_batch.drain(..) {
+                    update
+                        .account_updates
+                        .extend_from_slice(&update_item.account_updates);
+                    update
+                        .storage_updates
+                        .extend_from_slice(&update_item.storage_updates);
+                }
+                store.store_trie_updates(update).await.unwrap();
+            }
         }
     }
 
@@ -39,4 +53,3 @@ impl TrieWriter {
         &self.handle
     }
 }
-

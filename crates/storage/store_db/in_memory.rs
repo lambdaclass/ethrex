@@ -1,5 +1,8 @@
 use crate::{
-    api::StoreEngine, error::StoreError, store::{TrieUpdates, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS}, UpdateBatch
+    UpdateBatch,
+    api::StoreEngine,
+    error::StoreError,
+    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, TrieUpdates},
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -435,7 +438,7 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
-        _dirty_storage_nodes: Arc<RwLock<HashMap<(H256, NodeHash), Vec<u8>>>>,
+        _dirty_storage_nodes: Arc<RwLock<HashMap<([u8; 32], NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError> {
         let mut store = self.inner()?;
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
@@ -443,7 +446,11 @@ impl StoreEngine for Store {
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256, _dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>) -> Result<Trie, StoreError> {
+    fn open_state_trie(
+        &self,
+        state_root: H256,
+        _dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>,
+    ) -> Result<Trie, StoreError> {
         let trie_backend = self.inner()?.state_trie_nodes.clone();
         let db = Box::new(InMemoryTrieDB::new(trie_backend));
         Ok(Trie::open(db, state_root))
