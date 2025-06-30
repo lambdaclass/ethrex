@@ -9,6 +9,7 @@ use serde_with::{DeserializeAs, SerializeAs, serde_as};
 use ethrex_common::types::blobs_bundle;
 
 /// Private input variables passed into the zkVM execution program.
+#[derive(Serialize, Deserialize)]
 #[serde_as]
 pub struct ProgramInput {
     /// blocks to execute
@@ -27,6 +28,13 @@ pub struct ProgramInput {
     pub blob_proof: blobs_bundle::Proof,
 }
 
+/// JSON serializable program input. This struct is forced to serialize into JSON format.
+///
+// This is necessary because SP1 uses bincode for serialization into zkVM, which does not play well with
+// serde attributes like #[serde(skip)], failing to deserialize with an unrelated error message (this is an old bug).
+// As a patch we force serialization into JSON first (which is a format that works well with these attributes).
+pub struct JSONProgramInput(pub ProgramInput);
+
 impl Default for ProgramInput {
     fn default() -> Self {
         Self {
@@ -44,23 +52,24 @@ impl Default for ProgramInput {
 // This is necessary because SP1 uses bincode for serialization into zkVM, which does not play well with
 // serde attributes like #[serde(skip)], failing to deserialize with an unrelated error message (this is an old bug).
 // As a patch we force serialization into JSON first (which is a format that works well with these attributes).
-impl Serialize for ProgramInput {
+impl Serialize for JSONProgramInput {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         let mut encoded = Vec::new();
-        serde_json::to_writer(&mut encoded, &self).map_err(serde::ser::Error::custom)?;
+        serde_json::to_writer(&mut encoded, &self.0).map_err(serde::ser::Error::custom)?;
         serde_with::Bytes::serialize_as(&encoded, serializer)
     }
 }
-impl<'de> Deserialize<'de> for ProgramInput {
+impl<'de> Deserialize<'de> for JSONProgramInput {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let encoded: Vec<u8> = serde_with::Bytes::deserialize_as(deserializer)?;
-        serde_json::from_reader(&encoded[..]).map_err(serde::de::Error::custom)
+        let decoded: ProgramInput = serde_json::from_reader(&encoded[..]).map_err(serde::de::Error::custom)?;
+        Ok(JSONProgramInput(decoded))
     }
 }
 
