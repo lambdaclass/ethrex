@@ -1,8 +1,10 @@
-use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
-use ethrex_l2_sdk::calldata::Value;
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+};
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
-    Digest, ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
+    ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
 use tracing::info;

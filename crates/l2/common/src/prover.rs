@@ -1,4 +1,3 @@
-use ethrex_common::H256;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 
@@ -44,10 +43,7 @@ impl ProverType {
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
-                vec![
-                    Value::Bytes(vec![].into()),
-                    Value::Bytes(vec![].into()),
-                ]
+                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::SP1 => {
                 vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
