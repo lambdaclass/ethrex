@@ -4,7 +4,9 @@ use bls12_381::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{Address, H160, H256, U256, serde_utils::bool, types::Fork};
+use ethrex_common::{
+    Address, H160, H256, U256, serde_utils::bool, types::Fork, utils::u256_from_big_endian,
+};
 use keccak_hash::keccak256;
 use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
@@ -233,37 +235,36 @@ pub fn is_precompile(address: &Address, fork: Fork) -> bool {
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
-    gas_used: &mut u64,
-    gas_limit: u64,
+    gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
     let result = match address {
-        address if address == ECRECOVER_ADDRESS => ecrecover(calldata, gas_limit, gas_used)?,
-        address if address == IDENTITY_ADDRESS => identity(calldata, gas_limit, gas_used)?,
-        address if address == SHA2_256_ADDRESS => sha2_256(calldata, gas_limit, gas_used)?,
-        address if address == RIPEMD_160_ADDRESS => ripemd_160(calldata, gas_limit, gas_used)?,
-        address if address == MODEXP_ADDRESS => modexp(calldata, gas_limit, gas_used)?,
-        address if address == ECADD_ADDRESS => ecadd(calldata, gas_limit, gas_used)?,
-        address if address == ECMUL_ADDRESS => ecmul(calldata, gas_limit, gas_used)?,
-        address if address == ECPAIRING_ADDRESS => ecpairing(calldata, gas_limit, gas_used)?,
-        address if address == BLAKE2F_ADDRESS => blake2f(calldata, gas_limit, gas_used)?,
+        address if address == ECRECOVER_ADDRESS => ecrecover(calldata, gas_remaining)?,
+        address if address == IDENTITY_ADDRESS => identity(calldata, gas_remaining)?,
+        address if address == SHA2_256_ADDRESS => sha2_256(calldata, gas_remaining)?,
+        address if address == RIPEMD_160_ADDRESS => ripemd_160(calldata, gas_remaining)?,
+        address if address == MODEXP_ADDRESS => modexp(calldata, gas_remaining)?,
+        address if address == ECADD_ADDRESS => ecadd(calldata, gas_remaining)?,
+        address if address == ECMUL_ADDRESS => ecmul(calldata, gas_remaining)?,
+        address if address == ECPAIRING_ADDRESS => ecpairing(calldata, gas_remaining)?,
+        address if address == BLAKE2F_ADDRESS => blake2f(calldata, gas_remaining)?,
         address if address == POINT_EVALUATION_ADDRESS => {
-            point_evaluation(calldata, gas_limit, gas_used)?
+            point_evaluation(calldata, gas_remaining)?
         }
-        address if address == BLS12_G1ADD_ADDRESS => bls12_g1add(calldata, gas_limit, gas_used)?,
-        address if address == BLS12_G1MSM_ADDRESS => bls12_g1msm(calldata, gas_limit, gas_used)?,
-        address if address == BLS12_G2ADD_ADDRESS => bls12_g2add(calldata, gas_limit, gas_used)?,
-        address if address == BLS12_G2MSM_ADDRESS => bls12_g2msm(calldata, gas_limit, gas_used)?,
+        address if address == BLS12_G1ADD_ADDRESS => bls12_g1add(calldata, gas_remaining)?,
+        address if address == BLS12_G1MSM_ADDRESS => bls12_g1msm(calldata, gas_remaining)?,
+        address if address == BLS12_G2ADD_ADDRESS => bls12_g2add(calldata, gas_remaining)?,
+        address if address == BLS12_G2MSM_ADDRESS => bls12_g2msm(calldata, gas_remaining)?,
         address if address == BLS12_PAIRING_CHECK_ADDRESS => {
-            bls12_pairing_check(calldata, gas_limit, gas_used)?
+            bls12_pairing_check(calldata, gas_remaining)?
         }
         address if address == BLS12_MAP_FP_TO_G1_ADDRESS => {
-            bls12_map_fp_to_g1(calldata, gas_limit, gas_used)?
+            bls12_map_fp_to_g1(calldata, gas_remaining)?
         }
         address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
-            bls12_map_fp2_tp_g2(calldata, gas_limit, gas_used)?
+            bls12_map_fp2_tp_g2(calldata, gas_remaining)?
         }
         #[cfg(feature = "l2")]
-        address if address == P256VERIFY_ADDRESS => p_256_verify(calldata, gas_limit, gas_used)?,
+        address if address == P256VERIFY_ADDRESS => p_256_verify(calldata, gas_remaining)?,
         _ => return Err(InternalError::InvalidPrecompileAddress.into()),
     };
 
@@ -271,19 +272,10 @@ pub fn execute_precompile(
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.
-fn increase_precompile_consumed_gas(
-    gas_limit: u64,
-    gas_cost: u64,
-    gas_used: &mut u64,
-) -> Result<(), VMError> {
-    *gas_used = gas_used
-        .checked_add(gas_cost)
-        .ok_or(PrecompileError::GasConsumedOverflow)?;
-
-    if *gas_used > gas_limit {
-        return Err(PrecompileError::NotEnoughGas.into());
-    }
-
+fn increase_precompile_consumed_gas(gas_cost: u64, gas_remaining: &mut u64) -> Result<(), VMError> {
+    *gas_remaining = gas_remaining
+        .checked_sub(gas_cost)
+        .ok_or(PrecompileError::NotEnoughGas)?;
     Ok(())
 }
 
@@ -299,10 +291,10 @@ fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
 
 /// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
 /// Given a hash, a Signature and a recovery Id, returns the public key recovered by secp256k1
-pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     let gas_cost = ECRECOVER_COST;
 
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128);
@@ -313,7 +305,7 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
         return Ok(Bytes::new());
     };
 
-    let v = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
 
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
     if !(v == U256::from(27) || v == U256::from(28)) {
@@ -350,19 +342,19 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
 }
 
 /// Returns the calldata received
-pub fn identity(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn identity(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::identity(calldata.len())?;
 
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     Ok(calldata.clone())
 }
 
 /// Returns the calldata hashed by sha2-256 algorithm
-pub fn sha2_256(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::sha2_256(calldata.len())?;
 
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let result = sha2::Sha256::digest(calldata).to_vec();
 
@@ -370,10 +362,10 @@ pub fn sha2_256(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<
 }
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
-pub fn ripemd_160(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn ripemd_160(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::ripemd_160(calldata.len())?;
 
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut hasher = ripemd::Ripemd160::new();
     hasher.update(calldata);
@@ -386,23 +378,23 @@ pub fn ripemd_160(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resul
 }
 
 /// Returns the result of the module-exponentiation operation
-pub fn modexp(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    let base_size = U256::from_big_endian(
+    let base_size = u256_from_big_endian(
         calldata
             .get(0..32)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    let exponent_size = U256::from_big_endian(
+    let exponent_size = u256_from_big_endian(
         calldata
             .get(32..64)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    let modulus_size = U256::from_big_endian(
+    let modulus_size = u256_from_big_endian(
         calldata
             .get(64..96)
             .ok_or(PrecompileError::ParsingInputError)?,
@@ -410,7 +402,7 @@ pub fn modexp(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<By
 
     if base_size == U256::zero() && modulus_size == U256::zero() {
         // On Berlin or newer there is a floor cost for the modexp precompile
-        increase_precompile_consumed_gas(gas_limit, MODEXP_STATIC_COST, gas_used)?;
+        increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
 
         return Ok(Bytes::new());
     }
@@ -448,7 +440,7 @@ pub fn modexp(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<By
 
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size)?;
 
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let result = mod_exp(base, exponent, modulus);
 
@@ -511,11 +503,11 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
 }
 
 /// Makes a point addition on the elliptic curve 'alt_bn128'
-pub fn ecadd(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128);
 
-    increase_precompile_consumed_gas(gas_limit, ECADD_COST, gas_used)?;
+    increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
     let first_point_x = calldata
         .get(0..32)
         .ok_or(PrecompileError::ParsingInputError)?;
@@ -534,10 +526,10 @@ pub fn ecadd(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Byt
 
     // If points are zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let first_point_is_zero = U256::from_big_endian(first_point_x).is_zero()
-        && U256::from_big_endian(first_point_y).is_zero();
-    let second_point_is_zero = U256::from_big_endian(second_point_x).is_zero()
-        && U256::from_big_endian(second_point_y).is_zero();
+    let first_point_is_zero = u256_from_big_endian(first_point_x).is_zero()
+        && u256_from_big_endian(first_point_y).is_zero();
+    let second_point_is_zero = u256_from_big_endian(second_point_x).is_zero()
+        && u256_from_big_endian(second_point_y).is_zero();
 
     let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
         .map_err(|_| PrecompileError::ParsingInputError)?;
@@ -575,8 +567,8 @@ pub fn ecadd(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Byt
             .map_err(|_| PrecompileError::ParsingInputError)?;
         let sum = first_point.operate_with(&second_point).to_affine();
 
-        if U256::from_big_endian(&sum.x().to_bytes_be()) == U256::zero()
-            || U256::from_big_endian(&sum.y().to_bytes_be()) == U256::zero()
+        if u256_from_big_endian(&sum.x().to_bytes_be()) == U256::zero()
+            || u256_from_big_endian(&sum.y().to_bytes_be()) == U256::zero()
         {
             Ok(Bytes::from([0u8; 64].to_vec()))
         } else {
@@ -587,11 +579,11 @@ pub fn ecadd(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Byt
 }
 
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
-pub fn ecmul(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    increase_precompile_consumed_gas(gas_limit, ECMUL_COST, gas_used)?;
+    increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
     let point_x = calldata
         .get(0..32)
@@ -610,7 +602,7 @@ pub fn ecmul(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Byt
     // If point is zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
     let point_is_zero =
-        U256::from_big_endian(point_x).is_zero() && U256::from_big_endian(point_y).is_zero();
+        u256_from_big_endian(point_x).is_zero() && u256_from_big_endian(point_y).is_zero();
     if point_is_zero {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
@@ -628,8 +620,8 @@ pub fn ecmul(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Byt
         Ok(Bytes::from([0u8; 64].to_vec()))
     } else {
         let mul = point.operate_with_self(scalar).to_affine();
-        if U256::from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
-            || U256::from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
+        if u256_from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
+            || u256_from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
         {
             Ok(Bytes::from([0u8; 64].to_vec()))
         } else {
@@ -657,8 +649,8 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (U256::from_big_endian(first_point_x) == U256::zero())
-        ^ (U256::from_big_endian(first_point_y) == U256::zero())
+    if (u256_from_big_endian(first_point_x) == U256::zero())
+        ^ (u256_from_big_endian(first_point_y) == U256::zero())
     {
         return Err(PrecompileError::DefaultError.into());
     }
@@ -685,8 +677,8 @@ fn parse_second_point_coordinates(
     let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
-        ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
+    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
+        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
     {
         return Err(PrecompileError::DefaultError.into());
     }
@@ -695,17 +687,17 @@ fn parse_second_point_coordinates(
     let second_point_y_second_part = input_data.get(128..160).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
-        ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
+    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
+        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
     {
         return Err(PrecompileError::DefaultError.into());
     }
 
     // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-    if U256::from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-        || U256::from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-        || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-        || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
+    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
     {
         return Err(PrecompileError::DefaultError.into());
     }
@@ -787,7 +779,7 @@ fn handle_pairing_from_coordinates(
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
-pub fn ecpairing(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
         return Err(PrecompileError::ParsingInputError.into());
@@ -797,7 +789,7 @@ pub fn ecpairing(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
 
     // Consume gas
     let gas_cost = gas_cost::ecpairing(inputs_amount)?;
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut mul: FieldElement<Degree12ExtensionField> = QuadraticExtensionFieldElement::one();
     for input_index in 0..inputs_amount {
@@ -1017,12 +1009,12 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
 }
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
-pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != 213 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::Slicing)?);
+    let rounds = u256_from_big_endian(calldata.get(0..4).ok_or(InternalError::Slicing)?);
 
     let rounds: usize = rounds
         .try_into()
@@ -1030,7 +1022,7 @@ pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<B
 
     let gas_cost =
         u64::try_from(rounds).map_err(|_| InternalError::TypeConversion)? * BLAKE2F_ROUND_COST;
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let (h, m, t) = parse_slice_arguments(calldata)?;
 
@@ -1094,18 +1086,14 @@ const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
 ];
 
 /// Makes verifications on the received point, proof and commitment, if true returns a constant value
-fn point_evaluation(
-    calldata: &Bytes,
-    gas_limit: u64,
-    gas_used: &mut u64,
-) -> Result<Bytes, VMError> {
+fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != 192 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     // Consume gas
     let gas_cost = POINT_EVALUATION_COST;
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     // Parse inputs
     let versioned_hash: [u8; 32] = calldata
@@ -1157,14 +1145,14 @@ fn point_evaluation(
     Ok(Bytes::from(output))
 }
 
-pub fn bls12_g1add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn bls12_g1add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     // Two inputs of 128 bytes are required
     if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
-    increase_precompile_consumed_gas(gas_limit, BLS12_381_G1ADD_COST, gas_used)
+    increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     let first_g1_point = parse_g1_point(calldata.get(0..128), true)?;
@@ -1185,14 +1173,14 @@ pub fn bls12_g1add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     Ok(Bytes::from(padded_result))
 }
 
-pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn bls12_g1msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
     let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G1_K_DISCOUNT, G1_MUL_COST)?;
-    increase_precompile_consumed_gas(gas_limit, required_gas, gas_used)?;
+    increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
     let mut result = G1Projective::identity();
     // R = s_P_1 + s_P_2 + ... + s_P_k
@@ -1231,13 +1219,13 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     Ok(Bytes::copy_from_slice(&output))
 }
 
-pub fn bls12_g2add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn bls12_g2add(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
-    increase_precompile_consumed_gas(gas_limit, BLS12_381_G2ADD_COST, gas_used)
+    increase_precompile_consumed_gas(BLS12_381_G2ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     let first_g2_point = parse_g2_point(calldata.get(0..256), true)?;
@@ -1262,14 +1250,14 @@ pub fn bls12_g2add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     Ok(Bytes::from(padded_result))
 }
 
-pub fn bls12_g2msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
+pub fn bls12_g2msm(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     let k = calldata.len() / BLS12_381_G2_MSM_PAIR_LENGTH;
     let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G2_K_DISCOUNT, G2_MUL_COST)?;
-    increase_precompile_consumed_gas(gas_limit, required_gas, gas_used)?;
+    increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
     let mut result = G2Projective::identity();
     for i in 0..k {
@@ -1307,11 +1295,7 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     Ok(Bytes::from(padded_result))
 }
 
-pub fn bls12_pairing_check(
-    calldata: &Bytes,
-    gas_limit: u64,
-    gas_used: &mut u64,
-) -> Result<Bytes, VMError> {
+pub fn bls12_pairing_check(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
         return Err(PrecompileError::ParsingInputError.into());
     }
@@ -1319,7 +1303,7 @@ pub fn bls12_pairing_check(
     // GAS
     let k = calldata.len() / BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
     let gas_cost = gas_cost::bls12_pairing_check(k)?;
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
     for i in 0..k {
@@ -1363,17 +1347,13 @@ pub fn bls12_pairing_check(
     }
 }
 
-pub fn bls12_map_fp_to_g1(
-    calldata: &Bytes,
-    gas_limit: u64,
-    gas_used: &mut u64,
-) -> Result<Bytes, VMError> {
+pub fn bls12_map_fp_to_g1(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
-    increase_precompile_consumed_gas(gas_limit, BLS12_381_MAP_FP_TO_G1_COST, gas_used)?;
+    increase_precompile_consumed_gas(BLS12_381_MAP_FP_TO_G1_COST, gas_remaining)?;
 
     let coordinate_bytes = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
     let fp = Fp::from_bytes(&coordinate_bytes)
@@ -1400,17 +1380,13 @@ pub fn bls12_map_fp_to_g1(
     Ok(Bytes::from(padded_result))
 }
 
-pub fn bls12_map_fp2_tp_g2(
-    calldata: &Bytes,
-    gas_limit: u64,
-    gas_used: &mut u64,
-) -> Result<Bytes, VMError> {
+pub fn bls12_map_fp2_tp_g2(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP2_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
-    increase_precompile_consumed_gas(gas_limit, BLS12_381_MAP_FP2_TO_G2_COST, gas_used)?;
+    increase_precompile_consumed_gas(BLS12_381_MAP_FP2_TO_G2_COST, gas_remaining)?;
 
     // Parse the input to two Fp and create a Fp2
     let c0 = parse_coordinate(calldata.get(0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES))?;
@@ -1614,13 +1590,9 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
 /// If the verification succeeds, returns 1 in a 32-bit big-endian format.
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L1.
-pub fn p_256_verify(
-    calldata: &Bytes,
-    gas_limit: u64,
-    gas_used: &mut u64,
-) -> Result<Bytes, VMError> {
+pub fn p_256_verify(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     let gas_cost = P256VERIFY_COST;
-    increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 160);

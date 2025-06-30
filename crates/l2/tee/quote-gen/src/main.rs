@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use ethrex_common::Bytes;
-use ethrex_l2_sdk::calldata::{encode_tuple, Value};
+use ethrex_l2_sdk::calldata::encode_tuple;
 use ethrex_l2_sdk::get_address_from_secret_key;
 use zkvm_interface::io::ProgramInput;
 
@@ -13,7 +13,10 @@ use secp256k1::{generate_keypair, rand, Message, SecretKey};
 mod sender;
 use sender::{get_batch, submit_proof, submit_quote};
 
-use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProofCalldata, ProverType},
+};
 
 const POLL_INTERVAL_MS: u64 = 5000;
 
@@ -44,7 +47,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let final_hash_bytes = output.final_state_hash.0.to_vec();
     let last_block_hash_bytes = output.last_block_hash.0.to_vec();
     #[cfg(feature = "l2")]
-    let withdrawals_merkle_root_bytes = output.withdrawals_merkle_root.0.to_vec();
+    let l1messages_merkle_root_bytes = output.l1messages_merkle_root.0.to_vec();
     #[cfg(feature = "l2")]
     let deposit_logs_hash_bytes = output.deposit_logs_hash.0.to_vec();
     #[cfg(feature = "l2")]
@@ -54,7 +57,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         Value::FixedBytes(initial_hash_bytes.into()),
         Value::FixedBytes(final_hash_bytes.into()),
         #[cfg(feature = "l2")]
-        Value::FixedBytes(withdrawals_merkle_root_bytes.into()),
+        Value::FixedBytes(l1messages_merkle_root_bytes.into()),
         #[cfg(feature = "l2")]
         Value::FixedBytes(deposit_logs_hash_bytes.into()),
         #[cfg(feature = "l2")]

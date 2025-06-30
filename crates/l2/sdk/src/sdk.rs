@@ -1,10 +1,11 @@
 use std::{fs::read_to_string, path::Path, process::Command};
 
 use bytes::Bytes;
-use calldata::{Value, encode_calldata};
+use calldata::encode_calldata;
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
-use ethrex_rpc::clients::eth::WithdrawalProof;
+use ethrex_l2_common::calldata::Value;
+use ethrex_rpc::clients::eth::L1MessageProof;
 use ethrex_rpc::clients::eth::{
     EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
 };
@@ -29,6 +30,11 @@ pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xff,
+]);
+
+pub const L1_MESSENGER_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfe,
 ]);
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
@@ -80,12 +86,7 @@ pub async fn transfer(
     private_key: &SecretKey,
     client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!(
-        "Transferring {amount} from {from:#x} to {to:#x}",
-        amount = amount,
-        from = from,
-        to = to
-    );
+    println!("Transferring {amount} from {from:#x} to {to:#x}");
     let gas_price = client
         .get_gas_price_with_extra(20)
         .await?
@@ -132,28 +133,6 @@ pub async fn deposit_through_transfer(
     .await
 }
 
-pub async fn deposit_through_contract_call(
-    amount: impl Into<U256>,
-    to: Address,
-    l1_gas_limit: u64,
-    l2_gas_limit: u64,
-    depositor_private_key: &SecretKey,
-    bridge_address: Address,
-    eth_client: &EthClient,
-) -> Result<H256, EthClientError> {
-    let l1_from = get_address_from_secret_key(depositor_private_key)?;
-    send_l1_to_l2_tx(
-        l1_from,
-        Some(amount),
-        Some(l1_gas_limit),
-        L1ToL2TransactionData::new_deposit_data(to, l2_gas_limit),
-        depositor_private_key,
-        bridge_address,
-        eth_client,
-    )
-    .await
-}
-
 pub async fn withdraw(
     amount: U256,
     from: Address,
@@ -186,7 +165,7 @@ pub async fn claim_withdraw(
     from: Address,
     from_pk: SecretKey,
     eth_client: &EthClient,
-    withdrawal_proof: &WithdrawalProof,
+    message_proof: &L1MessageProof,
 ) -> Result<H256, EthClientError> {
     println!("Claiming {amount} from bridge to {from:#x}");
 
@@ -198,10 +177,10 @@ pub async fn claim_withdraw(
             l2_withdrawal_tx_hash.as_fixed_bytes(),
         )),
         Value::Uint(amount),
-        Value::Uint(withdrawal_proof.batch_number.into()),
-        Value::Uint(U256::from(withdrawal_proof.index)),
+        Value::Uint(message_proof.batch_number.into()),
+        Value::Uint(U256::from(message_proof.index)),
         Value::Array(
-            withdrawal_proof
+            message_proof
                 .merkle_proof
                 .iter()
                 .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))

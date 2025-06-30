@@ -116,70 +116,33 @@ contract OnChainProposer is
 
         // Set the AlignedProofAggregator address
         require(
-            ALIGNEDPROOFAGGREGATOR == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             alignedProofAggregator != address(0),
             "OnChainProposer: alignedProofAggregator is the zero address"
         );
-        require(
-            alignedProofAggregator != address(this),
-            "OnChainProposer: alignedProofAggregator is the contract address"
-        );
-
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         // Set the Risc0Groth16Verifier address
         require(
-            R0VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             r0verifier != address(0),
             "OnChainProposer: r0verifier is the zero address"
-        );
-        require(
-            r0verifier != address(this),
-            "OnChainProposer: r0verifier is the contract address"
         );
         R0VERIFIER = r0verifier;
 
         // Set the SP1Groth16Verifier address
         require(
-            SP1VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             sp1verifier != address(0),
             "OnChainProposer: sp1verifier is the zero address"
-        );
-        require(
-            sp1verifier != address(this),
-            "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
 
         // Set the TDXVerifier address
         require(
-            TDXVERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             tdxverifier != address(0),
             "OnChainProposer: tdxverifier is the zero address"
-        );
-        require(
-            tdxverifier != address(this),
-            "OnChainProposer: tdxverifier is the contract address"
         );
         TDXVERIFIER = tdxverifier;
 
         // Set the SP1 program verification key
-        require(
-            SP1_VERIFICATION_KEY == bytes32(0),
-            "OnChainProposer: contract already initialized"
-        );
         SP1_VERIFICATION_KEY = sp1Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
@@ -200,16 +163,8 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
-            BRIDGE == address(0),
-            "OnChainProposer: bridge already initialized"
-        );
-        require(
             bridge != address(0),
             "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
         );
         BRIDGE = bridge;
     }
@@ -256,9 +211,15 @@ contract OnChainProposer is
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(blobVersionedHash == 0, "L2 running as validium but blob was published");
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
         } else {
-            require(blobVersionedHash != 0, "L2 running as rollup but blob was not published");
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -297,7 +258,7 @@ contract OnChainProposer is
         // TODO: organize each zkvm proof arguments in their own structs
         require(
             ALIGNEDPROOFAGGREGATOR == DEV_MODE,
-            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchAligned instead"
+            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchesAligned instead"
         );
         require(
             batchNumber == lastVerifiedBatch + 1,
@@ -352,60 +313,71 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
-    function verifyBatchAligned(
-        uint256 batchNumber,
-        bytes calldata alignedPublicInputs,
-        bytes32 alignedProgramVKey,
-        bytes32[] calldata alignedMerkleProof
+    function verifyBatchesAligned(
+        uint256 firstBatchNumber,
+        bytes[] calldata alignedPublicInputsList,
+        bytes32[][] calldata alignedMerkleProofsList
     ) external override onlySequencer whenNotPaused {
         require(
             ALIGNEDPROOFAGGREGATOR != DEV_MODE,
             "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
         );
         require(
-            batchNumber == lastVerifiedBatch + 1,
-            "OnChainProposer: batch already verified"
+            alignedPublicInputsList.length == alignedMerkleProofsList.length,
+            "OnChainProposer: input/proof array length mismatch"
         );
         require(
-            batchCommitments[batchNumber].newStateRoot != bytes32(0),
-            "OnChainProposer: cannot verify an uncommitted batch"
+            firstBatchNumber == lastVerifiedBatch + 1,
+            "OnChainProposer: incorrect first batch number"
         );
 
-        // If the verification fails, it will revert.
-        _verifyPublicData(batchNumber, alignedPublicInputs[8:]);
+        uint256 batchNumber = firstBatchNumber;
 
-        bytes memory callData = abi.encodeWithSignature(
-            "verifyProofInclusion(bytes32[],bytes32,bytes)",
-            alignedMerkleProof,
-            alignedProgramVKey,
-            alignedPublicInputs
-        );
-        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-            .staticcall(callData);
-        require(
-            callResult,
-            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-        );
-        bool proofVerified = abi.decode(response, (bool));
-        require(
-            proofVerified,
-            "OnChainProposer: Aligned proof verification failed"
-        );
+        for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
+            require(
+                batchCommitments[batchNumber].newStateRoot != bytes32(0),
+                "OnChainProposer: cannot verify an uncommitted batch"
+            );
 
-        lastVerifiedBatch = batchNumber;
+            // Verify public data for the batch
+            _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
 
-        // The first 2 bytes are the number of deposits.
-        uint16 deposits_amount = uint16(
-            bytes2(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash
-            )
-        );
-        if (deposits_amount > 0) {
-            ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
+            bytes memory callData = abi.encodeWithSignature(
+                "verifyProofInclusion(bytes32[],bytes32,bytes)",
+                alignedMerkleProofsList[i],
+                SP1_VERIFICATION_KEY,
+                alignedPublicInputsList[i]
+            );
+            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+                .staticcall(callData);
+            require(
+                callResult,
+                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+            );
+
+            bool proofVerified = abi.decode(response, (bool));
+            require(
+                proofVerified,
+                "OnChainProposer: Aligned proof verification failed"
+            );
+
+            // The first 2 bytes are the number of deposits.
+            uint16 deposits_amount = uint16(
+                bytes2(
+                    batchCommitments[batchNumber]
+                        .processedDepositLogsRollingHash
+                )
+            );
+            if (deposits_amount > 0) {
+                ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
+            }
+
+            // Remove previous batch commitment
+            delete batchCommitments[batchNumber - 1];
+
+            lastVerifiedBatch = batchNumber;
+            batchNumber++;
         }
-
-        // Remove previous batch commitment as it is no longer needed.
-        delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
     }
@@ -458,8 +430,14 @@ contract OnChainProposer is
     function revertBatch(
         uint256 batchNumber
     ) external override onlySequencer whenPaused {
-        require(batchNumber >= lastVerifiedBatch, "OnChainProposer: can't revert verified batch");
-        require(batchNumber < lastCommittedBatch, "OnChainProposer: no batches are being reverted");
+        require(
+            batchNumber >= lastVerifiedBatch,
+            "OnChainProposer: can't revert verified batch"
+        );
+        require(
+            batchNumber < lastCommittedBatch,
+            "OnChainProposer: no batches are being reverted"
+        );
 
         // Remove old batches
         for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {

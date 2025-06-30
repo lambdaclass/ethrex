@@ -12,10 +12,10 @@ use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    calldata::{Value, encode_calldata},
-    compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
-    initialize_contract,
+    calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
+    get_address_from_secret_key, initialize_contract,
 };
 use ethrex_rpc::{
     EthClient,
@@ -206,7 +206,7 @@ pub fn git_clone(
             .current_dir(outdir)
             .arg("reset")
             .arg("--hard")
-            .arg(format!("origin/{}", branch_name))
+            .arg(format!("origin/{branch_name}"))
             .spawn()
             .map_err(|err| {
                 DeployerError::DependencyError(format!("Failed to spawn git reset: {err}"))
@@ -458,10 +458,9 @@ fn deploy_tdx_contracts(
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
         .env("RPC_URL", &opts.rpc_url)
-        .env("ON_CHAIN_PROPOSER", format!("{:#x}", on_chain_proposer))
+        .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .spawn()
         .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn make: {err}")))?
         .wait()
@@ -493,20 +492,15 @@ async fn initialize_contracts(
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
-    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
+
+    let sp1_vk = std::fs::read(&opts.sp1_vk_path)
+    .unwrap_or_else(|_| {
         warn!(
             path = opts.sp1_vk_path,
             "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
         );
-        "0x00".to_string()
-    });
-    let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
-        .map_err(|err| {
-            DeployerError::DecodingError(format!(
-                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
-            ))
-        })?
-        .into();
+        vec![0u8; 32]
+    }).into();
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -711,14 +705,6 @@ async fn make_deposits(
             DeployerError::DecodingError("Error while parsing private key".to_string())
         })?;
         let address = get_address_from_secret_key(&secret_key)?;
-        let values = vec![Value::Tuple(vec![
-            Value::Address(address),
-            Value::Address(address),
-            Value::Uint(U256::from(21000 * 5)),
-            Value::Bytes(Bytes::from_static(b"")),
-        ])];
-
-        let calldata = encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
 
         let Some(_) = genesis.alloc.get(&address) else {
             debug!(
@@ -742,7 +728,7 @@ async fn make_deposits(
         };
 
         let build = eth_client
-            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides)
+            .build_eip1559_transaction(bridge, address, Bytes::new(), overrides)
             .await?;
 
         match eth_client

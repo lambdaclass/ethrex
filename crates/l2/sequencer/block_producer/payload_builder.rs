@@ -1,35 +1,34 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
-
+use crate::sequencer::errors::BlockProducerError;
 use ethrex_blockchain::{
     Blockchain,
     constants::TX_GAS_COST,
-    payload::{HeadTransaction, PayloadBuildContext, PayloadBuildResult, apply_plain_transaction},
+    payload::{
+        HeadTransaction, PayloadBuildContext, PayloadBuildResult, TransactionQueue,
+        apply_plain_transaction,
+    },
 };
 use ethrex_common::{
     Address,
     types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction},
 };
+use ethrex_l2_common::l1_messages::get_block_l1_messages;
 use ethrex_l2_common::state_diff::{
-    AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE,
-    StateDiffError, WITHDRAWAL_LOG_LEN,
+    AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, L1MESSAGE_LOG_LEN,
+    SIMPLE_TX_STATE_DIFF_SIZE, StateDiffError,
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     metrics_blocks::METRICS_BLOCKS,
-    metrics_transactions::{METRICS_TX, MetricsTxStatus, MetricsTxType},
+    metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
+use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error};
-
-use crate::{
-    sequencer::errors::BlockProducerError,
-    utils::helpers::{is_deposit_l2, is_withdrawal_l2},
-};
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -45,9 +44,7 @@ pub async fn build_payload(
     debug!("Building payload");
     let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
 
-    blockchain.apply_withdrawals(&mut context)?;
     fill_transactions(blockchain.clone(), &mut context, store).await?;
-    blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
@@ -93,23 +90,17 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
 ) -> Result<(), BlockProducerError> {
-    // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
+    // version (u8) + header fields (struct) + messages_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + *BLOCK_HEADER_LEN + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
     let mut account_diffs = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
-    let max_blob_number_per_block: usize = chain_config
-        .get_fork_blob_schedule(context.payload.header.timestamp)
-        .map(|schedule| schedule.max)
-        .unwrap_or_default()
-        .try_into()
-        .unwrap_or_default();
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
-    let (mut plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
+    let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -125,23 +116,10 @@ pub async fn fill_transactions(
             debug!("No more StateDiff space to run transactions");
             break;
         };
-        if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block {
-            debug!("No more blob gas to run blob transactions");
-            blob_txs.clear();
-        }
-        // Fetch the next transactions
-        let (head_tx, is_blob) = match (plain_txs.peek(), blob_txs.peek()) {
-            (None, None) => break,
-            (None, Some(tx)) => (tx, true),
-            (Some(tx), None) => (tx, false),
-            (Some(a), Some(b)) if b < a => (b, true),
-            (Some(tx), _) => (tx, false),
-        };
 
-        let txs = if is_blob {
-            &mut blob_txs
-        } else {
-            &mut plain_txs
+        // Fetch the next transaction
+        let Some(head_tx) = txs.peek() else {
+            break;
         };
 
         // Check if we have enough gas to run the transaction
@@ -181,33 +159,13 @@ pub async fn fill_transactions(
             }
         }
 
-        // Check if the transaction is a blob transaction, which is not supported in L2
-        if matches!(*head_tx, Transaction::EIP4844Transaction(_)) {
-            debug!(
-                "Skipping blob transaction: {} (not supported in L2)",
-                tx_hash
-            );
-            txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
-            continue;
-        }
-
         // Execute tx
         let receipt = match apply_plain_transaction(&head_tx, context) {
-            Ok(receipt) => {
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Succeeded,
-                    MetricsTxType(head_tx.tx_type())
-                ));
-                receipt
-            }
-            // Ignore following txs from sender
+            Ok(receipt) => receipt,
             Err(e) => {
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Failed,
-                    MetricsTxType(head_tx.tx_type())
-                ));
+                metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                // Ignore following txs from sender
                 txs.pop();
                 continue;
             }
@@ -221,7 +179,7 @@ pub async fn fill_transactions(
             &head_tx,
             &receipt,
             *DEPOSITS_LOG_LEN,
-            *WITHDRAWAL_LOG_LEN,
+            *L1MESSAGE_LOG_LEN,
         )?;
 
         if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
@@ -243,7 +201,7 @@ pub async fn fill_transactions(
         // Pull transaction from the mempool
         blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
-        // We only add the withdrawals and deposits length because the accounts diffs may change
+        // We only add the messages and deposits length because the accounts diffs may change
         acc_size_without_accounts += tx_size_without_accounts;
         size_accounts_diffs = new_accounts_diff_size;
         // Include the new accounts diffs
@@ -254,7 +212,31 @@ pub async fn fill_transactions(
         // Save receipt for hash calculation
         context.receipts.push(receipt);
     }
+
+    metrics!(
+        context
+            .payload
+            .body
+            .transactions
+            .iter()
+            .for_each(|tx| METRICS_TX.inc_tx_with_type(MetricsTxType(tx.tx_type())))
+    );
+
     Ok(())
+}
+
+// TODO: Once #2857 is implemented, we can completely ignore the blobs pool.
+fn fetch_mempool_transactions(
+    blockchain: &Blockchain,
+    context: &mut PayloadBuildContext,
+) -> Result<TransactionQueue, BlockProducerError> {
+    let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
+    while let Some(blob_tx) = blob_txs.peek() {
+        let tx_hash = blob_tx.compute_hash();
+        blockchain.remove_transaction_from_pool(&tx_hash)?;
+        blob_txs.pop();
+    }
+    Ok(plain_txs)
 }
 
 /// Returns the state diffs introduced by the transaction by comparing the call frame backup
@@ -380,7 +362,7 @@ fn merge_diffs(
 }
 
 /// Calculates the size of the state diffs introduced by the transaction, including
-/// the size of withdrawals and deposits logs for this transaction, and the total
+/// the size of messages and deposits logs for this transaction, and the total
 /// size of all account diffs accumulated so far in the block.
 /// This is necessary because each transaction can modify accounts that were already
 /// changed by previous transactions, so we must recalculate the total diff size each time.
@@ -389,7 +371,7 @@ fn calculate_tx_diff_size(
     head_tx: &HeadTransaction,
     receipt: &Receipt,
     deposits_log_len: usize,
-    withdrawals_log_len: usize,
+    messages_log_len: usize,
 ) -> Result<(usize, usize), BlockProducerError> {
     let mut tx_state_diff_size = 0;
     let mut new_accounts_diff_size = 0;
@@ -412,9 +394,13 @@ fn calculate_tx_diff_size(
     if is_deposit_l2(head_tx) {
         tx_state_diff_size += deposits_log_len;
     }
-    if is_withdrawal_l2(&head_tx.clone().into(), receipt) {
-        tx_state_diff_size += withdrawals_log_len;
-    }
+    tx_state_diff_size +=
+        get_block_l1_messages(&[Transaction::from(head_tx.clone())], &[receipt.clone()]).len()
+            * messages_log_len;
 
     Ok((tx_state_diff_size, new_accounts_diff_size))
+}
+
+fn is_deposit_l2(tx: &Transaction) -> bool {
+    matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
 }
