@@ -4,10 +4,8 @@ use tokio::{
 };
 use zkvm_interface::io::ProgramInput;
 
-use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData,
-    utils::prover::proving_systems::{BatchProof, ProverType},
-};
+use ethrex_l2::sequencer::proof_coordinator::ProofData;
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use ethrex_common::Bytes;
 

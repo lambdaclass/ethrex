@@ -174,8 +174,7 @@ pub struct PayloadBuildContext {
     pub payload: Block,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
-    pub requests: Vec<EncodedRequests>,
-    pub requests_hash: Option<H256>,
+    pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
@@ -211,8 +210,9 @@ impl PayloadBuildContext {
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
-            requests: vec![],
-            requests_hash: None,
+            requests: config
+                .is_prague_activated(payload.header.timestamp)
+                .then_some(Vec::new()),
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
@@ -268,7 +268,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
         Self {
             blobs_bundle,
             block_value,
-            requests,
+            requests: requests.unwrap_or_default(),
             receipts,
             account_updates,
             payload,
@@ -517,8 +517,7 @@ impl Blockchain {
             .vm
             .extract_requests(&context.receipts, &context.payload.header)?;
 
-        context.requests = requests.iter().map(|r| r.encode()).collect();
-        context.requests_hash = Some(compute_requests_hash(&context.requests));
+        context.requests = Some(requests.iter().map(|r| r.encode()).collect());
 
         Ok(())
     }
@@ -541,7 +540,10 @@ impl Blockchain {
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-        context.payload.header.requests_hash = context.requests_hash;
+        context.payload.header.requests_hash = context
+            .requests
+            .as_ref()
+            .map(|requests| compute_requests_hash(requests));
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
 

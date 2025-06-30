@@ -41,7 +41,7 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
         TxResult::Success => {
             println!("output: \t\t0x{}", hex::encode(tx_report.output));
         }
-        TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
+        TxResult::Revert(error) => panic!("Execution failed: {error:?}"),
     }
 }
 

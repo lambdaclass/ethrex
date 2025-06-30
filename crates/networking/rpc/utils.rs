@@ -51,7 +51,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             RpcErr::WrongParam(field) => RpcErrorMetadata {
                 code: -32602,
                 data: None,
-                message: format!("Field '{}' is incorrect or has an unknown format", field),
+                message: format!("Field '{field}' is incorrect or has an unknown format"),
             },
             RpcErr::BadParams(context) => RpcErrorMetadata {
                 code: -32000,
@@ -103,7 +103,7 @@ impl From<RpcErr> for RpcErrorMetadata {
                 // Haven't found an example of this one yet.
                 code: 3,
                 data: None,
-                message: format!("execution halted: reason={}, gas_used={}", reason, gas_used),
+                message: format!("execution halted: reason={reason}, gas_used={gas_used}"),
             },
             RpcErr::AuthenticationError(auth_error) => match auth_error {
                 AuthenticationError::InvalidIssuedAtClaim => RpcErrorMetadata {
@@ -271,9 +271,9 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     if let Value::String(maybe_hex) = hex {
         let trimmed = maybe_hex.trim_start_matches("0x");
         let maybe_parsed = u64::from_str_radix(trimmed, 16);
-        maybe_parsed.map_err(|_| format!("Could not parse given hex {}", maybe_hex))
+        maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
     } else {
-        Err(format!("Could not parse given hex {}", hex))
+        Err(format!("Could not parse given hex {hex}"))
     }
 }
 
@@ -297,7 +297,7 @@ pub mod test_utils {
         rpc::{NodeData, RpcApiContext, start_api},
     };
 
-    pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
+    pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
     pub fn example_p2p_node() -> Node {
         let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
         Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1)

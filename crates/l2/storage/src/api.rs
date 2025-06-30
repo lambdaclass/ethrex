@@ -6,6 +6,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use crate::error::RollupStoreError;
 
@@ -112,6 +113,19 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         block_number: BlockNumber,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), RollupStoreError>;
+
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), RollupStoreError>;
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, RollupStoreError>;
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 }

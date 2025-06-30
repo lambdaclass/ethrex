@@ -415,11 +415,7 @@ impl Blockchain {
             );
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)",
-                    execution_time_per_gigagas,
-                    execution_fraction,
-                    storage_time_per_gigagas,
-                    storage_fraction
+                    " exec/Ggas: {execution_time_per_gigagas} ms ({execution_fraction}%), st/Ggas: {storage_time_per_gigagas} ms ({storage_fraction}%)",
                 )
             } else {
                 "".to_string()
@@ -766,8 +762,7 @@ impl Blockchain {
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
-                "Hash {} not found in the mempool",
-                hash
+                "Hash {hash} not found in the mempool",
             )));
         };
         let result = match tx {
@@ -777,8 +772,7 @@ impl Blockchain {
             Transaction::EIP4844Transaction(itx) => {
                 let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
                     return Err(StoreError::Custom(format!(
-                        "Blob transaction present without its bundle: hash {}",
-                        hash
+                        "Blob transaction present without its bundle: hash {hash}",
                     )));
                 };
 
