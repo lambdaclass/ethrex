@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751292323756,
+  "lastUpdate": 1751292895996,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2099,6 +2099,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207103992446,
             "range": "± 297046142",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "98512676ba767d6c635633da9b70932af1a2c483",
+          "message": "docs(l1): fix broken links in sync doc (#3369)\n\n**Motivation**\nSome links in the sync documentation do not point to the correct files\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Fix broken links to diagrams in sync documentation\n* Remove link and mention of no longer existing diagram\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-06-30T13:15:09Z",
+          "tree_id": "c1ab3a358155856f42742f8819e4ba0c51fb07cf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/98512676ba767d6c635633da9b70932af1a2c483"
+        },
+        "date": 1751292887512,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211597378504,
+            "range": "± 758816429",
             "unit": "ns/iter"
           }
         ]
