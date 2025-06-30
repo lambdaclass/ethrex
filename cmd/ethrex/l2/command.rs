@@ -16,6 +16,7 @@ use ethrex_common::{
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_p2p::network::peer_table;
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_rpc::{
     EthClient,
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -150,10 +151,10 @@ impl Command {
                         store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
-                        l2_sequencer_cfg.based.based,
-                        #[cfg(feature = "l2")]
-                        rollup_store.clone(),
-                        Some(l2_sequencer_cfg.l1_committer.l1_private_key),
+                        Some(P2PBasedContext {
+                            store_rollup: rollup_store.clone(),
+                            committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
+                        }),
                     )
                     .await;
                 } else {

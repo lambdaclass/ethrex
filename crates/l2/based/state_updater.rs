@@ -154,10 +154,10 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
             )
             .await?
             .parse()
-            .map_err(|_| {
-                StateUpdaterError::CalldataParsingError(
-                    "Failed to parse leaderSequencer() return data".to_string(),
-                )
+            .map_err(|err| {
+                StateUpdaterError::CalldataParsingError(format!(
+                    "Failed to parse leaderSequencer() return data: {err}"
+                ))
             })?,
     );
 

@@ -2,7 +2,7 @@ use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
     l2::{
         PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
-        l2_connection::L2ConnState,
+        l2_connection::{L2ConnState, P2PBasedContext},
     },
     p2p::DisconnectReason,
     utils::log_peer_warn,
@@ -115,7 +115,6 @@ pub(crate) struct RLPxConnection<S> {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         signer: SigningKey,
         node: Node,
@@ -125,6 +124,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         blockchain: Arc<Blockchain>,
         client_version: String,
         connection_broadcast: RLPxConnBroadcastSender,
+        based_context: Option<P2PBasedContext>,
     ) -> Self {
         Self {
             signer,
@@ -143,7 +143,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             requested_pooled_txs: HashMap::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
-            l2_state: L2ConnState::Disconnected,
+            l2_state: based_context
+                .map(|ctxt| L2ConnState::Disconnected(ctxt.clone()))
+                .unwrap_or(L2ConnState::Unsupported),
         }
     }
 
@@ -327,20 +329,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             }
                         }
                         "based" => {
-                            let l2_state = L2ConnectedState {
-                                latest_block_sent: 0,
-                                latest_block_added: 0,
-                                blocks_on_queue: BTreeMap::new(),
-                                latest_batch_sent: 0,
-                                store_rollup: StoreRollup::default(),
-                                committer_key: None,
-                                next_block_broadcast: Instant::now()
-                                    + PERIODIC_BLOCK_BROADCAST_INTERVAL,
-                                next_batch_broadcast: Instant::now()
-                                    + PERIODIC_BATCH_BROADCAST_INTERVAL,
-                            };
-                            self.l2_state = L2ConnState::Connected(l2_state);
+                            self.l2_state.set_established()?;
                         }
+                        "p2p" => {}
                         unknown_protocol => {
                             warn!("Peer sent an unsupported protocol: {unknown_protocol}")
                         }

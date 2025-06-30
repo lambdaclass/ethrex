@@ -1,4 +1,5 @@
 use crate::kademlia::{self, KademliaTable};
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
@@ -11,13 +12,10 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
-#[cfg(feature = "l2")]
-use ethrex_storage_rollup::StoreRollup;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
 };
-use secp256k1::SecretKey;
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
@@ -52,14 +50,10 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
-    pub based: bool,
-    #[cfg(feature = "l2")]
-    pub store_rollup: StoreRollup,
-    pub committer_key: Option<SecretKey>,
+    pub based_context: Option<P2PBasedContext>,
 }
 
 impl P2PContext {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
@@ -69,9 +63,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
-        based: bool,
-        #[cfg(feature = "l2")] store_rollup: StoreRollup,
-        committer_key: Option<SecretKey>,
+        based_context: Option<P2PBasedContext>,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -88,10 +80,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
-            based,
-            #[cfg(feature = "l2")]
-            store_rollup,
-            committer_key,
+            based_context,
         }
     }
 

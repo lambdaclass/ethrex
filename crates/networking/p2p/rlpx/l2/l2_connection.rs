@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
 
@@ -23,28 +23,58 @@ pub struct L2ConnectedState {
     pub latest_batch_sent: u64,
     pub blocks_on_queue: BTreeMap<u64, Arc<Block>>,
     pub store_rollup: StoreRollup,
-    pub committer_key: Option<SecretKey>,
+    pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
 }
 
 #[derive(Debug, Clone)]
+pub struct P2PBasedContext {
+    pub store_rollup: StoreRollup,
+    pub committer_key: Arc<SecretKey>,
+}
+
+#[derive(Debug, Clone)]
 pub enum L2ConnState {
-    Disconnected,
+    Unsupported,
+    Disconnected(P2PBasedContext),
     Connected(L2ConnectedState),
 }
 
 impl L2ConnState {
     pub(crate) fn connection_state_mut(&mut self) -> Result<&mut L2ConnectedState, RLPxError> {
         match self {
-            Self::Disconnected => Err(RLPxError::L2CapabilityNotNegotiated),
+            Self::Unsupported => Err(RLPxError::IncompatibleProtocol),
+            Self::Disconnected(_) => Err(RLPxError::L2CapabilityNotNegotiated),
             Self::Connected(conn_state) => Ok(conn_state),
         }
     }
     pub(crate) fn connection_state(&self) -> Result<&L2ConnectedState, RLPxError> {
         match self {
-            Self::Disconnected => Err(RLPxError::L2CapabilityNotNegotiated),
+            Self::Unsupported => Err(RLPxError::IncompatibleProtocol),
+            Self::Disconnected(_) => Err(RLPxError::L2CapabilityNotNegotiated),
             Self::Connected(conn_state) => Ok(conn_state),
+        }
+    }
+
+    pub(crate) fn set_established(&mut self) -> Result<(), RLPxError> {
+        match self {
+            Self::Unsupported => Err(RLPxError::IncompatibleProtocol),
+            Self::Disconnected(ctxt) => {
+                let state = L2ConnectedState {
+                    latest_block_sent: 0,
+                    latest_block_added: 0,
+                    blocks_on_queue: BTreeMap::new(),
+                    latest_batch_sent: 0,
+                    store_rollup: ctxt.store_rollup.clone(),
+                    committer_key: ctxt.committer_key.clone(),
+                    next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+                    next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
+                };
+                *self = L2ConnState::Connected(state);
+                Ok(())
+            }
+            Self::Connected(_) => Ok(()),
         }
     }
 }
@@ -64,16 +94,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             L2Message::BatchSealed(ref batch_sealed_msg) => {
                 if self.should_process_batch_sealed(batch_sealed_msg).await? {
                     self.process_batch_sealed(batch_sealed_msg).await?;
+                    self.broadcast_message(msg.into()).await?
                 }
             }
             L2Message::NewBlock(ref new_block_msg) => {
                 if self.should_process_new_block(new_block_msg).await? {
                     self.process_new_block(new_block_msg).await?;
+                    self.broadcast_message(msg.into()).await?
                 }
             }
         }
-        // for now we broadcast valid messages
-        self.broadcast_message(msg.into()).await
+        Ok(())
     }
     pub(crate) async fn l2_periodic_tasks(&mut self) -> Result<(), RLPxError> {
         let next_block_broadcast = self.l2_state.connection_state()?.next_block_broadcast;
@@ -126,15 +157,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     recovery_id.copy_from_slice(&recovered_sig[64..68]);
                     (signature, recovery_id)
                 } else {
-                    let Some(secret_key) = l2_state.committer_key else {
-                        return Err(RLPxError::InternalError(
-                            "Secret key is not set for based connection".to_string(),
-                        ));
-                    };
                     let (recovery_id, signature) = secp256k1::SECP256K1
                         .sign_ecdsa_recoverable(
                             &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
-                            &secret_key,
+                            &l2_state.committer_key,
                         )
                         .serialize_compact();
                     let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
@@ -323,15 +349,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 recovery_id.copy_from_slice(&recovered_sig[64..68]);
                 (signature, recovery_id)
             } else {
-                let Some(secret_key) = l2_state.committer_key else {
-                    return Err(RLPxError::InternalError(
-                        "Secret key is not set for based connection".to_string(),
-                    ));
-                };
                 let (recovery_id, signature) = secp256k1::SECP256K1
                     .sign_ecdsa_recoverable(
                         &SecpMessage::from_digest(get_hash_batch_sealed(&batch)),
-                        &secret_key,
+                        &l2_state.committer_key,
                     )
                     .serialize_compact();
                 let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
