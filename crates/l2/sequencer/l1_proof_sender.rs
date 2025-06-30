@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -29,10 +29,7 @@ use aligned_sdk::{
 };
 
 // TODO: Remove this import once it's no longer required by the SDK.
-use ethers::{
-    signers::{Signer, Wallet},
-    types::H256,
-};
+use ethers::signers::{Signer, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes32,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
@@ -205,7 +202,8 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
     let last_block_hash = state
         .rollup_store
         .get_block_hash_by_batch(batch_to_send)
-        .await?;
+        .await?
+        .unwrap();
 
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();

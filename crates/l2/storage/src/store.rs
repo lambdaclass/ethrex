@@ -203,7 +203,7 @@ impl Store {
     pub async fn get_block_hash_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<H256, RollupStoreError> {
+    ) -> Result<Option<H256>, RollupStoreError> {
         self.engine.get_block_hash_by_batch(batch_number).await
     }
 
