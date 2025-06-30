@@ -144,7 +144,7 @@ impl ProofData {
 }
 
 pub fn get_commit_hash() -> String {
-    format!("{}", env!("VERGEN_GIT_SHA"))
+    env!("VERGEN_GIT_SHA").to_string()
 }
 
 #[derive(Clone)]
