@@ -23,11 +23,7 @@ use ethrex_storage::Store;
 use ethrex_vm::{Evm, ExecutionResult};
 use serde::Serialize;
 
-#[cfg(feature = "l2")]
-use ethrex_common::types::Transaction;
 use serde_json::Value;
-#[cfg(feature = "l2")]
-use tracing::debug;
 use tracing::info;
 
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
@@ -481,7 +477,7 @@ impl RpcHandler for EstimateGasRequest {
                     fork,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
-                    return serde_json::to_value(format!("{:#x}", TRANSACTION_GAS))
+                    return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 }
             }
@@ -550,7 +546,7 @@ impl RpcHandler for EstimateGasRequest {
             middle_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        serde_json::to_value(format!("{:#x}", highest_gas_limit))
+        serde_json::to_value(format!("{highest_gas_limit:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -586,7 +582,7 @@ fn simulate_tx(
             gas_used: _,
             output,
         } => Err(RpcErr::Revert {
-            data: format!("0x{:#x}", output),
+            data: format!("0x{output:#x}"),
         }),
         ExecutionResult::Halt { reason, gas_used } => Err(RpcErr::Halt { reason, gas_used }),
         success => Ok(success),
@@ -609,33 +605,20 @@ impl RpcHandler for SendRawTransactionRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            #[cfg(feature = "l2")]
-            {
-                debug!(
-                    "EIP-4844 transaction are not supported in the L2: {:#x}",
-                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).compute_hash()
-                );
-                return Err(RpcErr::InvalidEthrexL2Message(
-                    "EIP-4844 transactions are not supported in the L2".to_string(),
-                ));
-            }
-            #[cfg(not(feature = "l2"))]
-            {
-                context
-                    .blockchain
-                    .add_blob_transaction_to_pool(
-                        wrapped_blob_tx.tx.clone(),
-                        wrapped_blob_tx.blobs_bundle.clone(),
-                    )
-                    .await
-            }
+            context
+                .blockchain
+                .add_blob_transaction_to_pool(
+                    wrapped_blob_tx.tx.clone(),
+                    wrapped_blob_tx.blobs_bundle.clone(),
+                )
+                .await
         } else {
             context
                 .blockchain
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;
-        serde_json::to_value(format!("{:#x}", hash))
+        serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

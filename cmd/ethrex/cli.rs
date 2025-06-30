@@ -313,7 +313,7 @@ impl Subcommand {
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
-                println!("{:#x}", state_root);
+                println!("{state_root:#x}");
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
