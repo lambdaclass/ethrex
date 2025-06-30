@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockHash, BlockNumber},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
@@ -79,6 +79,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(LastSentBatchProof),
         table_info!(AccountUpdatesByBlockNumber),
         table_info!(BatchProofs),
+        table_info!(BlockHashes),
     ]
     .into_iter()
     .collect();
@@ -218,6 +219,25 @@ impl StoreEngineRollup for Store {
             .read::<BlobsBundles>(batch_number)
             .await?
             .map(|blobs| blobs.to()))
+    }
+
+    async fn get_block_hash_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read::<BlockHashes>(batch_number)
+            .await?
+            .map(|tx| tx.to()))
+    }
+
+    async fn store_block_hash_by_batch(
+        &self,
+        batch_number: u64,
+        block_hash: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write::<BlockHashes>(batch_number, block_hash.into())
+            .await
     }
 
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {

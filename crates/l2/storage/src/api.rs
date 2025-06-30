@@ -88,8 +88,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
 
     async fn store_block_hash_by_batch(
         &self,
-        last_block_hash: H256,
         batch_number: u64,
+        last_block_hash: H256,
     ) -> Result<(), RollupStoreError>;
 
     async fn get_block_hash_by_batch(&self, batch_number: u64) -> Result<H256, RollupStoreError>;

@@ -192,11 +192,11 @@ impl Store {
 
     pub async fn store_block_hash_by_batch(
         &self,
-        last_block_hash: H256,
         batch_number: u64,
+        last_block_hash: H256,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .store_block_hash_by_batch(last_block_hash, batch_number)
+            .store_block_hash_by_batch(batch_number, last_block_hash)
             .await
     }
 
