@@ -6,10 +6,10 @@ use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::Block;
-use ethrex_common::types::batch::Batch;
-use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::Instant;
 use tracing::{debug, info};
@@ -21,7 +21,7 @@ pub struct L2ConnectedState {
     pub latest_block_sent: u64,
     pub latest_block_added: u64,
     pub latest_batch_sent: u64,
-    pub blocks_on_queue: BTreeMap<u64, Block>,
+    pub blocks_on_queue: BTreeMap<u64, Arc<Block>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Option<SecretKey>,
     pub next_block_broadcast: Instant,
@@ -62,13 +62,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.l2_state.connection_state()?;
         match msg {
             L2Message::BatchSealed(ref batch_sealed_msg) => {
-                if self.should_process_batch_sealed(&batch_sealed_msg).await? {
-                    self.process_batch_sealed(&batch_sealed_msg).await?;
+                if self.should_process_batch_sealed(batch_sealed_msg).await? {
+                    self.process_batch_sealed(batch_sealed_msg).await?;
                 }
             }
             L2Message::NewBlock(ref new_block_msg) => {
-                if self.should_process_new_block(&new_block_msg).await? {
-                    self.process_new_block(&new_block_msg).await?;
+                if self.should_process_new_block(new_block_msg).await? {
+                    self.process_new_block(new_block_msg).await?;
                 }
             }
         }
@@ -141,7 +141,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     (signature, recovery_id)
                 };
                 NewBlock {
-                    block: new_block,
+                    block: new_block.into(),
                     signature,
                     recovery_id,
                 }
@@ -635,7 +635,7 @@ mod tests {
                     break;
                 };
 
-                let Message::L2Message(L2Message::NewBlock(msg)) = message else {
+                let Message::L2(L2Message::NewBlock(msg)) = message else {
                     continue;
                 };
 
@@ -762,7 +762,7 @@ mod tests {
 
                 let (dummy_tx, _) = mpsc::channel(1);
                 match message {
-                    Message::L2Message(L2Message::NewBlock(msg)) => {
+                    Message::L2(L2Message::NewBlock(msg)) => {
                         blocks_received_count += 1;
                         println!(
                             "Receiver task received block {}. Total received: {}",
@@ -788,7 +788,7 @@ mod tests {
                             );
                         }
                     }
-                    Message::L2Message(L2Message::BatchSealed(msg)) => {
+                    Message::L2(L2Message::BatchSealed(msg)) => {
                         println!("Receiver task received sealed batch {}.", msg.batch.number);
                         // Process the message
                         match conn_b.handle_message(msg.into(), dummy_tx).await {
@@ -853,7 +853,7 @@ mod tests {
 
                 let (dummy_tx, _) = mpsc::channel(1);
                 match message {
-                    Message::L2Message(L2Message::NewBlock(msg)) => {
+                    Message::L2(L2Message::NewBlock(msg)) => {
                         blocks_received_count += 1;
                         println!(
                             "Receiver task received block {}. Total received: {}",
@@ -879,7 +879,7 @@ mod tests {
                             );
                         }
                     }
-                    Message::L2Message(L2Message::BatchSealed(msg)) => {
+                    Message::L2(L2Message::BatchSealed(msg)) => {
                         println!("Receiver task received sealed batch {}.", msg.batch.number);
                         // Process the message
                         match conn_b.handle_message(msg.into(), dummy_tx).await {

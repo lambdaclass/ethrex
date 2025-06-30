@@ -62,7 +62,7 @@ pub(crate) enum Message {
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
     // based capability
-    L2Message(messages::L2Message),
+    L2(messages::L2Message),
 }
 
 impl Message {
@@ -101,7 +101,7 @@ impl Message {
             Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
 
             // based capability
-            Message::L2Message(l2_msg) => {
+            Message::L2(l2_msg) => {
                 BASED_CAPABILITY_OFFSET + {
                     match l2_msg {
                         L2Message::NewBlock(_) => NewBlock::CODE,
@@ -168,7 +168,7 @@ impl Message {
             }
         } else {
             // based capability
-            Ok(Message::L2Message(match msg_id - BASED_CAPABILITY_OFFSET {
+            Ok(Message::L2(match msg_id - BASED_CAPABILITY_OFFSET {
                 messages::NewBlock::CODE => {
                     let decoded = l2::messages::NewBlock::decode(data)?;
                     L2Message::NewBlock(decoded)
@@ -209,7 +209,7 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
-            Message::L2Message(l2_msg) => match l2_msg {
+            Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
                 L2Message::NewBlock(msg) => msg.encode(buf),
             },
@@ -244,7 +244,7 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
-            Message::L2Message(l2_msg) => match l2_msg {
+            Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
                 L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
             },

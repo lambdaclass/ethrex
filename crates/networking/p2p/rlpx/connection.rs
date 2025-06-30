@@ -2,14 +2,12 @@ use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
     l2::{
         PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
-        SUPPORTED_BASED_CAPABILITIES, l2_connection::L2ConnState,
+        l2_connection::L2ConnState,
     },
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
-use crate::rlpx::l2::messages::BatchSealed;
-use crate::rlpx::utils::get_pub_key;
-use crate::rlpx::{based::get_hash_batch_sealed, l2::l2_connection::L2ConnectedState};
+use crate::rlpx::l2::l2_connection::L2ConnectedState;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -35,10 +33,10 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::{Blockchain, error::ChainError, fork_choice::apply_fork_choice};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
-    Address, H256, H512,
-    types::{Block, MempoolTransaction, Transaction},
+    H256, H512,
+    types::{MempoolTransaction, Transaction},
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -62,7 +60,6 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::info;
 use tracing::{debug, warn};
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -659,7 +656,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
-            Message::L2Message(msg) => self.handle_based_capability_message(msg).await?,
+            Message::L2(msg) => self.handle_based_capability_message(msg).await?,
             // Send response messages to the backend
             message @ Message::AccountRange(_)
             | message @ Message::StorageRanges(_)
@@ -688,9 +685,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     });
                     self.send(new_msg).await?;
                 }
-                Message::L2Message(l2_msg) => {
-                    let cloned = l2_msg;
-                    let new_msg = Message::L2Message(l2_msg.clone());
+                Message::L2(l2_msg) => {
+                    let new_msg = Message::L2(l2_msg.clone());
                     self.send(new_msg).await?;
                 }
                 msg => {
@@ -769,7 +765,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 };
                 Ok(())
             }
-            l2_msg @ Message::L2Message(_) => {
+            l2_msg @ Message::L2(_) => {
                 let Ok(_) = self
                     .connection_broadcast_send
                     .send((task_id, l2_msg.into()))
