@@ -181,7 +181,7 @@ mermaid-init.js mermaid.min.js &:
 		&& exit 1)
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
-	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck
+	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck mdbook-katex
 
 docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 	mdbook build
