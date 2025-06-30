@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockHash, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
@@ -79,7 +79,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(LastSentBatchProof),
         table_info!(AccountUpdatesByBlockNumber),
         table_info!(BatchProofs),
-        table_info!(BlockHashes),
+        table_info!(BlockHashesByBatch),
     ]
     .into_iter()
     .collect();
@@ -226,7 +226,7 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
-            .read::<BlockHashes>(batch_number)
+            .read::<BlockHashesByBatch>(batch_number)
             .await?
             .map(|tx| tx.to()))
     }
@@ -236,7 +236,7 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
         block_hash: H256,
     ) -> Result<(), RollupStoreError> {
-        self.write::<BlockHashes>(batch_number, block_hash.into())
+        self.write::<BlockHashesByBatch>(batch_number, block_hash.into())
             .await
     }
 
@@ -425,4 +425,9 @@ table!(
     /// Stores batch proofs, keyed by (BatchNumber, ProverType as u8).
     /// Value is the bincode-encoded BatchProof data.
     (BatchProofs) (u64, u32) => Vec<u8>
+);
+
+table!(
+    /// Commit transaction by batch number
+    ( BlockHashesByBatch ) u64 => Rlp<H256>
 );
