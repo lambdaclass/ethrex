@@ -1,6 +1,6 @@
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofCalldata, ProverType},
 };
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
@@ -17,6 +17,8 @@ use zkvm_interface::{
 pub enum Error {
     #[error("can only encode groth16 seals")]
     EncodeNonGroth16Seal,
+    #[error("failed to get seal selector")]
+    NoSealSelector,
     #[error("verification failed: {0}")]
     VerificationFailed(#[from] VerificationError),
     #[error("decode failed: {0}")]
@@ -84,7 +86,11 @@ fn encode_seal(receipt: &Receipt) -> Result<Vec<u8>, Error> {
     let InnerReceipt::Groth16(receipt) = receipt.inner.clone() else {
         return Err(Error::EncodeNonGroth16Seal);
     };
-    let selector = &receipt.verifier_parameters.as_bytes()[..4];
+    let selector = &receipt
+        .verifier_parameters
+        .as_bytes()
+        .get(..4)
+        .ok_or(Error::NoSealSelector)?;
     // Create a new vector with the capacity to hold both selector and seal
     let mut selector_seal = Vec::with_capacity(selector.len() + receipt.seal.len());
     selector_seal.extend_from_slice(selector);
