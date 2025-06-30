@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751079782474,
+  "lastUpdate": 1751290387430,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3028,6 +3028,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006880061855670103,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a51ad76d5dc1ca9ad6bb371037c9894a01af356a",
+          "message": "chore(core): update Rust version to 1.88 (#3382)",
+          "timestamp": "2025-06-30T13:04:49Z",
+          "tree_id": "7b9134c67f0cd8bbceeb6285c954f84e85063274",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a51ad76d5dc1ca9ad6bb371037c9894a01af356a"
+        },
+        "date": 1751290377502,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
             "unit": "Mgas/s"
           }
         ]
