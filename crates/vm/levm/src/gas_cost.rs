@@ -968,8 +968,8 @@ pub fn bls12_pairing_check(k: usize) -> Result<u64, VMError> {
     let gas_cost = u64::try_from(k)
         .map_err(|_| ExceptionalHalt::VeryLargeNumber)?
         .checked_mul(BLS12_PAIRING_CHECK_MUL_COST)
-        .ok_or(InternalError::GasConsumedOverflow)?
+        .ok_or(InternalError::Overflow)?
         .checked_add(BLS12_PAIRING_CHECK_FIXED_COST)
-        .ok_or(InternalError::GasConsumedOverflow)?;
+        .ok_or(InternalError::Overflow)?;
     Ok(gas_cost)
 }

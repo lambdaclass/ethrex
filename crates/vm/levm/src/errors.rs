@@ -142,8 +142,6 @@ pub enum InternalError {
     /// Unexpected error when accessing the database, used in trait `Database`.
     #[error("Database access error: {0}")]
     Database(#[from] DatabaseError),
-    #[error("Error while increasing consumed gas")]
-    GasConsumedOverflow,
 }
 
 impl InternalError {
