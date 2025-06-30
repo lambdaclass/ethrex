@@ -154,9 +154,9 @@ ethrex Execution client
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
-  removedb  Remove the database
-  import    Import blocks to the database
-  export    Export blocks in the current chain into a file in rlp encoding
+  removedb            Remove the database
+  import              Import blocks to the database
+  export              Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
 
@@ -169,10 +169,9 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
-          [default: mainnet]
 
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
@@ -194,7 +193,7 @@ Node options:
           Enable metrics collection and exposition
 
       --dev
-          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
+          If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
 
       --evm <EVM_BACKEND>
           Has to be `levm` or `revm`
