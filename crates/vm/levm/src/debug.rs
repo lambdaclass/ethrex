@@ -23,6 +23,9 @@ impl DebugMode {
     }
 
     /// Returns true if the call resulted in a debug operation. False otherwise.
+    ///
+    /// Note: This function is marked cold because it is rarely called (in prod).
+    #[cold]
     pub fn handle_debug(&mut self, offset: U256, value: U256) -> Result<bool, InternalError> {
         if !self.enabled {
             return Ok(false);

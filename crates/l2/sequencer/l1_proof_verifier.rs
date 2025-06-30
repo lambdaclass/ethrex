@@ -3,18 +3,19 @@ use aligned_sdk::{
     common::types::Network,
 };
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_sdk::calldata::{Value, encode_calldata};
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProverType},
+};
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
+use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     sequencer::errors::ProofVerifierError,
-    utils::prover::{
-        proving_systems::ProverType,
-        save_state::{StateFileType, batch_number_has_all_needed_proofs, read_proof},
-    },
 };
 
 use super::{
@@ -25,12 +26,16 @@ use super::{
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchAligned(uint256,bytes,bytes32[])";
 
-pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
+pub async fn start_l1_proof_verifier(
+    cfg: SequencerConfig,
+    rollup_store: StoreRollup,
+) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
         &cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
         &cfg.aligned,
+        rollup_store,
     )
     .await?;
     l1_proof_verifier.run().await;
@@ -45,6 +50,7 @@ struct L1ProofVerifier {
     on_chain_proposer_address: Address,
     proof_verify_interval_ms: u64,
     network: Network,
+    rollup_store: StoreRollup,
     sp1_vk: [u8; 32],
 }
 
@@ -54,6 +60,7 @@ impl L1ProofVerifier {
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
         aligned_cfg: &AlignedConfig,
+        rollup_store: StoreRollup,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
@@ -69,6 +76,7 @@ impl L1ProofVerifier {
             l1_private_key: proof_coordinator_cfg.l1_private_key,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
+            rollup_store,
             sp1_vk,
         })
     }
@@ -91,14 +99,22 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        if !batch_number_has_all_needed_proofs(batch_to_verify, &[ProverType::Aligned])
-            .is_ok_and(|has_all_proofs| has_all_proofs)
-        {
-            info!("Missing proofs for batch {batch_to_verify}, skipping verification");
+        let Some(aligned_proof) = self
+            .rollup_store
+            .get_proof_by_batch_and_type(batch_to_verify, ProverType::Aligned)
+            .await?
+        else {
+            info!(
+                ?batch_to_verify,
+                "Missing Aligned proof, skipping verification"
+            );
             return Ok(());
-        }
+        };
 
-        match self.verify_proof_aggregation(batch_to_verify).await? {
+        match self
+            .verify_proof_aggregation(batch_to_verify, aligned_proof)
+            .await?
+        {
             Some(verify_tx_hash) => {
                 info!(
                     "Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}"
@@ -117,9 +133,9 @@ impl L1ProofVerifier {
     async fn verify_proof_aggregation(
         &self,
         batch_number: u64,
+        aligned_proof: BatchProof,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
-        let public_inputs = proof.public_values();
+        let public_inputs = aligned_proof.public_values();
 
         let verification_data = AggregationModeVerificationData::SP1 {
             vk: self.sp1_vk,
