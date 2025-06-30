@@ -9,38 +9,39 @@ This section explains step by step how native ETH deposits work.
 On L1:
 
 1. The user sends ETH to the `CommonBridge` contract.
+   Alternatively, they can also call `deposit` and specify the address to receive the deposit in (the `l2Recipient`).
 2. The bridge adds the deposit's hash to the `pendingDepositLogs`.
    We explain how to compute this hash in ["Generic L1->L2 messaging"](#generic-l1-l2-messaging)
-3. The bridge emits a `DepositInitiated` event:
+3. The bridge emits a `L1ToL2Message` event:
 
     ```solidity
-    emit DepositInitiated(
-        msg.value,   // amount
-        msg.sender,  // to
+    bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
+
+    emit L1ToL2Message(
+        msg.value,          // amount
+        L2_BRIDGE_ADDRESS,  // to
         depositId,
-        msg.sender,  // recipient of the deposit
-        msg.sender,  // sender in L2
-        21000 * 5,   // gas limit
-        "",          // calldata
+        L2_BRIDGE_ADDRESS,  // sender in L2
+        21000 * 5,          // gas limit
+        callData,
         l2MintTxHash
     );
     ```
 
 Off-chain:
 
-1. On each L2 node, the L1 watcher processes `DepositInitiated` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
-2. The privileged transaction is an [EIP-2718 typed transaction](https://eips.ethereum.org/EIPS/eip-2718), somewhat similar to an [EIP-1559 transaction](https://eips.ethereum.org/EIPS/eip-1559), but with the following changes:
-   1. They don't have sender signatures. Those are validated in the L1, since the sender of the L1 deposit transaction is the sender in the L2.
-      As a consequence of this, privileged transactions can also be sent from L1 contracts.
-   2. At the start of the execution, the `recipient` account balance is increased by the transaction's value. The transaction's value is set to zero during the rest of the execution.
-   3. The sender account's nonce isn't increased as a result of the execution.
-   4. The sender isn't charged for the gas costs of the execution.
+1. On each L2 node, the L1 watcher processes `L1ToL2Message` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
+2. The privileged transaction is an [EIP-2718 typed transaction](https://eips.ethereum.org/EIPS/eip-2718), somewhat similar to an [EIP-1559 transaction](https://eips.ethereum.org/EIPS/eip-1559), but with some changes.
+   For deposits, the important differences are that the sender of the transaction is set by our L1 bridge.
+   This enables our L1 bridge to "forge" a transaction from any sender, even unreachable addresses like the L2 bridge.
+3. Privileged transactions sent by the L2 bridge don't deduct from the bridge's balance their value.
+   In practice, this means new ETH equal to the transactions `value` is minted.
 
 On L2:
 
-1. The privileged transaction increases the account balance of the recipient by the deposit amount.
-2. Additionally, a call to the sender address is executed, which immediately halts in case the sender is an EOA.
-   In case the call reverts, changes from the execution are reverted as normal, but the initial balance increase is kept.
+1. The privileged transaction calls `mintETH` on the `CommonBridgeL2` with the intended recipient as parameter.
+2. The bridge sends the minted ETH to the recipient.
+   In case of failure, it initiates an ETH withdrawal for the same amount.
 
 Back on L1:
 
@@ -62,15 +63,18 @@ sequenceDiagram
     actor Sequencer
 
     box rgb(139, 63, 63) L2
+        actor CommonBridgeL2
         actor L2Alice as Alice
     end
 
     L1Alice->>CommonBridge: sends 42 ETH
     CommonBridge->>CommonBridge: pendingDepositLogs.push(txHash)
-    CommonBridge->>CommonBridge: emit DepositInitiated
+    CommonBridge->>CommonBridge: emit L1ToL2Message
 
     CommonBridge-->>Sequencer: receives event
-    Sequencer->>L2Alice: mints 42 ETH
+    Sequencer-->>CommonBridgeL2: mints 42 ETH and<br>starts processing tx
+    CommonBridgeL2->>CommonBridgeL2: calls mintETH
+    CommonBridgeL2->>L2Alice: sends 42 ETH
 
     Sequencer->>OnChainProposer: publishes batch
     OnChainProposer->>CommonBridge: consumes pending deposits
@@ -196,18 +200,17 @@ sequenceDiagram
 
 <!-- TODO: extend this version once we have generic L1->L2 messages -->
 
-Privileged transactions are sent as a `DepositInitiated` event.
+Privileged transactions are sent as an `L1ToL2Message` event.
 
 ```solidity
-emit DepositInitiated(
-    amount,
-    to,
-    depositId,
-    recipient,
-    from,
-    gasLimit,
-    calldata,
-    l2MintTxHash
+event L1ToL2Message(
+    uint256 indexed amount,
+    address indexed to,
+    uint256 indexed depositId,
+    address from,
+    uint256 gasLimit,
+    bytes data,
+    bytes32 l2MintTxHash
 );
 ```
 
@@ -219,7 +222,6 @@ keccak256(
         bytes20(to),
         bytes32(value),
         bytes32(depositId),
-        bytes20(recipient),
         bytes20(from),
         bytes32(gasLimit),
         keccak256(calldata)
