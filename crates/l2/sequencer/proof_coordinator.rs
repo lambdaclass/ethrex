@@ -1,10 +1,6 @@
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
-use crate::utils::prover::proving_systems::{BatchProof, ProverType};
-use crate::utils::prover::save_state::{
-    StateFileType, StateType, batch_number_has_state_file, write_state,
-};
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
@@ -16,6 +12,7 @@ use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -399,7 +396,9 @@ async fn handle_connection(
                     batch_number,
                     batch_proof,
                 }) => {
-                    if let Err(e) = handle_submit(&mut stream, batch_number, batch_proof).await {
+                    if let Err(e) =
+                        handle_submit(state, &mut stream, batch_number, batch_proof).await
+                    {
                         error!("Failed to handle ProofSubmit: {e}");
                     }
                 }
@@ -418,7 +417,6 @@ async fn handle_connection(
                     warn!("Invalid request");
                 }
             }
-
             debug!("Connection closed");
         }
     };
@@ -460,20 +458,32 @@ async fn handle_request(
 }
 
 async fn handle_submit(
+    state: &ProofCoordinatorState,
     stream: &mut TcpStream,
     batch_number: u64,
     batch_proof: BatchProof,
 ) -> Result<(), ProofCoordinatorError> {
     info!("ProofSubmit received for batch number: {batch_number}");
 
-    // Check if we have the proof for that ProverType
-    if batch_number_has_state_file(
-        StateFileType::BatchProof(batch_proof.prover_type()),
-        batch_number,
-    )? {
-        debug!("Already known proof. Skipping");
+    // Check if we have a proof for this batch and prover type
+    let prover_type = batch_proof.prover_type();
+    if state
+        .rollup_store
+        .get_proof_by_batch_and_type(batch_number, prover_type)
+        .await?
+        .is_some()
+    {
+        info!(
+            ?batch_number,
+            ?prover_type,
+            "A proof was received for a batch and type that is already stored"
+        );
     } else {
-        write_state(batch_number, &StateType::BatchProof(batch_proof))?;
+        // If not, store it
+        state
+            .rollup_store
+            .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
+            .await?;
     }
 
     let response = ProofData::proof_submit_ack(batch_number);
