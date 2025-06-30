@@ -279,7 +279,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
             #[cfg(feature = "l2")]
-            &SUPPORTED_BASED_CAPABILITIES[..],
+            &super::l2::SUPPORTED_BASED_CAPABILITIES[..],
         ]
         .concat();
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
