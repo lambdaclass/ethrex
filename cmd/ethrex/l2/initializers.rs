@@ -72,7 +72,7 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
         return Vec::new();
     };
     let addresses: Vec<Address> = read_to_string(path)
-        .unwrap_or_else(|_| panic!("Failed to load file {}", path))
+        .unwrap_or_else(|_| panic!("Failed to load file {path}"))
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.to_string().parse::<Address>())

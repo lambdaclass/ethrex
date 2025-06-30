@@ -83,7 +83,7 @@ asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 And uncommenting the golang line in the asdf `.tool-versions` file:
 
 ```text
-rust 1.87.0
+rust 1.88.0
 golang 1.23.2
 ```
 
@@ -147,6 +147,7 @@ For more information about the different cli arguments check out the next sectio
 ## CLI Commands
 
 <!-- BEGIN_CLI_HELP -->
+
 ```
 ethrex Execution client
 
@@ -262,6 +263,7 @@ RPC options:
 
           [default: jwt.hex]
 ```
+
 <!-- END_CLI_HELP -->
 
 ## Syncing with Holesky
