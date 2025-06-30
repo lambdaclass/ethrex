@@ -103,7 +103,7 @@ pub enum Command {
             long = "network",
             default_value_t = Network::default(),
             value_name = "GENESIS_FILE_PATH",
-            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis*`.",
             env = "ETHREX_NETWORK",
             value_parser = clap::value_parser!(Network),
         )]
