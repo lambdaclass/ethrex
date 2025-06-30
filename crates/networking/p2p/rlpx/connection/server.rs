@@ -810,7 +810,7 @@ async fn handle_backend_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), RLPxError> {
-    log_peer_debug(&state.node, &format!("Sending message {}", message));
+    log_peer_debug(&state.node, &format!("Sending message {message}"));
     send(state, message).await?;
     Ok(())
 }
