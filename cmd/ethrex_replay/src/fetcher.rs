@@ -18,7 +18,7 @@ pub async fn get_blockdata(
     chain_config: ChainConfig,
     block_number: usize,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_{}.json", block_number);
+    let file_name = format!("cache_{block_number}.json");
     if let Ok(cache) = load_cache(&file_name) {
         return Ok(cache);
     }
@@ -50,7 +50,7 @@ pub async fn get_rangedata(
     from: usize,
     to: usize,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_{}-{}.json", from, to);
+    let file_name = format!("cache_{from}-{to}.json");
     if let Ok(cache) = load_cache(&file_name) {
         return Ok(cache);
     }

@@ -727,8 +727,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
     info!("Requested payload with id: {:#018x}", payload_id);
     let Some(payload) = context.storage.get_payload(payload_id).await? else {
         return Err(RpcErr::UnknownPayload(format!(
-            "Payload with id {:#018x} not found",
-            payload_id
+            "Payload with id {payload_id:#018x} not found",
         )));
     };
     Ok(payload)

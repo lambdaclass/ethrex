@@ -51,7 +51,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             RpcErr::WrongParam(field) => RpcErrorMetadata {
                 code: -32602,
                 data: None,
-                message: format!("Field '{}' is incorrect or has an unknown format", field),
+                message: format!("Field '{field}' is incorrect or has an unknown format"),
             },
             RpcErr::BadParams(context) => RpcErrorMetadata {
                 code: -32000,
@@ -103,7 +103,7 @@ impl From<RpcErr> for RpcErrorMetadata {
                 // Haven't found an example of this one yet.
                 code: 3,
                 data: None,
-                message: format!("execution halted: reason={}, gas_used={}", reason, gas_used),
+                message: format!("execution halted: reason={reason}, gas_used={gas_used}"),
             },
             RpcErr::AuthenticationError(auth_error) => match auth_error {
                 AuthenticationError::InvalidIssuedAtClaim => RpcErrorMetadata {
@@ -271,9 +271,9 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     if let Value::String(maybe_hex) = hex {
         let trimmed = maybe_hex.trim_start_matches("0x");
         let maybe_parsed = u64::from_str_radix(trimmed, 16);
-        maybe_parsed.map_err(|_| format!("Could not parse given hex {}", maybe_hex))
+        maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
     } else {
-        Err(format!("Could not parse given hex {}", hex))
+        Err(format!("Could not parse given hex {hex}"))
     }
 }
 

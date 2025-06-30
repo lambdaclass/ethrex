@@ -595,7 +595,7 @@ mod tests {
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result).unwrap();
         let expected_response_string =
-            format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
+            format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
         assert_eq!(response.to_string(), expected_response.to_string());
     }

@@ -65,7 +65,7 @@ impl Measurement for GasMeasurement {
 struct GasMeasurementFormatter;
 impl ValueFormatter for GasMeasurementFormatter {
     fn format_value(&self, value: f64) -> String {
-        format!("{:.2} Ggas/s", value)
+        format!("{value:.2} Ggas/s")
     }
 
     fn format_throughput(&self, throughput: &Throughput, _value: f64) -> String {

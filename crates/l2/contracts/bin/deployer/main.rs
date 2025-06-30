@@ -206,7 +206,7 @@ pub fn git_clone(
             .current_dir(outdir)
             .arg("reset")
             .arg("--hard")
-            .arg(format!("origin/{}", branch_name))
+            .arg(format!("origin/{branch_name}"))
             .spawn()
             .map_err(|err| {
                 DeployerError::DependencyError(format!("Failed to spawn git reset: {err}"))
@@ -458,7 +458,7 @@ fn deploy_tdx_contracts(
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
         .env("RPC_URL", &opts.rpc_url)
-        .env("ON_CHAIN_PROPOSER", format!("{:#x}", on_chain_proposer))
+        .env("ON_CHAIN_PROPOSER", format!("{on_chain_proposer:#x}"))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
         .spawn()

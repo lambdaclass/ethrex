@@ -252,10 +252,7 @@ async fn load_test(
                 sleep(Duration::from_micros(800)).await;
                 let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
             }
-            println!(
-                "{} transactions have been sent for {}",
-                tx_amount, encoded_src
-            );
+            println!("{tx_amount} transactions have been sent for {encoded_src}",);
             Ok::<(), EthClientError>(())
         });
     }
@@ -284,16 +281,12 @@ async fn wait_until_all_included(
             let nonce = client.get_nonce(src, BlockByNumber::Latest).await.unwrap();
             if nonce >= tx_amount {
                 println!(
-                    "All transactions sent from {} have been included in blocks. Nonce: {}",
-                    encoded_src, nonce
+                    "All transactions sent from {encoded_src} have been included in blocks. Nonce: {nonce}",
                 );
                 break;
             } else {
                 println!(
-                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%.",
-                    encoded_src,
-                    nonce,
-                    tx_amount,
+                    "Waiting for transactions to be included from {encoded_src}. Nonce: {nonce}. Needs: {tx_amount}. Percentage: {:2}%.",
                     (nonce as f64 / tx_amount as f64) * 100.0
                 );
             }
@@ -333,9 +326,9 @@ fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Account>> {
 fn parse_private_key_into_account(pkey: &str) -> Account {
     let key = pkey
         .parse::<H256>()
-        .unwrap_or_else(|_| panic!("Private key is not a valid hex representation {}", pkey));
+        .unwrap_or_else(|_| panic!("Private key is not a valid hex representation {pkey}"));
     let secret_key = SecretKey::from_slice(key.as_bytes())
-        .unwrap_or_else(|_| panic!("Invalid private key {}", pkey));
+        .unwrap_or_else(|_| panic!("Invalid private key {pkey}"));
     let public_key = secret_key.public_key(secp256k1::SECP256K1);
     (public_key, secret_key)
 }
