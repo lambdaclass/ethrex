@@ -57,6 +57,12 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
+    /// @notice Commited and verified batches
+    /// @dev This mapping contains the batch hashes and tells if they are commited or verified.
+    /// @dev If the value is false, the batch has been commited but not verified yet.
+    /// @dev If the value is true, the batch has been commited and verified by the proporser.
+    mapping(uint256 => bool) public verifiedBatches;
+
     address public BRIDGE;
     address public PICOVERIFIER;
     address public R0VERIFIER;
@@ -186,6 +192,8 @@ contract OnChainProposer is
             bytes32(0)
         );
 
+        verifiedBatches[bytes32(0)] = true;
+
         // Set the SequencerRegistry address
         require(
             SEQUENCER_REGISTRY == address(0),
@@ -284,6 +292,9 @@ contract OnChainProposer is
             withdrawalsLogsMerkleRoot,
             lastBlockHash
         );
+
+        verifiedBatches[lastBlockHash] = false;
+
         emit BatchCommitted(batchNumber, newStateRoot);
 
         lastCommittedBatch = batchNumber;
@@ -297,6 +308,7 @@ contract OnChainProposer is
     /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
     function verifyBatch(
         uint256 batchNumber,
+        bytes32 lastBlockHash,
         //risc0
         bytes memory risc0BlockProof,
         bytes32 risc0ImageId,
@@ -359,6 +371,8 @@ contract OnChainProposer is
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
+
+        verifiedBatches[lastBlockHash] = true;
 
         emit BatchVerified(lastVerifiedBatch);
     }
