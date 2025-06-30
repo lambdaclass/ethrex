@@ -363,8 +363,7 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
-                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.",
-                vm_error
+                "REVERT when reading withdrawal requests with error: {vm_error:?}. According to EIP-7002, the revert of this system call invalidates the block.",
             ))),
         }
     }
@@ -394,8 +393,7 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
-                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.",
-                vm_error
+                "REVERT when dequeuing consolidation requests with error: {vm_error:?}. According to EIP-7251, the revert of this system call invalidates the block.",
             ))),
         }
     }
@@ -515,12 +513,6 @@ pub fn extract_all_requests_levm(
 
     if fork < Fork::Prague {
         return Ok(Default::default());
-    }
-
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "l2")] {
-            return Ok(Default::default());
-        }
     }
 
     let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db)?.output.into();
