@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751301111336,
+  "lastUpdate": 1751301156782,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2249,6 +2249,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207736713004,
             "range": "± 411989142",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc56f4764a782fd952a56308dd8e28c41a190a83",
+          "message": "feat(l2): verify batches in chunks with aligned (#3242)\n\n**Motivation**\n\nAligned verifies proofs in batches, so it's possible to have an array of\nproofs ready to be verified at once.\n\n**Description**\n\n- Modifies `l1_proof_verifier` to check all already aggregated proofs\nand build a single verify transaction for them.\n- Updates `verifyBatchAligned()` in the `OnChainProposer` contract to\naccept an array of proofs.\n\n> [!WARNING]\n> #3276 was accidentally merged into this PR, so the diff includes\nchanges from both.\n\nCloses #3168\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-30T15:34:32Z",
+          "tree_id": "8a028358cc3b77a2e6c4a4e70df7faef6669dded",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc56f4764a782fd952a56308dd8e28c41a190a83"
+        },
+        "date": 1751301147543,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210495960759,
+            "range": "± 808046138",
             "unit": "ns/iter"
           }
         ]
