@@ -102,6 +102,8 @@ pub struct Established {
     //// messages from other connections (sent from other peers).
     //// The receive end is instantiated after the handshake is completed
     //// under `handle_peer`.
+    /// TODO: Improve this mechanism
+    /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Arc<Mutex<KademliaTable>>,
     pub(crate) backend_channel: Option<Sender<Message>>,
@@ -610,6 +612,9 @@ where
     stream.next().await
 }
 
+// TODO replace this spawn, once it's implemented in spawned
+// See https://github.com/lambdaclass/ethrex/issues/3387 and
+// https://github.com/lambdaclass/spawned/issues/17
 fn spawn_listener<S>(mut conn: RLPxConnectionHandle, node: &Node, mut stream: S)
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
@@ -633,6 +638,11 @@ where
     });
 }
 
+// TODO Maybe provide a similar mechanism for this listener, or remove it when
+// Broadcast is handled in a spawned GenServer
+// See https://github.com/lambdaclass/ethrex/issues/3387 and
+// https://github.com/lambdaclass/spawned/issues/17 and
+// https://github.com/lambdaclass/ethrex/issues/3388
 fn spawn_broadcast_listener(mut handle: RLPxConnectionHandle, state: &mut Established) {
     // Subscribe this connection to the broadcasting channel.
     // TODO currently spawning a listener task that will suscribe to a broadcast channel and
