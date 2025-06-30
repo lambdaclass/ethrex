@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751294275869,
+  "lastUpdate": 1751295730286,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2159,6 +2159,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210671124628,
             "range": "± 770806776",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "11384d62135ed354397c0a02b57adbe8d8392a8b",
+          "message": "ci(l2): use build-push-action to build L1 dev docker image (#3357)\n\n**Motivation**\n\nuse official\n[build-push-action](https://github.com/docker/build-push-action)",
+          "timestamp": "2025-06-30T14:03:04Z",
+          "tree_id": "34ce27d88d8e5c5e41e2acbbd24f840ad8e44840",
+          "url": "https://github.com/lambdaclass/ethrex/commit/11384d62135ed354397c0a02b57adbe8d8392a8b"
+        },
+        "date": 1751295720838,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211390794540,
+            "range": "± 832058859",
             "unit": "ns/iter"
           }
         ]
