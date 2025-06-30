@@ -101,6 +101,7 @@ pub async fn start_l2(
     let _ = L1ProofSender::spawn(
         cfg.clone(),
         shared_state.clone(),
+        store.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
     )

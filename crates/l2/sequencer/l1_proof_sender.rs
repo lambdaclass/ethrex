@@ -53,6 +53,7 @@ pub struct L1ProofSenderState {
 }
 
 impl L1ProofSenderState {
+    #[allow(clippy::too_many_arguments)]
     async fn new(
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
