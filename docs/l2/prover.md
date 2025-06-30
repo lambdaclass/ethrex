@@ -140,7 +140,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 
 - `Finally`, to start the `proposer`/`l2 node`, run:
   - `make rm-db-l2 && make down`
-  - `make deploy-l1 && make init-l2`
+  - `make deploy-l1 && make init-l2` (if running a risc0 prover, see the next step before invoking the L1 contract deployer)
 
 - If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions [here](https://github.com/risc0/risc0-ethereum/tree/main/contracts/script).
 - For a local L1 running with ethrex, we do the following:
@@ -158,7 +158,11 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       export DEPLOYER_ADDRESS="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
       export CHAIN_KEY="ethrex"
       export RPC_URL="http://localhost:8545"
+
+      export ETHERSCAN_URL="dummy"
+      export ETHERSCAN_API_KEY="dummy"
       ```
+      the last two variables need to be defined with some value even if not used, else the deployment script fails.
    1. cd into `risc0-ethereum/`
    1. run the deployment script
       ```bash
