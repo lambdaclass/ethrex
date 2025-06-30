@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751310169631,
+  "lastUpdate": 1751310798069,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2369,6 +2369,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209322451102,
             "range": "± 729403895",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8795e325f112d967cee60b965d64a6945dec068f",
+          "message": "fix(l2): based CI (#3404)\n\n**Motivation**\n\nIn #3242, `verifyBatchesAligned()` was updated in the based\n`OnChainProposer` to be consistent with the non-based one, but the\n`onlySequencer` identifier was added by mistake.\n\n**Description**\n\nRemoves the `onlySequencer` identifier.\n\nCloses None",
+          "timestamp": "2025-06-30T18:11:54Z",
+          "tree_id": "7c28ebcd53dded82020376b2a62d37f3caba2597",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8795e325f112d967cee60b965d64a6945dec068f"
+        },
+        "date": 1751310787973,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209706714945,
+            "range": "± 441054948",
             "unit": "ns/iter"
           }
         ]
