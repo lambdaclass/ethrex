@@ -1476,12 +1476,13 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 </ul>
 </li>
 </ul>
-<h2 id="how-do-deposits-and-withdrawals-work"><a class="header" href="#how-do-deposits-and-withdrawals-work">How do deposits and withdrawals work?</a></h2>
+<h2 id="l1-l2-communication"><a class="header" href="#l1-l2-communication">L1&lt;-&gt;L2 communication</a></h2>
+<p>To communicate between L1 and L2, we use two mechanisms called <em>Privileged transactions</em>, and <em>L1 messages</em>.
+In this section we talk a bit about them, first going through the more specific use cases for <em>Deposits</em> and <em>Withdrawals</em>.</p>
 <h3 id="deposits"><a class="header" href="#deposits">Deposits</a></h3>
-<p>TODO</p>
+<p>The mechanism for depositing funds to L2 from L1 is explained in detail in <a href="l2/./deposits.html">"Deposits"</a>.</p>
 <h3 id="withdrawals"><a class="header" href="#withdrawals">Withdrawals</a></h3>
 <p>The mechanism for withdrawing funds from L2 back to L1 is explained in detail in <a href="l2/./withdrawals.html">"Withdrawals"</a>.</p>
-<p>TODO: Explain it a high level maybe?</p>
 <h2 id="recap"><a class="header" href="#recap">Recap</a></h2>
 <h3 id="batch-commitment"><a class="header" href="#batch-commitment">Batch Commitment</a></h3>
 <p>An L2 batch commitment is the hash of the following things:</p>
@@ -1752,36 +1753,490 @@ number_of_deposit_logs_u16 ||
 }
 
 </style>
-<h1 id="withdrawals-1"><a class="header" href="#withdrawals-1">Withdrawals</a></h1>
-<p>This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.</p>
-<p>First, we need to understand the generic mechanism behind it:</p>
-<h2 id="l1message"><a class="header" href="#l1message">L1Message</a></h2>
-<p>To allow generic L2-&gt;L1 messages, a system contract is added which allows sending arbitary data.</p>
-<pre><code>struct L1Message {
-    tx_hash: H256, // L2 transaction where it was included
-    address: Address, // Who called L1Message.sol
-    data: bytes32 // payload
-}
+<h1 id="deposits-1"><a class="header" href="#deposits-1">Deposits</a></h1>
+<p>This document contains a detailed explanation of how asset deposits work.</p>
+<h2 id="native-eth-deposits"><a class="header" href="#native-eth-deposits">Native ETH deposits</a></h2>
+<p>This section explains step by step how native ETH deposits work.</p>
+<p>On L1:</p>
+<ol>
+<li>
+<p>The user sends ETH to the <code>CommonBridge</code> contract.</p>
+</li>
+<li>
+<p>The bridge adds the deposit's hash to the <code>pendingDepositLogs</code>.
+We explain how to compute this hash in <a href="l2/deposits.html#generic-l1-l2-messaging">"Generic L1-&gt;L2 messaging"</a></p>
+</li>
+<li>
+<p>The bridge emits a <code>DepositInitiated</code> event:</p>
+<pre><code class="language-solidity">emit DepositInitiated(
+    msg.value,   // amount
+    msg.sender,  // to
+    depositId,
+    msg.sender,  // recipient of the deposit
+    msg.sender,  // sender in L2
+    21000 * 5,   // gas limit
+    "",          // calldata
+    l2MintTxHash
+);
 </code></pre>
-<p>This data is collected, put in a merkle tree whose root is published as part of the batch commitment.</p>
-<p>This way, L1 contracts can access the data.</p>
-<h2 id="bridging"><a class="header" href="#bridging">Bridging</a></h2>
-<p>On the L2 side, a contract burns the eth (or other assets, in the future) and emits a message to the L1 containing the details of this operation:</p>
+</li>
+</ol>
+<p>Off-chain:</p>
+<ol>
+<li>On each L2 node, the L1 watcher processes <code>DepositInitiated</code> events, each adding a <code>PrivilegedL2Transaction</code> to the L2 mempool.</li>
+<li>The privileged transaction is an <a href="https://eips.ethereum.org/EIPS/eip-2718">EIP-2718 typed transaction</a>, somewhat similar to an <a href="https://eips.ethereum.org/EIPS/eip-1559">EIP-1559 transaction</a>, but with the following changes:
+<ol>
+<li>They don't have sender signatures. Those are validated in the L1, since the sender of the L1 deposit transaction is the sender in the L2.
+As a consequence of this, privileged transactions can also be sent from L1 contracts.</li>
+<li>At the start of the execution, the <code>recipient</code> account balance is increased by the transaction's value. The transaction's value is set to zero during the rest of the execution.</li>
+<li>The sender account's nonce isn't increased as a result of the execution.</li>
+<li>The sender isn't charged for the gas costs of the execution.</li>
+</ol>
+</li>
+</ol>
+<p>On L2:</p>
+<ol>
+<li>The privileged transaction increases the account balance of the recipient by the deposit amount.</li>
+<li>Additionally, a call to the sender address is executed, which immediately halts in case the sender is an EOA.
+In case the call reverts, changes from the execution are reverted as normal, but the initial balance increase is kept.</li>
+</ol>
+<p>Back on L1:</p>
+<ol>
+<li>A sequencer commits a batch on L1 including the privileged transaction.</li>
+<li>The <code>OnChainProposer</code> asserts the included privileged transactions exist and are included in order.</li>
+<li>The <code>OnChainProposer</code> notifies the bridge of the consumed privileged transactions and they are removed from <code>pendingDepositLogs</code>.</li>
+</ol>
+<pre class="mermaid">---
+title: User makes an ETH deposit
+---
+sequenceDiagram
+    box rgb(33,66,99) L1
+        actor L1Alice as Alice
+        participant CommonBridge
+        participant OnChainProposer
+    end
+
+    actor Sequencer
+
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+    end
+
+    L1Alice-&gt;&gt;CommonBridge: sends 42 ETH
+    CommonBridge-&gt;&gt;CommonBridge: pendingDepositLogs.push(txHash)
+    CommonBridge-&gt;&gt;CommonBridge: emit DepositInitiated
+
+    CommonBridge--&gt;&gt;Sequencer: receives event
+    Sequencer-&gt;&gt;L2Alice: mints 42 ETH
+
+    Sequencer-&gt;&gt;OnChainProposer: publishes batch
+    OnChainProposer-&gt;&gt;CommonBridge: consumes pending deposits
+    CommonBridge--&gt;&gt;CommonBridge: pendingDepositLogs.pop()
+</pre>
+<h2 id="erc20-deposits-through-the-native-bridge"><a class="header" href="#erc20-deposits-through-the-native-bridge">ERC20 deposits through the native bridge</a></h2>
+<p>This section explains step by step how native ERC20 deposits work.</p>
+<p>On L1:</p>
+<ol>
+<li>
+<p>The user gives the <code>CommonBridge</code> allowance via an <code>approve</code> call to the L1 token contract.</p>
+</li>
+<li>
+<p>The user calls <code>depositERC20</code> on the bridge, specifying the L1 and L2 token addresses, the amount to deposit, along with the intended L2 recipient.</p>
+</li>
+<li>
+<p>The bridge locks the specified L1 token amount in the bridge, updating the mapping with the amount locked for the L1 and L2 token pair.
+This ensures that L2 token withdrawals don't consume L1 tokens that weren't deposited into that L2 token (see <a href="l2/deposits.html#why-store-the-provenance-of-bridged-tokens">"Why store the provenance of bridged tokens?"</a> for more information).</p>
+</li>
+<li>
+<p>The bridge emits a <code>DepositInitiated</code> event:</p>
+<pre><code class="language-solidity">emit DepositInitiated(
+    0,            // amount (unused)
+    0xffff,       // to (the L2 bridge)
+    depositId,
+    0,            // recipient of the ETH deposit (unused)
+    0xffff,       // sender in L2 (the L2 bridge)
+    gasLimit,     // gas limit
+    data,         // calldata
+    l2MintTxHash
+);
+</code></pre>
+</li>
+</ol>
+<p>On L2:</p>
+<ol>
+<li>The privileged transaction performs a call to <code>mintERC20</code> on the <code>CommonBridgeL2</code> from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.</li>
+<li>The bridge calls <code>crosschainMint</code> on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.</li>
+<li>If the call reverts, the L2 bridge automatically initiates a withdrawal.</li>
+</ol>
+<p>Back on L1:</p>
+<ol>
+<li>A sequencer commits a batch on L1 including the privileged transaction.</li>
+<li>The <code>OnChainProposer</code> asserts the included privileged transactions exist and are included in order.</li>
+<li>The <code>OnChainProposer</code> notifies the bridge of the consumed privileged transactions and they are removed from <code>pendingDepositLogs</code>.</li>
+</ol>
+<pre class="mermaid">---
+title: User makes an ERC20 deposit
+---
+sequenceDiagram
+    box rgb(33,66,99) L1
+        actor L1Alice as Alice
+        participant L1Token
+        participant CommonBridge
+        participant OnChainProposer
+    end
+
+    actor Sequencer
+
+    box rgb(139, 63, 63) L2
+        participant CommonBridgeL2
+        participant L2Token
+        actor L2Alice as Alice
+    end
+
+    L1Alice-&gt;&gt;L1Token: approves token transfer
+    L1Alice-&gt;&gt;CommonBridge: calls depositERC20
+    CommonBridge-&gt;&gt;CommonBridge: pendingDepositLogs.push(txHash)
+    CommonBridge-&gt;&gt;CommonBridge: emit DepositInitiated
+
+    CommonBridge--&gt;&gt;Sequencer: receives event
+    Sequencer--&gt;&gt;CommonBridgeL2: executes call &lt;br&gt;to mintERC20
+
+    CommonBridgeL2-&gt;&gt;L2Token: calls l1Address
+    L2Token-&gt;&gt;CommonBridgeL2: returns address of L1Token
+
+    CommonBridgeL2-&gt;&gt;L2Token: calls crosschainMint
+    L2Token--&gt;&gt;L2Alice: mints 42 tokens
+
+    Sequencer-&gt;&gt;OnChainProposer: publishes batch
+    OnChainProposer-&gt;&gt;CommonBridge: consumes pending deposits
+    CommonBridge--&gt;&gt;CommonBridge: pendingDepositLogs.pop()
+</pre>
+<h3 id="why-store-the-provenance-of-bridged-tokens"><a class="header" href="#why-store-the-provenance-of-bridged-tokens">Why store the provenance of bridged tokens?</a></h3>
+<p>As said before, storing the provenance of bridged tokens or, in other words, how many tokens were sent from each L1 token to each L2 token, ensures that L2 token withdrawals don't unlock L1 tokens that weren't deposited into another L2 token.</p>
+<p>This can be better understood with an example:</p>
+<pre class="mermaid">---
+title: Attacker exploits alternative bridge without token provenance
+---
+sequenceDiagram
+    box rgb(33,66,99) L1
+        actor L1Eve as Eve
+        actor L1Alice as Alice
+        participant CommonBridge
+    end
+
+    box rgb(139, 63, 63) L2
+        participant CommonBridgeL2
+        actor L2Alice as Alice
+        actor L2Eve as Eve
+    end
+
+    Note over L1Eve,L2Eve: Alice does a normal deposit
+    L1Alice -&gt;&gt; CommonBridge: Deposits 100 Foo tokens into FooL2
+    CommonBridge --&gt;&gt; CommonBridgeL2: Notifies deposit
+    CommonBridgeL2 -&gt;&gt; L2Alice: Sends 100 FooL2 tokens
+
+    Note over L1Eve,L2Eve: Eve does a deposit to ensure the L2 token they control is registered with the bridge
+    L1Eve -&gt;&gt; CommonBridge: Deposits 1 Foo token into Bar
+    CommonBridge --&gt;&gt; CommonBridgeL2: Notifies deposit
+    CommonBridgeL2 -&gt;&gt; L2Eve: Sends 1 Bar token
+
+    Note over L1Eve,L2Eve: Eve does a malicious withdawal of Alice's funds
+    L2Eve -&gt;&gt; CommonBridgeL2: Withdraws 101 Bar tokens into Foo
+    CommonBridgeL2 --&gt;&gt; CommonBridge: Notifies withdrawal
+    CommonBridge -&gt;&gt; L1Eve: Sends 101 Foo tokens
+</pre>
+<h2 id="generic-l1-l2-messaging"><a class="header" href="#generic-l1-l2-messaging">Generic L1-&gt;L2 messaging</a></h2>
+<!-- TODO: extend this version once we have generic L1->L2 messages -->
+<p>Privileged transactions are sent as a <code>DepositInitiated</code> event.</p>
+<pre><code class="language-solidity">emit DepositInitiated(
+    amount,
+    to,
+    depositId,
+    recipient,
+    from,
+    gasLimit,
+    calldata,
+    l2MintTxHash
+);
+</code></pre>
+<p>The <code>l2MintTxHash</code> is the hash of the privileged transaction, computed as follows:</p>
+<pre><code class="language-solidity">keccak256(
+    bytes.concat(
+        bytes20(to),
+        bytes32(value),
+        bytes32(depositId),
+        bytes20(recipient),
+        bytes20(from),
+        bytes32(gasLimit),
+        keccak256(calldata)
+    )
+)
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="withdrawals-1"><a class="header" href="#withdrawals-1">Withdrawals</a></h1>
+<p>This document contains a detailed explanation of how asset withdrawals work.</p>
+<h2 id="native-eth-withdrawals"><a class="header" href="#native-eth-withdrawals">Native ETH withdrawals</a></h2>
+<p>This section explains step by step how native ETH withdrawals work.</p>
+<p>On L2:</p>
+<ol>
+<li>
+<p>The user sends a transaction calling <code>withdraw(address _receiverOnL1)</code> on the <code>CommonBridgeL2</code> contract, along with the amount of ETH to be withdrawn.</p>
+</li>
+<li>
+<p>The bridge sends the withdrawn amount to the burn address.</p>
+</li>
+<li>
+<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
+<pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
+</code></pre>
+</li>
+<li>
+<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics.</p>
+</li>
+</ol>
+<p>Off-chain:</p>
+<ol>
+<li>On each L2 node, the L1 watcher extracts <code>L1Message</code> events, generating a merkle tree with the hashed messages as leaves.</li>
+</ol>
+<p>On L1:</p>
+<ol>
+<li>A sequencer commits the batch on L1, publishing the merkle tree's root with <code>publishWithdrawals</code> on the L1 <code>CommonBridge</code>.</li>
+<li>The user submits a withdrawal proof when calling <code>claimWithdrawal</code> on the L1 <code>CommonBridge</code>.
+The proof can be obtained by calling <code>ethrex_getWithdrawalProof</code> in any L2 node, after the batch containing the withdrawal transaction was verified in the L1.</li>
+<li>The bridge asserts the proof is valid.</li>
+<li>The bridge sends the locked funds specified in the <code>L1Message</code> to the user.</li>
+</ol>
+<pre class="mermaid">---
+title: User makes an ETH withdrawal
+---
+sequenceDiagram
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+        participant CommonBridgeL2
+        participant L2ToL1Messenger
+    end
+
+    actor Sequencer
+
+    box rgb(33,66,99) L1
+        participant OnChainProposer
+        participant CommonBridge
+        actor L1Alice as Alice
+    end
+
+    L2Alice-&gt;&gt;CommonBridgeL2: withdraws 42 ETH
+    CommonBridgeL2-&gt;&gt;CommonBridgeL2: burns 42 ETH
+    CommonBridgeL2-&gt;&gt;L2ToL1Messenger: calls sendMessageToL1
+    L2ToL1Messenger-&gt;&gt;L2ToL1Messenger: emits L1Message event
+
+    L2ToL1Messenger--&gt;&gt;Sequencer: receives event
+
+    Sequencer-&gt;&gt;OnChainProposer: publishes batch
+    OnChainProposer-&gt;&gt;CommonBridge: publishes L1 message root
+
+    L1Alice-&gt;&gt;CommonBridge: submits withdrawal proof
+    CommonBridge--&gt;&gt;CommonBridge: asserts proof is valid
+    CommonBridge-&gt;&gt;L1Alice: sends 42 ETH
+</pre>
+<h2 id="erc20-withdrawals-through-the-native-bridge"><a class="header" href="#erc20-withdrawals-through-the-native-bridge">ERC20 withdrawals through the native bridge</a></h2>
+<p>This section explains step by step how native ERC20 withdrawals work.</p>
+<p>On L2:</p>
+<ol>
+<li>
+<p>The user calls <code>approve</code> on the L2 tokens to allow the bridge to transfer the asset.</p>
+</li>
+<li>
+<p>The user sends a transaction calling <code>withdrawERC20(address _token, address _receiverOnL1, uint256 _value)</code> on the <code>CommonBridgeL2</code> contract.</p>
+</li>
+<li>
+<p>The bridge calls <code>crosschainBurn</code> on the L2 token, burning the amount to be withdrawn by the user.</p>
+</li>
+<li>
+<p>The bridge fetches the address of the L1 token by calling <code>l1Address()</code> on the L2 token contract.</p>
+</li>
+<li>
+<p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
+<pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(l1Token, _token, _receiverOnL1, _value))
+</code></pre>
+</li>
+<li>
+<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics.</p>
+</li>
+</ol>
+<p>Off-chain:</p>
+<ol>
+<li>On each L2 node, the L1 watcher extracts <code>L1Message</code> events, generating a merkle tree with the hashed messages as leaves.</li>
+</ol>
+<p>On L1:</p>
+<ol>
+<li>A sequencer commits the batch on L1, publishing the <code>L1Message</code> with <code>publishWithdrawals</code> on the L1 <code>CommonBridge</code>.</li>
+<li>The user submits a withdrawal proof when calling <code>claimWithdrawalERC20</code> on the L1 <code>CommonBridge</code>.
+The proof can be obtained by calling <code>ethrex_getWithdrawalProof</code> in any L2 node, after the batch containing the withdrawal transaction was verified in the L1.</li>
+<li>The bridge asserts the proof is valid and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.</li>
+<li>The bridge transfers the locked tokens specified in the <code>L1Message</code> to the user and discounts the transferred amount from the L1 and L2 token pair in the mapping.</li>
+</ol>
+<pre class="mermaid">---
+title: User makes an ERC20 withdrawal
+---
+sequenceDiagram
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+        participant L2Token
+        participant CommonBridgeL2
+        participant L2ToL1Messenger
+    end
+
+    actor Sequencer
+
+    box rgb(33,66,99) L1
+        participant OnChainProposer
+        participant CommonBridge
+        participant L1Token
+        actor L1Alice as Alice
+    end
+
+    L2Alice-&gt;&gt;L2Token: approves token transfer
+    L2Alice-&gt;&gt;CommonBridgeL2: withdraws 42 of L2Token
+    CommonBridgeL2-&gt;&gt;L2Token: burns the 42 tokens
+    CommonBridgeL2-&gt;&gt;L2ToL1Messenger: calls sendMessageToL1
+    L2ToL1Messenger-&gt;&gt;L2ToL1Messenger: emits L1Message event
+
+    L2ToL1Messenger--&gt;&gt;Sequencer: receives event
+
+    Sequencer-&gt;&gt;OnChainProposer: publishes batch
+    OnChainProposer-&gt;&gt;CommonBridge: publishes L1 message root
+
+    L1Alice-&gt;&gt;CommonBridge: submits withdrawal proof
+    CommonBridge-&gt;&gt;L1Token: transfers tokens
+    L1Token--&gt;&gt;L1Alice: sends 42 tokens
+</pre>
+<h2 id="generic-l2-l1-messaging"><a class="header" href="#generic-l2-l1-messaging">Generic L2-&gt;L1 messaging</a></h2>
+<p>First, we need to understand the generic mechanism behind it:</p>
+<h3 id="l1message"><a class="header" href="#l1message">L1Message</a></h3>
+<p>To allow generic L2-&gt;L1 messages, a system contract is added which allows sending arbitrary data. This data is emitted as <code>L1Message</code> events, which nodes automatically extract from blocks.</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>struct L1Message {
+    tx_hash: H256, // L2 transaction where it was included
+    from: Address, // Who called L1Message.sol
+    data_hash: H256 // hashed payload
+}
+<span class="boring">}</span></code></pre></pre>
+<p>When sequencers commit a new batch, they include the merkle root of all the <code>L1Message</code>s inside the batch.
+That way, L1 contracts can verify some data was sent from a specific L2 sender.</p>
+<pre class="mermaid">---
+title: L1Message Merkle tree
+---
+flowchart TD
+    
+    Msg2[L1Message&lt;sub&gt;2&lt;/sub&gt;]
+    Root([Root])
+    Node1([Node&lt;sub&gt;1&lt;/sub&gt;])
+    Node2([Node&lt;sub&gt;2&lt;/sub&gt;])
+
+    Root --- Node1
+    Root --- Node2
+
+    subgraph Msg1[&quot;L1Message&lt;sub&gt;1&lt;/sub&gt;&quot;]
+        direction LR
+
+        txHash1[&quot;txHash&lt;sub&gt;1&lt;/sub&gt;&quot;]
+        from1[&quot;from&lt;sub&gt;1&lt;/sub&gt;&quot;]
+        dataHash1[&quot;hash(data&lt;sub&gt;1&lt;/sub&gt;)&quot;]
+
+        txHash1 --- from1
+        from1 --- dataHash1
+    end
+
+    Node1 --- Msg1
+    Node2 --- Msg2
+</pre>
+<p>As shown in the diagram, the leaves of the tree are the hash of each encoded <code>L1Message</code>.
+Messages are encoded by packing the bytes of the transaction hash that generated it in the L2, the address of the sender, and the hashed data attached to the message.</p>
+<h3 id="bridging"><a class="header" href="#bridging">Bridging</a></h3>
+<p>On the L2 side, for the case of asset bridging, a contract burns some assets.
+It then sends a message to the L1 containing the details of this operation:</p>
 <ul>
 <li>Destination: L1 address that can claim the deposit</li>
 <li>Amount: how much was burnt</li>
 </ul>
-<p>When the batch is commited, the OnChainProposer notifies the bridge which saves the message tree root.</p>
-<p>Once the batch containing this transaction is verified, the user can claim their funds on the L1.</p>
-<p>To do this, they compute a merkle proof for the included batch and call the L1 bridge contract.</p>
+<p>When the batch is committed on the L1, the <code>OnChainProposer</code> notifies the bridge which saves the message tree root.
+Once the batch containing this transaction is verified, the user can claim their funds on the L1.
+To do this, they compute a merkle proof for the included batch and call the L1 <code>CommonBridge</code> contract.</p>
 <p>This contract then:</p>
 <ul>
-<li>Verifies that the batch is validated</li>
+<li>Checks that the batch is verified</li>
 <li>Ensures the withdrawal wasn't already claimed</li>
 <li>Computes the expected leaf</li>
 <li>Validates that the proof leads from the leaf to the root of the message tree</li>
 <li>Gives the funds to the user</li>
-<li>Marks the withdrawl as claimed</li>
+<li>Marks the withdrawal as claimed</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
