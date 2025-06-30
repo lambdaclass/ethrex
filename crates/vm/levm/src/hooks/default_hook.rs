@@ -106,7 +106,7 @@ impl Hook for DefaultHook {
             validate_type_4_tx(vm)?;
         }
 
-        transfer_value_if_applicable(vm)?;
+        transfer_value(vm)?;
 
         set_bytecode_and_code_address(vm)?;
 
@@ -445,11 +445,9 @@ pub fn deduct_caller(
     Ok(())
 }
 
-/// Transfer msg_value to transaction recipient ONLY if it is a non-privileged CALL transaction.
-/// Note that non-privileged is a concept of L2 and in L1 every transaction is non-privileged
-pub fn transfer_value_if_applicable(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // Transfer value only in Call transactions that are not privileged.
-    if !vm.is_create()? && !vm.env.is_privileged {
+/// Transfer msg_value to transaction recipient
+pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
+    if !vm.is_create()? {
         vm.increase_account_balance(
             vm.current_call_frame()?.to,
             vm.current_call_frame()?.msg_value,
