@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751301156782,
+  "lastUpdate": 1751303802696,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3354,6 +3354,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006775289340101523,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "57b2a2b26933eebf3e878a05d1c46aa7a898fd0c",
+          "message": "fix(l2): remove requests processing in build_payload (#3300)\n\n**Motivation**\n\nWhen producing a block in L2 mode, we unnecessarily call\n`blockchain::extract_requests`, even though no requests are being\ngenerated.\n\n**Description**\n\n- Refactors `PayloadBuildContext` to store `requests:\nOption<Vec<EncodedRequests>>` and calculates the `request_hash` directly\nin `finalize_payload`.\n- Removes the `blockchain::extract_requests` call from\n`payload_builder`.\n\n\nCloses None",
+          "timestamp": "2025-06-30T14:18:21Z",
+          "tree_id": "bac5bdc1fbd5ae7e0f729563d2de21a7df9e4ff5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/57b2a2b26933eebf3e878a05d1c46aa7a898fd0c"
+        },
+        "date": 1751303793407,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
             "unit": "Mgas/s"
           }
         ]
