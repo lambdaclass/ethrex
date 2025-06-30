@@ -647,6 +647,7 @@ pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
     )
 }
 
+// CALL opcodes - CALL, CALLCODE, DELEGATECALL, STATICCALL
 #[allow(clippy::too_many_arguments)]
 pub fn call(
     new_memory_size: usize,
@@ -657,33 +658,17 @@ pub fn call(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    let value_is_zero = value_to_transfer.is_zero();
+    let positive_value_cost = Some(positive_value_cost(value_is_zero));
+    let value_to_empty_account = Some(value_to_empty_account(address_is_empty, value_is_zero));
 
-    let address_access_cost = address_access_cost(
+    let call_gas_costs = calculate_call_gas_costs(
+        new_memory_size,
+        current_memory_size,
         address_was_cold,
-        CALL_STATIC,
-        CALL_COLD_DYNAMIC,
-        CALL_WARM_DYNAMIC,
+        positive_value_cost,
+        value_to_empty_account,
     )?;
-    let positive_value_cost = if !value_to_transfer.is_zero() {
-        CALL_POSITIVE_VALUE
-    } else {
-        0
-    };
-
-    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
-        CALL_TO_EMPTY_ACCOUNT
-    } else {
-        0
-    };
-
-    let call_gas_costs = memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGas)?
-        .checked_add(positive_value_cost)
-        .ok_or(OutOfGas)?
-        .checked_add(value_to_empty_account)
-        .ok_or(OutOfGas)?;
 
     calculate_cost_and_gas_limit_call(
         value_to_transfer.is_zero(),
@@ -702,27 +687,19 @@ pub fn callcode(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-    let address_access_cost = address_access_cost(
+    let value_is_zero = value_to_transfer.is_zero();
+    let positive_value_cost = Some(positive_value_cost(value_is_zero));
+
+    let call_gas_costs = calculate_call_gas_costs(
+        new_memory_size,
+        current_memory_size,
         address_was_cold,
-        DELEGATECALL_STATIC,
-        DELEGATECALL_COLD_DYNAMIC,
-        DELEGATECALL_WARM_DYNAMIC,
+        positive_value_cost,
+        None,
     )?;
 
-    let positive_value_cost = if !value_to_transfer.is_zero() {
-        CALLCODE_POSITIVE_VALUE
-    } else {
-        0
-    };
-    let call_gas_costs = memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGas)?
-        .checked_add(positive_value_cost)
-        .ok_or(OutOfGas)?;
-
     calculate_cost_and_gas_limit_call(
-        value_to_transfer.is_zero(),
+        value_is_zero,
         gas_from_stack,
         gas_left,
         call_gas_costs,
@@ -737,18 +714,13 @@ pub fn delegatecall(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-
-    let address_access_cost = address_access_cost(
+    let call_gas_costs = calculate_call_gas_costs(
+        new_memory_size,
+        current_memory_size,
         address_was_cold,
-        DELEGATECALL_STATIC,
-        DELEGATECALL_COLD_DYNAMIC,
-        DELEGATECALL_WARM_DYNAMIC,
+        None,
+        None,
     )?;
-
-    let call_gas_costs = memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGas)?;
 
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
@@ -760,20 +732,90 @@ pub fn staticcall(
     gas_from_stack: U256,
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
-    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-
-    let address_access_cost = address_access_cost(
+    let call_gas_costs = calculate_call_gas_costs(
+        new_memory_size,
+        current_memory_size,
         address_was_cold,
-        STATICCALL_STATIC,
-        STATICCALL_COLD_DYNAMIC,
-        STATICCALL_WARM_DYNAMIC,
+        None,
+        None,
     )?;
 
-    let call_gas_costs = memory_expansion_cost
-        .checked_add(address_access_cost)
-        .ok_or(OutOfGas)?;
-
     calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
+}
+
+/// Calculates the gas cost for sending more than 0 wei.
+fn positive_value_cost(value_is_zero: bool) -> u64 {
+    if !value_is_zero {
+        CALL_POSITIVE_VALUE
+    } else {
+        0
+    }
+}
+
+/// Calculates the gas cost in case an empty account is "being created" in the state, meaning that more than 0
+/// wei is being sent to a previously empty account (no balance, no nonce, no code).
+fn value_to_empty_account(address_is_empty: bool, value_is_zero: bool) -> u64 {
+    if address_is_empty && !value_is_zero {
+        CALL_TO_EMPTY_ACCOUNT
+    } else {
+        0
+    }
+}
+
+/// Sums all the different gas costs for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes.
+/// Memory expansion and address access cost are common to all. Costs for transferring positive
+/// value and transferring to empty accounts are custom for each and therefore might exist or not.
+fn calculate_call_gas_costs(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    address_was_cold: bool,
+    positive_value_cost: Option<u64>,
+    value_to_empty_account: Option<u64>,
+) -> Result<u64, VMError> {
+    // Calculate memory expansion cost (common to all CALL opcodes)
+    let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
+    // Calculate address access cost (common to all CALL opcodes)
+    let address_access_cost = address_access_cost(
+        address_was_cold,
+        CALL_STATIC,
+        CALL_COLD_DYNAMIC,
+        CALL_WARM_DYNAMIC,
+    )?;
+    // Sum all costs. Positive value cost and value to empty account costs might exist or not for different CALL opcodes.
+    // In case they don't exists (value is None), 0 is added to the total costs.
+    Ok(memory_expansion_cost
+        .checked_add(address_access_cost)
+        .ok_or(OutOfGas)?
+        .checked_add(positive_value_cost.unwrap_or_default())
+        .ok_or(OutOfGas)?
+        .checked_add(value_to_empty_account.unwrap_or_default())
+        .ok_or(OutOfGas)?)
+}
+
+fn calculate_cost_and_gas_limit_call(
+    value_is_zero: bool,
+    gas_from_stack: U256,
+    gas_left: u64,
+    call_gas_costs: u64,
+    stipend: u64,
+) -> Result<(u64, u64), VMError> {
+    let gas_stipend = if value_is_zero { 0 } else { stipend };
+    let gas_left = gas_left.checked_sub(call_gas_costs).ok_or(OutOfGas)?;
+
+    // EIP 150, https://eips.ethereum.org/EIPS/eip-150
+    let max_gas_for_call = gas_left.checked_sub(gas_left / 64).ok_or(OutOfGas)?;
+
+    let gas: u64 = gas_from_stack
+        .min(max_gas_for_call.into())
+        .try_into()
+        .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+
+    Ok((
+        gas.checked_add(call_gas_costs)
+            .ok_or(ExceptionalHalt::OutOfGas)?,
+        gas.checked_add(gas_stipend)
+            .ok_or(ExceptionalHalt::OutOfGas)?,
+    ))
 }
 
 pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
@@ -909,32 +951,6 @@ pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMErr
         .ok_or(InternalError::Underflow)?;
 
     Ok(remaining_gas)
-}
-
-fn calculate_cost_and_gas_limit_call(
-    value_is_zero: bool,
-    gas_from_stack: U256,
-    gas_left: u64,
-    call_gas_costs: u64,
-    stipend: u64,
-) -> Result<(u64, u64), VMError> {
-    let gas_stipend = if value_is_zero { 0 } else { stipend };
-    let gas_left = gas_left.checked_sub(call_gas_costs).ok_or(OutOfGas)?;
-
-    // EIP 150, https://eips.ethereum.org/EIPS/eip-150
-    let max_gas_for_call = gas_left.checked_sub(gas_left / 64).ok_or(OutOfGas)?;
-
-    let gas: u64 = gas_from_stack
-        .min(max_gas_for_call.into())
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::OutOfGas)?;
-
-    Ok((
-        gas.checked_add(call_gas_costs)
-            .ok_or(ExceptionalHalt::OutOfGas)?,
-        gas.checked_add(gas_stipend)
-            .ok_or(ExceptionalHalt::OutOfGas)?,
-    ))
 }
 
 pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result<u64, VMError> {
