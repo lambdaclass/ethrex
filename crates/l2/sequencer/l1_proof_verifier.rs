@@ -280,7 +280,7 @@ impl L1ProofVerifier {
                     Ok(proof_status) => return Ok(proof_status),
                     Err(ProofVerificationAggModeError::BeaconClient(_)) => continue,
                     Err(ProofVerificationAggModeError::EthereumProviderError(_)) => break,
-                    Err(e) => return Err(ProofVerifierError::InternalError(format!("{:?}", e))),
+                    Err(e) => return Err(ProofVerifierError::InternalError(format!("{e:?}"))),
                 }
             }
         }
