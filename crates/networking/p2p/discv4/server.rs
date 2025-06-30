@@ -782,9 +782,10 @@ pub(super) mod tests {
 
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id())));
-        let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
-            MAX_MESSAGES_TO_BROADCAST,
-        );
+        let (broadcast, _) =
+            tokio::sync::broadcast::channel::<(tokio::task::Id, H256, Arc<RLPxMessage>)>(
+                MAX_MESSAGES_TO_BROADCAST,
+            );
         let tracker = tokio_util::task::TaskTracker::new();
         let local_node_record = Arc::new(Mutex::new(
             NodeRecord::from_node(&local_node, 1, &signer)
