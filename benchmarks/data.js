@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751293626463,
+  "lastUpdate": 1751294275869,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3176,6 +3176,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006880061855670103,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4b6318fb291bc731b4123fd88e9398c5aacb4b30",
+          "message": "feat(l2): value sending in privileged transactions (#3320)\n\n**Motivation**\n\nWe want to be able to send (\"deposit\") value-carrying privileged\ntransactions, for example to do forced withdrawals.\n\n**Description**\n\nThis PR allows users to specify the transaction value while sending\nprivileged transactions.\n\nFor regular deposits, the bridge calls it's L2 version and relies on the\nL2 hook allowing the bridge address to send without having funds. It\ncalls it's own L2 version, which handles failed transfers by making a\nwithdrawal.\n\nFor transactions, since they can't fail they are instead made to revert\nwhen there aren't enough funds to cover the operation.\n\nCloses #3290, closes #3291\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-06-30T13:28:49Z",
+          "tree_id": "0e7d86f866aa0e1081ab669a2f064c76a1c0eb95",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4b6318fb291bc731b4123fd88e9398c5aacb4b30"
+        },
+        "date": 1751294265710,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006988125654450262,
             "unit": "Mgas/s"
           }
         ]
