@@ -3,7 +3,7 @@ use ethrex_common::{
     types::{Block, block_execution_witness::ExecutionWitnessResult},
 };
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DeserializeAs, SerializeAs};
+use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::blobs_bundle;
