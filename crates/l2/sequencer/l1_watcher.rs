@@ -192,9 +192,8 @@ pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>,
         state.last_block_fetched, new_last_block
     );
 
-    // Matches the event DepositInitiated from ICommonBridge.sol
-    let topic =
-        keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
+    // Matches the event L1ToL2Message from ICommonBridge.sol
+    let topic = keccak(b"L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)");
 
     let logs = state
         .eth_client
@@ -233,14 +232,14 @@ pub async fn process_deposit_logs(
         if deposit_already_processed(state, deposit_data.deposit_tx_hash).await? {
             warn!(
                 "Deposit already processed (to: {:x}, value: {:x}, depositId: {:#}), skipping.",
-                deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
+                deposit_data.to_address, deposit_data.value, deposit_data.deposit_id
             );
             continue;
         }
 
         info!(
             "Initiating mint transaction for {:x} with value {:x} and depositId: {:#}",
-            deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
+            deposit_data.to_address, deposit_data.value, deposit_data.deposit_id
         );
 
         let gas_price = state.l2_client.get_gas_price().await?;
@@ -253,7 +252,6 @@ pub async fn process_deposit_logs(
             .eth_client
             .build_privileged_transaction(
                 deposit_data.to_address,
-                deposit_data.recipient,
                 deposit_data.from,
                 Bytes::copy_from_slice(&deposit_data.calldata),
                 Overrides {
@@ -270,7 +268,7 @@ pub async fn process_deposit_logs(
                     // If we make a transaction on the L2 with this address, we may break the
                     // deposit workflow.
                     nonce: Some(deposit_data.deposit_id.as_u64()),
-                    value: Some(deposit_data.mint_value),
+                    value: Some(deposit_data.value),
                     gas_limit: Some(deposit_data.gas_limit.as_u64()),
                     // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
                     // Otherwise, the transaction is not included in the mempool.
@@ -323,10 +321,9 @@ async fn deposit_already_processed(
 }
 
 struct DepositData {
-    pub mint_value: U256,
+    pub value: U256,
     pub to_address: H160,
     pub deposit_id: U256,
-    pub recipient: H160,
     pub from: H160,
     pub gas_limit: U256,
     pub calldata: Vec<u8>,
@@ -335,7 +332,7 @@ struct DepositData {
 
 impl DepositData {
     fn from_log(log: RpcLogInfo) -> Result<DepositData, L1WatcherError> {
-        let mint_value = format!(
+        let value = format!(
             "{:#x}",
             log.topics
                 .get(1)
@@ -371,59 +368,53 @@ impl DepositData {
         })?;
 
         // The previous values are indexed in the topic of the log. Data contains the rest.
-        // DATA = recipient: Address || from: Address || gas_limit: uint256 || offset_calldata: uint256 || tx_hash: H256 || length_calldata: uint256 || calldata: bytes
-        // DATA = 0..32              || 32..64        || 64..96             || 96..128                  || 128..160      || 160..192                 || 192..(192+calldata_len)
+        // DATA = from: Address || gas_limit: uint256 || offset_calldata: uint256 || tx_hash: H256 || length_calldata: uint256 || calldata: bytes
+        // DATA = 0..32         || 32..64             || 64..96                   || 96..128       || 128..160                 || 160..(160+calldata_len)
         // Any value that is not 32 bytes is padded with zeros.
-
-        let recipient = log
-            .data
-            .get(12..32)
-            .ok_or(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse recipient from log: log.data[0..32] out of bounds".to_owned(),
-            ))?;
-        let recipient = Address::from_slice(recipient);
 
         let from = log
             .data
-            .get(44..64)
+            .get(12..32)
             .ok_or(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse from from log: log.data[44..64] out of bounds".to_owned(),
+                "Failed to parse from from log: log.data[12..32] out of bounds".to_owned(),
             ))?;
         let from = Address::from_slice(from);
 
-        let gas_limit = U256::from_big_endian(log.data.get(64..96).ok_or(
+        let gas_limit = U256::from_big_endian(log.data.get(32..64).ok_or(
             L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[64..96] out of bounds".to_owned(),
+                "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
             ),
         )?);
 
         let deposit_tx_hash = H256::from_slice(
             log.data
-                .get(128..160)
+                .get(96..128)
                 .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Failed to parse deposit_tx_hash from log: log.data[64..96] out of bounds"
+                    "Failed to parse deposit_tx_hash from log: log.data[96..128] out of bounds"
                         .to_owned(),
                 ))?,
         );
 
-        let calldata_len = U256::from_big_endian(log.data.get(160..192).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse calldata_len from log: log.data[96..128] out of bounds".to_owned(),
-            ),
-        )?);
+        let calldata_len = U256::from_big_endian(
+            log.data
+                .get(128..160)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse calldata_len from log: log.data[128..160] out of bounds"
+                        .to_owned(),
+                ))?,
+        );
         let calldata = log
             .data
-            .get(192..192 + calldata_len.as_usize())
+            .get(160..160 + calldata_len.as_usize())
             .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse calldata from log: log.data[128..128 + calldata_len] out of bounds"
+            "Failed to parse calldata from log: log.data[160..160 + calldata_len] out of bounds"
                 .to_owned(),
         ))?;
 
         Ok(Self {
-            mint_value,
+            value,
             to_address,
             deposit_id,
-            recipient,
             from,
             gas_limit,
             calldata: calldata.to_vec(),

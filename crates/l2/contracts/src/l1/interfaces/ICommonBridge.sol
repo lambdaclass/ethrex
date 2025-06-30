@@ -11,7 +11,6 @@ interface ICommonBridge {
     /// @param amount the amount of tokens being deposited.
     /// @param to the address that will be called in the L2.
     /// @param depositId Id used to differentiate deposits with same amount and recipient.
-    /// @param recipient the address that initiated the deposit and will receive the tokens.
     /// @param from the address that initiated the deposit.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
@@ -19,11 +18,10 @@ interface ICommonBridge {
     /// deposit in L2. Could be used to track the status of the deposit finalization
     /// on L2. You can use this hash to retrive the tx data.
     /// It is the result of keccak(abi.encode(transaction)).
-    event DepositInitiated(
+    event L1ToL2Message(
         uint256 indexed amount,
         address indexed to,
         uint256 indexed depositId,
-        address recipient,
         address from,
         uint256 gasLimit,
         bytes data,
@@ -50,10 +48,10 @@ interface ICommonBridge {
         uint256 indexed claimedAmount
     );
 
-    struct DepositValues {
+    struct SendValues {
         address to;
-        address recipient;
         uint256 gasLimit;
+        uint256 value;
         bytes data;
     }
 
@@ -62,12 +60,19 @@ interface ICommonBridge {
     /// logs to be processed.
     function getPendingDepositLogs() external view returns (bytes32[] memory);
 
+    /// @notice Method that sends a transaction to L2.
+    /// @dev The deposit process starts here by emitting a L1ToL2Message
+    /// event. This event will later be intercepted by the L2 operator to
+    /// be inserted as a transaction.
+    /// @param sendValues the parameters of the transaction being sent.
+    function sendToL2(SendValues calldata sendValues) external;
+
     /// @notice Method that starts an L2 ETH deposit process.
-    /// @dev The deposit process starts here by emitting a DepositInitiated
+    /// @dev The deposit process starts here by emitting a L1ToL2Message
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
-    /// @param depositValues the values needed to create the deposit.
-    function deposit(DepositValues calldata depositValues) external payable;
+    /// @param l2Recipient the address on L2 that will receive the deposit.
+    function deposit(address l2Recipient) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number`
     /// pending deposit logs.

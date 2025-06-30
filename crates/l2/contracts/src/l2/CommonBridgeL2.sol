@@ -22,4 +22,10 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             keccak256(abi.encodePacked(_receiverOnL1, msg.value))
         );
     }
+    function mintETH(address to) external payable {
+        (bool success, ) = to.call{value: msg.value}("");
+        if (!success) {
+            this.withdraw{value: msg.value}(to);
+        }
+    }
 }

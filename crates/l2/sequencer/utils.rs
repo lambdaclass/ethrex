@@ -97,8 +97,7 @@ pub async fn get_needed_proof_types(
 
             let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
                 EthClientError::Custom(format!(
-                    "Failed to parse OnChainProposer response {}",
-                    response
+                    "Failed to parse OnChainProposer response {response}"
                 ))
             })?;
 
