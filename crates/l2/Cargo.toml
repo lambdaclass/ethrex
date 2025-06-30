@@ -51,6 +51,9 @@ zkvm_interface = { path = "./prover/zkvm/interface/" }
 [dev-dependencies]
 rand = "0.8.5"
 
+[build-dependencies]
+vergen-git2 = { version = "1.0.7"}
+
 [lib]
 path = "./l2.rs"
 
