@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751303802696,
+  "lastUpdate": 1751304368156,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3378,6 +3378,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/57b2a2b26933eebf3e878a05d1c46aa7a898fd0c"
         },
         "date": 1751303793407,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2ebb67cf51f137c75f26bdfa66540f5ea8835d6e",
+          "message": "chore(l1,l2): reorder fixtures (#3155)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThe `tests_data` folder was unorganized \n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nCreated a `fixtures` folder inside of test data with a folder for each\ntype of file.\nThe current structure looks like this:\n```\nfixtures/\n├── genesis/                    # All genesis files\n│   └── *.json\n│   \n├── network/                    # Network configuration\n│   ├── params.yaml\n│   └── hive_clients\n|       └── *.yml\n|\n├── contracts/                  # Smart contracts for testing\n│   ├── ERC20/\n│   │   ├── ERC20.sol\n│   │   ├── ERC20.bin\n│   │   |   └── TestToken.bin\n│   │   └── deps.sol\n│   ├── load-test/\n│   |   └── IOHeavyContract.sol\n|   └──levm_print\n|        └── Print.sol\n|\n├── blockchain/                 # Blockchain data files\n│   └── *.rlp\n|\n├── blobs/                      # BLOB files\n│   └── *.blob\n|\n├── keys/                       # Private keys for testing\n│   ├── private_keys.txt\n│   └── private_keys_l1.txt\n|\n├── cache/                      # Cached data\n│   └── rpc_prover/\n│       └── cache_3990967.json\n|\n└── rsp/                       \n    └── input/\n        └── 1/\n             └── 21272632.bin\n ```\nAll references were updated to avoid breaking the code\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3006\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-06-30T15:33:31Z",
+          "tree_id": "d4cc7189a817b84df69f40c674589bbf9ad8a4d8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2ebb67cf51f137c75f26bdfa66540f5ea8835d6e"
+        },
+        "date": 1751304367669,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
