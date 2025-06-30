@@ -64,13 +64,13 @@ pub struct BatchBlockProcessingFailure {
 
 fn log_batch_progress(batch_size: usize, current_block: usize) {
     let progress_needed = batch_size > 10;
-    let percent_marks = [20, 40, 60, 80];
+    const PERCENT_MARKS: [usize; 4] = [20, 40, 60, 80];
     if progress_needed {
-        for mark in percent_marks {
-            if ((batch_size * mark) / 100) == current_block {
+        PERCENT_MARKS.iter().for_each(|mark| {
+            if (batch_size * mark) / 100 == current_block {
                 info!("{}% of batch processed", mark);
             }
-        }
+        });
     }
 }
 
