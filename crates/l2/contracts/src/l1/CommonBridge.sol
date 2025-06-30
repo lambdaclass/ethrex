@@ -7,6 +7,7 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
+import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -84,49 +85,55 @@ contract CommonBridge is
         return pendingDepositLogs;
     }
 
-    function _deposit(DepositValues memory depositValues) private {
-        require(msg.value > 0, "CommonBridge: amount to deposit is zero");
-
+    function _sendToL2(address from, SendValues memory sendValues) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
-                bytes20(depositValues.to),
-                bytes32(msg.value),
+                bytes20(sendValues.to),
+                bytes32(sendValues.value),
                 bytes32(depositId),
-                bytes20(depositValues.recipient),
-                bytes20(msg.sender),
-                bytes32(depositValues.gasLimit),
-                bytes32(keccak256(depositValues.data))
+                bytes20(from),
+                bytes32(sendValues.gasLimit),
+                bytes32(keccak256(sendValues.data))
             )
         );
 
         pendingDepositLogs.push(l2MintTxHash);
 
-        emit DepositInitiated(
-            msg.value,
-            depositValues.to,
+        emit L1ToL2Message(
+            sendValues.value,
+            sendValues.to,
             depositId,
-            depositValues.recipient,
-            msg.sender,
-            depositValues.gasLimit,
-            depositValues.data,
+            from,
+            sendValues.gasLimit,
+            sendValues.data,
             l2MintTxHash
         );
         depositId += 1;
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(DepositValues calldata depositValues) public payable {
-        _deposit(depositValues);
+    function sendToL2(SendValues calldata sendValues) public {
+        _sendToL2(msg.sender, sendValues);
+    }
+    
+    /// @inheritdoc ICommonBridge
+    function deposit(address l2Recipient) public payable {
+        _deposit(l2Recipient);
+    }
+
+    function _deposit(address l2Recipient) private {
+        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
+        SendValues memory sendValues = SendValues({
+            to: L2_BRIDGE_ADDRESS,
+            gasLimit: 21000 * 5,
+            value: msg.value,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     receive() external payable {
-        DepositValues memory depositValues = DepositValues({
-            to: msg.sender,
-            recipient: msg.sender,
-            gasLimit: 21000 * 5,
-            data: bytes("")
-        });
-        _deposit(depositValues);
+        _deposit(msg.sender);
     }
 
     /// @inheritdoc ICommonBridge
