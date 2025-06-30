@@ -2,6 +2,8 @@ use bls12_381::{
     Fp, Fp2, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
+use ark_bls12_381::{Fr as ArkFR, G1Affine as ArkG1Affine, G2Affine as ArkG2Affine};
+use ark_serialize::CanonicalDeserialize;
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -1037,6 +1039,24 @@ fn verify_kzg_proof(
         &settings,
     )
     .map_err(|_| PrecompileError::EvaluationError.into())
+}
+
+fn verify_kzg_proof_ark(
+    commitment_bytes: &[u8; 48],
+    z: &[u8; 32],
+    y: &[u8; 32],
+    proof_bytes: &[u8; 48],
+) -> Result<bool, VMError> {
+    let commitment = ArkG1Affine::deserialize_compressed(&commitment_bytes[..])
+        .map_err(|_| PrecompileError::EvaluationError)?;
+
+    let proof = ArkG1Affine::deserialize_compressed(&proof_bytes[..])
+        .map_err(|_| PrecompileError::EvaluationError)?;
+
+    let z = ArkFR::deserialize_compressed(&z[..]).map_err(|_| PrecompileError::EvaluationError)?;
+    
+    let y = ArkFR::deserialize_compressed(&y[..]).map_err(|_| PrecompileError::EvaluationError)?;
+    Ok(true)
 }
 
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
