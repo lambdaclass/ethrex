@@ -7,6 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
+use ethrex_rlp::encode::RLPEncode;
 use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
@@ -143,11 +144,6 @@ impl Blockchain {
             .header
             .clone();
 
-        let parent_block_header = self
-            .storage
-            .get_block_header_by_hash(first_block_header.parent_hash)?
-            .ok_or(ChainError::ParentNotFound)?;
-
         // Get state at previous block
         let trie = self
             .storage
@@ -161,9 +157,23 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
         let mut block_hashes = HashMap::new();
         let mut codes = HashMap::new();
+
+        // Get the witness for the state trie
+        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+        })?;
+        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+        let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
+        // If the witness is empty at least try to store the root
+        if used_trie_nodes.is_empty() {
+            if let Some(root) = root_node {
+                used_trie_nodes.push(root.encode_raw());
+            }
+        }
+
+        let mut keys: Vec<Vec<u8>> = Vec::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -176,6 +186,13 @@ impl Blockchain {
             vm.execute_block(block)?;
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
+
+            for account_update in &account_updates {
+                keys.push(account_update.address.encode_to_vec());
+                for (storage, _) in &account_update.added_storage {
+                    keys.push(storage.encode_to_vec());
+                }
+            }
 
             let mut used_storage_tries = HashMap::new();
             // Get the used block hashes from the logger
@@ -266,29 +283,9 @@ impl Blockchain {
                 })?;
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
-                match encoded_storage_tries.entry(address) {
-                    std::collections::hash_map::Entry::Occupied(mut entry) => {
-                        entry.get_mut().extend(witness);
-                    }
-                    std::collections::hash_map::Entry::Vacant(vacant) => {
-                        vacant.insert(witness);
-                    }
-                }
+                used_trie_nodes.extend_from_slice(&witness);
             }
             trie = updated_trie;
-        }
-
-        // Get the witness for the state trie
-        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
-            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
-        })?;
-        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
-        let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
-        // If the witness is empty at least try to store the root
-        if used_trie_nodes.is_empty() {
-            if let Some(root) = root_node {
-                used_trie_nodes.push(root.encode_raw());
-            }
         }
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
@@ -307,25 +304,25 @@ impl Blockchain {
                 first_needed_block_number = **block_number_from_logger;
             }
         }
-        let mut block_headers = HashMap::new();
+        let mut headers: Vec<BlockHeader> = Vec::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
             let header = self.storage.get_block_header(block_number)?.ok_or(
                 ChainError::WitnessGeneration("Failed to get block header".to_string()),
             )?;
-            block_headers.insert(block_number, header);
+            headers.push(header);
         }
 
         let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
         Ok(ExecutionWitnessResult {
-            state_trie_nodes: Some(used_trie_nodes),
-            storage_trie_nodes: Some(encoded_storage_tries),
+            state: Some(used_trie_nodes),
             codes,
             state_trie: None,
             storage_tries: None,
-            block_headers,
-            parent_block_header,
+            headers,
+            block_headers: HashMap::new(),
             chain_config,
+            keys,
         })
     }
 
