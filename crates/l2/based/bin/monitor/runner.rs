@@ -11,9 +11,9 @@ use ratatui::Terminal;
 use ratatui::backend::{Backend, CrosstermBackend};
 
 use crate::monitor::EthrexMonitor;
-use crate::ui;
+use crate::{MonitorOptions, ui};
 
-pub async fn run(tick_rate: Duration) -> Result<(), Box<dyn Error>> {
+pub async fn run(opts: MonitorOptions) -> Result<(), Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -22,8 +22,8 @@ pub async fn run(tick_rate: Duration) -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let app = EthrexMonitor::new("Based Ethrex Monitor").await;
-    let app_result = run_app(&mut terminal, app, tick_rate).await;
+    let app = EthrexMonitor::new(&opts).await;
+    let app_result = run_app(&mut terminal, app, &opts).await;
 
     // restore terminal
     disable_raw_mode()?;
@@ -44,13 +44,13 @@ pub async fn run(tick_rate: Duration) -> Result<(), Box<dyn Error>> {
 async fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: EthrexMonitor<'_>,
-    tick_rate: Duration,
+    opts: &MonitorOptions,
 ) -> Result<(), Box<dyn Error>> {
     let mut last_tick = Instant::now();
     loop {
         terminal.draw(|frame| ui::render(frame, &mut app))?;
 
-        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        let timeout = Duration::from_millis(opts.tick_rate).saturating_sub(last_tick.elapsed());
         if !event::poll(timeout)? {
             app.on_tick().await;
             last_tick = Instant::now();

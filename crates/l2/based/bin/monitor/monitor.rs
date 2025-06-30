@@ -3,9 +3,8 @@
 #![expect(clippy::indexing_slicing)]
 
 use std::cmp::min;
-use std::str::FromStr;
 
-use ethrex_common::{Address, H160, H256, U256};
+use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_rpc::clients::Overrides;
@@ -14,6 +13,8 @@ use ethrex_rpc::types::block::{BlockBodyWrapper, RpcBlock};
 use ethrex_rpc::types::receipt::RpcLog;
 use keccak_hash::keccak;
 use ratatui::widgets::TableState;
+
+use crate::MonitorOptions;
 
 pub struct TabsState<'a> {
     pub titles: Vec<&'a str>,
@@ -501,18 +502,18 @@ pub struct EthrexMonitor<'a> {
 }
 
 impl<'a> EthrexMonitor<'a> {
-    pub async fn new(title: &'a str) -> Self {
-        // TODO: URLs should be configurable.
-        let eth_client =
-            EthClient::new("http://localhost:8545").expect("Failed to create EthClient");
+    pub async fn new(opts: &MonitorOptions) -> Self {
+        let title = if opts.based {
+            "Based Ethrex Monitor"
+        } else {
+            "Ethrex Monitor"
+        };
+        let eth_client = EthClient::new(&opts.l1_rpc_url).expect("Failed to create EthClient");
         let rollup_client =
-            EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
-        let on_chain_proposer_address =
-            H160::from_str("0x2fc01018f543dc4acfc87857df6168f540ca95d8").unwrap_or_default();
-        let common_bridge_address =
-            H160::from_str("0xfe61a6a4e812dd1ff6691faf5c0203775e221063").unwrap_or_default();
-        let sequencer_registry_address =
-            H160::from_str("0xb51d3c21db3dca551d407611da89c9fc51524f62").unwrap_or_default();
+            EthClient::new(&opts.l2_rpc_url).expect("Failed to create RollupClient");
+        let on_chain_proposer_address = opts.on_chain_proposer_address;
+        let common_bridge_address = opts.common_bridge_address;
+        let sequencer_registry_address = opts.sequencer_registry_address.unwrap_or_default();
 
         EthrexMonitor {
             title,
