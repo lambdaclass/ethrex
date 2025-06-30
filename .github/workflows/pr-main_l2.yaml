@@ -82,7 +82,12 @@ jobs:
           cargo test l2 --no-run --release
 
       - name: Build L1 docker image
-        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/blockchain/dev/Dockerfile
+          tags: ethrex_dev:latest
+          push: false
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -128,7 +133,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build L1 docker image
-        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/blockchain/dev/Dockerfile
+          tags: ethrex_dev:latest
+          push: false
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -208,7 +218,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build L1 docker image
-        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/blockchain/dev/Dockerfile
+          tags: ethrex_dev:latest
+          push: false
 
       - name: Install solc
         run: |
