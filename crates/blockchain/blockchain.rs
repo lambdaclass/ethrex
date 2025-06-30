@@ -530,11 +530,11 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed_seconds = interval.elapsed().as_millis() / 1000;
+        let elapsed_seconds = interval.elapsed().as_secs_f64();
         let mut throughput = 0.0;
-        if elapsed_seconds != 0 && total_gas_used != 0 {
+        if elapsed_seconds > 0.0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            throughput = (as_gigas) / (elapsed_seconds as f64);
+            throughput = as_gigas / elapsed_seconds;
         }
 
         metrics!(
