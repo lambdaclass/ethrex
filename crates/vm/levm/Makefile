@@ -137,10 +137,10 @@ SIM_PARALLELISM := 48
 run-hive-levm: build-image-levm ## 🐝 Run Hive with LEVM and Build report
 	$(MAKE) -C ../../../ setup-hive
 	$(MAKE) -C ../../../ clean-hive-logs
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client-file ../test_data/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client-file ../test_data/network/hive_clients/ethrex.yml--client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client-file ../test_data/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client-file ../test_data/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
 	cd ../../../ && cargo run --release -p hive_report
 
 download-state-tests: ## 📥 Download and setup state tests fixtures
