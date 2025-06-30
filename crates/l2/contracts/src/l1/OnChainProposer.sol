@@ -145,13 +145,8 @@ contract OnChainProposer is
         );
         TDXVERIFIER = tdxverifier;
 
-        // Set the SP1 program verification key
+        // Set verification keys (or image id in risc0's case)
         SP1_VERIFICATION_KEY = sp1Vk;
-        // Set the Risc0 program verification key
-        require(
-            RISC0_VERIFICATION_KEY == bytes32(0),
-            "OnChainProposer: contract already initialized"
-        );
         RISC0_VERIFICATION_KEY = risc0Vk;
 
         batchCommitments[0] = BatchCommitmentInfo(
