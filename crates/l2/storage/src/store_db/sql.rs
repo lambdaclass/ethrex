@@ -338,16 +338,10 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         commit_tx: H256,
     ) -> Result<(), RollupStoreError> {
-        self.execute_in_tx(vec![
-            (
-                "DELETE FROM commit_txs WHERE batch = ?1",
-                vec![batch_number].into_params()?,
-            ),
-            (
-                "INSERT INTO commit_txs VALUES (?1, ?2)",
-                (batch_number, Vec::from(commit_tx.to_fixed_bytes())).into_params()?,
-            ),
-        ])
+        self.execute_in_tx(vec![(
+            "INSERT OR REPLACE INTO commit_txs VALUES (?1, ?2)",
+            (batch_number, Vec::from(commit_tx.to_fixed_bytes())).into_params()?,
+        )])
         .await
     }
 
@@ -357,12 +351,12 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT * FROM commit_txs WHERE batch = ?1",
+                "SELECT commit_tx FROM commit_txs WHERE batch = ?1",
                 vec![batch_number],
             )
             .await?;
         if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 1)?;
+            let vec = read_from_row_blob(&row, 0)?;
             return Ok(Some(H256::from_slice(&vec)));
         }
         Ok(None)
@@ -373,16 +367,10 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         verify_tx: H256,
     ) -> Result<(), RollupStoreError> {
-        self.execute_in_tx(vec![
-            (
-                "DELETE FROM verify_txs WHERE batch = ?1",
-                vec![batch_number].into_params()?,
-            ),
-            (
-                "INSERT INTO verify_txs VALUES (?1, ?2)",
-                (batch_number, Vec::from(verify_tx.to_fixed_bytes())).into_params()?,
-            ),
-        ])
+        self.execute_in_tx(vec![(
+            "INSERT OR REPLACE INTO verify_txs VALUES (?1, ?2)",
+            (batch_number, Vec::from(verify_tx.to_fixed_bytes())).into_params()?,
+        )])
         .await
     }
 
@@ -392,12 +380,12 @@ impl StoreEngineRollup for SQLStore {
     ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT * FROM verify_txs WHERE batch = ?1",
+                "SELECT verify_tx FROM verify_txs WHERE batch = ?1",
                 vec![batch_number],
             )
             .await?;
         if let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 1)?;
+            let vec = read_from_row_blob(&row, 0)?;
             return Ok(Some(H256::from_slice(&vec)));
         }
         Ok(None)
