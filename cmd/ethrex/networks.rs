@@ -41,11 +41,13 @@ lazy_static! {
     )
     .expect("Failed to parse mainnet bootnodes file");
 }
+
 #[derive(Debug, Clone)]
 pub enum Network {
     PublicNetwork(PublicNetwork),
     GenesisPath(PathBuf),
 }
+
 #[derive(Debug, Clone, Copy)]
 pub enum PublicNetwork {
     Hoodi,
@@ -91,6 +93,10 @@ impl fmt::Display for Network {
 }
 
 impl Network {
+    pub fn mainnet() -> Self {
+        Network::PublicNetwork(PublicNetwork::Mainnet)
+    }
+
     pub fn get_genesis_path(&self) -> &Path {
         match self {
             Network::PublicNetwork(PublicNetwork::Holesky) => Path::new(HOLESKY_GENESIS_PATH),

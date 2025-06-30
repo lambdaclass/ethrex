@@ -203,7 +203,8 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
 }
 
 pub fn get_network(opts: &Options) -> Network {
-    opts.network.clone()
+    let default = Network::mainnet();
+    opts.network.clone().unwrap_or(default)
 }
 
 #[allow(dead_code)]
