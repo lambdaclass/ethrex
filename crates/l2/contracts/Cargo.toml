@@ -6,7 +6,7 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.38.0", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 ethereum-types = { workspace = true, features = ["serialize"] }
 bytes = { version = "1.6.0", features = ["serde"] }
 secp256k1.workspace = true
