@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751304949900,
+  "lastUpdate": 1751305529349,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3441,6 +3441,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0066736600000000005,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b8dffc6936af6669927bb1657f19fb6756dabf13",
+          "message": "fix(l2): parse default value correctly (#3317)\n\n**Description**\n\nThis PR fixes a panic we had when the user didn't specify any of the\n`proof-coordinator.*` flags. It seems clap called the `Default::default`\nimplementation, which panicked because of the parsing not having support\nfor leading `0x`.\n\nCloses #3309",
+          "timestamp": "2025-06-30T17:01:49Z",
+          "tree_id": "a1dd4d6768884e79ec22aa6bf5dc3a80898432a5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b8dffc6936af6669927bb1657f19fb6756dabf13"
+        },
+        "date": 1751305519630,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
             "unit": "Mgas/s"
           }
         ]
