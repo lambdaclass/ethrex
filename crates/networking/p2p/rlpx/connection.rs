@@ -738,7 +738,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.framed.next().await
     }
 
-    pub async fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
+    pub(crate) async fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
         let task_id = tokio::task::id();
         match msg {
             txs_msg @ Message::Transactions(_) => {
