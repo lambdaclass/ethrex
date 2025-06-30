@@ -6,8 +6,13 @@ use aligned_sdk::{
     common::types::Network,
 };
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_sdk::calldata::{Value, encode_calldata};
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProverType},
+};
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
+use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
 use secp256k1::SecretKey;
 use tracing::{error, info};
@@ -15,10 +20,6 @@ use tracing::{error, info};
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     sequencer::errors::ProofVerifierError,
-    utils::prover::{
-        proving_systems::{BatchProof, ProverType},
-        save_state::{StateFileType, batch_number_has_all_needed_proofs, read_proof},
-    },
 };
 
 use super::{
@@ -29,12 +30,16 @@ use super::{
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchesAligned(uint256,bytes[],bytes32[][])";
 
-pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
+pub async fn start_l1_proof_verifier(
+    cfg: SequencerConfig,
+    rollup_store: StoreRollup,
+) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
         &cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
         &cfg.aligned,
+        rollup_store,
     )
     .await?;
     l1_proof_verifier.run().await;
@@ -49,6 +54,7 @@ struct L1ProofVerifier {
     on_chain_proposer_address: Address,
     proof_verify_interval_ms: u64,
     network: Network,
+    rollup_store: StoreRollup,
     sp1_vk: [u8; 32],
 }
 
@@ -58,6 +64,7 @@ impl L1ProofVerifier {
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
         aligned_cfg: &AlignedConfig,
+        rollup_store: StoreRollup,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
@@ -74,6 +81,7 @@ impl L1ProofVerifier {
             l1_private_key: proof_coordinator_cfg.l1_private_key,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
+            rollup_store,
             sp1_vk,
         })
     }
@@ -95,12 +103,18 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        if !batch_number_has_all_needed_proofs(first_batch_to_verify, &[ProverType::Aligned])
-            .is_ok_and(|has_all_proofs| has_all_proofs)
+        if self
+            .rollup_store
+            .get_proof_by_batch_and_type(first_batch_to_verify, ProverType::Aligned)
+            .await?
+            .is_none()
         {
-            info!("Missing proofs for batch {first_batch_to_verify}, skipping verification");
+            info!(
+                ?first_batch_to_verify,
+                "Missing Aligned proof, skipping verification"
+            );
             return Ok(());
-        }
+        };
 
         match self
             .verify_proofs_aggregation(first_batch_to_verify)
@@ -125,7 +139,7 @@ impl L1ProofVerifier {
         &self,
         first_batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        let proofs = self.get_available_proofs(first_batch_number)?;
+        let proofs = self.get_available_proofs(first_batch_number).await?;
         let aggregated_proofs = self.get_aggregated_proofs(proofs).await?;
 
         let aggregated_proofs_count = u64::try_from(aggregated_proofs.len())
@@ -175,21 +189,20 @@ impl L1ProofVerifier {
     }
 
     /// Returns all proofs that have already been generated, starting from the given batch number.
-    fn get_available_proofs(
+    async fn get_available_proofs(
         &self,
         mut batch_number: u64,
     ) -> Result<Vec<(u64, BatchProof)>, ProofVerifierError> {
         let mut proofs = Vec::new();
         loop {
-            if !batch_number_has_all_needed_proofs(batch_number, &[ProverType::Aligned])
-                .is_ok_and(|has_all_proofs| has_all_proofs)
-            {
+            let Some(proof) = self
+                .rollup_store
+                .get_proof_by_batch_and_type(batch_number, ProverType::Aligned)
+                .await?
+            else {
                 return Ok(proofs);
-            }
-            proofs.push((
-                batch_number,
-                read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?,
-            ));
+            };
+            proofs.push((batch_number, proof));
             batch_number += 1;
         }
     }
