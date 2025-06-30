@@ -78,7 +78,7 @@ impl<'a> VM<'a> {
             substate: Substate::default(),
             db,
             tx: tx.clone(),
-            hooks: get_hooks(&vm_type, tx),
+            hooks: get_hooks(&vm_type),
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
             tracer,

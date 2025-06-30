@@ -14,11 +14,12 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_common::{
+    calldata::Value,
     deposits::{compute_deposit_logs_hash, get_block_deposits},
     l1_messages::{compute_merkle_root, get_block_l1_messages, get_l1_message_hash},
     state_diff::{StateDiff, prepare_state_diff},
 };
-use ethrex_l2_sdk::calldata::{Value, encode_calldata};
+use ethrex_l2_sdk::calldata::encode_calldata;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;

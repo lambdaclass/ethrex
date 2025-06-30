@@ -1,12 +1,12 @@
 .PHONY: help init down clean restart init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
-		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
+		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 ci_test test \
 		init-testnet deploy-l1-testnet restart-testnet
 
 .DEFAULT_GOAL := help
 
-L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
-L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
+L2_GENESIS_FILE_PATH=../../fixtures/genesis/l2.json
+L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1-dev.json
 
 # Basic
 help: ## 📚 Show help for each of the Makefile recipes
@@ -22,7 +22,7 @@ down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 clean: clean-contract-deps ## 🧹 Cleans the localnet
 	rm -rf out/
 
-restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restarts the localnet
+restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
 ## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
 restart-testnet:
@@ -110,9 +110,9 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l2-path ../../fixtures/genesis/l2.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
@@ -122,7 +122,7 @@ deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 update-system-contracts:
 	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
 	--contracts-path contracts \
-	--l2-genesis-path ../../test_data/genesis-l2.json
+	--l2-genesis-path ../../fixtures/genesis/l2.json
 
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
@@ -232,8 +232,8 @@ state-diff-test:
 	touch .env
 	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --features l2 --bin ethrex -- \
 	l2 reconstruct \
-	-g ../../test_data/genesis-l2.json \
-	-b ../../test_data/blobs/ \
+	-g ../../fixtures/genesis/l2.json \
+	-b ../../fixtures/blobs/ \
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
@@ -243,20 +243,3 @@ state-diff-test:
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
 
 	cargo test state_reconstruct --release
-
-# Purge L2's state
-UNAME_S:=$(shell uname -s)
-# This directory is set by crates/l2/utils/prover/save_state.rs -> const DEFAULT_DATADIR
-PROJECT_NAME:=ethrex_l2_state
-
-ifeq ($(UNAME_S),Linux)
-    PROJECT_PATH := $(HOME)/.local/share/${PROJECT_NAME}
-else ifeq ($(UNAME_S),Darwin)
-    PROJECT_PATH := $(HOME)/Library/Application\ Support/${PROJECT_NAME}
-else
-    $(error Unsupported platform: $(UNAME_S))
-endif
-
-purge_prover_state: ## 🧹 Removes the L2 state, only use to start fresh.
-	rm -rf $(PROJECT_PATH); \
-	echo "Directory deleted."
