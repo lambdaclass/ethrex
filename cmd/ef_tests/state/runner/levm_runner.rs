@@ -201,7 +201,7 @@ pub fn prepare_vm_for_tx<'a>(
         db,
         &tx,
         LevmCallTracer::disabled(),
-        VMType::L1, // TODO: Should be run the EF tests with L2?
+        VMType::L1, // TODO: Should we run the EF tests with L2?
     ))
 }
 
