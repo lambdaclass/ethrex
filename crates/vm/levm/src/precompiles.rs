@@ -1057,31 +1057,31 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
         .get(..32)
         .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| InternalError::Slicing)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let x: [u8; 32] = calldata
         .get(32..64)
         .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| InternalError::Slicing)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let y: [u8; 32] = calldata
         .get(64..96)
         .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| InternalError::Slicing)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let commitment: [u8; 48] = calldata
         .get(96..144)
         .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| InternalError::Slicing)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let proof: [u8; 48] = calldata
         .get(144..192)
         .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| InternalError::Slicing)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     // Perform the evaluation
 
@@ -1574,8 +1574,8 @@ pub fn p_256_verify(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     };
 
     // Build signature
-    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::Slicing)?;
-    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::Slicing)?;
+    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::TypeConversion)?;
+    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::TypeConversion)?;
 
     let Ok(signature) = P256Signature::from_scalars(r, s) else {
         return Ok(Bytes::new());
