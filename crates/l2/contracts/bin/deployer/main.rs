@@ -2,7 +2,7 @@ use std::{
     fs::{File, OpenOptions, read_to_string},
     io::{BufWriter, Write},
     path::PathBuf,
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, Stdio},
     str::FromStr,
 };
 
@@ -87,190 +87,7 @@ async fn main() -> Result<(), DeployerError> {
 }
 
 fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
-    trace!("Downloading contract dependencies");
-    std::fs::create_dir_all(opts.contracts_path.join("lib")).map_err(|err| {
-        DeployerError::DependencyError(format!("Failed to create contracts/lib: {err}"))
-    })?;
-
-    git_clone(
-        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-        opts.contracts_path
-            .join("lib/openzeppelin-contracts-upgradeable")
-            .to_str()
-            .ok_or(DeployerError::FailedToGetStringFromPath)?,
-        None,
-        true,
-    )?;
-
-    git_clone(
-        "https://github.com/succinctlabs/sp1-contracts.git",
-        opts.contracts_path
-            .join("lib/sp1-contracts")
-            .to_str()
-            .ok_or(DeployerError::FailedToGetStringFromPath)?,
-        None,
-        false,
-    )?;
-
-    trace!("Contract dependencies downloaded");
-    Ok(())
-}
-
-pub fn git_clone(
-    repository_url: &str,
-    outdir: &str,
-    branch: Option<&str>,
-    submodules: bool,
-) -> Result<ExitStatus, DeployerError> {
-    info!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning or updating git repository");
-
-    if PathBuf::from(outdir).join(".git").exists() {
-        info!(outdir = %outdir, "Found existing git repository, updating...");
-
-        let branch_name = if let Some(b) = branch {
-            b.to_string()
-        } else {
-            // Look for default branch name (could be main, master or other)
-            let output = Command::new("git")
-                .current_dir(outdir)
-                .arg("symbolic-ref")
-                .arg("refs/remotes/origin/HEAD")
-                .output()
-                .map_err(|e| {
-                    DeployerError::DependencyError(format!(
-                        "Failed to get default branch for {outdir}: {e}"
-                    ))
-                })?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(DeployerError::DependencyError(format!(
-                    "Failed to get default branch for {outdir}: {stderr}"
-                )));
-            }
-
-            String::from_utf8(output.stdout)
-                .map_err(|_| {
-                    DeployerError::InternalError("Failed to parse git output".to_string())
-                })?
-                .trim()
-                .split('/')
-                .next_back()
-                .ok_or(DeployerError::InternalError(
-                    "Failed to parse default branch".to_string(),
-                ))?
-                .to_string()
-        };
-
-        trace!(branch = %branch_name, "Updating to branch");
-
-        // Fetch
-        let fetch_status = Command::new("git")
-            .current_dir(outdir)
-            .args(["fetch", "origin"])
-            .spawn()
-            .map_err(|err| {
-                DeployerError::DependencyError(format!("Failed to spawn git fetch: {err}"))
-            })?
-            .wait()
-            .map_err(|err| {
-                DeployerError::DependencyError(format!("Failed to wait for git fetch: {err}"))
-            })?;
-        if !fetch_status.success() {
-            return Err(DeployerError::DependencyError(format!(
-                "git fetch failed for {outdir}"
-            )));
-        }
-
-        // Checkout to branch
-        let checkout_status = Command::new("git")
-            .current_dir(outdir)
-            .arg("checkout")
-            .arg(&branch_name)
-            .spawn()
-            .map_err(|err| {
-                DeployerError::DependencyError(format!("Failed to spawn git checkout: {err}"))
-            })?
-            .wait()
-            .map_err(|err| {
-                DeployerError::DependencyError(format!("Failed to wait for git checkout: {err}"))
-            })?;
-        if !checkout_status.success() {
-            return Err(DeployerError::DependencyError(format!(
-                "git checkout of branch {branch_name} failed for {outdir}, try deleting the repo folder"
-            )));
-        }
-
-        // Reset branch to origin
-        let reset_status = Command::new("git")
-            .current_dir(outdir)
-            .arg("reset")
-            .arg("--hard")
-            .arg(format!("origin/{branch_name}"))
-            .spawn()
-            .map_err(|err| {
-                DeployerError::DependencyError(format!("Failed to spawn git reset: {err}"))
-            })?
-            .wait()
-            .map_err(|err| {
-                DeployerError::DependencyError(format!("Failed to wait for git reset: {err}"))
-            })?;
-
-        if !reset_status.success() {
-            return Err(DeployerError::DependencyError(format!(
-                "git reset failed for {outdir}"
-            )));
-        }
-
-        // Update submodules
-        if submodules {
-            let submodule_status = Command::new("git")
-                .current_dir(outdir)
-                .arg("submodule")
-                .arg("update")
-                .arg("--init")
-                .arg("--recursive")
-                .spawn()
-                .map_err(|err| {
-                    DeployerError::DependencyError(format!(
-                        "Failed to spawn git submodule update: {err}"
-                    ))
-                })?
-                .wait()
-                .map_err(|err| {
-                    DeployerError::DependencyError(format!(
-                        "Failed to wait for git submodule update: {err}"
-                    ))
-                })?;
-            if !submodule_status.success() {
-                return Err(DeployerError::DependencyError(format!(
-                    "git submodule update failed for {outdir}"
-                )));
-            }
-        }
-
-        Ok(reset_status)
-    } else {
-        trace!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning git repository");
-        let mut git_cmd = Command::new("git");
-
-        let git_clone_cmd = git_cmd.arg("clone").arg(repository_url);
-
-        if let Some(branch) = branch {
-            git_clone_cmd.arg("--branch").arg(branch);
-        }
-
-        if submodules {
-            git_clone_cmd.arg("--recurse-submodules");
-        }
-
-        git_clone_cmd
-            .arg(outdir)
-            .spawn()
-            .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn git: {err}")))?
-            .wait()
-            .map_err(|err| DeployerError::DependencyError(format!("Failed to wait for git: {err}")))
-    }
+    ethrex_l2_sdk::download_contract_deps(&opts.contracts_path).map_err(DeployerError::from)
 }
 
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
@@ -462,9 +279,13 @@ fn deploy_tdx_contracts(
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
         .spawn()
-        .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn make: {err}")))?
+        .map_err(|err| {
+            DeployerError::DeploymentSubtaskFailed(format!("Failed to spawn make: {err}"))
+        })?
         .wait()
-        .map_err(|err| DeployerError::DependencyError(format!("Failed to wait for make: {err}")))?;
+        .map_err(|err| {
+            DeployerError::DeploymentSubtaskFailed(format!("Failed to wait for make: {err}"))
+        })?;
 
     let address = read_tdx_deployment_address("TDXVerifier");
     Ok(address)

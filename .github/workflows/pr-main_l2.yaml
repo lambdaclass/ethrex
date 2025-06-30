@@ -70,6 +70,11 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
@@ -111,6 +116,7 @@ jobs:
 
       - name: Run test
         run: |
+          sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           docker logs --follow ethrex_l2 &
@@ -132,6 +138,11 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
         with:
@@ -197,6 +208,7 @@ jobs:
 
       - name: Run test
         run: |
+          sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
