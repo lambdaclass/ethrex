@@ -62,16 +62,13 @@ pub struct BatchBlockProcessingFailure {
     pub failed_block_hash: H256,
 }
 
-fn log_batch_progress(batch_size: u64, current_block: u64) {
+fn log_batch_progress(batch_size: usize, current_block: usize) {
     let progress_needed = batch_size > 10;
     let percent_marks = [20, 40, 60, 80];
-    let mut next_mark = 0;
-    for (i, _) in blocks.iter().enumerate() {
-        if progress_needed {
-            let percent = ((i + 1) * 100) / blocks_len;
-            if next_mark < percent_marks.len() && percent >= percent_marks[next_mark] {
-                info!("Processed {}% of current batch", percent_marks[next_mark]);
-                next_mark += 1;
+    if progress_needed {
+        for mark in percent_marks {
+            if ((batch_size * mark) / 100) == current_block {
+                info!("{}% of batch processed", mark);
             }
         }
     }
@@ -469,14 +466,6 @@ impl Blockchain {
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
-        let progress_marks = [
-            blocks_len / 5,
-            2 * blocks_len / 5,
-            3 * blocks_len / 5,
-            4 * blocks_len / 5,
-            blocks_len - 1,
-        ];
-
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
             if cancellation_token.is_cancelled() {
@@ -515,6 +504,8 @@ impl Blockchain {
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
+
+            log_batch_progress(blocks_len, i);
         }
 
         let account_updates = vm
