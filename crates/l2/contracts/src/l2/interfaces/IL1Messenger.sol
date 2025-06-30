@@ -18,5 +18,5 @@ interface IL1Messenger {
 
     /// @notice Sends the given data to the L1
     /// @param data data to be sent to L1
-    function sendMessageToL1(bytes32 data, uint256 messageId) external;
+    function sendMessageToL1(bytes32 data) external;
 }
