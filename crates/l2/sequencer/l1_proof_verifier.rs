@@ -154,7 +154,7 @@ impl L1ProofVerifier {
             None,
         )
         .await
-        .map_err(|e| ProofVerifierError::InternalError(format!("{:?}", e)))?;
+        .map_err(|e| ProofVerifierError::InternalError(format!("{e:?}")))?;
 
         let (merkle_root, merkle_path) = match proof_status {
             ProofStatus::Verified {

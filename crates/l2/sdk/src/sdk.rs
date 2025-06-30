@@ -86,12 +86,7 @@ pub async fn transfer(
     private_key: &SecretKey,
     client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!(
-        "Transferring {amount} from {from:#x} to {to:#x}",
-        amount = amount,
-        from = from,
-        to = to
-    );
+    println!("Transferring {amount} from {from:#x} to {to:#x}");
     let gas_price = client
         .get_gas_price_with_extra(20)
         .await?

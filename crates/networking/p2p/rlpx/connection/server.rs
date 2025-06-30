@@ -370,7 +370,7 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
             }
             log_peer_debug(
                 &state.node,
-                &format!("Sent {} transactions to peer", tx_count),
+                &format!("Sent {tx_count} transactions to peer"),
             );
         }
     }
@@ -460,7 +460,7 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
         .unwrap_or_else(|_| {
             log_peer_debug(
                 &state.node,
-                &format!("Could not send Disconnect message: ({:?}).", reason),
+                &format!("Could not send Disconnect message: ({reason:?})."),
             );
         });
 }
@@ -627,7 +627,7 @@ where
                     let _ = conn.cast(CastMessage::PeerMessage(message)).await;
                 }
                 Some(Err(e)) => {
-                    log_peer_debug(&node, &format!("Received RLPX Error in msg {}", e));
+                    log_peer_debug(&node, &format!("Received RLPX Error in msg {e}"));
                     break;
                 }
                 // `None` does not neccessary means EOF, so we will keep the loop running
@@ -694,7 +694,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 let mut valid_txs = vec![];
                 for tx in &txs.transactions {
                     if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_warn(&state.node, &format!("Error adding transaction: {}", e));
+                        log_peer_warn(&state.node, &format!("Error adding transaction: {e}"));
                         continue;
                     }
                     valid_txs.push(tx.clone());
@@ -758,7 +758,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                     if let Err(error) = msg.validate_requested(requested).await {
                         log_peer_warn(
                             &state.node,
-                            &format!("disconnected from peer. Reason: {}", error),
+                            &format!("disconnected from peer. Reason: {error}"),
                         );
                         send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
                             .await;
