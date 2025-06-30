@@ -2716,8 +2716,8 @@ ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../.
 <p>Set <code>BRIDGE_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_ADDRESS</code> with the values printed in step 1.</p>
 </div>
 <p>Suggestion:
-When running the integration test, consider increasing the <code>commit-time-ms</code> to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the <code>init-l2-no-metrics</code> target:</p>
-<pre><code>--commit-time-ms 120000
+When running the integration test, consider increasing the <code>--committer.commit-time</code> to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the <code>init-l2-no-metrics</code> target:</p>
+<pre><code>--committer.commit-time 120000
 </code></pre>
 <ol start="4">
 <li>Start prover:</li>
@@ -2735,7 +2735,7 @@ make start_proof_aggregator AGGREGATOR=sp1
 </code></pre>
 <p>If successful, the <code>l1_proof_verifier</code> will print the following logs:</p>
 <pre><code>INFO ethrex_l2::sequencer::l1_proof_verifier: Proof for batch 1 aggregated by Aligned with commitment 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7 and Merkle root 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7
-INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 verified in AlignedProofAggregatorService, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
+INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
 </code></pre>
 <h2 id="behavioral-differences-in-aligned-mode"><a class="header" href="#behavioral-differences-in-aligned-mode">Behavioral Differences in Aligned Mode</a></h2>
 <h3 id="prover"><a class="header" href="#prover">Prover</a></h3>
@@ -2751,17 +2751,16 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 verified in AlignedProofAg
 <p><img src="l2/img/aligned_mode_proof_sender.png" alt="Proof Sender Aligned Mode" /></p>
 <h3 id="proof-verifier"><a class="header" href="#proof-verifier">Proof Verifier</a></h3>
 <ul>
-<li>Only spawned in Aligned mode.</li>
+<li>Spawned only in Aligned mode.</li>
 <li>Monitors whether the next proof has been aggregated by Aligned.</li>
-<li>Once verified, it triggers the advancement of the <code>OnChainProposer</code> contract.</li>
+<li>Once verified, collects all already aggregated proofs and triggers the advancement of the <code>OnChainProposer</code> contract by sending a single transaction.</li>
 </ul>
 <p><img src="l2/img/aligned_mode_proof_verifier.png" alt="Aligned Mode Proof Verifier" /></p>
 <h3 id="onchainproposer"><a class="header" href="#onchainproposer">OnChainProposer</a></h3>
 <ul>
-<li>Uses <code>verifyBatchAligned()</code> instead of <code>verifyBatch()</code>.</li>
+<li>Uses <code>verifyBatchesAligned()</code> instead of <code>verifyBatch()</code>.</li>
+<li>Receives an array of proofs to verify.</li>
 <li>Delegates proof verification to the <code>AlignedProofAggregatorService</code> contract.</li>
-<li>Currently supports one proof per transaction.</li>
-<li>Future updates aim to support verifying an array of proofs in a single call.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
