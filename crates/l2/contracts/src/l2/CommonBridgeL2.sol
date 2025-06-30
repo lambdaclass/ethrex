@@ -16,7 +16,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     address public constant ETH_TOKEN =  0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
-    modifier onlyBridge() {
+    modifier onlySelf() {
         require(msg.sender == address(this), "CommonBridgeL2: caller is not the bridge");
         _;
     }
@@ -26,6 +26,8 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
         (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
         require(success, "Failed to burn Ether");
+
+        emit WithdrawalInitiated(msg.sender, _receiverOnL1, msg.value);
 
         IL2ToL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
             ETH_TOKEN,
@@ -42,14 +44,15 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         }
     }
 
-    function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
+    function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlySelf {
         (bool success, ) = address(this).call(abi.encodeCall(this.tryMintERC20, (tokenL1, tokenL2, destination, amount)));
         if (!success) {
             _withdraw(tokenL1, tokenL2, destination, amount);
         }
+        emit ERC20DepositProcessed(tokenL1, tokenL2, destination, amount);
     }
 
-    function tryMintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
+    function tryMintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlySelf {
         IERC20L2 token = IERC20L2(tokenL2);
         require(token.l1Address() == tokenL1);
         token.crosschainMint(destination, amount);
@@ -58,6 +61,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     function withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
         require(amount > 0, "Withdrawal amount must be positive");
         IERC20L2(tokenL2).crosschainBurn(msg.sender, amount);
+        emit ERC20WithdrawalInitiated(tokenL1, tokenL2, destination, amount);
         _withdraw(tokenL1, tokenL2, destination, amount);
     }
 

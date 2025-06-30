@@ -17,6 +17,32 @@ interface ICommonBridgeL2 {
         uint256 indexed amount
     );
 
+
+    /// @notice An ERC20 token deposit was successfully processed
+    /// @dev Event emitted when an ERC20 deposit is processed.
+    /// @param tokenL1 Address of the token on L1
+    /// @param tokenL2 Address of the token on L2
+    /// @param receiver the address that received the tokens
+    /// @param amount the amount of ether being deposited
+    event ERC20DepositProcessed(
+        address indexed tokenL1,
+        address indexed tokenL2,
+        address indexed receiver,
+        uint256 amount
+    );
+    /// @notice An ERC20 token withdrawal has initiated
+    /// @dev Event emitted when an ERC20 withdrawal is initiated.
+    /// @param tokenL1 Address of the token on L1
+    /// @param tokenL2 Address of the token on L2
+    /// @param receiverOnL1 the address on L1 that will receive the funds back.
+    /// @param amount the amount of ether being withdrawn.
+    event ERC20WithdrawalInitiated(
+        address indexed tokenL1,
+        address indexed tokenL2,
+        address indexed receiverOnL1,
+        uint256 amount
+    );
+
     /// @notice Initiates the withdrawal of funds to the L1.
     /// @dev This is the first step in the two step process of a user withdrawal.
     /// @dev It burns funds on L2 and sends a message to the L1 so users
