@@ -63,7 +63,7 @@ path = "./l2.rs"
 
 [[bin]]
 name = "ethrex-l2-based-monitor"
-path = "./based/monitor/src/main.rs"
+path = "./based/bin/monitor/src/main.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
