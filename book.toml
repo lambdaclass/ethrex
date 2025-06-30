@@ -19,6 +19,7 @@ renderers = ["html", "linkcheck"]
 command = "mdbook-mermaid"
 
 # To render LaTeX math expressions
+# Note: Warnings can be safely ignored
 # https://github.com/lzanini/mdbook-katex
 [preprocessor.katex]
 after = ["links"]
