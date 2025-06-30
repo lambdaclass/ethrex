@@ -91,9 +91,8 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let rollup_storage = &context.rollup_store;
         info!("Requested batch with number: {}", self.batch_number);
-        let Some(batch) = rollup_storage.get_batch(self.batch_number).await? else {
+        let Some(batch) = context.rollup_store.get_batch(self.batch_number).await? else {
             return Ok(Value::Null);
         };
         let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage).await?;
