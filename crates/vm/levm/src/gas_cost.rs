@@ -95,6 +95,8 @@ pub const SELFDESTRUCT_REFUND: u64 = 24000;
 pub const DEFAULT_STATIC: u64 = 0;
 pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;
 pub const DEFAULT_WARM_DYNAMIC: u64 = 100;
+pub const DEFAULT_POSITIVE_VALUE: u64 = 9000;
+pub const DEFAULT_POSITIVE_VALUE_STIPEND: u64 = 2300;
 
 pub const SLOAD_STATIC: u64 = 0;
 pub const SLOAD_COLD_DYNAMIC: u64 = 2100;
@@ -124,26 +126,7 @@ pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const CALL_STATIC: u64 = DEFAULT_STATIC;
-pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
-pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
-pub const CALL_POSITIVE_VALUE: u64 = 9000;
-pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
 pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
-
-pub const CALLCODE_STATIC: u64 = DEFAULT_STATIC;
-pub const CALLCODE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
-pub const CALLCODE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
-pub const CALLCODE_POSITIVE_VALUE: u64 = 9000;
-pub const CALLCODE_POSITIVE_VALUE_STIPEND: u64 = 2300;
-
-pub const DELEGATECALL_STATIC: u64 = DEFAULT_STATIC;
-pub const DELEGATECALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
-pub const DELEGATECALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
-
-pub const STATICCALL_STATIC: u64 = DEFAULT_STATIC;
-pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
-pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
 // Costs in gas for call opcodes
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
@@ -675,7 +658,7 @@ pub fn call(
         gas_from_stack,
         gas_left,
         call_gas_costs,
-        CALL_POSITIVE_VALUE_STIPEND,
+        DEFAULT_POSITIVE_VALUE_STIPEND,
     )
 }
 
@@ -703,7 +686,7 @@ pub fn callcode(
         gas_from_stack,
         gas_left,
         call_gas_costs,
-        CALLCODE_POSITIVE_VALUE_STIPEND,
+        DEFAULT_POSITIVE_VALUE_STIPEND,
     )
 }
 
@@ -746,7 +729,7 @@ pub fn staticcall(
 /// Calculates the gas cost for sending more than 0 wei.
 fn positive_value_cost(value_is_zero: bool) -> u64 {
     if !value_is_zero {
-        CALL_POSITIVE_VALUE
+        DEFAULT_POSITIVE_VALUE
     } else {
         0
     }
@@ -777,9 +760,9 @@ fn calculate_call_gas_costs(
     // Calculate address access cost (common to all CALL opcodes)
     let address_access_cost = address_access_cost(
         address_was_cold,
-        CALL_STATIC,
-        CALL_COLD_DYNAMIC,
-        CALL_WARM_DYNAMIC,
+        DEFAULT_STATIC,
+        DEFAULT_COLD_DYNAMIC,
+        DEFAULT_WARM_DYNAMIC,
     )?;
     // Sum all costs. Positive value cost and value to empty account costs might exist or not for different CALL opcodes.
     // In case they don't exists (value is None), 0 is added to the total costs.
