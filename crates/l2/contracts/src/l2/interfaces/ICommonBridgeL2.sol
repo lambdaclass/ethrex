@@ -6,6 +6,14 @@ pragma solidity =0.8.29;
 /// @notice A CommonBridge contract is a contract that allows L1<->L2 communication
 /// It handles user withdrawals and message sending to L1.
 interface ICommonBridgeL2 {
+    /// @notice An ETH deposit was successfully processed
+    /// @dev Event emitted when an ETH deposit is processed.
+    /// @param receiver the address that received the ETH
+    /// @param amount the amount of ether being deposited
+    event DepositProcessed(
+        address indexed receiver,
+        uint256 amount
+    );
     /// @notice A withdrawal to L1 has initiated.
     /// @dev Event emitted when a withdrawal is initiated.
     /// @param senderOnL2 the sender of the transaction on L2.
@@ -23,7 +31,7 @@ interface ICommonBridgeL2 {
     /// @param tokenL1 Address of the token on L1
     /// @param tokenL2 Address of the token on L2
     /// @param receiver the address that received the tokens
-    /// @param amount the amount of ether being deposited
+    /// @param amount the amount of tokens being deposited
     event ERC20DepositProcessed(
         address indexed tokenL1,
         address indexed tokenL2,
@@ -35,7 +43,7 @@ interface ICommonBridgeL2 {
     /// @param tokenL1 Address of the token on L1
     /// @param tokenL2 Address of the token on L2
     /// @param receiverOnL1 the address on L1 that will receive the funds back.
-    /// @param amount the amount of ether being withdrawn.
+    /// @param amount the amount of tokens being withdrawn.
     event ERC20WithdrawalInitiated(
         address indexed tokenL1,
         address indexed tokenL2,

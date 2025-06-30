@@ -42,6 +42,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         if (!success) {
             this.withdraw{value: msg.value}(to);
         }
+        emit DepositProcessed(to, msg.value);
     }
 
     function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlySelf {
