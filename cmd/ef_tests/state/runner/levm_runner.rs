@@ -281,7 +281,7 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::GasLimitPriceProductOverflow)
             ) | (
                 TransactionExpectedException::SenderNotEoa,
-                VMError::TxValidation(TxValidationError::SenderNotEOA)
+                VMError::TxValidation(TxValidationError::SenderNotEOA(_))
             ) | (
                 TransactionExpectedException::InsufficientMaxFeePerGas,
                 VMError::TxValidation(TxValidationError::InsufficientMaxFeePerGas)
