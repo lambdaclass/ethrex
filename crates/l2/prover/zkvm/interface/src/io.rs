@@ -68,7 +68,8 @@ impl<'de> Deserialize<'de> for JSONProgramInput {
         D: serde::Deserializer<'de>,
     {
         let encoded: Vec<u8> = serde_with::Bytes::deserialize_as(deserializer)?;
-        let decoded: ProgramInput = serde_json::from_reader(&encoded[..]).map_err(serde::de::Error::custom)?;
+        let decoded: ProgramInput =
+            serde_json::from_reader(&encoded[..]).map_err(serde::de::Error::custom)?;
         Ok(JSONProgramInput(decoded))
     }
 }
