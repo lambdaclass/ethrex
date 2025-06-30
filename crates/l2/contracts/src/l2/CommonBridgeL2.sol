@@ -36,13 +36,13 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     }
 
     function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
-        (bool success, ) = this.call(abi.encodeCall(this._mintERC20, (tokenL1, tokenL2, destination, amount)))
+        (bool success, ) = address(this).call(abi.encodeCall(this.tryMintERC20, (tokenL1, tokenL2, destination, amount)));
         if (!success) {
-            _withdrawERC20(tokenL1, tokenL2, destination, amount);
+            _withdraw(tokenL1, tokenL2, destination, amount);
         }
     }
 
-    function _mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
+    function tryMintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
         IERC20L2 token = IERC20L2(tokenL2);
         require(token.l1Address() == tokenL1);
         token.crosschainMint(destination, amount);
@@ -51,7 +51,7 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     function withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
         require(amount > 0, "Withdrawal amount must be positive");
         IERC20L2(tokenL2).crosschainBurn(msg.sender, amount);
-        _withdrawERC20(tokenL1, tokenL2, destination, amount);
+        _withdraw(tokenL1, tokenL2, destination, amount);
     }
 
     function _withdraw(address tokenL1, address tokenL2, address destination, uint256 amount) private {
