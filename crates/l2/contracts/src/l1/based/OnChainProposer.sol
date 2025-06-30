@@ -368,7 +368,7 @@ contract OnChainProposer is
         uint256 firstBatchNumber,
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
-    ) external override onlySequencer whenNotPaused {
+    ) external override {
         require(
             ALIGNEDPROOFAGGREGATOR != DEV_MODE,
             "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
