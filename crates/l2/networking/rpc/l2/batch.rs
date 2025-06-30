@@ -1,3 +1,6 @@
+use ethrex_common::types::{BlockHash, batch::Batch};
+use ethrex_storage::Store;
+use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
 
@@ -6,8 +9,55 @@ use crate::{
     utils::RpcErr,
 };
 
+#[derive(Serialize)]
+pub struct RpcBatch {
+    #[serde(flatten)]
+    pub batch: Batch,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_hashes: Option<Vec<BlockHash>>,
+}
+
+impl RpcBatch {
+    pub async fn build(batch: Batch, block_hashes: bool, store: &Store) -> Result<Self, RpcErr> {
+        let block_hashes = if block_hashes {
+            Some(get_block_hashes(
+                batch.first_block,
+                batch.last_block,
+                store,
+            )?)
+        } else {
+            None
+        };
+
+        Ok(RpcBatch {
+            batch,
+            block_hashes,
+        })
+    }
+}
+
+fn get_block_hashes(
+    first_block: u64,
+    last_block: u64,
+    store: &Store,
+) -> Result<Vec<BlockHash>, RpcErr> {
+    let mut block_hashes = Vec::new();
+    for block_number in first_block..=last_block {
+        let Some(header) = store.get_block_header(block_number)? else {
+            return Err(RpcErr::Internal(format!(
+                "Failed to retrieve block header for block number {}",
+                block_number
+            )));
+        };
+        let hash = header.hash();
+        block_hashes.push(hash);
+    }
+    Ok(block_hashes)
+}
+
 pub struct GetBatchByBatchNumberRequest {
     pub batch_number: u64,
+    pub block_hashes: bool,
 }
 
 impl RpcHandler for GetBatchByBatchNumberRequest {
@@ -33,7 +83,12 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
         let batch_number =
             u64::from_str_radix(hex_str, 16).map_err(|_| ethrex_rpc::RpcErr::BadHexFormat(0))?;
 
-        Ok(GetBatchByBatchNumberRequest { batch_number })
+        let block_hashes = serde_json::from_value(params[1].clone())?;
+
+        Ok(GetBatchByBatchNumberRequest {
+            batch_number,
+            block_hashes,
+        })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -42,7 +97,8 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
         let Some(batch) = rollup_storage.get_batch(self.batch_number).await? else {
             return Ok(Value::Null);
         };
+        let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage).await?;
 
-        serde_json::to_value(&batch).map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(&rpc_batch).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

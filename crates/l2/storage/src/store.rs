@@ -261,10 +261,7 @@ impl Store {
         let message_hashes = self
             .get_message_hashes_by_batch(batch_number)
             .await?
-            .ok_or(RollupStoreError::Custom(
-            "Failed while trying to retrieve the message hashes of a known batch. This is a bug."
-                .to_owned(),
-        ))?;
+            .unwrap_or_default();
         let deposit_logs_hash = self
             .get_deposit_logs_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
