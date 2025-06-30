@@ -38,8 +38,6 @@ struct StoreInner {
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
     batch_proofs: HashMap<(ProverType, u64), BatchProof>,
-    /// Map of batch number to block hash
-    block_hashes: HashMap<u64, H256>,
 }
 
 impl Store {
@@ -172,22 +170,6 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         Ok(self.inner()?.blobs.get(&batch_number).cloned())
-    }
-
-    async fn get_block_hash_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<H256>, RollupStoreError> {
-        Ok(self.inner()?.block_hashes.get(&batch_number).cloned())
-    }
-
-    async fn store_block_hash_by_batch(
-        &self,
-        batch_number: u64,
-        block_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.block_hashes.insert(batch_number, block_hash);
-        Ok(())
     }
 
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {

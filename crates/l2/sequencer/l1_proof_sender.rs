@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, H256, U256, types::BlockNumber};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
+use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
@@ -43,6 +44,7 @@ pub struct L1ProofSenderState {
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
     sequencer_state: SequencerState,
+    store: Store,
     rollup_store: StoreRollup,
     l1_chain_id: u64,
     network: Network,
@@ -57,6 +59,7 @@ impl L1ProofSenderState {
         eth_cfg: &EthConfig,
         sequencer_state: SequencerState,
         aligned_cfg: &AlignedConfig,
+        store: Store,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
@@ -76,6 +79,7 @@ impl L1ProofSenderState {
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
                 sequencer_state,
+                store,
                 rollup_store,
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
@@ -92,6 +96,7 @@ impl L1ProofSenderState {
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             sequencer_state,
+            store,
             rollup_store,
             l1_chain_id,
             network: aligned_cfg.network.clone(),
@@ -117,6 +122,7 @@ impl L1ProofSender {
     pub async fn spawn(
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        store: Store,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofSenderError> {
@@ -126,6 +132,7 @@ impl L1ProofSender {
             &cfg.eth,
             sequencer_state,
             &cfg.aligned,
+            store,
             rollup_store,
             needed_proof_types,
         )
@@ -199,13 +206,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         return Ok(());
     }
 
-    let last_block_hash = state
-        .rollup_store
-        .get_block_hash_by_batch(batch_to_send)
-        .await?
-        .ok_or(ProofSenderError::InternalError(
-            "Block hash not found in db".to_string(),
-        ))?;
+    let last_block_hash = get_last_block_hash(&state.store, batch_to_send)?;
 
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();
@@ -370,4 +371,16 @@ fn resolve_fee_estimate(fee_estimate: &str) -> Result<FeeEstimationType, ProofSe
             "Unsupported fee estimation type".to_string(),
         )),
     }
+}
+
+fn get_last_block_hash(
+    store: &Store,
+    last_block_number: BlockNumber,
+) -> Result<H256, ProofSenderError> {
+    store
+        .get_block_header(last_block_number)?
+        .map(|header| header.hash())
+        .ok_or(ProofSenderError::InternalError(
+            "Failed to get last block hash from storage".to_owned(),
+        ))
 }

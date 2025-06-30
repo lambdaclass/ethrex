@@ -79,7 +79,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(LastSentBatchProof),
         table_info!(AccountUpdatesByBlockNumber),
         table_info!(BatchProofs),
-        table_info!(BlockHashesByBatch),
     ]
     .into_iter()
     .collect();
@@ -219,25 +218,6 @@ impl StoreEngineRollup for Store {
             .read::<BlobsBundles>(batch_number)
             .await?
             .map(|blobs| blobs.to()))
-    }
-
-    async fn get_block_hash_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<H256>, RollupStoreError> {
-        Ok(self
-            .read::<BlockHashesByBatch>(batch_number)
-            .await?
-            .map(|tx| tx.to()))
-    }
-
-    async fn store_block_hash_by_batch(
-        &self,
-        batch_number: u64,
-        block_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<BlockHashesByBatch>(batch_number, block_hash.into())
-            .await
     }
 
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
@@ -425,9 +405,4 @@ table!(
     /// Stores batch proofs, keyed by (BatchNumber, ProverType as u8).
     /// Value is the bincode-encoded BatchProof data.
     (BatchProofs) (u64, u32) => Vec<u8>
-);
-
-table!(
-    /// Commit transaction by batch number
-    ( BlockHashesByBatch ) u64 => Rlp<H256>
 );

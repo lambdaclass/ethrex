@@ -127,6 +127,8 @@ pub enum ProofSenderError {
     FailedToParseOnChainProposerResponse(String),
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+    #[error("Proof Sender failed because of a store error: {0}")]
+    StoreError(#[from] StoreError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
     #[error("Proof Sender failed to estimate Aligned fee: {0}")]
