@@ -508,10 +508,11 @@ impl<'a> EthrexMonitor<'a> {
         let rollup_client =
             EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
         let on_chain_proposer_address =
-            H160::from_str("0x14be0b63035b145fee97d32db4f889880b2e90cd").unwrap_or_default();
+            H160::from_str("0x2fc01018f543dc4acfc87857df6168f540ca95d8").unwrap_or_default();
         let common_bridge_address =
             H160::from_str("0xfe61a6a4e812dd1ff6691faf5c0203775e221063").unwrap_or_default();
-        let sequencer_registry_address = H160::from_str("0x").unwrap_or_default();
+        let sequencer_registry_address =
+            H160::from_str("0xb51d3c21db3dca551d407611da89c9fc51524f62").unwrap_or_default();
 
         EthrexMonitor {
             title,
