@@ -25,7 +25,7 @@ use crate::{
 };
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
-    verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
+    verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
 // TODO: Remove this import once it's no longer required by the SDK.
@@ -255,18 +255,7 @@ async fn send_proof_to_aligned(
         pub_input: None,
     };
 
-    let rpc_url = state
-        .eth_client
-        .urls
-        .first()
-        .ok_or_else(|| {
-            ProofSenderError::InternalError("No Ethereum RPC URL configured".to_owned())
-        })?
-        .as_str();
-
-    let fee_estimation = estimate_fee(rpc_url, state.fee_estimate.clone())
-        .await
-        .map_err(|err| ProofSenderError::AlignedFeeEstimateError(err.to_string()))?;
+    let fee_estimation = estimate_fee(state).await?;
 
     let nonce = get_nonce_from_batcher(state.network.clone(), state.l1_address.0.into())
         .await
@@ -296,6 +285,20 @@ async fn send_proof_to_aligned(
     info!("Proof for batch {batch_number} sent to Aligned");
 
     Ok(())
+}
+
+/// Performs a call to aligned SDK estimate_fee function with retries over all RPC URLs.
+async fn estimate_fee(state: &L1ProofSenderState) -> Result<ethers::types::U256, ProofSenderError> {
+    for rpc_url in &state.eth_client.urls {
+        if let Ok(estimation) =
+            aligned_estimate_fee(rpc_url.as_str(), state.fee_estimate.clone()).await
+        {
+            return Ok(estimation);
+        }
+    }
+    Err(ProofSenderError::AlignedFeeEstimateError(
+        "All Ethereum RPC URLs failed".to_string(),
+    ))
 }
 
 pub async fn send_proof_to_contract(
