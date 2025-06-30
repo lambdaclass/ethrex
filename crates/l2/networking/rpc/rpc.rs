@@ -178,6 +178,9 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::L1RpcNamespace(ethrex_rpc::RpcNamespace::Eth)) => {
             map_eth_requests(req, context).await
         }
+        Ok(RpcNamespace::L1RpcNamespace(ethrex_rpc::RpcNamespace::Debug)) => {
+            map_debug_requests(req, context).await
+        }
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
         _ => ethrex_rpc::map_http_requests(req, context.l1_ctx)
             .await
@@ -203,6 +206,15 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
                 .map_err(RpcErr::L1RpcErr)
         }
         _other_eth_method => ethrex_rpc::map_eth_requests(req, context.l1_ctx)
+            .await
+            .map_err(RpcErr::L1RpcErr),
+    }
+}
+
+pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "debug_nodeStatus" => NodeStatus::call(req, context).await,
+        _other_debug_method => ethrex_rpc::map_debug_requests(req, context.l1_ctx)
             .await
             .map_err(RpcErr::L1RpcErr),
     }

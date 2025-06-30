@@ -52,6 +52,8 @@ pub enum EthClientError {
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]
     FailedToSignPayload(String),
+    #[error("Failed to get node status: {0}")]
+    GetNodeStatusError(#[from] GetNodeStatusError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -232,6 +234,18 @@ pub enum GetMessageProofError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetMaxPriorityFeeError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetNodeStatusError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
