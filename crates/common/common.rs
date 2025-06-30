@@ -7,3 +7,4 @@ pub mod base64;
 pub use ethrex_trie::{TrieLogger, TrieWitness};
 pub mod kzg;
 pub mod tracing;
+pub mod utils;

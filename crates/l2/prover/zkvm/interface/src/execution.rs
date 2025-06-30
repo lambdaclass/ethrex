@@ -25,7 +25,6 @@ use ethrex_common::{
         kzg_commitment_to_versioned_hash,
     },
 };
-#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
     l1_messages::{L1MessagingError, compute_merkle_root, get_block_l1_messages},

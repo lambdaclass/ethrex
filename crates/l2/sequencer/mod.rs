@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
-use crate::{based::sequencer_state::SequencerState, utils::prover::proving_systems::ProverType};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
+use ethrex_l2_common::prover::ProverType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -128,7 +129,10 @@ pub async fn start_l2(
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
+        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
+            cfg.clone(),
+            rollup_store.clone(),
+        ));
     }
     if cfg.based.based {
         let _ = StateUpdater::spawn(

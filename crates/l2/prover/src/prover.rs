@@ -1,7 +1,6 @@
 use crate::{config::ProverConfig, prove, to_batch_proof};
-use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::BatchProof,
-};
+use ethrex_l2::sequencer::proof_coordinator::ProofData;
+use ethrex_l2_common::prover::BatchProof;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
