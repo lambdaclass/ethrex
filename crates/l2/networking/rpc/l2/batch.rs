@@ -28,10 +28,9 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let rollup_storage = &context.rollup_store;
         info!("Requested batch with number: {}", self.batch_number);
-        let batch = rollup_storage.get_batch(self.batch_number).await?;
-
-        // TODO: handle the case where the batch is not found
-        // TODO: implement batch serialization
+        let Some(batch) = rollup_storage.get_batch(self.batch_number).await? else {
+            return Ok(Value::Null);
+        };
 
         serde_json::to_value(&batch).map_err(|error| RpcErr::Internal(error.to_string()))
     }

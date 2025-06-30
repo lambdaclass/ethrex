@@ -1,8 +1,10 @@
+use serde::Serialize;
+
 use crate::H256;
 
 use super::BlobsBundle;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct Batch {
     pub number: u64,
     pub first_block: u64,
