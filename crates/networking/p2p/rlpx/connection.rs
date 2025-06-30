@@ -109,6 +109,7 @@ pub(crate) struct RLPxConnection<S> {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         signer: SigningKey,
         node: Node,

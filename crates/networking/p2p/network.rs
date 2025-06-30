@@ -54,6 +54,7 @@ pub struct P2PContext {
 }
 
 impl P2PContext {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
