@@ -153,10 +153,11 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
 
 pub fn get_client_version() -> String {
     format!(
-        "{}/v{}-develop-{}/{}/rustc-v{}",
+        "{}/v{}-{}-{}/{}/rustc-v{}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
-        &env!("VERGEN_RUSTC_COMMIT_HASH")[0..6],
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_GIT_SHA"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )
