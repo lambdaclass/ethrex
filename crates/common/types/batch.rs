@@ -12,6 +12,7 @@ pub struct Batch {
     pub state_root: H256,
     pub deposit_logs_hash: H256,
     pub message_hashes: Vec<H256>,
+    #[serde(skip_serializing)]
     pub blobs_bundle: BlobsBundle,
     pub commit_tx: Option<H256>,
     pub verify_tx: Option<H256>,
