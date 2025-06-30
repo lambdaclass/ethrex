@@ -4,7 +4,7 @@ use std::{
     sync::{LazyLock, Mutex},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tracing::{Subscriber, info, span::Id};
+use tracing::{Subscriber, span::Id};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 use crate::MetricsError;

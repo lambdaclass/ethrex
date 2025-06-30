@@ -6,10 +6,7 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 
-#[cfg(feature = "execution_profile")]
-use ethrex_metrics::metrics_profiling::FunctionProfilingLayer;
-#[cfg(feature = "execution_profile")]
-use ethrex_metrics::metrics_profiling::initialize_profiling_metrics;
+use ethrex_metrics::metrics_profiling::{FunctionProfilingLayer, initialize_profiling_metrics};
 
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -51,13 +48,16 @@ pub fn init_tracing(opts: &Options) {
         .from_env_lossy();
 
     let fmt_layer = fmt::layer().with_filter(log_filter);
-    let subscriber = Registry::default().with(fmt_layer);
-    #[cfg(feature = "execution_profile")]
-    let profiling_layer = FunctionProfilingLayer::default();
-    #[cfg(feature = "execution_profile")]
-    let subscriber = subscriber.with(profiling_layer);
-
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    if opts.profiling_enabled {
+        let profiling_layer = FunctionProfilingLayer::default();
+        let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+    } else {
+        let subscriber = Registry::default().with(fmt_layer);
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+    }
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
@@ -71,8 +71,9 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_port.clone(),
     );
 
-    #[cfg(feature = "execution_profile")]
-    initialize_profiling_metrics();
+    if opts.profiling_enabled {
+        initialize_profiling_metrics();
+    }
 
     tracker.spawn(metrics_api);
 }

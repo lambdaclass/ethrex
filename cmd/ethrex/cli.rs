@@ -93,6 +93,13 @@ pub struct Options {
     )]
     pub metrics_enabled: bool,
     #[arg(
+        long = "profiling",
+        action = ArgAction::SetTrue,
+        help = "Enable profiling of the client via function instrumentation",
+        help_heading = "Node options"
+    )]
+    pub profiling_enabled: bool,
+    #[arg(
         long = "dev",
         action = ArgAction::SetTrue,
         help = "Used to create blocks without requiring a Consensus Client",
@@ -214,6 +221,7 @@ impl Default for Options {
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
+            profiling_enabled: Default::default(),
             dev: Default::default(),
             evm: Default::default(),
             force: false,
