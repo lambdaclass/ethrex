@@ -416,10 +416,10 @@ mod tests {
             }
         }
 
-        let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
+        let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures"));
 
-        let chain_file_path = path.join("l2-loadtest.rlp");
-        let genesis_file_path = path.join("genesis-perf-ci.json");
+        let chain_file_path = path.join("blockchain/l2-loadtest.rlp");
+        let genesis_file_path = path.join("genesis/perf-ci.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
         let in_memory_db =
