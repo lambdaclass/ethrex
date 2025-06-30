@@ -220,8 +220,7 @@ impl REVM {
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!(
-                    "Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
-                    output
+                    "Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {output:?} and with used gas: {gas_used}",
                 );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
@@ -266,8 +265,7 @@ impl REVM {
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!(
-                    "Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
-                    output
+                    "Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {output:?} and with used gas: {gas_used}",
                 );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }

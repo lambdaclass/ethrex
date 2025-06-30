@@ -40,7 +40,7 @@ pub struct Options {
         long = "network",
         default_value_t = Network::default(),
         value_name = "GENESIS_FILE_PATH",
-        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis/*`.",
         long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
@@ -321,7 +321,7 @@ impl Subcommand {
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
-                println!("{:#x}", state_root);
+                println!("{state_root:#x}");
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,

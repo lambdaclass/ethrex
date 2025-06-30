@@ -52,9 +52,9 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "dummy"
         run: |
-          cp test_data/rpc_prover/cache_3990967.json cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_690403.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-sp1-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
+          make prove-sp1-gpu-ci BLOCK_NUMBER=690403 NETWORK=hoodi
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
