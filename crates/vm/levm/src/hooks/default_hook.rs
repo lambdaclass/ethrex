@@ -90,7 +90,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        validate_sender(vm.db.get_account(sender_address)?)?;
+        validate_sender(sender_address, vm.db.get_account(sender_address)?)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -369,9 +369,9 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
+pub fn validate_sender(sender_address: Address, sender_account: &Account) -> Result<(), VMError> {
     if sender_account.has_code() && !has_delegation(sender_account)? {
-        return Err(TxValidationError::SenderNotEOA.into());
+        return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
     Ok(())
 }

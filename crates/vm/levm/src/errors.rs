@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use derive_more::derive::Display;
-use ethrex_common::types::Log;
+use ethrex_common::{Address, types::Log};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
@@ -71,8 +71,8 @@ pub enum ExceptionalHalt {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum TxValidationError {
-    #[error("Sender account shouldn't be a contract")]
-    SenderNotEOA,
+    #[error("Sender account {0} shouldn't be a contract")]
+    SenderNotEOA(Address),
     #[error("Insufficient account funds")]
     InsufficientAccountFunds,
     #[error("Nonce is max")]
