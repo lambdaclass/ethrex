@@ -413,11 +413,12 @@ pub struct ProofCoordinatorOptions {
 
 impl Default for ProofCoordinatorOptions {
     fn default() -> Self {
+        let proof_coordinator_l1_private_key = utils::parse_private_key(
+            "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+        )
+        .unwrap();
         Self {
-            proof_coordinator_l1_private_key:
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-                    .parse()
-                    .unwrap(),
+            proof_coordinator_l1_private_key,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
