@@ -2,17 +2,21 @@
 pragma solidity ^0.8.17;
 
 contract Fibonacci {
-    function Benchmark(uint256 n) public view returns (uint256 result) {
+    function Benchmark(uint256 n) public pure returns (uint256 result) {
         if (n <= 1) return n;
 
-        uint256 rec = this.Benchmark(n - 1) + this.Benchmark(n - 2);
+        uint256 a = 0;
+        uint256 b = 1;
 
-        // Check for overflow
-        if (rec > (type(uint256).max / n)) {
-            return type(uint256).max;
+        for (uint256 i = 2; i <= n; i++) {
+            // Check for overflow
+            if (b > (type(uint256).max - a)) {
+                return type(uint256).max;
+            }
+            (a, b) = (b, a + b);
         }
 
-        result = rec;
+        result = b;
         return result;
     }
 }
