@@ -13,22 +13,25 @@ use ethrex_common::{H256, U256, types::Log};
 impl<'a> VM<'a> {
     // LOG operation
     pub fn op_log<const N_TOPICS: usize>(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        if current_call_frame.is_static {
-            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        {
+            let current_call_frame = self.current_call_frame_mut()?;
+            if current_call_frame.is_static {
+                return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+            }
         }
 
-        let [offset, size] = *current_call_frame.stack.pop()?;
+        let [offset, size] = *self.stack.pop()?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let topics = current_call_frame
+        let topics = self
             .stack
             .pop::<N_TOPICS>()?
             .map(|topic| H256(U256::to_big_endian(&topic)));
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::log(
             new_memory_size,
             current_call_frame.memory.len(),

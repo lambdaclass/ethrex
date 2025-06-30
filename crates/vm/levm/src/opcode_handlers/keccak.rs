@@ -12,8 +12,8 @@ use sha3::{Digest, Keccak256};
 
 impl<'a> VM<'a> {
     pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
+        let [offset, size] = *self.stack.pop()?;
         let current_call_frame = self.current_call_frame_mut()?;
-        let [offset, size] = *current_call_frame.stack.pop()?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -32,8 +32,7 @@ impl<'a> VM<'a> {
             offset,
             size,
         )?);
-        current_call_frame
-            .stack
+        self.stack
             .push(&[u256_from_big_endian(&hasher.finalize())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })

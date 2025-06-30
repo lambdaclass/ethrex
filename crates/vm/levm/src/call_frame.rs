@@ -152,7 +152,7 @@ pub struct CallFrame {
     pub bytecode: Bytes,
     /// Value sent along the transaction
     pub msg_value: U256,
-    pub stack: Stack,
+    pub stack_offset: usize, // The offset at the vm stack this call was.
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,

@@ -15,10 +15,10 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
 
         // Get the value at the specified depth
-        let value_at_depth = *current_call_frame.stack.get(depth)?;
+        let value_at_depth = *self.stack.get(depth)?;
 
         // Push the duplicated value onto the stack
-        current_call_frame.stack.push(&[value_at_depth])?;
+        self.stack.push(&[value_at_depth])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

@@ -1,6 +1,6 @@
 use crate::{
     TransientStorage,
-    call_frame::CallFrame,
+    call_frame::{CallFrame, Stack},
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
@@ -52,6 +52,8 @@ pub struct VM<'a> {
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
     pub debug_mode: DebugMode,
+    /// Current call frame stack.
+    pub stack: Stack,
 }
 
 impl<'a> VM<'a> {
@@ -75,6 +77,7 @@ impl<'a> VM<'a> {
             storage_original_values: HashMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
+            stack: Stack::default(),
         }
     }
 

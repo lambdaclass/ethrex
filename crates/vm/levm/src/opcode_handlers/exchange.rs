@@ -13,10 +13,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
 
-        if current_call_frame.stack.len() < depth {
+        if self.stack.len() < depth {
             return Err(ExceptionalHalt::StackUnderflow.into());
         }
-        current_call_frame.stack.swap(depth)?;
+        self.stack.swap(depth)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

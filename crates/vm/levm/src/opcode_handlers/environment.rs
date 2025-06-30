@@ -18,8 +18,7 @@ impl<'a> VM<'a> {
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
-        current_call_frame
-            .stack
+        self.stack
             .push(&[u256_from_big_endian_const(addr.to_fixed_bytes())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -27,7 +26,7 @@ impl<'a> VM<'a> {
 
     // BALANCE operation
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
+        let address = word_to_address(self.stack.pop::<1>()?[0]);
 
         let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
         let account_balance = account.info.balance;
@@ -36,7 +35,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
-        current_call_frame.stack.push(&[account_balance])?;
+        self.stack.push(&[account_balance])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -47,8 +46,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ORIGIN)?;
 
-        current_call_frame
-            .stack
+        self.stack
             .push(&[u256_from_big_endian_const(origin.to_fixed_bytes())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -60,8 +58,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
         let caller = current_call_frame.msg_sender;
-        current_call_frame
-            .stack
+        self.stack
             .push(&[u256_from_big_endian_const(caller.to_fixed_bytes())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -74,24 +71,25 @@ impl<'a> VM<'a> {
 
         let callvalue = current_call_frame.msg_value;
 
-        current_call_frame.stack.push(&[callvalue])?;
+        self.stack.push(&[callvalue])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATALOAD operation
     pub fn op_calldataload(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
+        let calldata_size: U256 = {
+            let current_call_frame = self.current_call_frame_mut()?;
+            current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
+            current_call_frame.calldata.len().into()
+        };
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
-
-        let [offset] = *current_call_frame.stack.pop()?;
+        let [offset] = *self.stack.pop()?;
 
         // If the offset is larger than the actual calldata, then you
         // have no data to return.
         if offset > calldata_size {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            self.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         let offset: usize = offset
@@ -100,6 +98,7 @@ impl<'a> VM<'a> {
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
+        let current_call_frame = self.current_call_frame_mut()?;
         for (i, byte) in current_call_frame
             .calldata
             .iter()
@@ -113,7 +112,7 @@ impl<'a> VM<'a> {
         }
         let result = u256_from_big_endian_const(data);
 
-        current_call_frame.stack.push(&[result])?;
+        self.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -123,17 +122,16 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
-        current_call_frame
-            .stack
-            .push(&[U256::from(current_call_frame.calldata.len())])?;
+        let len = current_call_frame.calldata.len();
+        self.stack.push(&[U256::from(len)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CALLDATACOPY operation
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
+        let [dest_offset, calldata_offset, size] = *self.stack.pop()?;
         let current_call_frame = self.current_call_frame_mut()?;
-        let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
         let size: usize = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -181,18 +179,16 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CODESIZE)?;
 
-        current_call_frame
-            .stack
-            .push(&[U256::from(current_call_frame.bytecode.len())])?;
+        let len = current_call_frame.bytecode.len();
+        self.stack.push(&[U256::from(len)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // CODECOPY operation
     pub fn op_codecopy(&mut self) -> Result<OpcodeResult, VMError> {
+        let [destination_offset, code_offset, size] = *self.stack.pop()?;
         let current_call_frame = self.current_call_frame_mut()?;
-
-        let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
 
         let size: usize = size
             .try_into()
@@ -240,14 +236,14 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
 
-        current_call_frame.stack.push(&[gas_price])?;
+        self.stack.push(&[gas_price])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
+        let address = word_to_address(self.stack.pop::<1>()?[0]);
 
         let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
 
@@ -257,15 +253,15 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
-        current_call_frame.stack.push(&[account_code_length])?;
+        self.stack.push(&[account_code_length])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODECOPY operation
     pub fn op_extcodecopy(&mut self) -> Result<OpcodeResult, VMError> {
+        let [address, dest_offset, offset, size] = *self.stack.pop()?;
         let call_frame = self.current_call_frame_mut()?;
-        let [address, dest_offset, offset, size] = *call_frame.stack.pop()?;
         let address = word_to_address(address);
         let size = size
             .try_into()
@@ -317,18 +313,17 @@ impl<'a> VM<'a> {
     pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
+        let len = current_call_frame.sub_return_data.len();
 
-        current_call_frame
-            .stack
-            .push(&[U256::from(current_call_frame.sub_return_data.len())])?;
+        self.stack.push(&[U256::from(len)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // RETURNDATACOPY operation
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
+        let [dest_offset, returndata_offset, size] = *self.stack.pop()?;
         let current_call_frame = self.current_call_frame_mut()?;
-        let [dest_offset, returndata_offset, size] = *current_call_frame.stack.pop()?;
         let returndata_offset: usize = returndata_offset
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -380,7 +375,7 @@ impl<'a> VM<'a> {
 
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
+        let address = word_to_address(self.stack.pop::<1>()?[0]);
 
         let (account_is_empty, account_code_hash, address_was_cold) = {
             let (account, address_was_cold) =
@@ -398,12 +393,12 @@ impl<'a> VM<'a> {
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            self.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let hash = u256_from_big_endian_const(account_code_hash);
-        current_call_frame.stack.push(&[hash])?;
+        self.stack.push(&[hash])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

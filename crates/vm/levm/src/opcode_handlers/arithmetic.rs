@@ -15,9 +15,9 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
-        let [augend, addend] = *current_call_frame.stack.pop()?;
+        let [augend, addend] = *self.stack.pop()?;
         let sum = augend.overflowing_add(addend).0;
-        current_call_frame.stack.push(&[sum])?;
+        self.stack.push(&[sum])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -27,9 +27,9 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
 
-        let [minuend, subtrahend] = *current_call_frame.stack.pop()?;
+        let [minuend, subtrahend] = *self.stack.pop()?;
         let difference = minuend.overflowing_sub(subtrahend).0;
-        current_call_frame.stack.push(&[difference])?;
+        self.stack.push(&[difference])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -39,9 +39,9 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
 
-        let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
+        let [multiplicand, multiplier] = *self.stack.pop()?;
         let product = multiplicand.overflowing_mul(multiplier).0;
-        current_call_frame.stack.push(&[product])?;
+        self.stack.push(&[product])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -51,12 +51,12 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
 
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
+        let [dividend, divisor] = *self.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            self.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
-        current_call_frame.stack.push(&[quotient])?;
+        self.stack.push(&[quotient])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -66,9 +66,9 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SDIV)?;
 
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
+        let [dividend, divisor] = *self.stack.pop()?;
         if divisor.is_zero() || dividend.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            self.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -87,7 +87,7 @@ impl<'a> VM<'a> {
             None => U256::zero(),
         };
 
-        current_call_frame.stack.push(&[quotient])?;
+        self.stack.push(&[quotient])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -97,11 +97,11 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
 
-        let [dividend, divisor] = *current_call_frame.stack.pop()?;
+        let [dividend, divisor] = *self.stack.pop()?;
 
         let remainder = dividend.checked_rem(divisor).unwrap_or_default();
 
-        current_call_frame.stack.push(&[remainder])?;
+        self.stack.push(&[remainder])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -111,10 +111,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SMOD)?;
 
-        let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
+        let [unchecked_dividend, unchecked_divisor] = *self.stack.pop()?;
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            self.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -124,7 +124,7 @@ impl<'a> VM<'a> {
         let unchecked_remainder = match dividend.checked_rem(divisor) {
             Some(remainder) => remainder,
             None => {
-                current_call_frame.stack.push(&[U256::zero()])?;
+                self.stack.push(&[U256::zero()])?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
@@ -135,7 +135,7 @@ impl<'a> VM<'a> {
             unchecked_remainder
         };
 
-        current_call_frame.stack.push(&[remainder])?;
+        self.stack.push(&[remainder])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -145,10 +145,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ADDMOD)?;
 
-        let [augend, addend, modulus] = *current_call_frame.stack.pop()?;
+        let [augend, addend, modulus] = *self.stack.pop()?;
 
         if modulus.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            self.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -165,7 +165,7 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| InternalError::Overflow)?;
 
-        current_call_frame.stack.push(&[sum_mod])?;
+        self.stack.push(&[sum_mod])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -175,10 +175,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::MULMOD)?;
 
-        let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
+        let [multiplicand, multiplier, modulus] = *self.stack.pop()?;
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            self.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -194,22 +194,22 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| InternalError::Overflow)?;
 
-        current_call_frame.stack.push(&[product_mod])?;
+        self.stack.push(&[product_mod])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXP operation
     pub fn op_exp(&mut self) -> Result<OpcodeResult, VMError> {
+        let [base, exponent] = *self.stack.pop()?;
         let current_call_frame = self.current_call_frame_mut()?;
-        let [base, exponent] = *current_call_frame.stack.pop()?;
 
         let gas_cost = gas_cost::exp(exponent)?;
 
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
         let power = base.overflowing_pow(exponent).0;
-        current_call_frame.stack.push(&[power])?;
+        self.stack.push(&[power])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -219,10 +219,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SIGNEXTEND)?;
 
-        let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;
+        let [byte_size_minus_one, value_to_extend] = *self.stack.pop()?;
 
         if byte_size_minus_one > U256::from(31) {
-            current_call_frame.stack.push(&[value_to_extend])?;
+            self.stack.push(&[value_to_extend])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -247,7 +247,7 @@ impl<'a> VM<'a> {
         } else {
             value_to_extend | !sign_bit_mask
         };
-        current_call_frame.stack.push(&[result])?;
+        self.stack.push(&[result])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
