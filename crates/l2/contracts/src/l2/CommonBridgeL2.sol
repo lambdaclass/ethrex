@@ -34,6 +34,13 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
             msg.value
         )));
     }
+    
+    function mintETH(address to) external payable {
+        (bool success, ) = to.call{value: msg.value}("");
+        if (!success) {
+            this.withdraw{value: msg.value}(to);
+        }
+    }
 
     function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external onlyBridge {
         (bool success, ) = address(this).call(abi.encodeCall(this.tryMintERC20, (tokenL1, tokenL2, destination, amount)));

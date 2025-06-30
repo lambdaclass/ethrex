@@ -57,7 +57,8 @@ contract CommonBridge is
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as L1 -> L2 -> amount
     /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
-    mapping(address => mapping(address => uint256)) public depositsERC20;
+    /// @dev The token can take the value {ETH_TOKEN} to represent ETH
+    mapping(address => mapping(address => uint256)) public deposits;
 
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =
@@ -98,52 +99,56 @@ contract CommonBridge is
         return pendingDepositLogs;
     }
 
-    function _deposit(
-        address from,
-        DepositValues memory depositValues
-    ) private {
+    function _sendToL2(address from, SendValues memory sendValues) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
-                bytes20(depositValues.to),
-                bytes32(msg.value),
+                bytes20(sendValues.to),
+                bytes32(sendValues.value),
                 bytes32(depositId),
-                bytes20(depositValues.recipient),
                 bytes20(from),
-                bytes32(depositValues.gasLimit),
-                bytes32(keccak256(depositValues.data))
+                bytes32(sendValues.gasLimit),
+                bytes32(keccak256(sendValues.data))
             )
         );
 
         pendingDepositLogs.push(l2MintTxHash);
 
-        emit DepositInitiated(
-            msg.value,
-            depositValues.to,
+        emit L1ToL2Message(
+            sendValues.value,
+            sendValues.to,
             depositId,
-            depositValues.recipient,
             from,
-            depositValues.gasLimit,
-            depositValues.data,
+            sendValues.gasLimit,
+            sendValues.data,
             l2MintTxHash
         );
         depositId += 1;
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(DepositValues calldata depositValues) public payable {
-        depositsERC20[ETH_TOKEN][ETH_TOKEN] += msg.value;
-        _deposit(msg.sender, depositValues);
+    function sendToL2(SendValues calldata sendValues) public {
+        _sendToL2(msg.sender, sendValues);
+    }
+    
+    /// @inheritdoc ICommonBridge
+    function deposit(address l2Recipient) public payable {
+        _deposit(l2Recipient);
+    }
+
+    function _deposit(address l2Recipient) private {
+        deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
+        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
+        SendValues memory sendValues = SendValues({
+            to: L2_BRIDGE_ADDRESS,
+            gasLimit: 21000 * 5,
+            value: msg.value,
+            data: callData
+        });
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     receive() external payable {
-        depositsERC20[ETH_TOKEN][ETH_TOKEN] += msg.value;
-        DepositValues memory depositValues = DepositValues({
-            to: msg.sender,
-            recipient: msg.sender,
-            gasLimit: 21000 * 5,
-            data: bytes("")
-        });
-        _deposit(msg.sender, depositValues);
+        _deposit(msg.sender);
     }
 
     function depositERC20(
@@ -153,20 +158,20 @@ contract CommonBridge is
         uint256 amount
     ) external {
         require(amount > 0, "CommonBridge: amount to deposit is zero");
-        depositsERC20[tokenL1][tokenL2] += amount;
+        deposits[tokenL1][tokenL2] += amount;
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
         bytes memory callData = abi.encodeCall(
             ICommonBridgeL2.mintERC20,
             (tokenL1, tokenL2, destination, amount)
         );
-        DepositValues memory depositValues = DepositValues({
+        SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
-            recipient: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
+            value: 0,
             data: callData
         });
-        _deposit(L2_BRIDGE_ADDRESS, depositValues);
+        _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
     }
 
     /// @inheritdoc ICommonBridge
@@ -290,10 +295,10 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) private {
         require(
-            depositsERC20[tokenL1][tokenL2] >= claimedAmount,
+            deposits[tokenL1][tokenL2] >= claimedAmount,
             "CommonBridge: trying to withdraw more tokens/ETH than were deposited"
         );
-        depositsERC20[tokenL1][tokenL2] -= claimedAmount;
+        deposits[tokenL1][tokenL2] -= claimedAmount;
         bytes32 msgHash = keccak256(
             abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
         );
