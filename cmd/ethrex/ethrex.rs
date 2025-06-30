@@ -7,6 +7,7 @@ use ethrex::{
     },
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
+use ethrex_blockchain::BlockchainType;
 use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
@@ -78,7 +79,7 @@ async fn main() -> eyre::Result<()> {
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone());
+    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
 
     let signer = get_signer(&data_dir);
 

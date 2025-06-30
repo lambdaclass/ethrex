@@ -9,12 +9,12 @@ use crate::{
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
+    l2_precompiles,
     opcodes::Opcode,
     precompiles::{
-        SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
-        is_precompile,
+        self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    vm::{Substate, VM},
+    vm::{Substate, VM, VMType},
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
@@ -554,7 +554,10 @@ impl<'a> VM<'a> {
     }
 
     pub fn is_precompile(&self, address: &Address) -> bool {
-        is_precompile(address, self.env.config.fork)
+        match self.vm_type {
+            VMType::L1 => precompiles::is_precompile(address, self.env.config.fork),
+            VMType::L2 => l2_precompiles::is_precompile(address, self.env.config.fork),
+        }
     }
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
