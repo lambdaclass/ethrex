@@ -45,7 +45,6 @@ pub async fn build_payload(
     let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
 
     fill_transactions(blockchain.clone(), &mut context, store).await?;
-    blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
