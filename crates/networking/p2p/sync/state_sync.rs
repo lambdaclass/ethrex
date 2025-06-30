@@ -59,7 +59,7 @@ pub(crate) async fn state_sync(
             storage_trie_rebuilder_sender.clone(),
         ));
     }
-    show_progress_handle.await?;
+    show_progress_handle.abort();
     // Check for pivot staleness
     let mut stale_pivot = false;
     let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
