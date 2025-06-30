@@ -397,38 +397,38 @@ contract OnChainProposer is
             // Verify public data for the batch
             _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
 
-        bytes memory callData = abi.encodeWithSignature(
-            "verifyProofInclusion(bytes32[],bytes32,bytes)",
-            alignedMerkleProof,
-            alignedProgramVKey,
-            alignedPublicInputs
-        );
-        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-            .staticcall(callData);
-        require(
-            callResult,
-            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-        );
-        bool proofVerified = abi.decode(response, (bool));
-        require(
-            proofVerified,
-            "OnChainProposer: Aligned proof verification failed"
-        );
-
-        lastVerifiedBatch = batchNumber;
-
-        // The first 2 bytes are the number of privileged transactions.
-        uint16 transaction_count = uint16(
-            bytes2(
-                batchCommitments[batchNumber]
-                    .processedPrivilegedTransactionsRollingHash
-            )
-        );
-        if (transaction_count > 0) {
-            ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                transaction_count
+            bytes memory callData = abi.encodeWithSignature(
+                "verifyProofInclusion(bytes32[],bytes32,bytes)",
+                alignedMerkleProofsList[i],
+                alignedProgramVKey,
+                alignedPublicInputsList[i]
             );
-        }
+            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+                .staticcall(callData);
+            require(
+                callResult,
+                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+            );
+            bool proofVerified = abi.decode(response, (bool));
+            require(
+                proofVerified,
+                "OnChainProposer: Aligned proof verification failed"
+            );
+
+            lastVerifiedBatch = batchNumber;
+
+            // The first 2 bytes are the number of privileged transactions.
+            uint16 transaction_count = uint16(
+                bytes2(
+                    batchCommitments[batchNumber]
+                        .processedPrivilegedTransactionsRollingHash
+                )
+            );
+            if (transaction_count > 0) {
+                ICommonBridge(BRIDGE).removePendingTransactionHashes(
+                    transaction_count
+                );
+            }
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];

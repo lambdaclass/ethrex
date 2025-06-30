@@ -15,7 +15,6 @@ use ethrex_common::{
 };
 use ethrex_l2_common::{
     calldata::Value,
-    deposits::{compute_deposit_logs_hash, get_block_deposits},
     l1_messages::{compute_merkle_root, get_block_l1_messages, get_l1_message_hash},
     privileged_transactions::{
         compute_privileged_transactions_hash, get_block_privileged_transactions,

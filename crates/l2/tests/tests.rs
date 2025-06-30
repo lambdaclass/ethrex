@@ -3,8 +3,8 @@
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::{H160, types::BlockNumber};
-use ethrex_l2_common::calldata::Value;
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
