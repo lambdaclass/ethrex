@@ -12,10 +12,10 @@ use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    calldata::{Value, encode_calldata},
-    compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
-    initialize_contract,
+    calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
+    get_address_from_secret_key, initialize_contract,
 };
 use ethrex_rpc::{
     EthClient,

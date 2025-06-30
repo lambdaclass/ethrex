@@ -1,5 +1,6 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, H160, H256};
+use ethrex_l2_common::prover::ProverType;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::WrappedTransaction},
@@ -17,8 +18,6 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
 ]);
-
-use crate::utils::prover::proving_systems::ProverType;
 
 use super::errors::SequencerError;
 
@@ -116,12 +115,12 @@ pub async fn get_needed_proof_types(
 
 pub async fn get_latest_sent_batch(
     needed_proof_types: Vec<ProverType>,
-    rollup_storage: &StoreRollup,
+    rollup_store: &StoreRollup,
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<u64, SequencerError> {
     if needed_proof_types.contains(&ProverType::Aligned) {
-        Ok(rollup_storage.get_lastest_sent_batch_proof().await?)
+        Ok(rollup_store.get_lastest_sent_batch_proof().await?)
     } else {
         Ok(eth_client
             .get_last_verified_batch(on_chain_proposer_address)
