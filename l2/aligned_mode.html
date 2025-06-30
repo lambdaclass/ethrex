@@ -410,9 +410,9 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l2-path ../../fixtures/genesis/l2.json
 </code></pre>
 <p>You will see that some deposits fail with the following error:</p>
 <pre><code>2025-06-18T19:19:24.066126Z  WARN ethrex_l2_l1_deployer: Failed to make deposits: Deployer EthClient error: eth_estimateGas request error: execution reverted: CommonBridge: amount to deposit is zero: CommonBridge: amount to deposit is zero
@@ -431,7 +431,7 @@ cargo run deposit-to-batcher \
 <li>Start our l2 node:</li>
 </ol>
 <pre><code>cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../test_data/genesis-l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address &lt;BRIDGE_ADDRESS&gt; --l1.on-chain-proposer-address &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-important">
 <p class="mdbook-alerts-title">

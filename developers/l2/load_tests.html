@@ -260,7 +260,7 @@ make load-test-io
 <h2 id="flamegraphs"><a class="header" href="#flamegraphs">Flamegraphs</a></h2>
 <p>To analyze performance during load tests (both <code>ethrex</code> and <code>reth</code>) you can use <code>cargo flamegraph</code> to generate a flamegraph of the node.</p>
 <p>For <code>ethrex</code>, you can run the server with:</p>
-<pre><code class="language-sh">sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network test_data/genesis-l2.json --http.port 1729 --dev
+<pre><code class="language-sh">sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network fixtures/genesis/l2.json --http.port 1729 --dev
 </code></pre>
 <p>For <code>reth</code>:</p>
 <pre><code class="language-sh">sudo cargo flamegraph --profile profiling -- node --chain &lt;path_to_genesis-load-test.json&gt; --dev --dev.block-time 5000ms --http.port 1729
@@ -274,7 +274,7 @@ make load-test-io
 </ol>
 <h3 id="samply"><a class="header" href="#samply">Samply</a></h3>
 <p>To run with samply, run</p>
-<pre><code class="language-sh">samply record ./target/profiling/reth node --chain ../ethrex/test_data/genesis-load-test.json --dev --dev.block-time 5000ms --http.port 1729
+<pre><code class="language-sh">samply record ./target/profiling/reth node --chain ../ethrex/fixtures/genesis/load-test.json --dev --dev.block-time 5000ms --http.port 1729
 </code></pre>
 
                     </main>
