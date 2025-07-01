@@ -107,8 +107,16 @@ contract CommonBridge is
     function getPendingDepositLogs() public view returns (bytes32[] memory) {
         return pendingDepositLogs;
     }
+    
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
+    }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
+        _burnGas(sendValues.gasLimit);
+
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(sendValues.to),
