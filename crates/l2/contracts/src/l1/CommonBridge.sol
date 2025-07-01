@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
+import "../l2/L2Upgradeable.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -63,6 +64,9 @@ contract CommonBridge is
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    /// @notice Owner of the L2 system contract proxies
+    address public constant L2_PROXY_ADMIN =  0x000000000000000000000000000000000000f000;
 
     modifier onlyOnChainProposer() {
         require(
@@ -357,6 +361,17 @@ contract CommonBridge is
         return
             withdrawalLeaf ==
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber];
+    }
+
+    function upgradeL2Contract(address l2Contract, address newImplementation, bytes calldata data) public {
+        bytes memory callData = abi.encodeCall(UpgradeableSystemContract.upgradeToAndCall, (newImplementation, data));
+        SendValues memory sendValues = SendValues({
+            to: l2Contract,
+            gasLimit: 21000 * 5,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 
     /// @notice Allow owner to upgrade the contract.

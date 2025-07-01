@@ -843,3 +843,11 @@ pub fn download_contract_deps(contracts_path: &Path) -> Result<(), GitError> {
     trace!("Contract dependencies downloaded");
     Ok(())
 }
+
+pub fn address_to_word(address: Address) -> U256 {
+    let mut word = [0u8; 32];
+    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
+        *word_byte = *address_byte;
+    }
+    U256::from_big_endian(&word)
+}
