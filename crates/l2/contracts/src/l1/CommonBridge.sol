@@ -3,6 +3,7 @@ pragma solidity =0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -12,7 +13,6 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
-import "../l2/L2Upgradeable.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
@@ -377,7 +377,7 @@ contract CommonBridge is
     }
 
     function upgradeL2Contract(address l2Contract, address newImplementation, bytes calldata data) public onlyOwner {
-        bytes memory callData = abi.encodeCall(UpgradeableSystemContract.upgradeToAndCall, (newImplementation, data));
+        bytes memory callData = abi.encodeCall(ITransparentUpgradeableProxy.upgradeToAndCall, (newImplementation, data));
         SendValues memory sendValues = SendValues({
             to: l2Contract,
             gasLimit: 21000 * 5,
