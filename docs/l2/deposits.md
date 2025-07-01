@@ -113,7 +113,8 @@ Off-chain:
 On L2:
 
 1. The privileged transaction performs a call to `mintERC20` on the `CommonBridgeL2` from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.
-2. The bridge calls `crosschainMint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
+2. The bridge calls `l1Address()` on the L2 token, to verify it matches the received L1 token address.
+3. The bridge calls `crosschainMint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
    In case of failure, it initiates an ERC20 withdrawal for the same amount.
 
 Back on L1:
