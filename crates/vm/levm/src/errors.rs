@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use derive_more::derive::Display;
-use ethrex_common::{Address, types::Log};
+use ethrex_common::{Address, U256, types::Log};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
@@ -81,8 +81,11 @@ pub enum TxValidationError {
     NonceMismatch { expected: u64, actual: u64 },
     #[error("Initcode size exceeded, max size: {max_size}, got: {actual_size}")]
     InitcodeSizeExceeded { max_size: usize, actual_size: usize },
-    #[error("Priority fee is greater than max fee per gas")]
-    PriorityGreaterThanMaxFeePerGas,
+    #[error("Priority fee {priority_fee} is greater than max fee per gas {max_fee_per_gas}")]
+    PriorityGreaterThanMaxFeePerGas {
+        priority_fee: U256,
+        max_fee_per_gas: U256,
+    },
     #[error("Intrinsic gas too low")]
     IntrinsicGasTooLow,
     #[error("Gas allowance exceeded")]

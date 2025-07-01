@@ -85,7 +85,11 @@ impl Hook for DefaultHook {
             vm.env.tx_max_fee_per_gas,
         ) {
             if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas.into());
+                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                    priority_fee: tx_max_priority_fee,
+                    max_fee_per_gas: tx_max_fee_per_gas,
+                }
+                .into());
             }
         }
 

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    deserialize::SENDER_NOT_EOA_REGEX,
+    deserialize::{PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX, SENDER_NOT_EOA_REGEX},
     network::Network,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
@@ -205,7 +205,7 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
             )
             | (
                 "priority fee is greater than max fee",
-                "Priority fee is greater than max fee per gas"
+                PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX
             )
             | ("create initcode size limit", "Initcode size exceeded")
     ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
