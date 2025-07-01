@@ -888,6 +888,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::GetBatchSealed(_req) => {
                 #[cfg(feature = "l2")]
                 {
+                    if let SequencerStatus::Syncing = self.shared_state.status().await {
+                        // If the sequencer is syncing, we won't send any batches
+                        self.send(Message::GetBatchSealedResponse(
+                            GetBatchSealedResponseMessage {
+                                batches: vec![], // empty response
+                                                 // for now skipping signatures
+                            },
+                        ))
+                        .await?;
+                        return Ok(());
+                    }
                     use crate::rlpx::based::GetBatchSealedResponseMessage;
                     let mut batches = vec![];
                     for batch_number in _req.first_batch..=_req.last_batch {

@@ -202,6 +202,10 @@ impl PeerHandler {
                         Some(RLPxMessage::GetBatchSealedResponse(
                             GetBatchSealedResponseMessage { batches },
                         )) => {
+                            if batches.is_empty() {
+                                warn!("[SYNCING] Received empty batch from peer {peer_id}, meaning is syncing, asking another peer...");
+                                return None;
+                            }
                             return Some(batches);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
@@ -221,8 +225,8 @@ impl PeerHandler {
                 // TODO: penalize peer if the signature is incorrect or the batch is invalid
                 return Some(batches);
             }
-            warn!("[SYNCING] Didn't receive batch from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
+            // warn!("[SYNCING] Didn't receive batch from peer, penalizing peer {peer_id}...");
+            // self.record_peer_failure(peer_id).await;
         }
         None
     }
