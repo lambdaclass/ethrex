@@ -8,6 +8,8 @@ use crate::constants::{
     MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
 };
 
+
+
 use std::collections::HashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
 pub type TransientStorage = HashMap<(Address, U256), U256>;
@@ -91,7 +93,7 @@ impl EVMConfig {
     }
 
     const fn max_blobs_per_block(fork: Fork) -> u64 {
-        if fork as u8 >= Fork::Prague as u8 {
+        if fork.as_u8() >= Fork::Prague.as_u8() {
             MAX_BLOB_COUNT_ELECTRA
         } else {
             MAX_BLOB_COUNT
@@ -99,7 +101,7 @@ impl EVMConfig {
     }
 
     const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
-        if fork as u8 >= Fork::Prague as u8 {
+        if fork.as_u8() >= Fork::Prague.as_u8() {
             BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
         } else {
             BLOB_BASE_FEE_UPDATE_FRACTION
@@ -107,7 +109,7 @@ impl EVMConfig {
     }
 
     const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
-        if fork as u8 >= Fork::Prague as u8 {
+        if fork.as_u8() >= Fork::Prague.as_u8() {
             TARGET_BLOB_GAS_PER_BLOCK_PECTRA
         } else {
             TARGET_BLOB_GAS_PER_BLOCK
