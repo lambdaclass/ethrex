@@ -22,6 +22,10 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
+        run: |
+          git diff --exit-code -- crates/l2/prover/zkvm/interface/${{ matrix.backend }}/Cargo.lock
+
       - name: RISC-V Risc0 toolchain install
         if: matrix.backend == 'risc0'
         # should be able to specify a version for `rzup install rust` (toolchain version)
@@ -44,10 +48,6 @@ jobs:
       - name: Clippy ${{ matrix.backend }} backend
         run: |
           cargo clippy -r -p ethrex-prover --all-targets -F ${{ matrix.backend }}
-
-      - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
-        run: |
-          git diff --exit-code -- crates/l2/prover/zkvm/interface/${{ matrix.backend }}/Cargo.lock
 
   lint_exec:
     name: Lint exec backend
