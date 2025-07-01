@@ -148,6 +148,14 @@ impl StoreEngine for Store {
                 .cursor::<StateTrieNodes>()
                 .map_err(StoreError::LibmdbxError)?;
             for (node_hash, node_data) in trie_updates.account_updates {
+                if let Some((key, value)) = state_trie_cursor
+                    .seek_exact(node_hash.clone())
+                    .map_err(StoreError::LibmdbxError)?
+                {
+                    if key == node_hash && value == node_data {
+                        continue;
+                    }
+                }
                 state_trie_cursor
                     .upsert(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
@@ -162,6 +170,14 @@ impl StoreEngine for Store {
                     let key_1 = hashed_address;
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
+                    if let Some((key, value)) = storage_tries_cursor
+                        .seek_exact((key_1, key_2))
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        if key == (key_1, key_2) && value == node_data {
+                            continue;
+                        }
+                    }
                     storage_tries_cursor
                         .upsert((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
