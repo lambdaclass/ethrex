@@ -38,6 +38,10 @@ struct StoreInner {
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
     batch_proofs: HashMap<(ProverType, u64), BatchProof>,
+    /// Map of batch number to commit transaction hash
+    commit_txs: HashMap<u64, H256>,
+    /// Map of batch number to verify transaction hash
+    verify_txs: HashMap<u64, H256>,
 }
 
 impl Store {
@@ -170,6 +174,38 @@ impl StoreEngineRollup for Store {
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         Ok(self.inner()?.blobs.get(&batch_number).cloned())
+    }
+
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self.inner()?.commit_txs.get(&batch_number).cloned())
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.commit_txs.insert(batch_number, commit_tx);
+        Ok(())
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self.inner()?.verify_txs.get(&batch_number).cloned())
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.verify_txs.insert(batch_number, verify_tx);
+        Ok(())
     }
 
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
