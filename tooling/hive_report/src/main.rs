@@ -77,7 +77,7 @@ impl std::fmt::Display for HiveResult {
     }
 }
 
-fn create_fork_result(json_data: &JsonFile, fork: &str, test_pattern: &str) -> HiveResult {
+fn create_fork_result_eest(json_data: &JsonFile, fork: &str, test_pattern: &str) -> HiveResult {
     let total_tests = json_data
         .test_cases
         .iter()
@@ -124,18 +124,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
-            // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
+            // Both of these simulators have only 1 suite where we can find tests for all forks.
+            // To get the total tests and the passed tests a filter is done each time so we do not clone the test cases.
             if json_data.name.as_str() == "eest/consume-rlp"
                 || json_data.name.as_str() == "eest/consume-engine"
             {
-                let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
-                // Shanghai
-                let result_shanghai = create_fork_result(&json_data, "Shanghai", "fork_Shanghai");
-                // Cancun
-                let result_cancun = create_fork_result(&json_data, "Cancun", "fork_Cancun");
-                // Prague
-                let result_prague = create_fork_result(&json_data, "Prague", "fork_Prague");
+                let result_paris = create_fork_result_eest(&json_data, "Paris", "fork_Paris");
+                let result_shanghai = create_fork_result_eest(&json_data, "Shanghai", "fork_Shanghai");
+                let result_cancun = create_fork_result_eest(&json_data, "Cancun", "fork_Cancun");
+                let result_prague = create_fork_result_eest(&json_data, "Prague", "fork_Prague");
 
                 results.push(result_paris);
                 results.push(result_shanghai);
