@@ -575,7 +575,7 @@ async fn batch_is_safe(
         .map_err(|e| BlockFetcherError::InternalError(e.to_string()))?;
 
     let Some(last_byte) = decoded_response.last() else {
-        return Err(BlockFetcherError::InternalError("hola".to_string()));
+        return Err(BlockFetcherError::InternalError("decode error".to_string()));
     };
 
     Ok(*last_byte > 0)
