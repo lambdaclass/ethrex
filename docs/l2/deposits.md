@@ -10,32 +10,31 @@ On L1:
 
 1. The user sends ETH to the `CommonBridge` contract.
    Alternatively, they can also call `deposit` and specify the address to receive the deposit in (the `l2Recipient`).
-2. The bridge adds the deposit's hash to the `pendingDepositLogs`.
+2. The bridge adds the deposit's hash to the `pendingTxHashes`.
    We explain how to compute this hash in ["Generic L1->L2 messaging"](#generic-l1-l2-messaging)
-3. The bridge emits a `L1ToL2Message` event:
+3. The bridge emits a `PrivilegedTxSent` event:
 
     ```solidity
     bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
 
-    emit L1ToL2Message(
-        msg.value,          // amount
-        L2_BRIDGE_ADDRESS,  // to
-        depositId,
-        L2_BRIDGE_ADDRESS,  // sender in L2
-        21000 * 5,          // gas limit
-        callData,
-        l2MintTxHash
+    emit PrivilegedTxSent(
+        0xffff,         // sender in L2 (the L2 bridge)
+        0xffff,         // to (the L2 bridge)
+        transactionId,
+        msg.value,      // value
+        gasLimit,
+        callData
     );
     ```
 
 Off-chain:
 
-1. On each L2 node, the L1 watcher processes `L1ToL2Message` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
+1. On each L2 node, the L1 watcher processes `PrivilegedTxSent` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
 2. The privileged transaction is an [EIP-2718 typed transaction](https://eips.ethereum.org/EIPS/eip-2718), somewhat similar to an [EIP-1559 transaction](https://eips.ethereum.org/EIPS/eip-1559), but with some changes.
    For deposits, the important differences are that the sender of the transaction is set by our L1 bridge.
    This enables our L1 bridge to "forge" a transaction from any sender, even unreachable addresses like the L2 bridge.
 3. Privileged transactions sent by the L2 bridge don't deduct from the bridge's balance their value.
-   In practice, this means new ETH equal to the transactions `value` is minted.
+   In practice, this means ETH equal to the transactions `value` is minted.
 
 On L2:
 
@@ -47,7 +46,7 @@ Back on L1:
 
 1. A sequencer commits a batch on L1 including the privileged transaction.
 2. The `OnChainProposer` asserts the included privileged transactions exist and are included in order.
-3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingDepositLogs`.
+3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingTxHashes`.
 
 ```mermaid
 ---
@@ -68,8 +67,8 @@ sequenceDiagram
     end
 
     L1Alice->>CommonBridge: sends 42 ETH
-    CommonBridge->>CommonBridge: pendingDepositLogs.push(txHash)
-    CommonBridge->>CommonBridge: emit L1ToL2Message
+    CommonBridge->>CommonBridge: pendingTxHashes.push(txHash)
+    CommonBridge->>CommonBridge: emit PrivilegedTxSent
 
     CommonBridge-->>Sequencer: receives event
     Sequencer-->>CommonBridgeL2: mints 42 ETH and<br>starts processing tx
@@ -78,7 +77,7 @@ sequenceDiagram
 
     Sequencer->>OnChainProposer: publishes batch
     OnChainProposer->>CommonBridge: consumes pending deposits
-    CommonBridge-->>CommonBridge: pendingDepositLogs.pop()
+    CommonBridge-->>CommonBridge: pendingTxHashes.pop()
 ```
 
 ## ERC20 deposits through the native bridge
@@ -91,18 +90,16 @@ On L1:
 2. The user calls `depositERC20` on the bridge, specifying the L1 and L2 token addresses, the amount to deposit, along with the intended L2 recipient.
 3. The bridge locks the specified L1 token amount in the bridge, updating the mapping with the amount locked for the L1 and L2 token pair.
    This ensures that L2 token withdrawals don't consume L1 tokens that weren't deposited into that L2 token (see ["Why store the provenance of bridged tokens?"](#why-store-the-provenance-of-bridged-tokens) for more information).
-4. The bridge emits a `DepositInitiated` event:
+4. The bridge emits a `PrivilegedTxSent` event:
 
     ```solidity
-    emit DepositInitiated(
+    emit PrivilegedTxSent(
         0,            // amount (unused)
         0xffff,       // to (the L2 bridge)
         depositId,
-        0,            // recipient of the ETH deposit (unused)
         0xffff,       // sender in L2 (the L2 bridge)
-        gasLimit,     // gas limit
-        data,         // calldata
-        l2MintTxHash
+        gasLimit,
+        callData
     );
     ```
 
@@ -110,13 +107,13 @@ On L2:
 
 1. The privileged transaction performs a call to `mintERC20` on the `CommonBridgeL2` from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.
 2. The bridge calls `crosschainMint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
-3. If the call reverts, the L2 bridge automatically initiates a withdrawal.
+   In case of failure, it initiates an ERC20 withdrawal for the same amount.
 
 Back on L1:
 
 1. A sequencer commits a batch on L1 including the privileged transaction.
 2. The `OnChainProposer` asserts the included privileged transactions exist and are included in order.
-3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingDepositLogs`.
+3. The `OnChainProposer` notifies the bridge of the consumed privileged transactions and they are removed from `pendingTxHashes`.
 
 ```mermaid
 ---
@@ -140,8 +137,8 @@ sequenceDiagram
 
     L1Alice->>L1Token: approves token transfer
     L1Alice->>CommonBridge: calls depositERC20
-    CommonBridge->>CommonBridge: pendingDepositLogs.push(txHash)
-    CommonBridge->>CommonBridge: emit DepositInitiated
+    CommonBridge->>CommonBridge: pendingTxHashes.push(txHash)
+    CommonBridge->>CommonBridge: emit PrivilegedTxSent
 
     CommonBridge-->>Sequencer: receives event
     Sequencer-->>CommonBridgeL2: executes call <br>to mintERC20
@@ -154,7 +151,7 @@ sequenceDiagram
 
     Sequencer->>OnChainProposer: publishes batch
     OnChainProposer->>CommonBridge: consumes pending deposits
-    CommonBridge-->>CommonBridge: pendingDepositLogs.pop()
+    CommonBridge-->>CommonBridge: pendingTxHashes.pop()
 ```
 
 ### Why store the provenance of bridged tokens?
@@ -200,31 +197,30 @@ sequenceDiagram
 
 <!-- TODO: extend this version once we have generic L1->L2 messages -->
 
-Privileged transactions are sent as an `L1ToL2Message` event.
+Privileged transactions are sent as a `PrivilegedTxSent` event.
 
 ```solidity
-event L1ToL2Message(
-    uint256 indexed amount,
+event PrivilegedTxSent (
+    address indexed from,
     address indexed to,
-    uint256 indexed depositId,
-    address from,
+    uint256 indexed transactionId,
+    uint256 value,
     uint256 gasLimit,
-    bytes data,
-    bytes32 l2MintTxHash
+    bytes data
 );
 ```
 
-The `l2MintTxHash` is the hash of the privileged transaction, computed as follows:
+The hash of the privileged transaction is computed as follows:
 
 ```solidity
 keccak256(
     bytes.concat(
-        bytes20(to),
-        bytes32(value),
-        bytes32(depositId),
         bytes20(from),
+        bytes20(to),
+        bytes32(transactionId),
+        bytes32(value),
         bytes32(gasLimit),
-        keccak256(calldata)
+        keccak256(data)
     )
 )
 ```
