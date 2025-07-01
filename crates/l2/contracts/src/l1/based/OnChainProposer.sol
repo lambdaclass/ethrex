@@ -61,7 +61,7 @@ contract OnChainProposer is
     /// @dev This mapping contains the batch hashes and tells if they are committed or verified.
     /// @dev If the value is false, the batch has been committed but not verified yet.
     /// @dev If the value is true, the batch has been committed and verified by the proporser.
-    mapping(uint256 => bool) public verifiedBatches;
+    mapping(bytes32 => bool) public verifiedBatches;
 
     address public BRIDGE;
     address public PICOVERIFIER;

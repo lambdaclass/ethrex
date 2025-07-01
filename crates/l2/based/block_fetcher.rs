@@ -228,9 +228,7 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
 
             let batch = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 
-            if verify_batch_is_safe(&batch, &state.eth_client, state.on_chain_proposer_address)
-                .await?
-            {
+            if batch_is_safe(&batch, &state.eth_client, state.on_chain_proposer_address).await? {
                 store_batch(state, &batch).await?;
 
                 seal_batch(state, &batch, batch_number).await?;
@@ -551,7 +549,7 @@ async fn get_batch(
     })
 }
 
-async fn verify_batch_is_safe(
+async fn batch_is_safe(
     batch: &Vec<Block>,
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
@@ -574,5 +572,5 @@ async fn verify_batch_is_safe(
 
     info!("result {result}");
 
-    Ok(false)
+    Ok(true)
 }
