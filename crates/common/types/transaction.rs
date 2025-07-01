@@ -1356,7 +1356,7 @@ impl TxType {
 impl PrivilegedL2Transaction {
     /// Returns the formatted hash of the privileged transaction,
     /// or None if the transaction is not a privileged transactions.
-    /// The hash is computed as keccak256(from || to || transaction_id == nonce  || value || gas_limit || keccak256(calldata))
+    /// The hash is computed as keccak256(from || to || transaction_id  || value || gas_limit || keccak256(calldata))
     pub fn get_privileged_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {
