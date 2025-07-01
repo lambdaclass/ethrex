@@ -33,38 +33,14 @@ use lambdaworks_math::{
     unsigned_integer::element,
 };
 use num_bigint::BigUint;
-#[cfg(feature = "l2")]
-use p256::{
-    EncodedPoint, FieldElement as P256FieldElement, NistP256,
-    ecdsa::{Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier},
-    elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
-};
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 
-// Secp256r1 curve parameters
-// See https://neuromancer.sk/std/secg/secp256r1
-#[cfg(feature = "l2")]
-const P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
-#[cfg(feature = "l2")]
-const P256_N: P256Uint = NistP256::ORDER;
-#[cfg(feature = "l2")]
-const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
-#[cfg(feature = "l2")]
-const P256_B_UINT: P256Uint =
-    P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
-#[cfg(feature = "l2")]
-lazy_static::lazy_static! {
-    static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
-}
-
 use sha3::Digest;
 use std::ops::Mul;
 
-#[cfg(feature = "l2")]
-use crate::gas_cost::P256VERIFY_COST;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
@@ -145,12 +121,6 @@ pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x11,
 ]);
 
-#[cfg(feature = "l2")]
-pub const P256VERIFY_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00,
-]);
-
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
@@ -173,9 +143,6 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_MAP_FP_TO_G1_ADDRESS,
     BLS12_MAP_FP2_TO_G2_ADDRESS,
 ];
-
-#[cfg(feature = "l2")]
-pub const RIP_PRECOMPILES: [H160; 1] = [P256VERIFY_ADDRESS];
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
@@ -224,11 +191,6 @@ pub fn is_precompile(address: &Address, fork: Fork) -> bool {
         return false;
     }
 
-    #[cfg(feature = "l2")]
-    if RIP_PRECOMPILES.contains(address) {
-        return true;
-    }
-
     PRECOMPILES.contains(address) || PRECOMPILES_POST_CANCUN.contains(address)
 }
 
@@ -263,8 +225,6 @@ pub fn execute_precompile(
         address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
             bls12_map_fp2_tp_g2(calldata, gas_remaining)?
         }
-        #[cfg(feature = "l2")]
-        address if address == P256VERIFY_ADDRESS => p_256_verify(calldata, gas_remaining)?,
         _ => return Err(InternalError::InvalidPrecompileAddress.into()),
     };
 
@@ -272,7 +232,10 @@ pub fn execute_precompile(
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.
-fn increase_precompile_consumed_gas(gas_cost: u64, gas_remaining: &mut u64) -> Result<(), VMError> {
+pub(crate) fn increase_precompile_consumed_gas(
+    gas_cost: u64,
+    gas_remaining: &mut u64,
+) -> Result<(), VMError> {
     *gas_remaining = gas_remaining
         .checked_sub(gas_cost)
         .ok_or(PrecompileError::NotEnoughGas)?;
@@ -281,7 +244,7 @@ fn increase_precompile_consumed_gas(gas_cost: u64, gas_remaining: &mut u64) -> R
 
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
 /// more than `target_len`, the excess bytes are discarded.
-fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
+pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     let mut padded_calldata = calldata.to_vec();
     if padded_calldata.len() < target_len {
         padded_calldata.resize(target_len, 0);

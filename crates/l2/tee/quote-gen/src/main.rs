@@ -1,19 +1,20 @@
-use configfs_tsm::create_tdx_quote;
+mod sender;
 
+use configfs_tsm::create_tdx_quote;
+use ethrex_common::Bytes;
+use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProofCalldata, ProverType},
+};
+use ethrex_l2_sdk::calldata::encode_tuple;
+use ethrex_l2_sdk::get_address_from_secret_key;
+use keccak_hash::keccak;
+use secp256k1::{Message, SecretKey, generate_keypair, rand};
+use sender::{get_batch, submit_proof, submit_quote};
 use std::time::Duration;
 use tokio::time::sleep;
-
-use ethrex_common::Bytes;
-use ethrex_l2_sdk::calldata::{encode_tuple, Value};
-use ethrex_l2_sdk::get_address_from_secret_key;
 use zkvm_interface::io::ProgramInput;
-
-use keccak_hash::keccak;
-use secp256k1::{generate_keypair, rand, Message, SecretKey};
-mod sender;
-use sender::{get_batch, submit_proof, submit_quote};
-
-use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
 
 const POLL_INTERVAL_MS: u64 = 5000;
 
@@ -82,8 +83,8 @@ fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {
         .map(Bytes::from)
 }
 
-async fn do_loop(private_key: &SecretKey) -> Result<u64, String> {
-    let (batch_number, input) = get_batch().await?;
+async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, String> {
+    let (batch_number, input) = get_batch(commit_hash).await?;
     let output = calculate_transition(input)?;
     let signature = sign_eip191(&output, private_key);
     let calldata = ProofCalldata {
@@ -105,13 +106,14 @@ async fn setup(private_key: &SecretKey) -> Result<(), String> {
 #[tokio::main]
 async fn main() {
     let (private_key, _) = generate_keypair(&mut rand::rngs::OsRng);
+    let commit_hash = get_commit_hash();
     while let Err(err) = setup(&private_key).await {
         println!("Error sending quote: {}", err);
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
     loop {
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
-        match do_loop(&private_key).await {
+        match do_loop(&private_key, commit_hash.clone()).await {
             Ok(batch_number) => println!("Processed batch {}", batch_number),
             Err(err) => println!("Error: {}", err),
         };

@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
-
+use crate::sequencer::errors::BlockProducerError;
 use ethrex_blockchain::{
     Blockchain,
     constants::TX_GAS_COST,
-    payload::{HeadTransaction, PayloadBuildContext, PayloadBuildResult, apply_plain_transaction},
+    payload::{
+        HeadTransaction, PayloadBuildContext, PayloadBuildResult, TransactionQueue,
+        apply_plain_transaction,
+    },
 };
 use ethrex_common::{
     Address,
@@ -23,11 +24,11 @@ use ethrex_metrics::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Div;
+use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error};
-
-use crate::sequencer::errors::BlockProducerError;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -41,10 +42,14 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
+    let mut context = PayloadBuildContext::new(
+        payload,
+        blockchain.evm_engine,
+        store,
+        blockchain.r#type.clone(),
+    )?;
 
     fill_transactions(blockchain.clone(), &mut context, store).await?;
-    blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
@@ -96,17 +101,11 @@ pub async fn fill_transactions(
     let mut account_diffs = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
-    let max_blob_number_per_block: usize = chain_config
-        .get_fork_blob_schedule(context.payload.header.timestamp)
-        .map(|schedule| schedule.max)
-        .unwrap_or_default()
-        .try_into()
-        .unwrap_or_default();
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
-    let (mut plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
+    let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
     // Execute and add transactions to payload (if suitable)
     loop {
         // Check if we have enough gas to run more transactions
@@ -122,23 +121,10 @@ pub async fn fill_transactions(
             debug!("No more StateDiff space to run transactions");
             break;
         };
-        if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block {
-            debug!("No more blob gas to run blob transactions");
-            blob_txs.clear();
-        }
-        // Fetch the next transactions
-        let (head_tx, is_blob) = match (plain_txs.peek(), blob_txs.peek()) {
-            (None, None) => break,
-            (None, Some(tx)) => (tx, true),
-            (Some(tx), None) => (tx, false),
-            (Some(a), Some(b)) if b < a => (b, true),
-            (Some(tx), _) => (tx, false),
-        };
 
-        let txs = if is_blob {
-            &mut blob_txs
-        } else {
-            &mut plain_txs
+        // Fetch the next transaction
+        let Some(head_tx) = txs.peek() else {
+            break;
         };
 
         // Check if we have enough gas to run the transaction
@@ -176,17 +162,6 @@ pub async fn fill_transactions(
                 blockchain.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
-        }
-
-        // Check if the transaction is a blob transaction, which is not supported in L2
-        if matches!(*head_tx, Transaction::EIP4844Transaction(_)) {
-            debug!(
-                "Skipping blob transaction: {} (not supported in L2)",
-                tx_hash
-            );
-            txs.pop();
-            blockchain.remove_transaction_from_pool(&tx_hash)?;
-            continue;
         }
 
         // Execute tx
@@ -255,6 +230,20 @@ pub async fn fill_transactions(
     Ok(())
 }
 
+// TODO: Once #2857 is implemented, we can completely ignore the blobs pool.
+fn fetch_mempool_transactions(
+    blockchain: &Blockchain,
+    context: &mut PayloadBuildContext,
+) -> Result<TransactionQueue, BlockProducerError> {
+    let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
+    while let Some(blob_tx) = blob_txs.peek() {
+        let tx_hash = blob_tx.compute_hash();
+        blockchain.remove_transaction_from_pool(&tx_hash)?;
+        blob_txs.pop();
+    }
+    Ok(plain_txs)
+}
+
 /// Returns the state diffs introduced by the transaction by comparing the call frame backup
 /// (which holds the state before executing the transaction) with the current state of the cache
 /// (which contains all the writes performed by the transaction).
@@ -268,7 +257,7 @@ fn get_account_diffs_in_tx(
                 "REVM not supported for L2".to_string(),
             )));
         }
-        Evm::LEVM { db } => {
+        Evm::LEVM { db, .. } => {
             let transaction_backup = db.get_tx_backup().map_err(|e| {
                 BlockProducerError::FailedToGetDataFrom(format!("TransactionBackup: {e}"))
             })?;

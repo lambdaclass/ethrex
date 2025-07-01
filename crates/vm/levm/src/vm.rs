@@ -9,7 +9,7 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    precompiles::execute_precompile,
+    l2_precompiles, precompiles,
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -25,6 +25,13 @@ use std::{
 };
 
 pub type Storage = HashMap<U256, H256>;
+
+#[derive(Debug, Clone, Default)]
+pub enum VMType {
+    #[default]
+    L1,
+    L2,
+}
 
 #[derive(Debug, Clone, Default)]
 /// Information that changes during transaction execution
@@ -52,6 +59,7 @@ pub struct VM<'a> {
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
     pub debug_mode: DebugMode,
+    pub vm_type: VMType,
 }
 
 impl<'a> VM<'a> {
@@ -60,8 +68,8 @@ impl<'a> VM<'a> {
         db: &'a mut GeneralizedDatabase,
         tx: &Transaction,
         tracer: LevmCallTracer,
+        vm_type: VMType,
     ) -> Self {
-        let hooks = get_hooks(tx);
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
         Self {
@@ -70,11 +78,12 @@ impl<'a> VM<'a> {
             substate: Substate::default(),
             db,
             tx: tx.clone(),
-            hooks,
+            hooks: get_hooks(&vm_type),
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
+            vm_type,
         }
     }
 
@@ -192,14 +201,21 @@ impl<'a> VM<'a> {
 
     /// Executes precompile and handles the output that it returns, generating a report.
     pub fn execute_precompile(&mut self) -> Result<ContextResult, VMError> {
+        let vm_type = self.vm_type.clone();
+
         let callframe = self.current_call_frame_mut()?;
 
-        let precompile_result = {
-            execute_precompile(
+        let precompile_result = match vm_type {
+            VMType::L1 => precompiles::execute_precompile(
                 callframe.code_address,
                 &callframe.calldata,
                 &mut callframe.gas_remaining,
-            )
+            ),
+            VMType::L2 => l2_precompiles::execute_precompile(
+                callframe.code_address,
+                &callframe.calldata,
+                &mut callframe.gas_remaining,
+            ),
         };
 
         let ctx_result = self.handle_precompile_result(precompile_result)?;
