@@ -64,26 +64,20 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // GAS
-        let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
-        let new_memory_size_for_return_data =
-            calculate_memory_size(return_data_start_offset, return_data_size)?;
-        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
-
-        let (account_is_empty, address_was_cold) = {
-            let (account, address_was_cold) = self.db.access_account(&mut self.substate, callee)?;
-            (account.is_empty(), address_was_cold)
-        };
-
+        // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, callee)?;
 
-        let gas_left = self
-            .current_call_frame()?
-            .gas_remaining
-            .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::Underflow)?;
-
+        // GAS
+        let (new_memory_size, gas_left, account_is_empty, address_was_cold) = self
+            .get_call_gas_params(
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+                eip7702_gas_consumed,
+                callee,
+            )?;
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
@@ -95,8 +89,10 @@ impl<'a> VM<'a> {
         )?;
 
         let callframe = self.current_call_frame_mut()?;
-        callframe.increase_consumed_gas(cost)?;
-        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
+        callframe.increase_consumed_gas(
+            cost.checked_add(eip7702_gas_consumed)
+                .ok_or(InternalError::Overflow)?,
+        )?;
 
         // OPERATION
         let from = callframe.to; // The new sender will be the current contract.
@@ -127,7 +123,7 @@ impl<'a> VM<'a> {
         // STACK
         let (
             gas,
-            code_address,
+            address,
             value,
             current_memory_size,
             args_start_offset,
@@ -138,14 +134,14 @@ impl<'a> VM<'a> {
             let current_call_frame = self.current_call_frame_mut()?;
             let [
                 gas,
-                code_address,
+                address,
                 value_to_transfer,
                 args_start_offset,
                 args_size,
                 return_data_start_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
-            let code_address = word_to_address(code_address);
+            let address = word_to_address(address);
             let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -155,7 +151,7 @@ impl<'a> VM<'a> {
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
-                code_address,
+                address,
                 value_to_transfer,
                 current_memory_size,
                 args_start_offset,
@@ -165,24 +161,19 @@ impl<'a> VM<'a> {
             )
         };
 
-        // GAS
-        let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
-
-        let new_memory_size_for_return_data =
-            calculate_memory_size(return_data_start_offset, return_data_size)?;
-        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
-
-        let (_account_info, address_was_cold) =
-            self.db.access_account(&mut self.substate, code_address)?;
-
+        // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.substate, code_address)?;
-
-        let gas_left = self
-            .current_call_frame()?
-            .gas_remaining
-            .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::Underflow)?;
+            eip7702_get_code(self.db, &mut self.substate, address)?;
+        // GAS
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
+            .get_call_gas_params(
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+                eip7702_gas_consumed,
+                address,
+            )?;
 
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
@@ -194,8 +185,10 @@ impl<'a> VM<'a> {
         )?;
 
         let callframe = self.current_call_frame_mut()?;
-        callframe.increase_consumed_gas(cost)?;
-        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
+        callframe.increase_consumed_gas(
+            cost.checked_add(eip7702_gas_consumed)
+                .ok_or(InternalError::Overflow)?,
+        )?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let from = callframe.to;
@@ -253,7 +246,7 @@ impl<'a> VM<'a> {
         // STACK
         let (
             gas,
-            code_address,
+            address,
             current_memory_size,
             args_start_offset,
             args_size,
@@ -263,13 +256,13 @@ impl<'a> VM<'a> {
             let current_call_frame = self.current_call_frame_mut()?;
             let [
                 gas,
-                code_address,
+                address,
                 args_start_offset,
                 args_size,
                 return_data_start_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
-            let code_address = word_to_address(code_address);
+            let address = word_to_address(address);
             let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -279,7 +272,7 @@ impl<'a> VM<'a> {
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
-                code_address,
+                address,
                 current_memory_size,
                 args_start_offset,
                 args_size,
@@ -288,23 +281,20 @@ impl<'a> VM<'a> {
             )
         };
 
-        // GAS
-        let (_account_info, address_was_cold) =
-            self.db.access_account(&mut self.substate, code_address)?;
-
-        let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
-        let new_memory_size_for_return_data =
-            calculate_memory_size(return_data_start_offset, return_data_size)?;
-        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
-
+        // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, address)?;
 
-        let gas_left = self
-            .current_call_frame()?
-            .gas_remaining
-            .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::Underflow)?;
+        // GAS
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
+            .get_call_gas_params(
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+                eip7702_gas_consumed,
+                address,
+            )?;
 
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
@@ -315,8 +305,10 @@ impl<'a> VM<'a> {
         )?;
 
         let callframe = self.current_call_frame_mut()?;
-        callframe.increase_consumed_gas(cost)?;
-        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
+        callframe.increase_consumed_gas(
+            cost.checked_add(eip7702_gas_consumed)
+                .ok_or(InternalError::Overflow)?,
+        )?;
 
         // OPERATION
         let from = callframe.msg_sender;
@@ -349,7 +341,7 @@ impl<'a> VM<'a> {
         // STACK
         let (
             gas,
-            code_address,
+            address,
             current_memory_size,
             args_start_offset,
             args_size,
@@ -359,13 +351,13 @@ impl<'a> VM<'a> {
             let current_call_frame = self.current_call_frame_mut()?;
             let [
                 gas,
-                code_address,
+                address,
                 args_start_offset,
                 args_size,
                 return_data_start_offset,
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
-            let code_address = word_to_address(code_address);
+            let address = word_to_address(address);
             let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -375,7 +367,7 @@ impl<'a> VM<'a> {
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
-                code_address,
+                address,
                 current_memory_size,
                 args_start_offset,
                 args_size,
@@ -384,23 +376,20 @@ impl<'a> VM<'a> {
             )
         };
 
-        // GAS
-        let (_account_info, address_was_cold) =
-            self.db.access_account(&mut self.substate, code_address)?;
-
-        let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
-        let new_memory_size_for_return_data =
-            calculate_memory_size(return_data_start_offset, return_data_size)?;
-        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
-
+        // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
-            eip7702_get_code(self.db, &mut self.substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, address)?;
 
-        let gas_left = self
-            .current_call_frame()?
-            .gas_remaining
-            .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::Underflow)?;
+        // GAS
+        let (new_memory_size, gas_left, _account_is_empty, address_was_cold) = self
+            .get_call_gas_params(
+                args_start_offset,
+                args_size,
+                return_data_start_offset,
+                return_data_size,
+                eip7702_gas_consumed,
+                address,
+            )?;
 
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
@@ -411,13 +400,15 @@ impl<'a> VM<'a> {
         )?;
 
         let callframe = self.current_call_frame_mut()?;
-        callframe.increase_consumed_gas(cost)?;
-        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
+        callframe.increase_consumed_gas(
+            cost.checked_add(eip7702_gas_consumed)
+                .ok_or(InternalError::Overflow)?,
+        )?;
 
         // OPERATION
         let value = U256::zero();
         let from = callframe.to; // The new sender will be the current contract.
-        let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
+        let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let data = self.get_calldata(args_start_offset, args_size)?;
 
         self.tracer
@@ -428,7 +419,7 @@ impl<'a> VM<'a> {
             value,
             from,
             to,
-            code_address,
+            address,
             true,
             true,
             data,
@@ -911,6 +902,42 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(ctx_result, false)?;
         Ok(())
+    }
+
+    /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
+    fn get_call_gas_params(
+        &mut self,
+        args_start_offset: U256,
+        args_size: usize,
+        return_data_start_offset: U256,
+        return_data_size: usize,
+        eip7702_gas_consumed: u64,
+        address: Address,
+    ) -> Result<(usize, u64, bool, bool), VMError> {
+        // Creation of previously empty accounts and cold addresses have higher gas cost
+        let (account_is_empty, address_was_cold) = {
+            let (account, address_was_cold) =
+                self.db.access_account(&mut self.substate, address)?;
+            (account.is_empty(), address_was_cold)
+        };
+        // Calculated here for memory expansion gas cost
+        let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
+        let new_memory_size_for_return_data =
+            calculate_memory_size(return_data_start_offset, return_data_size)?;
+        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
+        // Calculate remaining gas after EIP7702 consumption
+        let gas_left = self
+            .current_call_frame()?
+            .gas_remaining
+            .checked_sub(eip7702_gas_consumed)
+            .ok_or(InternalError::Underflow)?;
+
+        Ok((
+            new_memory_size,
+            gas_left,
+            account_is_empty,
+            address_was_cold,
+        ))
     }
 
     fn get_calldata(&mut self, offset: U256, size: usize) -> Result<Bytes, VMError> {
