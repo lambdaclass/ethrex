@@ -273,10 +273,13 @@ pub fn validate_max_fee_per_blob_gas(
 
 pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-    if vm.current_call_frame()?.calldata.len() > INIT_CODE_MAX_SIZE
-        && vm.env.config.fork >= Fork::Shanghai
-    {
-        return Err(TxValidationError::InitcodeSizeExceeded.into());
+    let code_size = vm.current_call_frame()?.calldata.len();
+    if code_size > INIT_CODE_MAX_SIZE && vm.env.config.fork >= Fork::Shanghai {
+        return Err(TxValidationError::InitcodeSizeExceeded {
+            max_size: INIT_CODE_MAX_SIZE,
+            actual_size: code_size,
+        }
+        .into());
     }
     Ok(())
 }

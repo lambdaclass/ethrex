@@ -311,7 +311,10 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::InsufficientMaxFeePerBlobGas)
             ) | (
                 TransactionExpectedException::InitcodeSizeExceeded,
-                VMError::TxValidation(TxValidationError::InitcodeSizeExceeded)
+                VMError::TxValidation(TxValidationError::InitcodeSizeExceeded {
+                    max_size: _,
+                    actual_size: _
+                })
             ) | (
                 TransactionExpectedException::Type4TxContractCreation,
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
