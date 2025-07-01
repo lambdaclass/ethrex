@@ -80,7 +80,7 @@ const PERIODIC_BATCH_BROADCAST_INTERVAL: std::time::Duration =
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(60);
-pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
+pub const MAX_PEERS_TCP_CONNECTIONS: usize = 200;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
