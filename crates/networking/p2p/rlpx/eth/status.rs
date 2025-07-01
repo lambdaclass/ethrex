@@ -48,6 +48,7 @@ impl StatusMessage {
         let total_difficulty =
             U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
         let network_id = chain_config.chain_id;
+        dbg!(network_id);
 
         // These blocks must always be available
         let genesis_header = storage
