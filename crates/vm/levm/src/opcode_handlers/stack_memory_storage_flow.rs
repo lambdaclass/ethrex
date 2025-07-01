@@ -4,7 +4,6 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
-    opcodes::Opcode,
     vm::VM,
 };
 use ethrex_common::{H256, U256, types::Fork};
@@ -307,14 +306,17 @@ impl<'a> VM<'a> {
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
     fn target_address_is_valid(call_frame: &CallFrame, jump_address: usize) -> bool {
-        #[expect(clippy::as_conversions)]
-        call_frame.bytecode.get(jump_address).is_some_and(|&value| {
-            // It's a constant, therefore the conversion cannot fail.
-            value == Opcode::JUMPDEST as u8
-                && call_frame
-                    .invalid_jump_destinations
-                    .binary_search(&jump_address)
-                    .is_err()
+        #[expect(clippy::indexing_slicing)]
+        call_frame.bytecode.get(jump_address).is_some_and(|_| {
+            (call_frame.valid_jump_destinations[jump_address >> 6] & (1 << (jump_address & 0x3F)))
+                != 0
+
+            // // It's a constant, therefore the conversion cannot fail.
+            // value == Opcode::JUMPDEST as u8
+            //     && call_frame
+            //         .valid_jump_destinations
+            //         .binary_search(&jump_address)
+            //         .is_err()
         })
     }
 
