@@ -369,7 +369,7 @@ contract OnChainProposer is
             );
         }
 
-        _checkAndUpdateInclusionQuota(transactions_count);
+        _checkAndUpdateInclusionQuota(privileged_transaction_count);
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -438,7 +438,7 @@ contract OnChainProposer is
                 );
             }
 
-            _checkAndUpdateInclusionQuota(transactions_count);
+            _checkAndUpdateInclusionQuota(transaction_count);
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];

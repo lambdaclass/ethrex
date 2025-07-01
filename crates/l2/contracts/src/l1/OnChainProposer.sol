@@ -391,7 +391,7 @@ contract OnChainProposer is
                 );
             }
 
-            _checkAndUpdateInclusionQuota(transactions_count);
+            _checkAndUpdateInclusionQuota(transaction_count);
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
