@@ -110,8 +110,13 @@ pub enum TxValidationError {
     Type3TxZeroBlobs,
     #[error("Invalid blob versioned hash")]
     Type3TxInvalidBlobVersionedHash,
-    #[error("Blob count exceeded")]
-    Type3TxBlobCountExceeded,
+    #[error(
+        "Blob count exceeded. Max blob count: {max_blob_count}, actual blob count: {actual_blob_count}"
+    )]
+    Type3TxBlobCountExceeded {
+        max_blob_count: usize,
+        actual_blob_count: usize,
+    },
     #[error("Contract creation in blob transaction")]
     Type3TxContractCreation,
     #[error("Type 4 transactions are not supported before the Prague fork")]

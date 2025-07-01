@@ -302,7 +302,10 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::Type3TxPreFork)
             ) | (
                 TransactionExpectedException::Type3TxBlobCountExceeded,
-                VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded)
+                VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded {
+                    max_blob_count: _,
+                    actual_blob_count: _
+                })
             ) | (
                 TransactionExpectedException::Type3TxZeroBlobs,
                 VMError::TxValidation(TxValidationError::Type3TxZeroBlobs)
