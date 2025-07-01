@@ -61,7 +61,7 @@ pub struct UpdateBatch {
     /// Code updates
     pub code_updates: Vec<(H256, Bytes)>,
 
-    /// Updates for the log tables
+    /// Updates for the log tables - (address, old_info, new_info)
     pub account_info_log_updates: Vec<(AccountAddress, AccountInfo, AccountInfo)>,
     pub storage_log_updates: Vec<AccountStorageLogEntry>,
 }
