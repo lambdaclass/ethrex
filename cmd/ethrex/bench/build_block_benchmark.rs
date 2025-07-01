@@ -10,7 +10,7 @@ use criterion::{
     measurement::{Measurement, ValueFormatter},
 };
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
@@ -262,7 +262,11 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let store_with_genesis = Arc::new(Mutex::new(store_with_genesis));
-                    let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone());
+                    let block_chain = Blockchain::new(
+                        EvmEngine::LEVM,
+                        store_with_genesis.clone(),
+                        BlockchainType::L1, // TODO: Should we support L2?
+                    );
                     fill_mempool(&block_chain, accounts).await;
 
                     (block_chain, genesis.get_block(), store_with_genesis)
