@@ -48,7 +48,6 @@ spinoff = "0.8.0"
 default = []
 c-kzg = ["ethrex-common/c-kzg"]
 ethereum_foundation_tests = []
-l2 = []
 debug = []
 
 [lints.rust]

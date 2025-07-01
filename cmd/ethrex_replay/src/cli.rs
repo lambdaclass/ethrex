@@ -70,6 +70,8 @@ enum SubcommandExecute {
             help = "Name or ChainID of the network to use"
         )]
         network: String,
+        #[arg(long, required = false)]
+        l2: bool,
     },
 }
 
@@ -117,11 +119,12 @@ impl SubcommandExecute {
                 tx,
                 rpc_url,
                 network,
+                l2,
             } => {
                 let chain_config = get_chain_config(&network)?;
                 let block_number = get_tx_block(&tx, &rpc_url).await?;
                 let cache = get_blockdata(&rpc_url, chain_config, block_number).await?;
-                let (receipt, transitions) = run_tx(cache, &tx).await?;
+                let (receipt, transitions) = run_tx(cache, &tx, l2).await?;
                 print_receipt(receipt);
                 for transition in transitions {
                     print_transition(transition);
@@ -293,7 +296,7 @@ fn print_transition(update: AccountUpdate) {
         println!("  Updated Storage:");
     }
     for (key, value) in update.added_storage {
-        println!("    {:#x} = {:#x}", key, value);
+        println!("    {key:#x} = {value:#x}");
     }
 }
 

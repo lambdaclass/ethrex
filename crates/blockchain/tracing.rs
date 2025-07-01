@@ -102,14 +102,12 @@ impl Blockchain {
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect();
-        let mut vm = Evm::new(
-            self.evm_engine,
-            StoreVmDatabase::new_with_block_hash_cache(
-                self.storage.clone(),
-                parent_hash,
-                block_hash_cache,
-            ),
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            parent_hash,
+            block_hash_cache,
         );
+        let mut vm = self.new_evm(vm_db)?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;

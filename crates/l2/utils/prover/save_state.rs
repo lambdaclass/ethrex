@@ -394,7 +394,7 @@ pub fn batch_number_has_all_needed_proofs(
 #[allow(clippy::expect_used)]
 mod tests {
     use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
-    use ethrex_levm::db::gen_db::GeneralizedDatabase;
+    use ethrex_levm::{db::gen_db::GeneralizedDatabase, vm::VMType};
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         DynVmDatabase,
@@ -416,10 +416,10 @@ mod tests {
             }
         }
 
-        let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
+        let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures"));
 
-        let chain_file_path = path.join("l2-loadtest.rlp");
-        let genesis_file_path = path.join("genesis-perf-ci.json");
+        let chain_file_path = path.join("blockchain/l2-loadtest.rlp");
+        let genesis_file_path = path.join("genesis/perf-ci.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
         let in_memory_db =
@@ -459,7 +459,7 @@ mod tests {
             let store: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(in_memory_db.clone(), block.hash()));
             let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
-            LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
+            LEVM::execute_block(blocks.last().unwrap(), &mut db, VMType::L2)?;
             let account_updates = LEVM::get_state_transitions(&mut db)?;
 
             account_updates_vec.push(account_updates.clone());
