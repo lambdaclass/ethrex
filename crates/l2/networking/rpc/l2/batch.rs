@@ -43,11 +43,11 @@ fn get_block_hashes(
 ) -> Result<Vec<BlockHash>, RpcErr> {
     let mut block_hashes = Vec::new();
     for block_number in first_block..=last_block {
-        let Some(header) = store.get_block_header(block_number)? else {
-            return Err(RpcErr::Internal(format!(
+        let header = store
+            .get_block_header(block_number)?
+            .ok_or(RpcErr::Internal(format!(
                 "Failed to retrieve block header for block number {block_number}"
-            )));
-        };
+            )))?;
         let hash = header.hash();
         block_hashes.push(hash);
     }
