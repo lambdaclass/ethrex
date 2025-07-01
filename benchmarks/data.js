@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751381487730,
+  "lastUpdate": 1751384444286,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3965,6 +3965,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/d6d79a4d1781a6aa39dd9dfb3cc6e79cfe7350e6"
         },
         "date": 1751381475003,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006844779487179487,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cffc84b07c17135c5a87cebbae4c1bbaae61c202",
+          "message": "feat(l2): replace custom merkle tree with `OpenZeppelin` + `lambdaworks` (#3344)\n\n**Motivation**\n\nWe are using an unsafe (not audited) custom merkle tree implementation\nfor the L1messaging system\n\n**Description**\n\n- Replace the merkle tree verify function in the CommonBridge contract\nto use OppenZeppelin's `MerkleProof.sol` contract\n- Replace our custom merkle tree implementation with lambdaworks' for\nthis:\n- We implement the trait `IsMerkleTreeBackend` for H256 to build a tree\nthat is compliant with\n- https://docs.openzeppelin.com/contracts/5.x/api/utils#MerkleProof\n - The implementation is taken from \n-\nhttps://github.com/yetanotherco/aligned_layer/blob/8a3a6448c974d09c645f3b74d4c9ff9d2dd27249/batcher/aligned-sdk/src/aggregation_layer/types.rs",
+          "timestamp": "2025-07-01T15:16:50Z",
+          "tree_id": "fa2255e61c907a119f01fe63cb1e5cdcd6160904",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cffc84b07c17135c5a87cebbae4c1bbaae61c202"
+        },
+        "date": 1751384443753,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
