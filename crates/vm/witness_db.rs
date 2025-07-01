@@ -75,7 +75,7 @@ impl VmDatabase for ExecutionWitnessResult {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Bytes::new());
         }
-        match self.codes.get(&code_hash) {
+        match self.code_map.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => Err(EvmError::DB(format!(
                 "Could not find code for hash {}",

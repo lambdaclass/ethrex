@@ -158,7 +158,8 @@ impl Blockchain {
         })?;
 
         let mut block_hashes = HashMap::new();
-        let mut codes = HashMap::new();
+        let mut codes = Vec::new();
+        let mut code_map = HashMap::new();
 
         // Get the witness for the state trie
         let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
@@ -265,7 +266,8 @@ impl Blockchain {
                     .ok_or(ChainError::WitnessGeneration(
                         "Failed to get account code".to_string(),
                     ))?;
-                codes.insert(*code_hash, code);
+                code_map.insert(*code_hash, code.clone());
+                codes.push(code.to_vec());
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -317,6 +319,7 @@ impl Blockchain {
         Ok(ExecutionWitnessResult {
             state: Some(used_trie_nodes),
             codes,
+            code_map,
             state_trie: None,
             storage_tries: None,
             headers,
