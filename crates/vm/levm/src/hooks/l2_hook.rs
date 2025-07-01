@@ -59,7 +59,6 @@ impl Hook for L2Hook {
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         // NOT CHECKED: privileged transactions do not pay for gas, the gas price is irrelevant
-        default_hook::validate_sufficient_max_fee_per_gas(vm)?;
 
         // (5) INITCODE_SIZE_EXCEEDED
         // NOT CHECKED: privileged transactions can't be of "create" type
@@ -90,7 +89,7 @@ impl Hook for L2Hook {
         // NOT CHECKED: privileged transactions are not type 4
 
         if tx_should_fail {
-            // If the transaction failed some validation, it must still be included
+            // If the transaction failed some validation, but it must still be included
             // To prevent it from taking effect, we force it to revert
             vm.current_call_frame_mut()?.msg_value = U256::zero();
             vm.current_call_frame_mut()?
@@ -114,7 +113,7 @@ impl Hook for L2Hook {
             return DefaultHook.finalize_execution(vm, ctx_result);
         }
 
-        if !ctx_result.is_success() {
+        if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
             default_hook::undo_value_transfer(vm)?;
         }
 
