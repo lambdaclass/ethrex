@@ -275,7 +275,10 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
             ) | (
                 TransactionExpectedException::PriorityGreaterThanMaxFeePerGas,
-                VMError::TxValidation(TxValidationError::PriorityGreaterThanMaxFeePerGas)
+                VMError::TxValidation(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                    priority_fee: _,
+                    max_fee_per_gas: _
+                })
             ) | (
                 TransactionExpectedException::GasLimitPriceProductOverflow,
                 VMError::TxValidation(TxValidationError::GasLimitPriceProductOverflow)
