@@ -396,7 +396,9 @@ async fn handle_connection(
                     batch_number,
                     batch_proof,
                 }) => {
-                    if let Err(e) = handle_submit(state, &mut stream, batch_number, batch_proof).await {
+                    if let Err(e) =
+                        handle_submit(state, &mut stream, batch_number, batch_proof).await
+                    {
                         error!("Failed to handle ProofSubmit: {e}");
                     }
                 }
