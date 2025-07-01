@@ -400,7 +400,7 @@ contract OnChainProposer is
             bytes memory callData = abi.encodeWithSignature(
                 "verifyProofInclusion(bytes32[],bytes32,bytes)",
                 alignedMerkleProofsList[i],
-                alignedProgramVKey,
+                SP1_VERIFICATION_KEY,
                 alignedPublicInputsList[i]
             );
             (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
