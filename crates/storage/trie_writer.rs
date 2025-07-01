@@ -23,21 +23,8 @@ impl TrieWriter {
     }
 
     pub async fn writer_loop(store: Store, mut receiver: mpsc::Receiver<TrieUpdates>) {
-        let mut update_batch = Vec::with_capacity(1024);
         while let Some(update) = receiver.recv().await {
-            update_batch.push(update);
-            if update_batch.len() == 1024 {
-                let mut update = update_batch.drain(..1).next().unwrap();
-                for update_item in update_batch.drain(..) {
-                    update
-                        .account_updates
-                        .extend_from_slice(&update_item.account_updates);
-                    update
-                        .storage_updates
-                        .extend_from_slice(&update_item.storage_updates);
-                }
-                store.store_trie_updates(update).await.unwrap();
-            }
+            store.store_trie_updates(update).await.unwrap();
         }
     }
 

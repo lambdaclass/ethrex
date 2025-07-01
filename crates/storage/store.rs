@@ -96,20 +96,18 @@ impl Store {
 
     pub async fn store_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError> {
         self.engine.apply_trie_updates(trie_updates.clone()).await?;
-        // Chunk to avoid hogging the lock
-        for chunk in trie_updates.account_updates.chunks(10000) {
-            let mut guard = self.dirty_state_nodes.write().unwrap();
-            for (node_hash, _) in chunk {
-                guard.remove(&node_hash);
+        {
+            let mut guard = self.dirty_storage_nodes.write().unwrap();
+            for (address_hash, updates) in trie_updates.storage_updates {
+                for (node_hash, _) in updates {
+                    guard.remove(&(address_hash.into(), node_hash));
+                }
             }
         }
-        for (address_hash, updates) in trie_updates.storage_updates {
-            // Chunk to avoid hogging the lock
-            for chunk in updates.chunks(10000) {
-                let mut guard = self.dirty_storage_nodes.write().unwrap();
-                for (node_hash, _) in chunk {
-                    guard.remove(&(address_hash.into(), *node_hash));
-                }
+        {
+            let mut guard = self.dirty_state_nodes.write().unwrap();
+            for (node_hash, _) in trie_updates.account_updates {
+                guard.remove(&node_hash);
             }
         }
 

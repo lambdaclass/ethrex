@@ -1296,8 +1296,9 @@ dupsort!(
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
+// FIXME: use u64 as key to use INTEGERKEY flag
 // FIXME: use [u8; 20] (non-hashed address) to reduce IO cost
-// FIXME: make normal table
+// FIXME: replace the Vec<u8>
 dupsort!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
