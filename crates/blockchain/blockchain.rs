@@ -161,12 +161,16 @@ impl Blockchain {
         let mut codes = Vec::new();
         let mut code_map = HashMap::new();
 
-        // Get the witness for the state trie
-        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
-            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
-        })?;
-        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
-        let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
+        let mut used_trie_nodes = Vec::new();
+        { // This block is to explicitly drop the mutex
+            // Get the witness for the state trie
+            let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
+                ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+            })?;
+            let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+            used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
+            info!("{:?}", used_trie_nodes);
+        }
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty() {
             if let Some(root) = root_node {
