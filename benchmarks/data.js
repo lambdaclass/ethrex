@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751372282512,
+  "lastUpdate": 1751381487730,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3941,6 +3941,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006915709844559585,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d6d79a4d1781a6aa39dd9dfb3cc6e79cfe7350e6",
+          "message": "perf(levm): add fib recursive bench (#3391)\n\n**Motivation**\nThe fibonacci recursive can show perfomance results of stack reuse that\nthe factorial recursive one can't because factorial will never be able\nto \"reuse\" the stack.\n\nSee also https://github.com/lambdaclass/ethrex/pull/3386\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-01T13:47:40Z",
+          "tree_id": "c9c109f9a6cf0890e08cf3280f85eda9dd076a88",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d6d79a4d1781a6aa39dd9dfb3cc6e79cfe7350e6"
+        },
+        "date": 1751381475003,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006844779487179487,
             "unit": "Mgas/s"
           }
         ]
