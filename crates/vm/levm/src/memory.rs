@@ -19,9 +19,9 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
         .ok_or(OutOfBounds)?;
 
     if new_size > memory.len() {
-        let additional_size = new_size
-            .checked_sub(memory.len())
-            .ok_or(InternalError::Underflow)?;
+        // We already checked new size > memory len
+        #[expect(clippy::arithmetic_side_effects)]
+        let additional_size = new_size - memory.len();
         memory
             .try_reserve(additional_size)
             .map_err(|_err| InternalError::MemorySizeOverflow)?;
@@ -59,22 +59,22 @@ pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
     try_resize(memory, new_size)?;
-    try_store(
-        memory,
-        &word.to_big_endian(),
-        offset,
-        WORD_SIZE_IN_BYTES_USIZE,
-    )
+
+    let offset: usize = offset
+        .try_into()
+        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
+    try_store(memory, &word.to_big_endian(), offset)
 }
 
 pub fn try_store_data(memory: &mut Memory, offset: U256, data: &[u8]) -> Result<(), VMError> {
-    let new_size = offset
-        .checked_add(data.len().into())
-        .ok_or(OutOfBounds)?
+    let offset: usize = offset
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+    let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
+
     try_resize(memory, new_size)?;
-    try_store(memory, data, offset, data.len())
+    try_store(memory, data, offset)
 }
 
 pub fn try_store_range(
@@ -87,28 +87,21 @@ pub fn try_store_range(
         return Ok(());
     }
 
-    let new_size = offset
-        .checked_add(size.into())
-        .ok_or(OutOfBounds)?
+    let offset: usize = offset
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
+    let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
     try_resize(memory, new_size)?;
-    try_store(memory, data, offset, size)
+    try_store(memory, data.get(0..size).ok_or(OutOfBounds)?, offset)
 }
 
-fn try_store(
-    memory: &mut Memory,
-    data: &[u8],
-    at_offset: U256,
-    data_size: usize,
-) -> Result<(), VMError> {
+fn try_store(memory: &mut Memory, data: &[u8], at_offset: usize) -> Result<(), VMError> {
+    let data_size = data.len();
+
     if data_size == 0 {
         return Ok(());
     }
-
-    let at_offset: usize = at_offset
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
     let dst = memory
         .get_mut(
@@ -118,7 +111,7 @@ fn try_store(
                     .ok_or(InternalError::Overflow)?,
         )
         .ok_or(OutOfBounds)?;
-    dst.copy_from_slice(data.get(0..data_size).ok_or(InternalError::Slicing)?);
+    dst.copy_from_slice(data);
     Ok(())
 }
 
