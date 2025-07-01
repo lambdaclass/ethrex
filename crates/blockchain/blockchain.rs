@@ -192,9 +192,9 @@ impl Blockchain {
             let account_updates = vm.get_state_transitions()?;
 
             for account_update in &account_updates {
-                keys.push(account_update.address.encode_to_vec());
+                keys.push(account_update.address.as_bytes().to_vec());
                 for (storage, _) in &account_update.added_storage {
-                    keys.push(storage.encode_to_vec());
+                    keys.push(storage.as_bytes().to_vec());
                 }
             }
 
