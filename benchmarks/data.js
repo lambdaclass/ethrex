@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751387486983,
+  "lastUpdate": 1751411534859,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4028,6 +4028,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006844779487179487,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8c1812c8b0a657ac11392bda47bc88034bd10c67",
+          "message": "feat(l2): implement batch endpoint (#3374)\n\n**Motivation**\n\nFor debugging purposes, it's useful to have an `ethrex_getBatchByNumber`\nendpoint that returns a `Batch` struct:\n\n```Rust\npub struct Batch {\n    pub number: u64,\n    pub first_block: u64,\n    pub last_block: u64,\n    pub state_root: H256,\n    pub deposit_logs_hash: H256,\n    pub message_hashes: Vec<H256>,\n    pub blobs_bundle: BlobsBundle,\n    pub commit_tx: Option<H256>,\n    pub verify_tx: Option<H256>,\n}\n```\n\n**Description**\n\n- Modifies the `Batch` struct to incude `commit_tx` and `verify_tx`.\n- Updates `block_fetcher` to process verify tx logs and extract the\nverify tx hashes as well.\n- Fixes a bug found during development: the `rollup_storage::getBatch()`\nfunction incorrectly treated batches without `L1Messages` as an error.\n\n## How to test\n\nYou can run:\n```bash\ncurl -X POST http://localhost:1729 \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"jsonrpc\":\"2.0\",\n    \"method\":\"ethrex_getBatchByNumber\",\n    \"params\": [\"0x1\", true],\n    \"id\":1\n  }'\n  ```\n\nCloses None\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: Damian Ramirez <damian.ramirez@lambdaclass.com>",
+          "timestamp": "2025-07-01T22:08:29Z",
+          "tree_id": "c5741d911edff60bcb50e7172cf6f59a11d5246d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8c1812c8b0a657ac11392bda47bc88034bd10c67"
+        },
+        "date": 1751411525424,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006775289340101523,
             "unit": "Mgas/s"
           }
         ]
