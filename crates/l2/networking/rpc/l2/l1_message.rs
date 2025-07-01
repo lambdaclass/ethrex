@@ -1,11 +1,15 @@
-use ethrex_l2_common::l1_messages::get_block_l1_message_hashes;
 use keccak_hash::H256;
 use serde_json::Value;
 use tracing::info;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
-    utils::{RpcErr, merkle_proof},
+    utils::RpcErr,
+};
+
+use ethrex_l2_common::{
+    l1_messages::{get_block_l1_messages, get_l1_message_hash},
+    merkle_tree::compute_merkle_proof,
 };
 
 pub struct GetL1MessageProof {
@@ -56,8 +60,11 @@ impl RpcHandler for GetL1MessageProof {
         };
 
         // Gets the message hashes from the transaction
-        let tx_message_hashes = get_block_l1_message_hashes(&[tx], &[tx_receipt])
-            .map_err(|e| ethrex_rpc::RpcErr::Internal(e.to_string()))?;
+        let tx_messages = get_block_l1_messages(&[tx], &[tx_receipt]);
+        let tx_message_hashes = tx_messages
+            .iter()
+            .map(get_l1_message_hash)
+            .collect::<Vec<_>>();
 
         // Gets the batch number for the block
         let batch_number = match context
@@ -81,18 +88,25 @@ impl RpcHandler for GetL1MessageProof {
 
         let mut proofs = vec![];
         for (index, message_hash) in batch_message_hashes.iter().enumerate() {
-            if !tx_message_hashes.contains(message_hash) {
+            let Some(message_idx) = tx_message_hashes
+                .iter()
+                .position(|hash| hash == message_hash)
+            else {
                 continue;
-            }
+            };
+
+            let Some(message) = tx_messages.get(message_idx) else {
+                continue;
+            };
 
             // Calculates the merkle proof of the batch
-            let Some(path) = merkle_proof(batch_message_hashes.clone(), index) else {
+            let Some(path) = compute_merkle_proof(&batch_message_hashes, index) else {
                 return Ok(Value::Null);
             };
 
             let proof = ethrex_rpc::clients::eth::L1MessageProof {
                 batch_number,
-                index,
+                message_id: message.message_id,
                 message_hash: *message_hash,
                 merkle_proof: path,
             };

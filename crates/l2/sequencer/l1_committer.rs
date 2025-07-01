@@ -16,7 +16,8 @@ use ethrex_common::{
 use ethrex_l2_common::{
     calldata::Value,
     deposits::{compute_deposit_logs_hash, get_block_deposits},
-    l1_messages::{compute_merkle_root, get_block_l1_messages, get_l1_message_hash},
+    l1_messages::{get_block_l1_messages, get_l1_message_hash},
+    merkle_tree::compute_merkle_root,
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
@@ -471,7 +472,7 @@ async fn send_commitment(
     state: &mut CommitterState,
     batch: &Batch,
 ) -> Result<H256, CommitterError> {
-    let messages_merkle_root = compute_merkle_root(&batch.message_hashes)?;
+    let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
     let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
 
     let mut calldata_values = vec![

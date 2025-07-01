@@ -12,7 +12,8 @@ interface IL2ToL1Messenger {
     /// @param data the data being sent, usually a hash
     event L1Message(
         address indexed senderOnL2,
-        bytes32 indexed data
+        bytes32 indexed data,
+        uint256 indexed messageId
     );
 
     /// @notice Sends the given data to the L1
