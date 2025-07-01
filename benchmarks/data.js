@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751340474185,
+  "lastUpdate": 1751372282512,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3912,6 +3912,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006809857142857143,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d62fcc5accaaa13b9909af04071379219dc6a0b1",
+          "message": "perf(levm): refactor `CacheDB` to use more efficient APIs (#3259)\n\n**Motivation**\n\nThe cache db is a bunch of functions that accept a state object as an\nargument. This is confusing since those are not methods, but functions,\nwhich also do stuff that the state object already supports natively (not\nto mention the duplicated function).\n\n**Description**\n\nRemove the `cache.rs` file and use the state object directly. Move stuff\nto more relevant places to fix borrow issues.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-01T11:14:17Z",
+          "tree_id": "56071286cc95f7df094c33217f324109aa83f6c2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d62fcc5accaaa13b9909af04071379219dc6a0b1"
+        },
+        "date": 1751372272286,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006915709844559585,
             "unit": "Mgas/s"
           }
         ]
