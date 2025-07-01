@@ -46,9 +46,11 @@ where
     SK: Clone + Encodable + Eq + std::hash::Hash,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let dirty_nodes = self.dirty_nodes.read().unwrap();
-        if let Some(node) = dirty_nodes.get(&(self.fixed_key.clone(), key)) {
-            return Ok(Some(node.clone()));
+        {
+            let dirty_nodes = self.dirty_nodes.read().unwrap();
+            if let Some(node) = dirty_nodes.get(&(self.fixed_key.clone(), key)) {
+                return Ok(Some(node.clone()));
+            }
         }
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
         txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
