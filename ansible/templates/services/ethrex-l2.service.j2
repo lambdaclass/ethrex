@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 ExecStart={{ ethrex_dir }}/target/release/ethrex l2 init \
-          --network {{ ethrex_dir }}/genesis.json \
+          --network {{ genesis_json_file }} \
           --http.addr 0.0.0.0 --http.port 1729 \
           --metrics --metrics.port 3702 \
           --evm levm \
@@ -16,7 +16,7 @@ ExecStart={{ ethrex_dir }}/target/release/ethrex l2 init \
           --proof-coordinator.addr 127.0.0.1 \
           --block-producer.coinbase-address {{ coinbase_address }} \
           --validium \
-          --eth.maximum-allowed-max-fee-per-gas {{ max_allowed_fee_per_gas }} \
+          --eth.maximum-allowed-max-fee-per-gas {{ eth_max_allowed_fee_per_gas }} \
           --eth.maximum-allowed-max-fee-per-blob-gas {{ eth_max_allowed_fee_per_blob_gas }} \
           --committer.commit-time {{ committer_commit_time }} \
           --eth.rpc-url {{ eth_testnet_rpc }} https://sepolia.infura.io/v3/{{ infura_api_key }}

@@ -5,6 +5,16 @@
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
 
   tasks:
+    - name: Install dependencies
+      become: true
+      apt:
+        name:
+          - libclang-dev
+          - pkg-config
+        state: present
+      vars:
+        ansible_ssh_user: admin
+
     - name: Check if rustup is installed
       stat:
         path: /home/{{ ansible_user }}/.cargo/bin/rustc
@@ -26,16 +36,23 @@
         create: yes
       when: not rustup_check.stat.exists
 
+    - name: Clone Ethrex repository
+      git:
+        repo: "https://github.com/lambdaclass/ethrex.git"
+        dest: "{{ ethrex_dir }}"
+        version: main
+
     - name: Compile Ethrex with L2 features
-      command: cargo build --release --features l2,metrics,rollup_storage_libmdbx
+      shell: cargo build --release --features l2,metrics,rollup_storage_libmdbx
       args:
         chdir: "{{ ethrex_dir }}"
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/home/{{ ansible_user }}/.cargo/bin"
 
-    - name: Add Genesis JSON (If set)
+    - name: Copy genesis JSON file
       copy:
         src: "{{ lookup('env', 'GENESIS_JSON_FILE') }}"
-        dest: "{{ ethrex_dir }}/genesis.json"
-      when: lookup('env', 'GENESIS_JSON_FILE') | length != 0
+        dest: "/home/{{ ansible_user }}/genesis.json"
 
     - name: Ensure user systemd directory exists
       file:
@@ -50,7 +67,7 @@
         src: services/ethrex-l2.service.j2
         dest: /home/{{ ansible_user }}/.config/systemd/user/ethrex-l2.service
       vars:
-        netowrk: "{{ lookup('env', 'NETWORK') | default({{ ethrex_dir }}/genesis.json) }}"
+        genesis_json_file: "/home/{{ ansible_user }}/genesis.json"
         common_bridge_address: "{{ lookup('env', 'COMMON_BRIDGE_ADDRESS') }}"
         on_chain_proposer_address: "{{ lookup('env', 'ON_CHAIN_PROPOSER_ADDRESS') }}"
         committer_pk: "{{ lookup('env', 'COMMITTER_PK') }}"
@@ -68,3 +85,4 @@
         state: started
         enabled: true
         daemon_reload: true
+        scope: user
