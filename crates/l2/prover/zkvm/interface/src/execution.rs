@@ -23,7 +23,7 @@ use ethrex_common::types::{
     kzg_commitment_to_versioned_hash,
 };
 use ethrex_l2_common::{
-    l1_messages::{L1MessagingError, compute_merkle_root, get_block_l1_messages},
+    l1_messages::get_block_l1_messages,
     privileged_transactions::{
         PrivilegedTransactionError, compute_privileged_transactions_hash,
         get_block_privileged_transactions,
@@ -46,10 +46,7 @@ pub enum StatelessExecutionError {
     #[error("Receipts validation error: {0}")]
     ReceiptsRootValidationError(ChainError),
     #[error("EVM error: {0}")]
-    EvmError(EvmError),
-    #[cfg(feature = "l2")]
-    #[error("L1Message calculation error: {0}")]
-    L1MessageError(#[from] L1MessagingError),
+    EvmError(#[from] EvmError),
     #[cfg(feature = "l2")]
     #[error("Privileged Transaction calculation error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
@@ -272,7 +269,10 @@ fn execute_stateless(
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
         // Execute block
-        let mut vm = Evm::new(EvmEngine::LEVM, db.clone());
+        #[cfg(feature = "l2")]
+        let mut vm = Evm::new_for_l2(EvmEngine::LEVM, db.clone())?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(EvmEngine::LEVM, db.clone());
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;
@@ -352,7 +352,7 @@ fn compute_l1messages_and_privileged_transactions_digests(
     l1messages: &[L1Message],
     privileged_transactions: &[PrivilegedL2Transaction],
 ) -> Result<(H256, H256), StatelessExecutionError> {
-    use ethrex_l2_common::l1_messages::get_l1_message_hash;
+    use ethrex_l2_common::{l1_messages::get_l1_message_hash, merkle_tree::compute_merkle_root};
 
     let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
     let privileged_transactions_hashes: Vec<_> = privileged_transactions
@@ -361,7 +361,7 @@ fn compute_l1messages_and_privileged_transactions_digests(
         .map(|hash| hash.ok_or(StatelessExecutionError::InvalidPrivilegedTransaction))
         .collect::<Result<_, _>>()?;
 
-    let l1message_merkle_root = compute_merkle_root(&message_hashes)?;
+    let l1message_merkle_root = compute_merkle_root(&message_hashes);
     let privileged_transactions_hash =
         compute_privileged_transactions_hash(privileged_transactions_hashes)
             .map_err(StatelessExecutionError::PrivilegedTransactionError)?;

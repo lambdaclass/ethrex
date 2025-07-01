@@ -71,3 +71,5 @@ book/
 # mdbook-mermaid artifacts
 mermaid-init.js
 mermaid.min.js
+
+bench-results/

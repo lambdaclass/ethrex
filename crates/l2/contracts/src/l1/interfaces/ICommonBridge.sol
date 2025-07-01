@@ -34,10 +34,8 @@ interface ICommonBridge {
 
     /// @notice A withdrawal has been claimed.
     /// @dev Event emitted when a withdrawal is claimed.
-    /// @param withdrawalId the hash of the batch and index of the withdrawal
-    event WithdrawalClaimed(
-        bytes32 indexed withdrawalId
-    );
+    /// @param withdrawalId the message Id of the claimed withdrawal
+    event WithdrawalClaimed(uint256 indexed withdrawalId);
 
     struct SendValues {
         address to;

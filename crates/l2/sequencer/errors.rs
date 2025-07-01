@@ -4,11 +4,9 @@ use crate::utils::error::UtilsError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
-use ethrex_l2_common::l1_messages::L1MessagingError;
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
-use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
@@ -223,8 +221,6 @@ pub enum CommitterError {
     FailedToSendCommitment(String),
     #[error("Committer failed to decode deposit hash")]
     FailedToDecodeDepositHash,
-    #[error("Committer failed to merkelize: {0}")]
-    FailedToMerkelize(#[from] MerkleError),
     #[error("Withdrawal transaction was invalid")]
     InvalidWithdrawalTransaction,
     #[error("Blob estimation failed: {0}")]
@@ -239,8 +235,6 @@ pub enum CommitterError {
     FailedToGetWithdrawals(#[from] UtilsError),
     #[error("Privileged Transaction error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
-    #[error("L1Message error: {0}")]
-    L1MessageError(#[from] L1MessagingError),
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }

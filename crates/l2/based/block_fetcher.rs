@@ -16,7 +16,6 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
-use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, send_after};
 use tracing::{debug, error, info};
@@ -500,7 +499,7 @@ async fn get_batch(
     let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
     for block in batch {
         let vm_db = StoreVmDatabase::new(state.store.clone(), block.header.parent_hash);
-        let mut vm = Evm::new(EvmEngine::default(), vm_db);
+        let mut vm = state.blockchain.new_evm(vm_db)?;
         vm.execute_block(block)
             .map_err(BlockFetcherError::EvmError)?;
         let account_updates = vm
