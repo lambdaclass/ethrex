@@ -79,7 +79,7 @@ pub enum TxValidationError {
     NonceIsMax,
     #[error("Nonce mismatch: expected {expected}, got {actual}")]
     NonceMismatch { expected: u64, actual: u64 },
-    #[error("Initcode size exceeded, max size: {max_size}, got: {actual_size}")]
+    #[error("Initcode size exceeded, max size: {max_size}, actual size: {actual_size}")]
     InitcodeSizeExceeded { max_size: usize, actual_size: usize },
     #[error("Priority fee {priority_fee} is greater than max fee per gas {max_fee_per_gas}")]
     PriorityGreaterThanMaxFeePerGas {
