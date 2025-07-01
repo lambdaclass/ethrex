@@ -205,12 +205,6 @@ pub enum Fork {
     Osaka = 19,
 }
 
-impl Fork {
-    pub const fn as_u8(self) -> u8 {
-        self as u8
-    }
-}
-
 impl From<Fork> for &str {
     fn from(fork: Fork) -> Self {
         match fork {
