@@ -36,10 +36,8 @@ use crate::{
     types::Node,
 };
 #[cfg(feature = "l2")]
-use ethrex_blockchain::sequencer_state::SequencerState;
-use ethrex_blockchain::{
-    Blockchain, error::ChainError, fork_choice::apply_fork_choice, sequencer_state::SequencerStatus,
-};
+use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
+use ethrex_blockchain::{Blockchain, error::ChainError, fork_choice::apply_fork_choice};
 use ethrex_common::{
     Address, H256, H512,
     types::{Block, MempoolTransaction, Transaction},
@@ -164,6 +162,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     ) -> Self {
         #[cfg(feature = "l2")]
         let latest_batch_on_store = store_rollup.get_latest_batch_number().await.unwrap_or(0);
+        #[cfg(feature = "l2")]
         let latest_block_on_store = storage.get_latest_block_number().await.unwrap_or(0);
         Self {
             signer,
@@ -1239,14 +1238,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 Ok(())
             }
             Message::NewBlock(new_block_msg) => {
+                #[cfg(feature = "l2")]
                 if self.last_block_broadcasted >= new_block_msg.block.header.number {
                     debug!(
                         "Block {} already broadcasted, ignoring it",
                         new_block_msg.block.header.number
                     );
                     return Ok(());
+                } else {
+                    self.last_block_broadcasted = new_block_msg.block.header.number;
                 }
-                self.last_block_broadcasted = new_block_msg.block.header.number;
                 let block = Arc::new(Message::NewBlock(new_block_msg));
                 let task_id = tokio::task::id();
                 let Ok(_) = self
