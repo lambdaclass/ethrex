@@ -130,7 +130,7 @@ fn exception_is_expected(
         {
             return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
                 || (expected_error_msg.to_lowercase() == error_msg.to_lowercase())
-                || match_expected_regex(&expected_error_msg, &error_msg);
+                || match_expected_regex(expected_error_msg, error_msg);
         }
         matches!(
             (exception, &returned_error),
@@ -212,10 +212,10 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
 }
 
 fn match_expected_regex(expected_error_msg: &String, error_msg: &String) -> bool {
-    let Ok(regex) = Regex::new(&expected_error_msg) else {
+    let Ok(regex) = Regex::new(expected_error_msg) else {
         return false;
     };
-    regex.is_match(&error_msg)
+    regex.is_match(error_msg)
 }
 
 /// Tests the rlp decoding of a block
