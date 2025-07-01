@@ -8,8 +8,6 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 /// @author LambdaClass
 /// @dev Uses the interface described in the ERC-7802 draft
 contract UpgradeableSystemContract is ERC1967Proxy {
-    address constant ADMIN =  0x000000000000000000000000000000000000f000;
-
     constructor() ERC1967Proxy(address(0), "") {
         // This contract is compiled into runtime code when assembling the genesis
         // The setup is done by directly setting the ERC-1967 storage slots
