@@ -415,8 +415,6 @@ contract OnChainProposer is
                 "OnChainProposer: Aligned proof verification failed"
             );
 
-            lastVerifiedBatch = batchNumber;
-
             // The first 2 bytes are the number of privileged transactions.
             uint16 transaction_count = uint16(
                 bytes2(
