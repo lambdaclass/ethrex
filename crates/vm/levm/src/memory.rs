@@ -110,19 +110,15 @@ fn try_store(
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-    for (byte_to_store, memory_slot) in data.iter().zip(
-        memory
-            .get_mut(
-                at_offset
-                    ..at_offset
-                        .checked_add(data_size)
-                        .ok_or(InternalError::Overflow)?,
-            )
-            .ok_or(OutOfBounds)?
-            .iter_mut(),
-    ) {
-        *memory_slot = *byte_to_store;
-    }
+    let dst = memory
+        .get_mut(
+            at_offset
+                ..at_offset
+                    .checked_add(data_size)
+                    .ok_or(InternalError::Overflow)?,
+        )
+        .ok_or(OutOfBounds)?;
+    dst.copy_from_slice(data.get(0..data_size).ok_or(InternalError::Slicing)?);
     Ok(())
 }
 
