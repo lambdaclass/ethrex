@@ -9,8 +9,9 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info};
 
@@ -140,7 +141,7 @@ impl L1ProofSender {
 }
 
 impl GenServer for L1ProofSender {
-    type CallMsg = ();
+    type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = L1ProofSenderState;
@@ -149,15 +150,6 @@ impl GenServer for L1ProofSender {
 
     fn new() -> Self {
         Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, OutMessage::Done)
     }
 
     async fn handle_cast(

@@ -13,9 +13,8 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
-};
+use spawned_concurrency::messages::Unused;
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -93,8 +92,8 @@ impl L1Watcher {
 }
 
 impl GenServer for L1Watcher {
+    type CallMsg = Unused;
     type CastMsg = InMessage;
-    type CallMsg = ();
     type OutMsg = OutMessage;
     type State = L1WatcherState;
     type Error = L1WatcherError;
@@ -115,15 +114,6 @@ impl GenServer for L1Watcher {
             .await
             .map_err(Self::Error::GenServerError)?;
         Ok(state)
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, Self::OutMsg::Done)
     }
 
     async fn handle_cast(

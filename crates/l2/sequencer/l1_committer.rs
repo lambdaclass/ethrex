@@ -35,8 +35,9 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
@@ -130,7 +131,7 @@ impl L1Committer {
 }
 
 impl GenServer for L1Committer {
-    type CallMsg = ();
+    type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = CommitterState;
@@ -139,15 +140,6 @@ impl GenServer for L1Committer {
 
     fn new() -> Self {
         Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, Self::OutMsg::Done)
     }
 
     async fn handle_cast(

@@ -14,7 +14,7 @@ use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
 use ethrex_vm::{EvmError, ProverDBError};
-use spawned_concurrency::tasks::GenServerError;
+use spawned_concurrency::error::GenServerError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]

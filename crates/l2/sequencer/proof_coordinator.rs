@@ -19,7 +19,8 @@ use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle};
+use spawned_concurrency::messages::Unused;
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::{
@@ -238,7 +239,7 @@ impl ProofCoordinator {
 }
 
 impl GenServer for ProofCoordinator {
-    type CallMsg = ();
+    type CallMsg = Unused;
     type CastMsg = ProofCordInMessage;
     type OutMsg = ProofCordOutMessage;
     type State = ProofCoordinatorState;
@@ -246,15 +247,6 @@ impl GenServer for ProofCoordinator {
 
     fn new() -> Self {
         Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, ProofCordOutMessage::Done)
     }
 
     async fn handle_cast(
@@ -332,7 +324,7 @@ pub enum ConnOutMessage {
 }
 
 impl GenServer for ConnectionHandler {
-    type CallMsg = ConnInMessage;
+    type CallMsg = Unused;
     type CastMsg = ConnInMessage;
     type OutMsg = ConnOutMessage;
     type State = ProofCoordinatorState;
@@ -340,15 +332,6 @@ impl GenServer for ConnectionHandler {
 
     fn new() -> Self {
         Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, ConnOutMessage::Done)
     }
 
     async fn handle_cast(

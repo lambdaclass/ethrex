@@ -14,8 +14,9 @@ use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use k256::{PublicKey, ecdsa::SigningKey};
 use rand::random;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_interval,
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
 };
 use tokio::{
     net::TcpStream,
@@ -182,7 +183,7 @@ impl RLPxConnection {
 }
 
 impl GenServer for RLPxConnection {
-    type CallMsg = CallMessage;
+    type CallMsg = Unused;
     type CastMsg = CastMessage;
     type OutMsg = MsgResult;
     type State = RLPxConnectionState;
@@ -213,15 +214,6 @@ impl GenServer for RLPxConnection {
             state.0 = InnerState::Established(established_state);
             Ok(state)
         }
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &RLPxConnectionHandle,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, Ok(OutMessage::Done))
     }
 
     async fn handle_cast(

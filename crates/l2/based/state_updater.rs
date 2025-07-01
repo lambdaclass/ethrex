@@ -6,8 +6,10 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerError, GenServerHandle, send_after,
+use spawned_concurrency::{
+    error::GenServerError,
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info, warn};
 
@@ -103,7 +105,7 @@ impl StateUpdater {
 }
 
 impl GenServer for StateUpdater {
-    type CallMsg = ();
+    type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = StateUpdaterState;
@@ -111,15 +113,6 @@ impl GenServer for StateUpdater {
 
     fn new() -> Self {
         Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, Self::OutMsg::Done)
     }
 
     async fn handle_cast(

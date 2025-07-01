@@ -16,8 +16,9 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info};
 
@@ -105,7 +106,7 @@ impl BlockProducer {
 }
 
 impl GenServer for BlockProducer {
-    type CallMsg = ();
+    type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = BlockProducerState;
@@ -114,15 +115,6 @@ impl GenServer for BlockProducer {
 
     fn new() -> Self {
         Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, Self::OutMsg::Done)
     }
 
     async fn handle_cast(

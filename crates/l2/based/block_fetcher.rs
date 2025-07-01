@@ -18,8 +18,10 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerError, GenServerHandle, send_after,
+use spawned_concurrency::{
+    error::GenServerError,
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info};
 
@@ -134,7 +136,7 @@ impl BlockFetcher {
 }
 
 impl GenServer for BlockFetcher {
-    type CallMsg = ();
+    type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = BlockFetcherState;
@@ -142,15 +144,6 @@ impl GenServer for BlockFetcher {
 
     fn new() -> Self {
         Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        CallResponse::Reply(state, Self::OutMsg::Done)
     }
 
     async fn handle_cast(
