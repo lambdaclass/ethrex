@@ -30,6 +30,7 @@ pub async fn validate_status(
 
     //Check networkID
     if msg_data.get_network_id() != chain_config.chain_id {
+        dbg!(msg_data.get_network_id(), chain_config.chain_id);
         return Err(RLPxError::HandshakeError(
             "Network Id does not match".to_string(),
         ));
