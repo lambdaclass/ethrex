@@ -49,9 +49,6 @@ impl Default for ProgramInput {
     }
 }
 
-// This is necessary because SP1 uses bincode for serialization into zkVM, which does not play well with
-// serde attributes like #[serde(skip)], failing to deserialize with an unrelated error message (this is an old bug).
-// As a patch we force serialization into JSON first (which is a format that works well with these attributes).
 impl Serialize for JSONProgramInput {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
