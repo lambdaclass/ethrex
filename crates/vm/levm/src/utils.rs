@@ -103,15 +103,27 @@ pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMErr
     let mut address_blacklist = Vec::new();
 
     let mut iter = code.iter().enumerate();
+
+    // Using constants as much as possible, since this code is in a hot path.
+
+    #[expect(clippy::as_conversions)]
+    const JUMP_DEST_CODE: u8 = Opcode::JUMPDEST as u8;
+    #[expect(clippy::as_conversions)]
+    const PUSH0_CODE: u8 = Opcode::PUSH0 as u8;
+    #[expect(clippy::as_conversions)]
+    const PUSH1_CODE: u8 = Opcode::PUSH1 as u8;
+    #[expect(clippy::as_conversions)]
+    const PUSH32_CODE: u8 = Opcode::PUSH32 as u8;
+
     while let Some((_, &value)) = iter.next() {
-        let op_code = Opcode::from(value);
-        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
+        #[expect(clippy::manual_range_contains)] // we want to avoid calling a function here.
+        if value >= PUSH1_CODE && value < (PUSH32_CODE + 1) {
             #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
-            let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
+            let num_bytes = (value - PUSH0_CODE) as usize;
             address_blacklist.extend(
                 (&mut iter)
                     .take(num_bytes)
-                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
+                    .filter_map(|(pc, &value)| (value == JUMP_DEST_CODE).then_some(pc)),
             );
         }
     }
