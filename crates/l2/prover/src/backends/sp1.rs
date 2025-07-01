@@ -4,7 +4,7 @@ use sp1_sdk::{
 };
 use std::{fmt::Debug, sync::LazyLock};
 use tracing::info;
-use zkvm_interface::io::{ProgramInput, JSONProgramInput};
+use zkvm_interface::io::{JSONProgramInput, ProgramInput};
 
 use ethrex_l2_common::{
     calldata::Value,
