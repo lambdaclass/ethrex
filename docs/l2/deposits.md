@@ -148,7 +148,8 @@ sequenceDiagram
     CommonBridge->>CommonBridge: emit PrivilegedTxSent
 
     CommonBridge-->>Sequencer: receives event
-    Sequencer-->>CommonBridgeL2: executes call <br>to mintERC20
+    Sequencer-->>CommonBridgeL2: starts processing tx
+    CommonBridgeL2->>CommonBridgeL2: calls mintERC20
 
     CommonBridgeL2->>L2Token: calls l1Address
     L2Token->>CommonBridgeL2: returns address of L1Token
