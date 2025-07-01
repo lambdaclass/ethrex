@@ -7,7 +7,7 @@ use error::SystemContractsUpdaterError;
 use ethrex_common::U256;
 use ethrex_common::types::GenesisAccount;
 use ethrex_l2::utils::test_data_io::read_genesis_file;
-use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, L1_MESSENGER_ADDRESS, compile_contract};
+use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, compile_contract};
 use genesis_tool::genesis::write_genesis_as_json;
 mod cli;
 mod error;
@@ -15,7 +15,7 @@ mod error;
 fn main() -> Result<(), SystemContractsUpdaterError> {
     let opts = SystemContractsUpdaterOptions::parse();
     compile_contract(&opts.contracts_path, "src/l2/CommonBridgeL2.sol", true)?;
-    compile_contract(&opts.contracts_path, "src/l2/L1Messenger.sol", true)?;
+    compile_contract(&opts.contracts_path, "src/l2/L2ToL1Messenger.sol", true)?;
     update_genesis_file(&opts.l2_genesis_path)?;
     Ok(())
 }
@@ -39,10 +39,10 @@ fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsU
         },
     );
 
-    let l1_messenger_runtime = std::fs::read("contracts/solc_out/L1Messenger.bin-runtime")?;
+    let l1_messenger_runtime = std::fs::read("contracts/solc_out/L2ToL1Messenger.bin-runtime")?;
 
     genesis.alloc.insert(
-        L1_MESSENGER_ADDRESS,
+        L2_TO_L1_MESSENGER_ADDRESS,
         GenesisAccount {
             code: Bytes::from(hex::decode(l1_messenger_runtime)?),
             storage: HashMap::new(),

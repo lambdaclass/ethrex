@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import "./interfaces/IL1Messenger.sol";
+import "./interfaces/IL2ToL1Messenger.sol";
 
-/// @title L1Messenger contract.
+/// @title L2ToL1Messenger contract.
 /// @author LambdaClass
-contract L1Messenger is IL1Messenger {
+contract L2ToL1Messenger is IL2ToL1Messenger {
     /// @notice Id of the last emitted message.
     /// @dev Message Id that should be incremented before a message is sent
     uint256 public lastMessageId;
