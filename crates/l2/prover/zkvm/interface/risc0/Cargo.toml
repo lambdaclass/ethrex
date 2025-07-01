@@ -27,4 +27,4 @@ c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v1.0.3-riscz
 # for production environments.
 
 [features]
-l2 = ["ethrex-vm/l2", "zkvm_interface/l2", "ethrex-blockchain/l2"]
+l2 = ["zkvm_interface/l2", "ethrex-blockchain/l2"]

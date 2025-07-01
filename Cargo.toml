@@ -95,6 +95,7 @@ eyre = "0.6.12"
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
+lambdaworks-crypto = "0.11.0"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
