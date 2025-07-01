@@ -1,3 +1,4 @@
+pub mod codec;
 pub mod db;
 pub mod error;
 pub mod logger;
