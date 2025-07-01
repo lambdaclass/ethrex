@@ -338,7 +338,7 @@ impl StoreEngineRollup for SQLStore {
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.execute(
-            "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, messages = withdrawals + ?3",
+            "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, messages = messages + ?3", 
             (transaction_inc, deposits_inc, messages_inc)).await?;
         Ok(())
     }

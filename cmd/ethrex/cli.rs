@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{BlockchainType, error::ChainError};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
@@ -40,7 +40,7 @@ pub struct Options {
         long = "network",
         default_value_t = Network::default(),
         value_name = "GENESIS_FILE_PATH",
-        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis/*`.",
         long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
@@ -241,6 +241,8 @@ pub enum Subcommand {
         path: String,
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        l2: bool,
     },
     #[command(
         name = "export",
@@ -290,7 +292,7 @@ impl Subcommand {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
-            Subcommand::Import { path, removedb } => {
+            Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
@@ -305,7 +307,12 @@ impl Subcommand {
 
                 let network = &opts.network;
                 let genesis = network.get_genesis()?;
-                import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
+                let blockchain_type = if l2 {
+                    BlockchainType::L2
+                } else {
+                    BlockchainType::L1
+                };
+                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -313,7 +320,7 @@ impl Subcommand {
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
-                println!("{:#x}", state_root);
+                println!("{state_root:#x}");
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -354,10 +361,11 @@ pub async fn import_blocks(
     data_dir: &str,
     genesis: Genesis,
     evm: EvmEngine,
+    blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(evm, store.clone());
+    let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
         let mut blocks = vec![];

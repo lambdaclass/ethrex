@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import "./interfaces/IL1Messenger.sol";
+import "./interfaces/IL2ToL1Messenger.sol";
 
-/// @title L1Messenger contract.
+/// @title L2ToL1Messenger contract.
 /// @author LambdaClass
-contract L1Messenger is IL1Messenger {
+contract L2ToL1Messenger is IL2ToL1Messenger {
     function sendMessageToL1(bytes32 data) external {
         // This event gets pushed to L1, the sequencer monitors
         // them on every block.

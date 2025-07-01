@@ -20,7 +20,6 @@ This will generate the SP1 ELF program and verification key under:
 - `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf`
 - `crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk`
 
-
 ### 2. Deploying L1 Contracts
 
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
@@ -181,9 +180,9 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	--genesis-l2-path ../../fixtures/genesis/l2.json
 ```
 
 You will see that some deposits fail with the following error:
@@ -206,16 +205,16 @@ cargo run deposit-to-batcher \
 
 ```
 cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../test_data/genesis-l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 ```
 
 > [!IMPORTANT]  
 > Set `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1.
 
 Suggestion:
-When running the integration test, consider increasing the `commit-time-ms` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
+When running the integration test, consider increasing the `--committer.commit-time` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
 ```
---commit-time-ms 120000
+--committer.commit-time 120000
 ```
 
 4. Start prover:
@@ -241,7 +240,7 @@ If successful, the `l1_proof_verifier` will print the following logs:
 
 ```
 INFO ethrex_l2::sequencer::l1_proof_verifier: Proof for batch 1 aggregated by Aligned with commitment 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7 and Merkle root 0xa9a0da5a70098b00f97d96cee43867c7aa8f5812ca5388da7378454580af2fb7
-INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 verified in AlignedProofAggregatorService, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
+INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x731d27d81b2e0f1bfc0f124fb2dd3f1a67110b7b69473cacb6a61dea95e63321
 ```
 
 ## Behavioral Differences in Aligned Mode
@@ -260,15 +259,14 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batch 1 verified in AlignedProofAg
 
 ### Proof Verifier
 
-- Only spawned in Aligned mode.
+- Spawned only in Aligned mode.
 - Monitors whether the next proof has been aggregated by Aligned.
-- Once verified, it triggers the advancement of the `OnChainProposer` contract.
+- Once verified, collects all already aggregated proofs and triggers the advancement of the `OnChainProposer` contract by sending a single transaction.
 
 ![Aligned Mode Proof Verifier](img/aligned_mode_proof_verifier.png)
 
 ### OnChainProposer
 
-- Uses `verifyBatchAligned()` instead of `verifyBatch()`.
+- Uses `verifyBatchesAligned()` instead of `verifyBatch()`.
+- Receives an array of proofs to verify.
 - Delegates proof verification to the `AlignedProofAggregatorService` contract.
-- Currently supports one proof per transaction.
-- Future updates aim to support verifying an array of proofs in a single call.

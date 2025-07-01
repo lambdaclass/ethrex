@@ -17,11 +17,11 @@ use ethrex_common::{
     },
 };
 use ethrex_levm::EVMConfig;
-use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
+use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
@@ -44,8 +44,9 @@ impl LEVM {
     pub fn execute_block(
         block: &Block,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<BlockExecutionResult, EvmError> {
-        Self::prepare_block(block, db)?;
+        Self::prepare_block(block, db, vm_type.clone())?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -53,7 +54,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -70,13 +71,13 @@ impl LEVM {
             Self::process_withdrawals(db, withdrawals)?;
         }
 
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                let requests = extract_all_requests_levm(&receipts, db, &block.header)?;
-            } else {
-                let requests = Default::default();
-            }
-        }
+        // TODO: I don't like deciding the behavior based on the VMType here.
+        // TODO2: Revise this, apparently extract_all_requests_levm is not called
+        // in L2 execution, but its implementation behaves differently based on this.
+        let requests = match vm_type {
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L2 => Default::default(),
+        };
 
         Ok(BlockExecutionResult { receipts, requests })
     }
@@ -130,37 +131,12 @@ impl LEVM {
         // The block header for the current block.
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
 
         vm.execute().map_err(VMError::into)
-    }
-
-    pub fn execute_tx_l2(
-        // The transaction to execute.
-        tx: &Transaction,
-        // The transactions recovered address
-        tx_sender: Address,
-        // The block header for the current block.
-        block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
-    ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
-
-        let report_result = vm.execute().map_err(EvmError::from)?;
-
-        // Here we differ from the execute_tx function from the L1.
-        // We need to check if the transaction exceeded the blob size limit.
-        // If it did, we need to revert the state changes made by the transaction and return the error.
-        let call_frame_backup = vm
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CallFrame))?
-            .call_frame_backup;
-
-        Ok((report_result, call_frame_backup))
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
@@ -174,6 +150,7 @@ impl LEVM {
         // The block header for the current block.
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
@@ -181,7 +158,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -304,7 +281,14 @@ impl LEVM {
     pub fn beacon_root_contract_call(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<(), EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "beacon_root_contract_call should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let beacon_root = match block_header.parent_beacon_block_root {
             None => {
                 return Err(EvmError::Header(
@@ -320,6 +304,7 @@ impl LEVM {
             db,
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
+            vm_type,
         )?;
         Ok(())
     }
@@ -327,26 +312,42 @@ impl LEVM {
     pub fn process_block_hash_history(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<(), EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "process_block_hash_history should not be called for L2 VM".to_string(),
+            ));
+        }
+
         generic_system_contract_levm(
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             db,
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
+            vm_type,
         )?;
         Ok(())
     }
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "read_withdrawal_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
             db,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
+            vm_type,
         )?;
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
@@ -363,21 +364,29 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
-                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.",
-                vm_error
+                "REVERT when reading withdrawal requests with error: {vm_error:?}. According to EIP-7002, the revert of this system call invalidates the block.",
             ))),
         }
     }
+
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2 = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "dequeue_consolidation_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
             db,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
+            vm_type,
         )?;
 
         // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
@@ -394,8 +403,7 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
-                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.",
-                vm_error
+                "REVERT when dequeuing consolidation requests with error: {vm_error:?}. According to EIP-7251, the revert of this system call invalidates the block.",
             ))),
         }
     }
@@ -404,39 +412,47 @@ impl LEVM {
         mut tx: GenericTransaction,
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
+        vm_type: VMType,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, db)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type.clone())?;
 
         vm.stateless_execute()?;
         let access_list = build_access_list(&vm.substate);
 
         // Execute the tx again, now with the created access list.
         tx.access_list = access_list.iter().map(|item| item.into()).collect();
-        let mut vm = vm_from_generic(&tx, env.clone(), db)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
 
         let report = vm.stateless_execute()?;
 
         Ok((report.into(), access_list))
     }
 
-    pub fn prepare_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+    pub fn prepare_block(
+        block: &Block,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+    ) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
 
+        // TODO: I don't like deciding the behavior based on the VMType here.
+        if let VMType::L2 = vm_type {
+            return Ok(());
+        }
+
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            #[cfg(not(feature = "l2"))]
-            Self::beacon_root_contract_call(block_header, db)?;
+            Self::beacon_root_contract_call(block_header, db, vm_type.clone())?;
         }
 
         if fork >= Fork::Prague {
             //eip 2935: stores parent block hash in system contract
-            #[cfg(not(feature = "l2"))]
-            Self::process_block_hash_history(block_header, db)?;
+            Self::process_block_hash_history(block_header, db, vm_type)?;
         }
         Ok(())
     }
@@ -448,6 +464,7 @@ pub fn generic_system_contract_levm(
     db: &mut GeneralizedDatabase,
     contract_address: Address,
     system_address: Address,
+    vm_type: VMType,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -480,7 +497,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
+    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -509,7 +526,14 @@ pub fn extract_all_requests_levm(
     receipts: &[Receipt],
     db: &mut GeneralizedDatabase,
     header: &BlockHeader,
+    vm_type: VMType,
 ) -> Result<Vec<Requests>, EvmError> {
+    if let VMType::L2 = vm_type {
+        return Err(EvmError::InvalidEVM(
+            "extract_all_requests_levm should not be called for L2 VM".to_string(),
+        ));
+    }
+
     let chain_config = db.store.get_chain_config()?;
     let fork = chain_config.fork(header.timestamp);
 
@@ -517,16 +541,13 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "l2")] {
-            return Ok(Default::default());
-        }
-    }
-
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db)?.output.into();
-    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db)?
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type.clone())?
         .output
         .into();
+    let consolidation_data: Vec<u8> =
+        LEVM::dequeue_consolidation_requests(header, db, vm_type.clone())?
+            .output
+            .into();
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;
@@ -613,6 +634,7 @@ fn vm_from_generic<'a>(
     tx: &GenericTransaction,
     env: Environment,
     db: &'a mut GeneralizedDatabase,
+    vm_type: VMType,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -647,5 +669,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled()))
+    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type))
 }

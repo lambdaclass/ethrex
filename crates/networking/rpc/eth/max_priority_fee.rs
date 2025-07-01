@@ -23,7 +23,7 @@ impl RpcHandler for MaxPriorityFee {
             .estimate_gas_tip(&context.storage)
             .await?;
 
-        let gas_as_hex = format!("0x{:x}", gas_tip);
+        let gas_as_hex = format!("0x{gas_tip:x}");
         Ok(serde_json::Value::String(gas_as_hex))
     }
 }

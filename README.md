@@ -74,6 +74,7 @@ Full documentation is available in the [`docs/`](./docs/) directory. Please refe
 For better viewing, we have it hosted in [docs.ethrex.xyz](https://docs.ethrex.xyz/).
 This includes both [L1](https://docs.ethrex.xyz/l1/index.html) and [L2](https://docs.ethrex.xyz/l2/index.html) documentation.
 
+
 ## 📚 References and acknowledgements
 
 The following links, repos, companies and projects have been important in the development of this repo, we have learned a lot from them and want to thank and acknowledge them.

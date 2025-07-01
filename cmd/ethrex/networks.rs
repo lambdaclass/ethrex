@@ -85,7 +85,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
             Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
-            Network::GenesisPath(path_buf) => write!(f, "{:?}", path_buf),
+            Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
         }
     }
 }

@@ -20,7 +20,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{Evm, ExecutionResult};
+use ethrex_vm::ExecutionResult;
 use serde::Serialize;
 
 use serde_json::Value;
@@ -348,7 +348,7 @@ impl RpcHandler for CreateAccessListRequest {
         };
 
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
-        let mut vm = Evm::new(context.blockchain.evm_engine, vm_db);
+        let mut vm = context.blockchain.new_evm(vm_db)?;
         let chain_config = context.storage.get_chain_config()?;
         let fork = chain_config.get_fork(header.timestamp);
 
@@ -477,7 +477,7 @@ impl RpcHandler for EstimateGasRequest {
                     fork,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
-                    return serde_json::to_value(format!("{:#x}", TRANSACTION_GAS))
+                    return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 }
             }
@@ -546,7 +546,7 @@ impl RpcHandler for EstimateGasRequest {
             middle_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        serde_json::to_value(format!("{:#x}", highest_gas_limit))
+        serde_json::to_value(format!("{highest_gas_limit:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -574,15 +574,15 @@ fn simulate_tx(
     blockchain: Arc<Blockchain>,
     fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
-    let db = StoreVmDatabase::new(storage.clone(), block_header.hash());
-    let mut vm = Evm::new(blockchain.evm_engine, db);
+    let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash());
+    let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header, fork)? {
         ExecutionResult::Revert {
             gas_used: _,
             output,
         } => Err(RpcErr::Revert {
-            data: format!("0x{:#x}", output),
+            data: format!("0x{output:#x}"),
         }),
         ExecutionResult::Halt { reason, gas_used } => Err(RpcErr::Halt { reason, gas_used }),
         success => Ok(success),
@@ -618,7 +618,7 @@ impl RpcHandler for SendRawTransactionRequest {
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;
-        serde_json::to_value(format!("{:#x}", hash))
+        serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

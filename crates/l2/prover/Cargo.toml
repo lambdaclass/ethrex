@@ -2,6 +2,7 @@
 name = "ethrex-prover"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [dependencies]
 serde_json.workspace = true
@@ -42,6 +43,9 @@ sp1-recursion-gnark-ffi = { version = "5.0.0", optional = true }
 [dev-dependencies]
 ethrex-storage.workspace = true
 
+[build-dependencies]
+vergen-git2 = { version = "1.0.7"}
+
 [lib]
 name = "ethrex_prover_lib"
 path = "src/lib.rs"
@@ -63,7 +67,6 @@ sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [
-  "ethrex-vm/l2",
   "zkvm_interface/l2",
   "ethrex-blockchain/l2",
   "ethrex-l2/l2",

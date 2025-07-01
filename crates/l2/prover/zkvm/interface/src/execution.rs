@@ -43,7 +43,7 @@ pub enum StatelessExecutionError {
     #[error("Receipts validation error: {0}")]
     ReceiptsRootValidationError(ChainError),
     #[error("EVM error: {0}")]
-    EvmError(EvmError),
+    EvmError(#[from] EvmError),
     #[cfg(feature = "l2")]
     #[error("L1Message calculation error: {0}")]
     L1MessageError(#[from] L1MessagingError),
@@ -265,7 +265,10 @@ fn execute_stateless(
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
         // Execute block
-        let mut vm = Evm::new(EvmEngine::LEVM, db.clone());
+        #[cfg(feature = "l2")]
+        let mut vm = Evm::new_for_l2(EvmEngine::LEVM, db.clone())?;
+        #[cfg(not(feature = "l2"))]
+        let mut vm = Evm::new_for_l1(EvmEngine::LEVM, db.clone());
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;

@@ -81,7 +81,7 @@ impl From<RollupStoreError> for RpcErr {
 
 pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     let Value::String(maybe_hex) = hex else {
-        return Err(format!("Could not parse given hex {}", hex));
+        return Err(format!("Could not parse given hex {hex}"));
     };
     let trimmed = maybe_hex.trim_start_matches("0x");
     let maybe_parsed = u64::from_str_radix(trimmed, 16);
