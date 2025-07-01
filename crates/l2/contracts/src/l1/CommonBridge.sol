@@ -94,11 +94,6 @@ contract CommonBridge is
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
 
-    /// @inheritdoc ICommonBridge
-    function getPendingDepositLogs() public view returns (bytes32[] memory) {
-        return pendingDepositLogs;
-    }
-
     function _sendToL2(address from, SendValues memory sendValues) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(

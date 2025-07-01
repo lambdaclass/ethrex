@@ -51,11 +51,6 @@ interface ICommonBridge {
         bytes data;
     }
 
-    /// @notice Method to retrieve all the pending deposit logs hashes.
-    /// @dev This method is used by the L2 L1_Watcher to get the pending deposit
-    /// logs to be processed.
-    function getPendingDepositLogs() external view returns (bytes32[] memory);
-
     /// @notice Method that sends a transaction to L2.
     /// @dev The deposit process starts here by emitting a L1ToL2Message
     /// event. This event will later be intercepted by the L2 operator to

@@ -1076,7 +1076,7 @@ impl EthClient {
         common_bridge_address: Address,
     ) -> Result<Vec<H256>, EthClientError> {
         let response = self
-            ._generic_call(b"getPendingDepositLogs()", common_bridge_address)
+            ._generic_call(b"pendingDepositLogs()", common_bridge_address)
             .await?;
         Self::from_hex_string_to_h256_array(&response)
     }
