@@ -3,7 +3,7 @@ use std::{fmt::Display, str::FromStr};
 use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber};
 use ethrex_storage::{Store, error::StoreError};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::utils::RpcErr;
 
@@ -124,6 +124,21 @@ impl BlockIdentifierOrHash {
         let latest = storage.get_latest_block_number().await?;
 
         Ok(result.is_some_and(|res| res == latest))
+    }
+}
+
+impl From<BlockIdentifier> for Value {
+    fn from(value: BlockIdentifier) -> Self {
+        match value {
+            BlockIdentifier::Number(n) => json!(format!("{n:#x}")),
+            BlockIdentifier::Tag(tag) => match tag {
+                BlockTag::Earliest => json!("earliest"),
+                BlockTag::Finalized => json!("finalized"),
+                BlockTag::Safe => json!("safe"),
+                BlockTag::Latest => json!("latest"),
+                BlockTag::Pending => json!("pending"),
+            },
+        }
     }
 }
 

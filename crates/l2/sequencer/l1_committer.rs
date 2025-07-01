@@ -25,8 +25,9 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::eth::{
-    BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides,
+use ethrex_rpc::{
+    clients::eth::{EthClient, WrappedTransaction, eth_sender::Overrides},
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -625,7 +626,7 @@ async fn estimate_blob_gas(
     headroom: u64,
 ) -> Result<u64, CommitterError> {
     let latest_block = eth_client
-        .get_block_by_number(BlockByNumber::Latest)
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let blob_gas_used = latest_block.header.blob_gas_used.unwrap_or(0);
