@@ -2475,7 +2475,7 @@ mod tests {
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
             s: U256::from_big_endian(&hex!(
-                "5f6e3f188e3e6eab7d7d3b6568f5eacf7d687b08d307d3154ccd8c87b4630509b"
+                "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
         };
         body.transactions.push(Transaction::LegacyTransaction(tx));
