@@ -3,7 +3,7 @@ use ethrex_common::types::AccountInfo;
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
-#[derive(Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AccountInfoLogEntry {
     pub address: H160,
     pub info: AccountInfo,

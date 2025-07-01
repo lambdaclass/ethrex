@@ -463,6 +463,7 @@ impl StoreEngine for Store {
 
             while let Some((read_key_num_hash, log_entry)) = found_storage_log {
                 tracing::warn!("UNDO: found storage log for {key:?}: {read_key_num_hash:?}");
+                // TODO: Check if this should be 0
                 if read_key_num_hash.1 != key {
                     break;
                 }
