@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751334342174,
+  "lastUpdate": 1751335014276,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3854,6 +3854,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0067071959798994975,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8940f50dcac4ff9ca7b22a86ff2534450c50097e",
+          "message": "refactor(l1, l2, levm): remove `l2` feature flag from crates `ethrex-vm` and `ethrex-levm` (#3367)\n\n**Motivation**\n\nMy primary goal was to remove the `l2` feature flag from `cmd/ethrex`\nbut to do this, we first need to remove it from:\n- `ethrex-vm`.\n- `ethrex-levm`.\n- `ethrex-blockchain`.\n\n**Description**\n\nThis PR removes the feature flag `l2` from crates `ethrex-vm` and\n`ethrex-levm`.\n\n> *TL;DR:*\n> - In `ethrex-vm` the l2 precompiles logic was moved to a separate\nmodule, `l2_precompiles`.\n> - A new `VMType` enum was introduced in `ethrex-levm` as a field of\n`VM` (main LEVM's struct). It is used by LEVM to behave differently\nwhere needed (this is specifically, when executing precompiles, and when\nexecuting hooks).\n> - A new `BlockchainType` enum was introduced in `ethrex-blockchain` as\na field of the struct `Blockchain` to differentiate when nodes are\nstarted as L1 or L2 nodes (this is later used in the code to instantiate\nthe VM properly, matching the `BlockchainType` variants with `VMType`\nones).\n\nThe `l2` feature flag exists in `ethrex-vm` only because of\n`ethrex-levm`, so to remove it I needed to remove it from `ethrex-levm`\nfirst. The following commits do that:\n- [Move l2 precompiles logic to new\nmodule](https://github.com/lambdaclass/ethrex/commit/28843a6b7b7bee0cacc95589e66190bdae510f94)\n- [Remove feature flag from hooks public\nAPI](https://github.com/lambdaclass/ethrex/commit/39a509fc7046dd2ffb34c405db89e1f38aead490)\n- [Use the correct\nfunctions](https://github.com/lambdaclass/ethrex/commit/3023b88d96455337f6b1fb6d34ea2c6d087b3518)\n- [Replace\nget_hooks](https://github.com/lambdaclass/ethrex/commit/88bc9a25691b06663600e4afe75f30332517f039)\n- [Remove l2 feature flag from\nlevm](https://github.com/lambdaclass/ethrex/commit/8b098836b23fcdee1c85294d33090cd30f77c689)\n\nAfter that, it was almost safe to remove it from `ethrex-vm`:\n- [Remove l2 feature flag from vm\ncrate](https://github.com/lambdaclass/ethrex/commit/fd971bec15d0934ccde5f6d25b16a4d16d0693df)\n\nThis brought some compilation errors that were solved in:\n- [Implement BlockchainType and fix\ncompilation](https://github.com/lambdaclass/ethrex/commit/32557eb7cabcefc935f2d525354ab981870af45f)\n\n**Next Steps**\n\n- Remove feature flag `l2` from `ethrex-blockchain` crate.\n- Remove feature flag `l2` from `cmd/ethrex`.\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-06-30T21:11:30Z",
+          "tree_id": "ca1641496a92408cdb3c69075de725cb3d1d00f2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8940f50dcac4ff9ca7b22a86ff2534450c50097e"
+        },
+        "date": 1751335013598,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006775289340101523,
             "unit": "Mgas/s"
           }
         ]
