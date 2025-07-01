@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751384444286,
+  "lastUpdate": 1751387486983,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3994,6 +3994,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/cffc84b07c17135c5a87cebbae4c1bbaae61c202"
         },
         "date": 1751384443753,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006844779487179487,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "416581dc8833dccf10121a116b1fd462b2bb1644",
+          "message": "feat(l2): burn gas when sending privileged transactions (#3407)\n\n**Motivation**\n\nTo prevent users from sending L2 transactions for free, we must charge\nthem for the gas sent.\n\n**Description**\n\nOne way to do this is to burn the gas limit specified at L1 prices.\n\nCloses #3402, closes #2156",
+          "timestamp": "2025-07-01T15:24:31Z",
+          "tree_id": "2abf5e9f8515e6822bfdb5d83421a77346f61133",
+          "url": "https://github.com/lambdaclass/ethrex/commit/416581dc8833dccf10121a116b1fd462b2bb1644"
+        },
+        "date": 1751387476733,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
