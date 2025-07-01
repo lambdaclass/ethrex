@@ -190,6 +190,22 @@ pub struct CallFrameBackup {
 }
 
 impl CallFrameBackup {
+    pub fn backup_account_info(
+        &mut self,
+        address: Address,
+        account: &Account,
+    ) -> Result<(), InternalError> {
+        self.original_accounts_info
+            .entry(address)
+            .or_insert_with(|| Account {
+                info: account.info.clone(),
+                code: account.code.clone(),
+                storage: HashMap::new(),
+            });
+
+        Ok(())
+    }
+
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
