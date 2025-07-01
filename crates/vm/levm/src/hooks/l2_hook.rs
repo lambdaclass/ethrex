@@ -111,8 +111,7 @@ impl Hook for L2Hook {
         ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
-            let mut default_hook = DefaultHook;
-            return default_hook.finalize_execution(vm, ctx_result);
+            return DefaultHook.finalize_execution(vm, ctx_result);
         }
 
         if !ctx_result.is_success() {
