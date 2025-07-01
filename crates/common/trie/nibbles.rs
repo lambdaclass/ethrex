@@ -118,8 +118,12 @@ impl Nibbles {
 
     /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
     /// Encodes the nibbles in compact form
-    pub fn encode_compact(&self) -> Vec<u8> {
-        let mut compact = vec![];
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes written to the buffer
+    pub fn encode_compact_to_vec(&self, buffer: &mut Vec<u8>) -> usize {
+        let old_len = buffer.len();
         let is_leaf = self.is_leaf();
         let mut hex = if is_leaf {
             &self.data[0..self.data.len() - 1]
@@ -140,11 +144,16 @@ impl Nibbles {
             0x00
         };
 
-        compact.push(v + if is_leaf { 0x20 } else { 0x00 });
+        buffer.push(v + if is_leaf { 0x20 } else { 0x00 });
         for i in 0..(hex.len() / 2) {
-            compact.push((hex[i * 2] * 16) + (hex[i * 2 + 1]));
+            buffer.push((hex[i * 2] * 16) + (hex[i * 2 + 1]));
         }
+        buffer.len() - old_len
+    }
 
+    pub fn encode_compact(&self) -> Vec<u8> {
+        let mut compact = vec![];
+        let _ = self.encode_compact_to_vec(&mut compact);
         compact
     }
 
