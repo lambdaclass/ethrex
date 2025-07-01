@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751324655578,
+  "lastUpdate": 1751328016308,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3796,6 +3796,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006809857142857143,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0cae5580655068ccad5aa3e5d1fdf357a459c384",
+          "message": "feat(l2): add instance info to Grafana alerts (#3333)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe need to easily differentiate between environments when alerts come up\n(staging-1, staging-2, etc.).\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdd an \"$INSTANCE\" variable in the Slack contact point so it's\nover-ridden with an env var.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-06-30T19:52:03Z",
+          "tree_id": "b2e3209043911fd5929de4a4ebf5af80232542d8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0cae5580655068ccad5aa3e5d1fdf357a459c384"
+        },
+        "date": 1751328015594,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006844779487179487,
             "unit": "Mgas/s"
           }
         ]
