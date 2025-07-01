@@ -1287,7 +1287,6 @@ impl EthClient {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "debug_executionWitness".to_string(),
-            // With false it just returns the hash of the transactions.
             params,
         };
 
