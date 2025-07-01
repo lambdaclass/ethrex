@@ -1375,8 +1375,7 @@ fn decode_hex(hex: String) -> Result<Vec<u8>, EthClientError> {
     if trimmed.len() % 2 != 0 {
         trimmed = "0".to_string() + &trimmed;
     }
-    Ok(hex::decode(trimmed)
-        .map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))?)
+    hex::decode(trimmed).map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
