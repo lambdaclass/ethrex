@@ -162,20 +162,6 @@ impl Blockchain {
         let mut code_map = HashMap::new();
 
         let mut used_trie_nodes = Vec::new();
-        { // This block is to explicitly drop the mutex
-            // Get the witness for the state trie
-            let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
-                ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
-            })?;
-            let state_trie_witness = std::mem::take(&mut *state_trie_witness);
-            used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
-        }
-        // If the witness is empty at least try to store the root
-        if used_trie_nodes.is_empty() {
-            if let Some(root) = root_node {
-                used_trie_nodes.push(root.encode_raw());
-            }
-        }
 
         let mut keys: Vec<Vec<u8>> = Vec::new();
 
@@ -291,6 +277,20 @@ impl Blockchain {
                 used_trie_nodes.extend_from_slice(&witness);
             }
             trie = updated_trie;
+        }
+
+        // Get the witness for the state trie
+        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+        })?;
+        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+        used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
+        
+        // If the witness is empty at least try to store the root
+        if used_trie_nodes.is_empty() {
+            if let Some(root) = root_node {
+                used_trie_nodes.push(root.encode_raw());
+            }
         }
 
         let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
