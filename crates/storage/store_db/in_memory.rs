@@ -3,6 +3,10 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    store_db::codec::{
+        account_address::AccountAddress, account_storage_log_entry::AccountStorageLogEntry,
+        block_num_hash::BlockNumHash,
+    },
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -17,6 +21,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
+use tracing::warn;
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
@@ -48,6 +53,24 @@ struct StoreInner {
     state_snapshot: BTreeMap<H256, AccountState>,
     // Stores Storage trie leafs from the last downloaded tries
     storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    /// Stores current account info
+    account_info: HashMap<Address, AccountInfo>,
+    /// Stores current account storage
+    account_storage: HashMap<(Address, H256), U256>,
+    /// Current snapshot block number and hash
+    current_snapshot_block: Option<(BlockNumber, BlockHash)>,
+    /// Account info write log table.
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
+    account_info_logs: HashMap<BlockNumHash, Vec<(Address, AccountInfo, AccountInfo)>>,
+    /// Storage write log table.
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
+    account_storage_logs: HashMap<BlockNumHash, Vec<AccountStorageLogEntry>>,
 }
 
 #[derive(Default, Debug)]
@@ -148,37 +171,79 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    /// Rewinds (a.k.a undo) writes from the write logs until a canonical block is reached.
+    ///
+    /// This is used to restore the flat tables from the write logs after a reorg.
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
-        todo!()
+        todo!();
     }
+
     async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_current_account_info(&self, _: Address) -> Result<Option<AccountInfo>, StoreError> {
-        todo!()
+    fn get_current_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        let store = self.inner()?;
+        Ok(store.account_info.get(&address).cloned())
     }
+
     async fn setup_genesis_flat_account_info(
         &self,
-        _genesis_block_number: u64,
-        _genesis_block_hash: H256,
-        _: &[(Address, u64, U256, H256, bool)],
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
-        todo!()
+        let mut store = self.inner()?;
+
+        store.current_snapshot_block = Some((genesis_block_number, genesis_block_hash));
+
+        for (address, nonce, balance, code_hash, removed) in genesis_accounts {
+            if *removed {
+                store.account_info.remove(address);
+            } else {
+                let account_info = AccountInfo {
+                    nonce: *nonce,
+                    balance: *balance,
+                    code_hash: *code_hash,
+                };
+                store.account_info.insert(*address, account_info);
+            }
+        }
+
+        Ok(())
     }
+
     fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
-        todo!()
+        let store: MutexGuard<'_, StoreInner> = self.inner()?;
+        Ok(store.current_snapshot_block.map(|(_, hash)| hash))
     }
-    fn get_current_storage(&self, _: Address, _: H256) -> Result<Option<U256>, StoreError> {
-        todo!()
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        let store = self.inner()?;
+        Ok(store.account_storage.get(&(address, key)).cloned())
     }
     async fn setup_genesis_flat_account_storage(
         &self,
-        _genesis_block_number: u64,
-        _genesis_block_hash: H256,
-        _: &[(Address, H256, U256)],
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
-        todo!()
+        let mut store = self.inner()?;
+
+        store.current_snapshot_block = Some((genesis_block_number, genesis_block_hash));
+
+        for (address, slot, value) in genesis_accounts {
+            if !value.is_zero() {
+                store.account_storage.insert((*address, *slot), *value);
+            } else {
+                store.account_storage.remove(&(*address, *slot));
+            }
+        }
+
+        Ok(())
     }
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner()?;

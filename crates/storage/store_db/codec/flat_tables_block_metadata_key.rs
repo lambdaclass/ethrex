@@ -2,6 +2,7 @@
 use libmdbx::orm::{Decodable, Encodable};
 
 #[cfg(feature = "libmdbx")]
+#[derive(Debug)]
 pub struct FlatTablesBlockMetadataKey();
 
 #[cfg(feature = "libmdbx")]
