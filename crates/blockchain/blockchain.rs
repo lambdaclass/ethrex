@@ -169,7 +169,6 @@ impl Blockchain {
             })?;
             let state_trie_witness = std::mem::take(&mut *state_trie_witness);
             used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
-            info!("{:?}", used_trie_nodes);
         }
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty() {
