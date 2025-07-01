@@ -1361,7 +1361,7 @@ mod tests {
             .add_initial_state(genesis_kurtosis)
             .await
             .expect("second genesis with same block");
-        // The task panic will still be shown via stderr, but rest assured that it will also be caught and read by the test assertion
+        // The task panic will still be shown via stderr, but rest assured that it will also be caught and read by the test assertion/Users/lucasrack/Documents/ethrex/crates/l2/sequencer/utils.rs
         let add_initial_state_handle =
             tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
         let panic = add_initial_state_handle.await.unwrap_err().into_panic();
