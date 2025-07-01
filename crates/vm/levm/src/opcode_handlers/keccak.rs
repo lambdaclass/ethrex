@@ -4,7 +4,8 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_common::utils::u256_from_big_endian;
+use ethrex_common::utils::{u256_from_big_endian, u256_from_big_endian_const};
+use sha2::digest::FixedOutput;
 use sha3::{Digest, Keccak256};
 
 // KECCAK256 (1)
@@ -34,7 +35,7 @@ impl<'a> VM<'a> {
         )?);
         current_call_frame
             .stack
-            .push(&[u256_from_big_endian(&hasher.finalize())])?;
+            .push(&[u256_from_big_endian_const(hasher.finalize_fixed().into())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
