@@ -120,6 +120,8 @@ pub(crate) struct RLPxConnection<S> {
     next_batch_broadcast: Instant,
     #[cfg(feature = "l2")]
     latest_block_sent: u64,
+    #[cfg(feature = "l2")]
+    last_block_broadcasted: u64,
     latest_block_added: u64,
     blocks_on_queue: BTreeMap<u64, Block>,
     #[cfg(feature = "l2")]
@@ -181,6 +183,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             broadcasted_txs: HashSet::new(),
             #[cfg(feature = "l2")]
             latest_block_sent: latest_block_on_store,
+            #[cfg(feature = "l2")]
+            last_block_broadcasted: 0,
             latest_block_added: 0,
             blocks_on_queue: BTreeMap::new(),
             #[cfg(feature = "l2")]
@@ -863,7 +867,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         self.blocks_on_queue
                             .entry(req.block.header.number)
                             .or_insert_with(|| req.block.clone());
-                        self.broadcast_message(Message::NewBlock(req.clone()))?;
+                        if req.block.header.number > self.last_block_broadcasted {
+                            self.last_block_broadcasted = req.block.header.number;
+                            self.broadcast_message(Message::NewBlock(req.clone()))?;
+                        }
                     }
                 }
                 #[cfg(feature = "l2")]
@@ -961,6 +968,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.send(new_msg).await?;
                 }
                 Message::NewBlock(block_msg) => {
+                    println!("-------------");
+                    println!(
+                        "Received broadcasted block: {}",
+                        block_msg.block.header.number
+                    );
+                    println!("From peer: {node_id} and i am : {}", self.node.node_id());
+                    println!("-------------");
                     let new_msg = Message::NewBlock(block_msg.clone());
                     self.send(new_msg).await?;
                 }
@@ -1211,7 +1225,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.framed.next().await
     }
 
-    fn broadcast_message(&self, msg: Message) -> Result<(), RLPxError> {
+    fn broadcast_message(&mut self, msg: Message) -> Result<(), RLPxError> {
         let node_id = self.node.node_id();
         match msg {
             txs_msg @ Message::Transactions(_) => {
@@ -1224,8 +1238,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 };
                 Ok(())
             }
-            block_msg @ Message::NewBlock(_) => {
-                let block = Arc::new(block_msg);
+            Message::NewBlock(new_block_msg) => {
+                if self.last_block_broadcasted >= new_block_msg.block.header.number {
+                    debug!(
+                        "Block {} already broadcasted, ignoring it",
+                        new_block_msg.block.header.number
+                    );
+                    return Ok(());
+                }
+                self.last_block_broadcasted = new_block_msg.block.header.number;
+                let block = Arc::new(Message::NewBlock(new_block_msg));
                 let task_id = tokio::task::id();
                 let Ok(_) = self
                     .connection_broadcast_send
