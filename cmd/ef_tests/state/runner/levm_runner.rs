@@ -314,7 +314,10 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::Type3TxInvalidBlobVersionedHash)
             ) | (
                 TransactionExpectedException::InsufficientMaxFeePerBlobGas,
-                VMError::TxValidation(TxValidationError::InsufficientMaxFeePerBlobGas)
+                VMError::TxValidation(TxValidationError::InsufficientMaxFeePerBlobGas {
+                    base_fee_per_blob_gas: _,
+                    tx_max_fee_per_blob_gas: _,
+                })
             ) | (
                 TransactionExpectedException::InitcodeSizeExceeded,
                 VMError::TxValidation(TxValidationError::InitcodeSizeExceeded {
