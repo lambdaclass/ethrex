@@ -162,7 +162,7 @@ impl Evm {
                 Ok((receipt, execution_result.gas_used()))
             }
             Evm::LEVM { db, vm_type } => {
-                let execution_report =
+                let (execution_report, _) =
                     LEVM::execute_tx(tx, sender, block_header, db, vm_type.clone())?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
