@@ -30,6 +30,7 @@ REPETITIONS_SLOW := 200
 BENCH_FACT_ITERATIONS := 57
 BENCH_FACT_REC_ITERATIONS := 57
 BENCH_FIB_ITERATIONS := 57
+BENCH_FIB_REC_ITERATIONS := 15
 BENCH_HASHES_ITERATIONS := 57
 BENCH_BUBBLESORT_ITERATIONS := 100 # Size of the array to sort
 BENCH_MINT_ITERATIONS := 500
@@ -76,6 +77,7 @@ compile-contracts:
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
 	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark,FibonacciRecursive,REPETITIONS_SLOW,BENCH_FIB_REC_ITERATIONS)
 	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
 	$(call run_benchmark,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
@@ -88,6 +90,7 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 revm-comparison-ci: compile-contracts
 	mkdir -p ../../../benchmark_comparison_results
 	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark_ci,FibonacciRecursive,REPETITIONS_SLOW,BENCH_FIB_REC_ITERATIONS)
 	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
@@ -102,6 +105,7 @@ render-benches:
 
 flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
+	$(MAKE) flamegraph-levm-bench-generic name=FibonacciRecursive repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_FIB_REC_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=Factorial repetitions=$(REPETITIONS) iterations=$(BENCH_FACT_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=FactorialRecursive repetitions=$(REPETITIONS) iterations=$(BENCH_FACT_REC_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=ManyHashes repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_HASHES_ITERATIONS)
