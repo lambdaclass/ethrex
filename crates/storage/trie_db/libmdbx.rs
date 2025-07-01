@@ -32,9 +32,11 @@ where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let dirty_nodes = self.dirty_nodes.read().unwrap();
-        if let Some(node) = dirty_nodes.get(&key) {
-            return Ok(Some(node.clone()));
+        {
+            let dirty_nodes = self.dirty_nodes.read().unwrap();
+            if let Some(node) = dirty_nodes.get(&key) {
+                return Ok(Some(node.clone()));
+            }
         }
 
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
