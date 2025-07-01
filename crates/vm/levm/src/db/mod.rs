@@ -1,13 +1,14 @@
 use crate::errors::DatabaseError;
 use bytes::Bytes;
-pub use cache::CacheDB;
 use ethrex_common::{
     Address, H256, U256,
     types::{Account, ChainConfig},
 };
+use std::collections::HashMap;
 
-pub mod cache;
 pub mod gen_db;
+
+pub type CacheDB = HashMap<Address, Account>;
 
 pub trait Database: Send + Sync {
     fn get_account(&self, address: Address) -> Result<Account, DatabaseError>;
