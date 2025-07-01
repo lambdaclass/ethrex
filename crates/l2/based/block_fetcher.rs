@@ -550,7 +550,7 @@ async fn get_batch(
 }
 
 async fn batch_is_safe(
-    batch: &Vec<Block>,
+    batch: &[Block],
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<bool, BlockFetcherError> {
@@ -571,8 +571,12 @@ async fn batch_is_safe(
         )
         .await?;
 
-    let res = hex::decode(result.trim_start_matches("0x"))
+    let decoded_response = hex::decode(result.trim_start_matches("0x"))
         .map_err(|e| BlockFetcherError::InternalError(e.to_string()))?;
 
-    Ok(*res.last().unwrap() > 0)
+    let Some(last_byte) = decoded_response.last() else {
+        return Err(BlockFetcherError::InternalError("hola".to_string()));
+    };
+
+    Ok(*last_byte > 0)
 }
