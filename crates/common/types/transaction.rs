@@ -1356,7 +1356,7 @@ impl TxType {
 impl PrivilegedL2Transaction {
     /// Returns the formatted hash of the privileged transaction,
     /// or None if the transaction is not a privileged transactions.
-    /// The hash is computed as keccak256(to || value || transaction_id == nonce || from || gas_limit || keccak256(calldata))
+    /// The hash is computed as keccak256(from || to || transaction_id == nonce  || value || gas_limit || keccak256(calldata))
     pub fn get_privileged_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {
@@ -1373,10 +1373,10 @@ impl PrivilegedL2Transaction {
 
         Some(keccak_hash::keccak(
             [
-                to.as_bytes(),
-                &value,
-                &nonce,
                 self.from.as_bytes(),
+                to.as_bytes(),
+                &nonce,
+                &value,
                 &U256::from(self.gas_limit).to_big_endian(),
                 keccak(&self.data).as_bytes(),
             ]
@@ -2475,7 +2475,7 @@ mod tests {
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
             s: U256::from_big_endian(&hex!(
-                "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
+                "5f6e3f188e3e6eab7d7d3b6568f5eacf7d687b08d307d3154ccd8c87b4630509b"
             )),
         };
         body.transactions.push(Transaction::LegacyTransaction(tx));

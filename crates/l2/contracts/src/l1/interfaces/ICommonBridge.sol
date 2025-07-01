@@ -11,14 +11,14 @@ interface ICommonBridge {
     /// @param from the address that initiated the transaction.
     /// @param to the recipient on L2
     /// @param transactionId Id used to make transactions unique
-    /// @param amount the value of the transaction
+    /// @param value the value of the transaction
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
     event PrivilegedTxSent (
         address indexed from,
         address indexed to,
         uint256 indexed transactionId,
-        uint256 amount,
+        uint256 value,
         uint256 gasLimit,
         bytes data
     );

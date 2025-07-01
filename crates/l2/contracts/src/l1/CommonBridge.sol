@@ -106,10 +106,10 @@ contract CommonBridge is
     function _sendToL2(address from, SendValues memory sendValues) private {
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
-                bytes20(sendValues.to),
-                bytes32(sendValues.value),
-                bytes32(transactionId),
                 bytes20(from),
+                bytes20(sendValues.to),
+                bytes32(transactionId),
+                bytes32(sendValues.value),
                 bytes32(sendValues.gasLimit),
                 bytes32(keccak256(sendValues.data))
             )
