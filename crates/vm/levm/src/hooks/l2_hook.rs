@@ -52,10 +52,7 @@ impl Hook for L2Hook {
         // NOT CHECKED: privileged transactions do not pay for gas
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
-        // CHECKED: we don't want to exceed block quotas
-        if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
-            default_hook::validate_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
-        }
+        // NOT CHECKED: the blob price does not matter, privileged transactions do not support blobs
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         // NOT CHECKED: privileged transactions do not pay for gas, the gas price is irrelevant
