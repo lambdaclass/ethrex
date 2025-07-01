@@ -80,17 +80,19 @@ pub struct AccountUpdatesList {
 
 impl Store {
     pub fn update_cache(&self, trie_updates: &TrieUpdates) {
-        let mut write_guard_state = self.dirty_state_nodes.write().unwrap();
-        let mut write_guard_storage = self.dirty_storage_nodes.write().unwrap();
-
-        for (node_hash, node_data) in &trie_updates.account_updates {
-            write_guard_state.insert(*node_hash, node_data.clone());
+        {
+            let mut write_guard_state = self.dirty_state_nodes.write().unwrap();
+            write_guard_state.extend(trie_updates.account_updates.iter().cloned());
         }
-        for (storage_root, storage_updates) in &trie_updates.storage_updates {
-            let storage_root_h256 = H256::from_slice(storage_root);
-            for (node_hash, node_data) in storage_updates {
-                write_guard_storage.insert((storage_root_h256.0, *node_hash), node_data.clone());
-            }
+        {
+            let mut write_guard_storage = self.dirty_storage_nodes.write().unwrap();
+            write_guard_storage.extend(trie_updates.storage_updates.iter().flat_map(
+                |(storage_root, storage_updates)| {
+                    storage_updates.iter().map(|(node_hash, node_data)| {
+                        ((*storage_root, *node_hash), node_data.clone())
+                    })
+                },
+            ));
         }
     }
 
