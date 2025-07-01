@@ -17,8 +17,7 @@ pub struct L2Hook {}
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if !vm.env.is_privileged {
-            let mut default_hook = DefaultHook;
-            return default_hook.prepare_execution(vm);
+            return DefaultHook.prepare_execution(vm);
         }
 
         let sender_address = vm.env.origin;
