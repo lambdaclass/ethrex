@@ -385,20 +385,18 @@ async fn handle_connection(
         Ok(mut stream) => {
             stream.read_to_end(&mut buffer).await?;
 
-
-                let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
-                match data {
-                    Ok(ProofData::BatchRequest { commit_hash }) => {
-                        if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
-                            error!("Failed to handle BatchRequest: {e}");                    }
+            let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+            match data {
+                Ok(ProofData::BatchRequest { commit_hash }) => {
+                    if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
+                        error!("Failed to handle BatchRequest: {e}");
+                    }
                 }
                 Ok(ProofData::ProofSubmit {
                     batch_number,
                     batch_proof,
                 }) => {
-                    if let Err(e) =
-                        handle_submit(state, &mut stream, batch_number, batch_proof).await
-                    {
+                    if let Err(e) = handle_submit(state, &mut stream, batch_number, batch_proof).await {
                         error!("Failed to handle ProofSubmit: {e}");
                     }
                 }
