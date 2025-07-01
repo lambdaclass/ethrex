@@ -62,11 +62,11 @@ async fn server_shutdown(
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
-    init_tracing(&opts);
-
     if let Some(subcommand) = command {
         return subcommand.run(&opts).await;
     }
+
+    init_tracing(&opts);
 
     let data_dir = set_datadir(&opts.datadir);
 

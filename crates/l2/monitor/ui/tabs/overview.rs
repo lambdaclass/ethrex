@@ -1,12 +1,20 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Row, Table},
+    widgets::{Block, Paragraph, Row, Table},
 };
 
 use crate::monitor::EthrexMonitor;
+
+pub const ETHREX_LOGO: &str = r#"
+███████╗████████╗██╗░░██╗██████╗░███████╗██╗░░██╗
+██╔════╝╚══██╔══╝██║░░██║██╔══██╗██╔════╝╚██╗██╔╝
+█████╗░░░░░██║░░░███████║██████╔╝█████╗░░░╚███╔╝░
+██╔══╝░░░░░██║░░░██╔══██║██╔══██╗██╔══╝░░░██╔██╗░
+███████╗░░░██║░░░██║░░██║██║░░██║███████╗██╔╝╚██╗
+╚══════╝░░░╚═╝░░░╚═╝░░╚═╝╚═╝░░╚═╝╚══════╝╚═╝░░╚═╝"#;
 
 pub const H256_LENGTH_IN_DIGITS: u16 = 66; // 64 hex characters + 2 for "0x" prefix
 pub const ADDRESS_LENGTH_IN_DIGITS: u16 = 42; // 40 hex characters + 2 for "0x" prefix
@@ -32,17 +40,31 @@ pub fn draw(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
         Constraint::Length(1),
     ])
     .split(area);
-    draw_status(frame, app, chunks[0]);
+    {
+        let constraints = vec![
+            Constraint::Fill(1),
+            Constraint::Length(LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS),
+        ];
+        let chunks = Layout::horizontal(constraints).split(chunks[0]);
+        draw_ethrex_logo(frame, chunks[0]);
+        {
+            let constraints = vec![Constraint::Fill(1), Constraint::Fill(1)];
+            let chunks = Layout::horizontal(constraints).split(chunks[1]);
+            draw_node_status(frame, app, chunks[0]);
+            draw_global_chain_status(frame, app, chunks[1]);
+        }
+    }
     draw_latest_batches_and_blocks(frame, app, chunks[1]);
     draw_mempool(frame, app, chunks[2]);
     draw_text(frame, chunks[3]);
 }
 
-fn draw_status(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
-    let constraints = vec![Constraint::Percentage(50), Constraint::Percentage(50)];
-    let chunks = Layout::horizontal(constraints).split(area);
-    draw_node_status(frame, app, chunks[0]);
-    draw_global_chain_status(frame, app, chunks[1]);
+fn draw_ethrex_logo(frame: &mut Frame, area: Rect) {
+    let logo = Paragraph::new(ETHREX_LOGO)
+        .centered()
+        .style(Style::default())
+        .block(Block::bordered().border_style(Style::default().fg(Color::Cyan)));
+    frame.render_widget(logo, area);
 }
 
 fn draw_node_status(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
@@ -53,9 +75,14 @@ fn draw_node_status(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
             Span::styled(value, Style::default()),
         ])
     });
-    let node_status_table = Table::new(rows, constraints).block(Block::bordered().title(
-        Span::styled("Node Status", Style::default().add_modifier(Modifier::BOLD)),
-    ));
+    let node_status_table = Table::new(rows, constraints).block(
+        Block::bordered()
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(Span::styled(
+                "Node Status",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+    );
     frame.render_stateful_widget(node_status_table, area, &mut app.node_status.state);
 }
 
@@ -67,11 +94,14 @@ fn draw_global_chain_status(frame: &mut Frame, app: &mut EthrexMonitor, area: Re
             Span::styled(value, Style::default()),
         ])
     });
-    let global_chain_status_table =
-        Table::new(rows, constraints).block(Block::bordered().title(Span::styled(
-            "Global Chain Status",
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
+    let global_chain_status_table = Table::new(rows, constraints).block(
+        Block::bordered()
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(Span::styled(
+                "Global Chain Status",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+    );
 
     frame.render_stateful_widget(
         global_chain_status_table,
@@ -103,10 +133,14 @@ fn draw_latest_batches_and_blocks(frame: &mut Frame, app: &mut EthrexMonitor, ar
             });
         let committed_batches_table = Table::new(rows, constraints)
             .header(Row::new(vec!["Number", "Commit Tx Hash"]).style(Style::default()))
-            .block(Block::bordered().title(Span::styled(
-                "Committed Batches",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        "Committed Batches",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+            );
         frame.render_stateful_widget(
             committed_batches_table,
             chunks[0],
@@ -142,10 +176,14 @@ fn draw_latest_batches_and_blocks(frame: &mut Frame, app: &mut EthrexMonitor, ar
                 ])
                 .style(Style::default()),
             )
-            .block(Block::bordered().title(Span::styled(
-                "Latest Blocks",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        "Latest Blocks",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+            );
         frame.render_stateful_widget(latest_blocks_table, chunks[1], &mut app.blocks_table.state);
     }
 }
@@ -165,13 +203,17 @@ fn draw_mempool(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
     });
     let mempool_table = Table::new(rows, constraints)
         .header(Row::new(vec!["Hash", "Sender", "Nonce"]).style(Style::default()))
-        .block(Block::bordered().title(Span::styled(
-            "Mempool",
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
+        .block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(Span::styled(
+                    "Mempool",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+        );
     frame.render_stateful_widget(mempool_table, area, &mut app.mempool.state);
 }
 
 fn draw_text(frame: &mut Frame, area: Rect) {
-    frame.render_widget(Line::raw("◄ ► change tab |  Q to quit").centered(), area)
+    frame.render_widget(Line::raw("tab: switch tab |  Q: quit").centered(), area)
 }

@@ -42,6 +42,7 @@ secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
 itertools = "0.14.0"
+tui-logger = { workspace = true, optional = true }
 
 cfg-if = "1.0.0"
 
@@ -58,7 +59,7 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["libmdbx", "c-kzg", "blst"]
+default = ["libmdbx", "c-kzg", "blst", "l2"]
 dev = ["dep:ethrex-dev", "debug"]
 c-kzg = [
   "ethrex-vm/c-kzg",
@@ -75,6 +76,7 @@ l2 = [
   "dep:ethrex-l2-common",
   "dep:ethrex-sdk",
   "dep:ethrex-l2-rpc",
+  "dep:tui-logger",
   "ethrex-vm/l2",
   "ethrex-blockchain/l2",
   "ethrex-storage-rollup",

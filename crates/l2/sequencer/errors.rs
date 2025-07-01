@@ -45,6 +45,8 @@ pub enum SequencerError {
     FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("Failed to resolve network")]
     AlignedNetworkError(String),
+    #[error("Failed to start EthrexMonitor: {0}")]
+    MonitorError(#[from] MonitorError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -283,4 +285,10 @@ pub enum ExecutionCacheError {
 pub enum ConnectionHandlerError {
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MonitorError {
+    #[error("Failed because of io error: {0}")]
+    Io(#[from] std::io::Error),
 }

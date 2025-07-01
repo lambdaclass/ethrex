@@ -14,6 +14,9 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::warn;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 use crate::cli::Options as L1Options;
 use crate::initializers::{get_authrpc_socket_addr, get_http_socket_addr};
@@ -103,4 +106,14 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
         .await
         .expect("Failed to init rollup store");
     rollup_store
+}
+
+pub fn init_tracing() {
+    let level_filter = EnvFilter::builder()
+        .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::command=off");
+    let subscriber = tracing_subscriber::registry()
+        .with(TuiTracingSubscriberLayer)
+        .with(level_filter);
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 }

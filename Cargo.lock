@@ -3475,6 +3475,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_filter"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "186e05a59d4c50738528153b83b0b0194d3a29507dfec16eccd4b342903397d0"
+dependencies = [
+ "log",
+ "regex",
+]
+
+[[package]]
 name = "env_logger"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3917,6 +3927,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "tui-logger",
  "vergen",
 ]
 
@@ -4037,6 +4048,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tui-big-text",
+ "tui-logger",
  "tui-scrollview",
  "zkvm_interface",
 ]
@@ -12057,6 +12069,24 @@ dependencies = [
  "font8x8",
  "itertools 0.14.0",
  "ratatui",
+]
+
+[[package]]
+name = "tui-logger"
+version = "0.17.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57ea457a31a3fff1073f83e5c9e1c61a7805c435b2476b1df3a78f934adebabe"
+dependencies = [
+ "chrono",
+ "env_filter",
+ "fxhash",
+ "lazy_static",
+ "log",
+ "parking_lot 0.12.4",
+ "ratatui",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+ "unicode-segmentation",
 ]
 
 [[package]]

@@ -4,6 +4,7 @@
 
 use std::cmp::min;
 
+use crossterm::event::{KeyCode, MouseEventKind};
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
@@ -13,8 +14,9 @@ use ethrex_rpc::types::block::{BlockBodyWrapper, RpcBlock};
 use ethrex_rpc::types::receipt::RpcLog;
 use keccak_hash::keccak;
 use ratatui::widgets::TableState;
+use tui_logger::{TuiWidgetEvent, TuiWidgetState};
 
-use crate::MonitorOptions;
+use crate::SequencerConfig;
 
 pub struct TabsState<'a> {
     pub titles: Vec<&'a str>,
@@ -49,19 +51,25 @@ impl GlobalChainStatusTable {
     pub async fn new(
         eth_client: &EthClient,
         rollup_client: &EthClient,
-        opts: &MonitorOptions,
+        cfg: &SequencerConfig,
     ) -> Self {
+        let sequencer_registry_address =
+            if cfg.based.state_updater.sequencer_registry == Address::default() {
+                None
+            } else {
+                Some(cfg.based.state_updater.sequencer_registry)
+            };
         Self {
             state: TableState::default(),
             items: Self::refresh_items(
                 eth_client,
                 rollup_client,
-                opts.on_chain_proposer_address,
-                opts.sequencer_registry_address,
+                cfg.l1_committer.on_chain_proposer_address,
+                sequencer_registry_address,
             )
             .await,
-            on_chain_proposer_address: opts.on_chain_proposer_address,
-            sequencer_registry_address: opts.sequencer_registry_address,
+            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+            sequencer_registry_address,
         }
     }
 
@@ -229,15 +237,19 @@ pub struct CommittedBatchesTable {
 }
 
 impl CommittedBatchesTable {
-    pub async fn new(eth_client: &EthClient, opts: &MonitorOptions) -> Self {
+    pub async fn new(
+        common_bridge_address: Address,
+        on_chain_proposer_address: Address,
+        eth_client: &EthClient,
+    ) -> Self {
         let mut last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(opts.common_bridge_address)
+            .get_last_fetched_l1_block(common_bridge_address)
             .await
             .expect("Failed to get last fetched L1 block")
             .into();
         let items = Self::refresh_items(
             &mut last_l1_block_fetched,
-            opts.on_chain_proposer_address,
+            on_chain_proposer_address,
             eth_client,
         )
         .await;
@@ -245,7 +257,7 @@ impl CommittedBatchesTable {
             state: TableState::default(),
             items,
             last_l1_block_fetched,
-            on_chain_proposer_address: opts.on_chain_proposer_address,
+            on_chain_proposer_address,
         }
     }
 
@@ -516,6 +528,7 @@ pub struct EthrexMonitor<'a> {
     pub should_quit: bool,
     pub tabs: TabsState<'a>,
 
+    pub logger: TuiWidgetState,
     pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
     pub mempool: MempoolTable,
@@ -527,48 +540,90 @@ pub struct EthrexMonitor<'a> {
 }
 
 impl<'a> EthrexMonitor<'a> {
-    pub async fn new(opts: &MonitorOptions) -> Self {
-        let eth_client = EthClient::new(&opts.l1_rpc_url).expect("Failed to create EthClient");
+    pub async fn new(cfg: &SequencerConfig) -> Self {
+        let eth_client = EthClient::new(cfg.eth.rpc_url.first().expect("No RPC URLs provided"))
+            .expect("Failed to create EthClient");
+        // TODO: De-hardcode the rollup client URL
         let rollup_client =
-            EthClient::new(&opts.l2_rpc_url).expect("Failed to create RollupClient");
+            EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
 
         EthrexMonitor {
-            title: if opts.based {
+            title: if cfg.based.based {
                 "Based Ethrex Monitor"
             } else {
                 "Ethrex Monitor"
             },
             should_quit: false,
-            tabs: TabsState::new(vec!["Overview"]),
-            global_chain_status: GlobalChainStatusTable::new(&eth_client, &rollup_client, opts)
+            tabs: TabsState::new(vec!["Overview", "Logs"]),
+            global_chain_status: GlobalChainStatusTable::new(&eth_client, &rollup_client, cfg)
                 .await,
+            logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
             node_status: NodeStatusTable::new(&rollup_client).await,
             mempool: MempoolTable::new(&rollup_client).await,
-            committed_batches: CommittedBatchesTable::new(&eth_client, opts).await,
+            committed_batches: CommittedBatchesTable::new(
+                cfg.l1_watcher.bridge_address,
+                cfg.l1_committer.on_chain_proposer_address,
+                &eth_client,
+            )
+            .await,
             blocks_table: BlocksTable::new(&rollup_client).await,
             eth_client,
             rollup_client,
         }
     }
 
-    pub fn on_up(&mut self) {}
-
-    pub fn on_down(&mut self) {}
-
-    pub fn on_right(&mut self) {
-        self.tabs.next();
+    pub fn on_key_event(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Left => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::LeftKey),
+                _ => {}
+            },
+            KeyCode::Down => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::DownKey),
+                _ => {}
+            },
+            KeyCode::Up => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::UpKey),
+                _ => {}
+            },
+            KeyCode::Right => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::RightKey),
+                _ => {}
+            },
+            KeyCode::Char('Q') => self.should_quit = true,
+            KeyCode::Char('h') => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::HideKey),
+                _ => {}
+            },
+            KeyCode::Char('f') => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::FocusKey),
+                _ => {}
+            },
+            KeyCode::Char('+') => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::PlusKey),
+                _ => {}
+            },
+            KeyCode::Char('-') => match self.tabs.index {
+                0 => {}
+                1 => self.logger.transition(TuiWidgetEvent::MinusKey),
+                _ => {}
+            },
+            KeyCode::Tab => self.tabs.next(),
+            _ => {}
+        }
     }
 
-    pub fn on_left(&mut self) {
-        self.tabs.previous();
-    }
-
-    pub fn on_key(&mut self, c: char) {
-        #[expect(clippy::single_match)]
-        match c {
-            'Q' => {
-                self.should_quit = true;
-            }
+    pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
+        match kind {
+            MouseEventKind::ScrollDown => self.logger.transition(TuiWidgetEvent::NextPageKey),
+            MouseEventKind::ScrollUp => self.logger.transition(TuiWidgetEvent::PrevPageKey),
             _ => {}
         }
     }

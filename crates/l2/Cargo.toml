@@ -52,6 +52,7 @@ crossterm = "0.29.0"
 ratatui = "0.29.0"
 tui-big-text = "0.7.1"
 tui-scrollview = "0.5.1"
+tui-logger.workspace = true
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 
