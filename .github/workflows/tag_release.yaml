@@ -1,16 +1,17 @@
-name: L2 Release
+name: Ethrex Release
 
 on:
   push:
     tags:
-      - "l2_v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  build-l2:
+  build-ethrex:
     strategy:
       matrix:
         platform:
@@ -40,7 +41,10 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      # TODO when https://github.com/lambdaclass/ethrex/pull/3381 is merged
+      # Rename to Build ethrex
       - name: Build ethrex L2
+        # replace --features l2 with --all-features
         run: |
           cargo build --release --features l2 --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
@@ -51,16 +55,13 @@ jobs:
           name: ethrex-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
-  build-prover-sp1:
+  build-prover-exec:
     strategy:
       matrix:
         platform:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-latest
-        backend:
-          - sp1
-          - exec
         include:
           - platform: ubuntu-latest
             os: linux
@@ -71,8 +72,45 @@ jobs:
           - platform: macos-latest
             os: macos
             arch: arm64
-          - backend: sp1
-            mode: sp1
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          [[ "${{ matrix.os }}" != "macos" ]] && export RUSTFLAGS='-C target-cpu=native'
+          cargo build --release --features "l2" \
+            --manifest-path ./prover/Cargo.toml \
+            --bin ethrex_prover
+          cd ../../
+          mv target/release/ethrex_prover ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
+
+  build-prover-sp1:
+    strategy:
+      matrix:
+        include:
+          - platform: ubuntu-latest
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -94,18 +132,26 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build ethrex L2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64
+
+      - name: Build prover
         run: |
           cd crates/l2
-          make build-prover PROVER=${{ matrix.mode }}
+          RUSTFLAGS='-C target-cpu=native' \
+          cargo build --release --features "sp1,gpu,l2" \
+            --manifest-path ./prover/Cargo.toml \
+            --bin ethrex_prover
           cd ../../
-          mv target/release/ethrex_prover ethrex_prover_${{ matrix.backend }}-${{ matrix.os }}_${{ matrix.arch }}
+          mv target/release/ethrex_prover ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_prover_${{ matrix.backend }}-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_prover_${{ matrix.backend }}-${{ matrix.os }}_${{ matrix.arch }}
+          name: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
   build-prover-risc0:
     if: false # Remove when fixed RISC0
@@ -143,10 +189,13 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build ethrex L2
+      - name: Build prover
         run: |
           cd crates/l2
-          make build-prover PROVER=risc0
+          RUSTFLAGS='-C target-cpu=native' \
+          cargo build --release --features "risc0,gpu,l2" \
+            --manifest-path ./prover/Cargo.toml \
+            --bin ethrex_prover
           cd ../../
           mv target/release/ethrex_prover ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
@@ -156,13 +205,41 @@ jobs:
           name: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
+  package-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Archive contracts
+        run: |
+          cd crates/l2/contracts/src/
+          tar -czvf l1-contracts.tar.gz ./l1
+          tar -czvf l2-contracts.tar.gz ./l2
+          cd ../../../../
+          mv crates/l2/contracts/src/l1-contracts.tar.gz ethrex-l1-contracts.tar.gz
+          mv crates/l2/contracts/src/l2-contracts.tar.gz ethrex-l2-contracts.tar.gz
+
+      - name: Upload L1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-l1-contracts.tar.gz
+          path: ethrex-l1-contracts.tar.gz
+
+      - name: Upload L2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-l2-contracts.tar.gz
+          path: ethrex-l2-contracts.tar.gz
+
   # Creates a draft release on GitHub with the binaries
   finalize-release:
     needs:
-      - build-l2
+      - build-ethrex
+      - build-prover-exec
       - build-prover-sp1
     # - build-prover-risc0 # Uncomment when fixed RISC0
-    # - build-prover-pico # Uncomment when fixed Pico
+      - package-contracts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -203,5 +280,5 @@ jobs:
           draft: false
           prerelease: false
           tag_name: ${{ github.ref_name }}
-          name: "L2: ${{ env.RELEASE_NAME }}"
+          name: "ethrex: ${{ env.RELEASE_NAME }}"
           body: ${{ steps.changelog.outputs.changes }}
