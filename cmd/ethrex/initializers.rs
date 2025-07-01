@@ -3,7 +3,7 @@ use crate::{
     networks::{self, Network, PublicNetwork},
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -82,9 +82,13 @@ pub fn open_store(data_dir: &str) -> Store {
     }
 }
 
-pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+pub fn init_blockchain(
+    evm_engine: EvmEngine,
+    store: Store,
+    blockchain_type: BlockchainType,
+) -> Arc<Blockchain> {
     info!("Initiating blockchain with EVM: {}", evm_engine);
-    Blockchain::new(evm_engine, store).into()
+    Blockchain::new(evm_engine, store, blockchain_type).into()
 }
 
 #[allow(clippy::too_many_arguments)]
