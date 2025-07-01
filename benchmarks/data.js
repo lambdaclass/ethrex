@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751335014276,
+  "lastUpdate": 1751340474185,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3883,6 +3883,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006775289340101523,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cdc0bb8c2fb459bf62deb25bdc82e3d9418e6281",
+          "message": "fix(core): more accurate throughput (#3412)\n\nThroughput in the logged metrics was computed over a truncated number of\nseconds, which meant the same block taking 1999ms or 1000ms reports the\nsame throughput, when one is indeed twice as slow as the other.\nThis fixes it by asking for the `as_secs_f64` directly rather than\ntaking an integer number of millis, dividing (with integer semantics) by\n1000 and then casting.",
+          "timestamp": "2025-06-30T21:29:01Z",
+          "tree_id": "0aac684e2a008af2325ffa0d11310c21428d1aed",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cdc0bb8c2fb459bf62deb25bdc82e3d9418e6281"
+        },
+        "date": 1751340473458,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
             "unit": "Mgas/s"
           }
         ]
