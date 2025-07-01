@@ -211,8 +211,8 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
     ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
 }
 
-fn match_expected_regex(expected_error_msg: &str, error_msg: &str) -> bool {
-    let Ok(regex) = Regex::new(expected_error_msg) else {
+fn match_expected_regex(expected_error_regex: &str, error_msg: &str) -> bool {
+    let Ok(regex) = Regex::new(expected_error_regex) else {
         return false;
     };
     regex.is_match(error_msg)
