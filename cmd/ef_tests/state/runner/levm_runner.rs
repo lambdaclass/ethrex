@@ -293,7 +293,10 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::NonceIsMax)
             ) | (
                 TransactionExpectedException::GasAllowanceExceeded,
-                VMError::TxValidation(TxValidationError::GasAllowanceExceeded)
+                VMError::TxValidation(TxValidationError::GasAllowanceExceeded {
+                    block_gas_limit: _,
+                    tx_gas_limit: _
+                })
             ) | (
                 TransactionExpectedException::Type3TxPreFork,
                 VMError::TxValidation(TxValidationError::Type3TxPreFork)

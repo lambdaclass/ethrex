@@ -385,7 +385,10 @@ pub fn validate_sender(sender_address: Address, sender_account: &Account) -> Res
 
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
     if vm.env.gas_limit > vm.env.block_gas_limit {
-        return Err(TxValidationError::GasAllowanceExceeded);
+        return Err(TxValidationError::GasAllowanceExceeded {
+            block_gas_limit: vm.env.block_gas_limit,
+            tx_gas_limit: vm.env.gas_limit,
+        });
     }
     Ok(())
 }

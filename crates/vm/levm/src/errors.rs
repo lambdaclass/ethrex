@@ -88,8 +88,13 @@ pub enum TxValidationError {
     },
     #[error("Intrinsic gas too low")]
     IntrinsicGasTooLow,
-    #[error("Gas allowance exceeded")]
-    GasAllowanceExceeded,
+    #[error(
+        "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
+    )]
+    GasAllowanceExceeded {
+        block_gas_limit: u64,
+        tx_gas_limit: u64,
+    },
     #[error("Insufficient max fee per gas")]
     InsufficientMaxFeePerGas,
     #[error("Insufficient max fee per blob gas")]
