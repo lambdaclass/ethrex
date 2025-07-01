@@ -1,5 +1,6 @@
+use aligned_sdk::common::types::ProvingSystemId;
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display};
+use std::{fmt::{Debug, Display}, path::PathBuf};
 
 use crate::calldata::Value;
 
@@ -9,7 +10,6 @@ pub enum ProverType {
     Exec,
     RISC0,
     SP1,
-    Aligned,
     TDX,
 }
 
@@ -19,8 +19,7 @@ impl From<ProverType> for u32 {
             ProverType::Exec => 0,
             ProverType::RISC0 => 1,
             ProverType::SP1 => 2,
-            ProverType::Aligned => 4,
-            ProverType::TDX => 5,
+            ProverType::TDX => 3,
         }
     }
 }
@@ -32,7 +31,6 @@ impl ProverType {
             ProverType::Exec,
             ProverType::RISC0,
             ProverType::SP1,
-            ProverType::Aligned,
             ProverType::TDX,
         ]
         .into_iter()
@@ -52,19 +50,32 @@ impl ProverType {
                 vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
-            ProverType::Aligned => unimplemented!("Doesn't need to generate an empty calldata."),
         }
     }
 
     pub fn verifier_getter(&self) -> Option<String> {
         // These values have to match with the OnChainProposer.sol contract
         match self {
-            Self::Aligned => Some("ALIGNEDPROOFAGGREGATOR()".to_string()),
             Self::RISC0 => Some("R0VERIFIER()".to_string()),
             Self::SP1 => Some("SP1VERIFIER()".to_string()),
             Self::TDX => Some("TDXVERIFIER()".to_string()),
             Self::Exec => None,
         }
+    }
+
+    pub fn elf_path(&self) -> Option<PathBuf> {
+        let path = match self {
+            Self::RISC0 => format!(
+                "{}/../../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-elf",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            Self::SP1 => format!(
+                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            _ => return None
+        };
+        std::fs::canonicalize(path).ok()
     }
 }
 
@@ -75,7 +86,16 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::TDX => write!(f, "TDX"),
-            Self::Aligned => write!(f, "Aligned"),
+        }
+    }
+}
+
+impl Into<Option<ProvingSystemId>> for ProverType {
+    fn into(self) -> Option<ProvingSystemId> {
+        match self {
+            ProverType::RISC0 => Some(ProvingSystemId::Risc0),
+            ProverType::SP1 => Some(ProvingSystemId::SP1),
+            _ => None
         }
     }
 }
@@ -93,7 +113,7 @@ impl BatchProof {
     pub fn prover_type(&self) -> ProverType {
         match self {
             BatchProof::ProofCalldata(proof) => proof.prover_type,
-            BatchProof::ProofBytes(_) => ProverType::Aligned,
+            BatchProof::ProofBytes(_) => todo!(),
         }
     }
 
@@ -104,10 +124,10 @@ impl BatchProof {
         }
     }
 
-    pub fn proof(&self) -> Vec<u8> {
+    pub fn compressed(&self) -> Option<Vec<u8>> {
         match self {
-            BatchProof::ProofCalldata(_) => vec![],
-            BatchProof::ProofBytes(proof) => proof.proof.clone(),
+            BatchProof::ProofCalldata(_) => None,
+            BatchProof::ProofBytes(proof) => Some(proof.proof.clone()),
         }
     }
 

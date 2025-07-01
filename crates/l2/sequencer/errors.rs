@@ -1,6 +1,7 @@
 use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
+use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
@@ -129,12 +130,16 @@ pub enum ProofSenderError {
     GenServerError(GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
+    #[error("Failed to read ELF file: {0}")]
+    FailedToReadELF(std::io::Error),
     #[error("Proof Sender failed to estimate Aligned fee: {0}")]
     AlignedFeeEstimateError(String),
     #[error("Proof Sender failed to get nonce from batcher: {0}")]
     AlignedGetNonceError(String),
-    #[error("Proof Sender failed to submit proof: {0}")]
-    AlignedSubmitProofError(String),
+    #[error("Proof Sender failed to submit proof(s): {0}")]
+    AlignedSubmitProofError(#[from] SubmitError),
+    #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
+    AlignedWrongProofFormat,
 }
 
 #[derive(Debug, thiserror::Error)]

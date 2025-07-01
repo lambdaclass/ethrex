@@ -4,7 +4,7 @@ use ethrex_l2_common::{
 };
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
-    ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
+    ExecutorEnv, InnerReceipt, ProverOpts, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
 use tracing::info;
@@ -38,7 +38,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput, _aligned_mode: bool) -> Result<Receipt, Error> {
+pub fn prove(input: ProgramInput, aligned_mode: bool) -> Result<risc0_zkvm::Receipt, Error> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -55,16 +55,25 @@ pub fn prove(input: ProgramInput, _aligned_mode: bool) -> Result<Receipt, Error>
     Ok(prove_info.receipt)
 }
 
-pub fn verify(receipt: &Receipt) -> Result<(), Error> {
+pub fn verify(receipt: &risc0_zkvm::Receipt) -> Result<(), Error> {
     receipt.verify(ZKVM_RISC0_PROGRAM_ID)?;
     Ok(())
 }
 
-pub fn to_batch_proof(proof: Receipt, _aligned_mode: bool) -> Result<BatchProof, Error> {
+pub fn to_batch_proof(proof: risc0_zkvm::Receipt, aligned_mode: bool) -> Result<BatchProof, Error> {
+    let batch_proof = if aligned_mode {
+        BatchProof::ProofBytes(ProofBytes {
+            proof: bincode::serialize(&proof.proof)?,
+            public_values: proof.proof.public_values.to_vec(),
+        })
+    } else {
+        BatchProof::ProofCalldata(to_calldata(proof))
+    };
+
     to_calldata(proof).map(BatchProof::ProofCalldata)
 }
 
-fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
+fn to_calldata(receipt: risc0_zkvm::Receipt) -> Result<ProofCalldata, Error> {
     let seal = encode_seal(&receipt)?;
     let journal = receipt.journal.bytes;
 
@@ -82,7 +91,7 @@ fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
 // ref: https://github.com/risc0/risc0-ethereum/blob/046bb34ea4605f9d8420c7db89baf8e1064fa6f5/contracts/src/lib.rs#L88
 // this was reimplemented because risc0-ethereum-contracts brings a different version of c-kzg into the workspace (2.1.0),
 // which is incompatible with our current version (1.0.3).
-fn encode_seal(receipt: &Receipt) -> Result<Vec<u8>, Error> {
+fn encode_seal(receipt: &risc0_zkvm::Receipt) -> Result<Vec<u8>, Error> {
     let InnerReceipt::Groth16(receipt) = receipt.inner.clone() else {
         return Err(Error::EncodeNonGroth16Seal);
     };
