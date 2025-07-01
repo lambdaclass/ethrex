@@ -91,24 +91,26 @@ impl EVMConfig {
     }
 
     const fn max_blobs_per_block(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
-            Fork::Osaka => MAX_BLOB_COUNT_ELECTRA,
-            _ => MAX_BLOB_COUNT,
+        if fork as u8 >= Fork::Prague as u8 {
+            MAX_BLOB_COUNT_ELECTRA
+        } else {
+            MAX_BLOB_COUNT
         }
     }
 
     const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            _ => BLOB_BASE_FEE_UPDATE_FRACTION,
+        if fork as u8 >= Fork::Prague as u8 {
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+        } else {
+            BLOB_BASE_FEE_UPDATE_FRACTION
         }
     }
 
     const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
-            _ => TARGET_BLOB_GAS_PER_BLOCK,
+        if fork as u8 >= Fork::Prague as u8 {
+            TARGET_BLOB_GAS_PER_BLOCK_PECTRA
+        } else {
+            TARGET_BLOB_GAS_PER_BLOCK
         }
     }
 }
