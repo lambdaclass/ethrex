@@ -24,13 +24,16 @@ libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
-tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
+tokio = { version = "1.41.1", default-features = false, features = [
+    "sync",
+    "rt",
+] }
 bincode = "1.3.3"
 
 [features]
 default = []
-libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
-redb = ["dep:redb", "dep:tokio"]
+libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx"]
+redb = ["dep:redb"]
 
 [dev-dependencies]
 hex.workspace = true

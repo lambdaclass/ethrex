@@ -6,7 +6,7 @@ use crate::rlp::{
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
     TriePathsRLP, TupleRLP,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, TrieUpdates};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -29,17 +29,23 @@ use libmdbx::{
     table_info,
 };
 use serde_json;
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 pub struct Store {
     db: Arc<Database>,
+    tries_db: Arc<Database>,
 }
+
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
+        let (main_db, tries_db) = init_dbs(Some(path)).map_err(StoreError::LibmdbxError)?;
         Ok(Self {
-            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
+            db: Arc::new(main_db),
+            tries_db: Arc::new(tries_db),
         })
     }
 
@@ -126,16 +132,67 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn apply_trie_updates(&self, mut trie_updates: TrieUpdates) -> Result<(), StoreError> {
+        let db = self.tries_db.clone();
+        tokio::task::spawn_blocking(move || {
+            // store account updates
+            trie_updates.account_updates.sort_unstable_by_key(|u| u.0);
+            trie_updates.storage_updates.sort_unstable_by_key(|u| u.0);
+            trie_updates
+                .storage_updates
+                .iter_mut()
+                .for_each(|u| u.1.sort_unstable_by_key(|u| u.0));
+
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            let mut state_trie_cursor = tx
+                .cursor::<StateTrieNodes>()
+                .map_err(StoreError::LibmdbxError)?;
+            for (node_hash, node_data) in trie_updates.account_updates {
+                if let Some((key, value)) = state_trie_cursor
+                    .seek_exact(node_hash.clone())
+                    .map_err(StoreError::LibmdbxError)?
+                {
+                    if key == node_hash && value == node_data {
+                        continue;
+                    }
+                }
+                state_trie_cursor
+                    .upsert(node_hash, node_data)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            // store storage updates
+            let mut storage_tries_cursor = tx
+                .cursor::<StorageTriesNodes>()
+                .map_err(StoreError::LibmdbxError)?;
+            for (hashed_address, nodes) in trie_updates.storage_updates {
+                for (node_hash, node_data) in nodes {
+                    let key_1 = hashed_address;
+                    let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    if let Some((key, value)) = storage_tries_cursor
+                        .seek_exact((key_1, key_2))
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        if key == (key_1, key_2) && value == node_data {
+                            continue;
+                        }
+                    }
+                    storage_tries_cursor
+                        .upsert((key_1, key_2), node_data)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
-            // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
 
             // store code updates
             for (hashed_address, code) in update_batch.code_updates {
@@ -143,15 +200,6 @@ impl StoreEngine for Store {
                     .map_err(StoreError::LibmdbxError)?;
             }
 
-            for (hashed_address, nodes) in update_batch.storage_updates {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
@@ -622,16 +670,25 @@ impl StoreEngine for Store {
         &self,
         hashed_address: H256,
         storage_root: H256,
+        dirty_storage_nodes: Arc<RwLock<HashMap<([u8; 32], NodeHash), Vec<u8>>>>,
     ) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
-            self.db.clone(),
+            self.tries_db.clone(),
             hashed_address.0,
+            dirty_storage_nodes,
         ));
         Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
+    fn open_state_trie(
+        &self,
+        state_root: H256,
+        dirty_state_nodes: Arc<RwLock<HashMap<NodeHash, Vec<u8>>>>,
+    ) -> Result<Trie, StoreError> {
+        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(
+            self.tries_db.clone(),
+            dirty_state_nodes,
+        ));
         Ok(Trie::open(db, state_root))
     }
 
@@ -1255,6 +1312,9 @@ dupsort!(
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
+// FIXME: use u64 as key to use INTEGERKEY flag
+// FIXME: use [u8; 20] (non-hashed address) to reduce IO cost
+// FIXME: replace the Vec<u8>
 dupsort!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
@@ -1394,7 +1454,7 @@ impl Encodable for SnapStateIndex {
 ///
 /// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
 /// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
-const DB_PAGE_SIZE: usize = 4096;
+const DB_PAGE_SIZE: usize = 1 << 16;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
 // Maximum DB size, set to 2 TB
@@ -1402,7 +1462,7 @@ const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
-pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
+pub fn init_dbs(path: Option<impl AsRef<Path>>) -> anyhow::Result<(Database, Database)> {
     let tables = [
         table_info!(BlockNumbers),
         table_info!(Headers),
@@ -1411,8 +1471,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(Receipts),
         table_info!(TransactionLocations),
         table_info!(ChainData),
-        table_info!(StateTrieNodes),
-        table_info!(StorageTriesNodes),
         table_info!(CanonicalBlockHashes),
         table_info!(Payloads),
         table_info!(PendingBlocks),
@@ -1433,7 +1491,21 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         }),
         ..Default::default()
     };
-    Database::create_with_options(path, options, &tables)
+    let main_db = Database::create_with_options(path.clone(), options, &tables)?;
+    let tables = [table_info!(StateTrieNodes), table_info!(StorageTriesNodes)]
+        .into_iter()
+        .collect();
+    let path = path.map(|p| p.join("_tries"));
+    let options = DatabaseOptions {
+        page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+        mode: Mode::ReadWrite(ReadWriteOptions {
+            max_size: Some(MAX_MAP_SIZE),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let tries_db = Database::create_with_options(path, options, &tables)?;
+    Ok((main_db, tries_db))
 }
 
 #[cfg(test)]

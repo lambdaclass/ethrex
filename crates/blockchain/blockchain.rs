@@ -25,6 +25,7 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
+use ethrex_storage::{TrieUpdates, TrieWriter};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
@@ -56,6 +57,7 @@ pub enum BlockchainType {
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
+    trie_writer: TrieWriter,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
@@ -71,9 +73,11 @@ pub struct BatchBlockProcessingFailure {
 }
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
+        let trie_writer = TrieWriter::new(store.clone());
         Self {
+            trie_writer,
             evm_engine,
-            storage: store,
+            storage: store.clone(),
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
@@ -81,7 +85,9 @@ impl Blockchain {
     }
 
     pub fn default_with_store(store: Store) -> Self {
+        let trie_writer = TrieWriter::new(store.clone());
         Self {
+            trie_writer,
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
@@ -106,7 +112,6 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
-
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
         let execution_result = vm.execute_block(block)?;
@@ -363,9 +368,19 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        let update_batch = UpdateBatch {
+        // Convert H256 storage roots to [u8; 32]
+        let storage_updates = accounts_updates
+            .into_iter()
+            .map(|(root, updates)| (root.0, updates))
+            .collect();
+
+        let trie_updates = TrieUpdates {
             account_updates: state_updates,
-            storage_updates: accounts_updates,
+            storage_updates,
+        };
+
+        self.trie_writer.write(trie_updates).await;
+        let update_batch = UpdateBatch {
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
             code_updates,
@@ -523,16 +538,27 @@ impl Blockchain {
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
         let new_state_root = account_updates_list.state_trie_hash;
-        let state_updates = account_updates_list.state_updates;
-        let accounts_updates = account_updates_list.storage_updates;
+        let account_updates = account_updates_list.state_updates;
+        let storage_updates = account_updates_list.storage_updates;
         let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        // Convert H256 storage roots to [u8; 32]
+        let storage_updates_converted = storage_updates
+            .into_iter()
+            .map(|(root, updates)| (root.0, updates))
+            .collect();
+
+        let trie_updates = TrieUpdates {
+            account_updates,
+            storage_updates: storage_updates_converted,
+        };
+
+        self.trie_writer.write(trie_updates).await;
+
         let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
             code_updates,
