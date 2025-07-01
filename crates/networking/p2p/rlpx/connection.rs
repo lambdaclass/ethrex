@@ -69,8 +69,8 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::debug;
 use tracing::info;
+use tracing::{debug, warn};
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
@@ -259,6 +259,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 );
             }
             if let Err(e) = self.connection_loop(sender, receiver).await {
+                warn!("Error in CONNECTION LOOP: {e:?}");
                 self.connection_failed("Error during RLPx connection", e, table)
                     .await;
             }
@@ -282,7 +283,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
-        log_peer_debug(&self.node, &format!("{error_text}: ({error})"));
+        log_peer_error(&self.node, &format!("{error_text}: ({error})"));
 
         // Send disconnect message only if error is different than RLPxError::DisconnectRequested
         // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
@@ -306,7 +307,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             _ => {
                 let remote_public_key = self.node.public_key;
-                log_peer_debug(
+                log_peer_error(
                     &self.node,
                     &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
                 );
