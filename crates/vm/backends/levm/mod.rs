@@ -8,6 +8,7 @@ use crate::constants::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::types::ChainConfig;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -48,13 +49,25 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         Self::prepare_block(block, db, vm_type.clone())?;
 
+        let chain_config = db.store.get_chain_config()?;
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
+
+        // Reuse the VM between transactions.
+        let mut vm: Option<VM> = None;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
+            let report = if let Some(vm) = &mut vm {
+                Self::execute_tx_with_vm(tx, tx_sender, &block.header, &chain_config, vm)?
+            } else {
+                let (report, new_vm) =
+                    Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
+                vm = Some(new_vm);
+                report
+            };
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -86,9 +99,8 @@ impl LEVM {
         tx: &Transaction,
         tx_sender: Address,
         block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
+        chain_config: &ChainConfig,
     ) -> Result<Environment, EvmError> {
-        let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
             .ok_or(VMError::TxValidation(
@@ -96,7 +108,7 @@ impl LEVM {
             ))?
             .into();
 
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let config = EVMConfig::new_from_chain_config(chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
@@ -123,18 +135,40 @@ impl LEVM {
         Ok(env)
     }
 
-    pub fn execute_tx(
+    pub fn execute_tx<'db>(
         // The transaction to execute.
         tx: &Transaction,
         // The transactions recovered address
         tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
+        db: &'db mut GeneralizedDatabase,
         vm_type: VMType,
-    ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+    ) -> Result<(ExecutionReport, VM<'db>), EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let env = Self::setup_env(tx, tx_sender, block_header, &chain_config)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+
+        Ok((vm.execute()?, vm))
+    }
+
+    pub fn execute_tx_with_vm(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        chain_config: &ChainConfig,
+        vm: &mut VM,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, chain_config)?;
+        vm.env = env;
+        vm.tx = tx.clone();
+        vm.call_frames.clear();
+        vm.substate = Substate::default();
+        vm.substate_backups.clear();
+        vm.storage_original_values.clear();
 
         vm.execute().map_err(VMError::into)
     }

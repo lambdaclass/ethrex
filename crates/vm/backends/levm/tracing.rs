@@ -50,13 +50,14 @@ impl LEVM {
         with_log: bool,
         vm_type: VMType,
     ) -> Result<CallTrace, EvmError> {
+        let chain_config = db.store.get_chain_config()?;
         let env = Self::setup_env(
             tx,
             tx.sender().map_err(|error| {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?,
             block_header,
-            db,
+            &chain_config,
         )?;
         let mut vm = VM::new(
             env,
