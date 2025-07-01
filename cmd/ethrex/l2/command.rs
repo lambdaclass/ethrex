@@ -10,6 +10,7 @@ use crate::{
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
+use ethrex_blockchain::BlockchainType;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -103,7 +104,7 @@ pub enum Command {
             long = "network",
             default_value_t = Network::default(),
             value_name = "GENESIS_FILE_PATH",
-            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis*`.",
             env = "ETHREX_NETWORK",
             value_parser = clap::value_parser!(Network),
         )]
@@ -136,7 +137,8 @@ impl Command {
                 let store = init_store(&data_dir, genesis).await;
                 let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain =
+                    init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
 
                 let signer = get_signer(&data_dir);
 

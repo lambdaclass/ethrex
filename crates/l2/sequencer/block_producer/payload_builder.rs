@@ -42,10 +42,14 @@ pub async fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
+    let mut context = PayloadBuildContext::new(
+        payload,
+        blockchain.evm_engine,
+        store,
+        blockchain.r#type.clone(),
+    )?;
 
     fill_transactions(blockchain.clone(), &mut context, store).await?;
-    blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
@@ -253,7 +257,7 @@ fn get_account_diffs_in_tx(
                 "REVM not supported for L2".to_string(),
             )));
         }
-        Evm::LEVM { db } => {
+        Evm::LEVM { db, .. } => {
             let transaction_backup = db.get_tx_backup().map_err(|e| {
                 BlockProducerError::FailedToGetDataFrom(format!("TransactionBackup: {e}"))
             })?;
