@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751470688027,
+  "lastUpdate": 1751479087979,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4086,6 +4086,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006479281553398058,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "94380962+sofiazcoaga@users.noreply.github.com",
+            "name": "sofiazcoaga",
+            "username": "sofiazcoaga"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aa317274b1dbcc14b88823839e7525cafa3524e8",
+          "message": "refactor(levm): consider all forks after Prague and not just Osaka (#3423)\n\n**Motivation**\n\nThis PR addresses issue #2773. \n\nFunctions `max_blobs_per_block()`,\n`get_blob_base_fee_update_fraction_value()` and\n`get_target_blob_gas_per_block_()` in `environment.rs` consider three\noptions: Prague fork, Osaka fork and other forks, where the first two\nhave the same course of action. The idea is to consider two points:\nprevious or posterior to Prague fork.\n\n**Description**\n\nChanges pattern matching to an `if` statement that checks whether we are\nprevious to Prague fork or past that.\n\nCloses #2773",
+          "timestamp": "2025-07-02T17:34:08Z",
+          "tree_id": "536fa64c7a8b0286fe9fe9b0cee6b64e667fd2db",
+          "url": "https://github.com/lambdaclass/ethrex/commit/aa317274b1dbcc14b88823839e7525cafa3524e8"
+        },
+        "date": 1751479087265,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006386277511961722,
             "unit": "Mgas/s"
           }
         ]
