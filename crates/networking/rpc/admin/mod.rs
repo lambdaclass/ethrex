@@ -1,9 +1,7 @@
-use bytes::buf::Chain;
 use ethrex_common::types::ChainConfig;
 use ethrex_storage::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 
 use crate::{rpc::NodeData, utils::RpcErr};
 mod peers;
@@ -41,7 +39,9 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
     let chain_config = storage
         .get_chain_config()
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let protocols = Protocols { eth: Some(chain_config) };
+    let protocols = Protocols {
+        eth: Some(chain_config),
+    };
 
     let node_info = NodeInfo {
         enode: enode_url,

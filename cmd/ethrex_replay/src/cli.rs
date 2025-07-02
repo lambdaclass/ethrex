@@ -79,12 +79,10 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                println!("foo");
                 let chain_config = match network {
                     Some(net) => get_chain_config(&net)?,
                     None => get_chain_config_rpc(&rpc_url).await?,
                 };
-                println!("{:?}", chain_config);
                 let block = or_latest(block, &rpc_url).await?;
                 let cache = get_blockdata(&rpc_url, chain_config, block).await?;
                 let body = async {
@@ -109,7 +107,7 @@ impl SubcommandExecute {
                 let chain_config = match network {
                     Some(net) => get_chain_config(&net)?,
                     None => get_chain_config_rpc(&rpc_url).await?,
-                };  
+                };
                 let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
                 let body = async {
                     let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();

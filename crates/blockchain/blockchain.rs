@@ -7,7 +7,6 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ethrex_rlp::encode::RLPEncode;
 use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
@@ -179,7 +178,7 @@ impl Blockchain {
 
             for account_update in &account_updates {
                 keys.push(account_update.address.as_bytes().to_vec());
-                for (storage, _) in &account_update.added_storage {
+                for storage in account_update.added_storage.keys() {
                     keys.push(storage.as_bytes().to_vec());
                 }
             }
@@ -268,7 +267,7 @@ impl Blockchain {
                     used_storage_tries,
                 )
                 .await?;
-            for (address, (witness, _storage_trie)) in storage_tries_after_update {
+            for (_address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
                 })?;
@@ -285,7 +284,7 @@ impl Blockchain {
         })?;
         let state_trie_witness = std::mem::take(&mut *state_trie_witness);
         used_trie_nodes.extend_from_slice(&Vec::from_iter(state_trie_witness.into_iter()));
-        
+
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty() {
             if let Some(root) = root_node {

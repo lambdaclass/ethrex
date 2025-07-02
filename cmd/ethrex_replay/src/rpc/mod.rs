@@ -1,5 +1,7 @@
 use ethrex_common::types::{
-    block_execution_witness::{ExecutionWitnessResult, ExecutionWitnessError}, Block, ChainConfig};
+    Block, ChainConfig,
+    block_execution_witness::{ExecutionWitnessError, ExecutionWitnessResult},
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::admin::NodeInfo;
 use eyre::Chain;
@@ -65,7 +67,9 @@ pub async fn get_node_info(rpc_url: &str) -> eyre::Result<NodeInfo> {
 
 pub async fn get_chain_config_rpc(rpc_url: &str) -> eyre::Result<ChainConfig> {
     let node = get_node_info(rpc_url).await?;
-    node.protocols.eth.ok_or(ExecutionWitnessError::MissingChainConfig.into())
+    node.protocols
+        .eth
+        .ok_or(ExecutionWitnessError::MissingChainConfig.into())
 }
 
 pub async fn get_witness(

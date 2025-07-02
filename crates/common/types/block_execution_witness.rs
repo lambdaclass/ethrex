@@ -89,7 +89,10 @@ pub enum ExecutionWitnessError {
     Unreachable(String),
 }
 
-pub fn rebuild_trie(initial_state: H256, state: Vec<Vec<u8>>) -> Result<Trie, ExecutionWitnessError>{
+pub fn rebuild_trie(
+    initial_state: H256,
+    state: Vec<Vec<u8>>,
+) -> Result<Trie, ExecutionWitnessError> {
     let mut initial_node = None;
     for node in state.iter() {
         let x = Node::decode_raw(node).map_err(|_| {
@@ -102,21 +105,18 @@ pub fn rebuild_trie(initial_state: H256, state: Vec<Vec<u8>>) -> Result<Trie, Ex
         }
     }
 
-    Trie::from_nodes(initial_node.as_ref(), &state).map_err(|e| {
-            ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
-        })
+    Trie::from_nodes(initial_node.as_ref(), &state)
+        .map_err(|e| ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}")))
 }
 
 // This funciton is an option because we expect it to fail sometimes, and we just want to filter it
-pub fn rebuild_storage_trie(address: &Vec<u8>, trie: &Trie, state: Vec<Vec<u8>>) -> Option<Trie>{
-        let account_state_rlp = trie.get(address)
-            .ok()??;
-        let account_state = AccountState::decode(&account_state_rlp)
-            .ok()?;
-        if account_state.storage_root == *EMPTY_TRIE_HASH {
-            return None;
-        }
-        rebuild_trie(account_state.storage_root, state.clone()).ok()
+pub fn rebuild_storage_trie(address: &Vec<u8>, trie: &Trie, state: Vec<Vec<u8>>) -> Option<Trie> {
+    let account_state_rlp = trie.get(address).ok()??;
+    let account_state = AccountState::decode(&account_state_rlp).ok()?;
+    if account_state.storage_root == *EMPTY_TRIE_HASH {
+        return None;
+    }
+    rebuild_trie(account_state.storage_root, state.clone()).ok()
 }
 
 impl ExecutionWitnessResult {
@@ -128,42 +128,48 @@ impl ExecutionWitnessResult {
             ));
         };
 
-        let state_root = self.headers.last().ok_or(
-            ExecutionWitnessError::NoBlockHeaders
-        )?.state_root;
+        let state_root = self
+            .headers
+            .last()
+            .ok_or(ExecutionWitnessError::NoBlockHeaders)?
+            .state_root;
         let state_trie = rebuild_trie(state_root, state.clone())?;
 
         for header in &self.headers {
             self.block_headers.insert(header.number, header.clone());
         }
-        
+
         // So keys can either be account addresses or storage slots
         // addresses are 20 u8 long
-        let addresses: Vec<&Vec<u8>> = self.keys.iter()
-            .filter(|k| k.len() == 20)
-            .collect();
+        let addresses: Vec<&Vec<u8>> = self.keys.iter().filter(|k| k.len() == 20).collect();
 
         // Storage slots are 32 u8 long
         // TODO consider removing this
-        let _: Vec<H256> = self.keys.iter()
+        let _: Vec<H256> = self
+            .keys
+            .iter()
             .filter(|k: &&Vec<u8>| k.len() == 32)
             .map(|k| H256::from_slice(k))
             .collect();
 
         let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
-            addresses.iter()
-                .filter_map(|addr| Some((
-                    Address::from_slice(addr),
-                    rebuild_storage_trie(addr, &state_trie, state.clone())?
-                )))
-                .collect::<Vec<(Address, Trie)>>()
+            addresses
+                .iter()
+                .filter_map(|addr| {
+                    Some((
+                        Address::from_slice(addr),
+                        rebuild_storage_trie(addr, &state_trie, state.clone())?,
+                    ))
+                })
+                .collect::<Vec<(Address, Trie)>>(),
         );
 
         self.state_trie = Some(Arc::new(Mutex::new(state_trie)));
         self.storage_tries = Some(Arc::new(Mutex::new(storage_tries)));
 
         for code in &self.codes {
-            self.code_map.insert(keccak_hash::keccak(code), Bytes::from(code.clone()));
+            self.code_map
+                .insert(keccak_hash::keccak(code), Bytes::from(code.clone()));
         }
 
         Ok(())
@@ -302,10 +308,7 @@ impl ExecutionWitnessResult {
     }
 }
 
-fn serialize_headers<S>(
-    headers: &Vec<BlockHeader>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+fn serialize_headers<S>(headers: &Vec<BlockHeader>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {

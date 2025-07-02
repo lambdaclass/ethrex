@@ -12,7 +12,6 @@ mod receipt;
 pub mod requests;
 pub mod transaction;
 pub mod tx_fields;
-pub mod rebuild_tries_new;
 
 pub use account::*;
 pub use account_update::*;
