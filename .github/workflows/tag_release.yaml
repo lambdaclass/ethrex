@@ -159,7 +159,6 @@ jobs:
           path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
   build-prover-risc0:
-    if: false # TODO risc0 is now fixed but installing the cuda toolkit errors out with "No space left on device"
     strategy:
       matrix:
         include:
@@ -191,6 +190,7 @@ jobs:
         id: cuda-toolkit
         with:
           cuda: '12.5.0'
+          linux-local-args: '["--toolkit"]'
 
       - name: Build prover
         run: |
