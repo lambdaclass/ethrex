@@ -33,6 +33,11 @@ jobs:
         with:
           cache-on-failure: "true"
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
       - name: RISC-V SP1 toolchain install
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
@@ -87,7 +92,6 @@ jobs:
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
