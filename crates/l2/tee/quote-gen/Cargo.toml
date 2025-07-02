@@ -40,4 +40,4 @@ vergen-git2 = { version = "1.0.7" }
 
 [features]
 default = ["l2"]
-l2 = ["zkvm_interface/l2", "ethrex-blockchain/l2", "ethrex-l2/l2"]
+l2 = ["zkvm_interface/l2", "ethrex-l2/l2"]
