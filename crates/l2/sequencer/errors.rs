@@ -239,8 +239,6 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
-    #[error("Deposit error: {0}")]
-    DepositError(#[from] DepositError),
     #[error("Privileged Transaction error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
     // TODO: Avoid propagating GenServerErrors outside GenServer modules

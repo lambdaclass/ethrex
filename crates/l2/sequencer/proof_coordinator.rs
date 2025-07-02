@@ -272,7 +272,6 @@ impl GenServer for ProofCoordinator {
         _handle: &GenServerHandle<Self>,
         state: Self::State,
     ) -> CastResponse<Self> {
-        info!("Receiving message");
         match message {
             ProofCordInMessage::Listen { listener } => {
                 handle_listens(&state, listener).await;

@@ -57,8 +57,6 @@ pub enum BlockFetcherError {
     #[error("Failed to produce the blob bundle")]
     BlobBundleError,
     #[error("Failed to compute deposit logs hash: {0}")]
-    DepositError(#[from] ethrex_l2_common::deposits::DepositError),
-    #[error("Failed to compute privileged transactions hash: {0}")]
     PrivilegedTransactionError(
         #[from] ethrex_l2_common::privileged_transactions::PrivilegedTransactionError,
     ),
