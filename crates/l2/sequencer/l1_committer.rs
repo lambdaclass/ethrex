@@ -21,9 +21,9 @@ use ethrex_l2_common::{
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType};
+use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
+use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::{
     BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides,
@@ -246,9 +246,9 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
     match send_commitment(state, &batch).await {
         Ok(commit_tx_hash) => {
             metrics!(
-            let _ = METRICS_L2
+            let _ = METRICS
                 .set_block_type_and_block_number(
-                    MetricsL2BlockType::LastCommittedBlock,
+                    MetricsBlockType::LastCommittedBlock,
                     batch.last_block,
                 )
                 .inspect_err(|e| {
@@ -443,7 +443,7 @@ async fn prepare_batch_from_block(
         }
         #[allow(clippy::as_conversions)]
         let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
-        METRICS_L2.set_blob_usage_percentage(blob_usage_percentage);
+        METRICS.set_blob_usage_percentage(blob_usage_percentage);
     );
 
     let deposit_logs_hash = compute_deposit_logs_hash(deposit_logs_hashes)?;
