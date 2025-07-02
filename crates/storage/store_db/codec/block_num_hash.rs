@@ -1,4 +1,11 @@
 use ethrex_common::types::{BlockHash, BlockNumber};
+#[cfg(feature = "redb")]
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
+    error::RLPDecodeError,
+    structs::{Decoder, Encoder},
+};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
@@ -32,5 +39,25 @@ impl Decodable for BlockNumHash {
         let block_number = BlockNumber::from_be_bytes(b[0..8].try_into()?);
         let block_hash = ethereum_types::H256::from_slice(&b[8..40]);
         Ok((block_number, block_hash).into())
+    }
+}
+
+#[cfg(feature = "redb")]
+impl RLPEncode for BlockNumHash {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.0)
+            .encode_field(&self.1)
+            .finish();
+    }
+}
+
+#[cfg(feature = "redb")]
+impl RLPDecode for BlockNumHash {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(BlockNumHash, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (block_number, decoder) = decoder.decode_field("block_number")?;
+        let (block_hash, decoder) = decoder.decode_field("block_hash")?;
+        Ok((BlockNumHash(block_number, block_hash), decoder.finish()?))
     }
 }

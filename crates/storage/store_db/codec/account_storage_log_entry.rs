@@ -1,5 +1,12 @@
 use ethereum_types::{H256, U256};
 use ethrex_common::H160;
+#[cfg(feature = "redb")]
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
+    error::RLPDecodeError,
+    structs::{Decoder, Encoder},
+};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
@@ -48,5 +55,35 @@ impl Decodable for AccountStorageLogEntry {
             old_value,
             new_value,
         })
+    }
+}
+
+#[cfg(feature = "redb")]
+impl RLPEncode for AccountStorageLogEntry {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.address)
+            .encode_field(&self.slot)
+            .encode_field(&self.old_value)
+            .encode_field(&self.new_value)
+            .finish();
+    }
+}
+
+#[cfg(feature = "redb")]
+impl RLPDecode for AccountStorageLogEntry {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(AccountStorageLogEntry, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (address, decoder) = decoder.decode_field("address")?;
+        let (slot, decoder) = decoder.decode_field("slot")?;
+        let (old_value, decoder) = decoder.decode_field("old_value")?;
+        let (new_value, decoder) = decoder.decode_field("new_value")?;
+        let log_entry = AccountStorageLogEntry {
+            address,
+            slot,
+            old_value,
+            new_value,
+        };
+        Ok((log_entry, decoder.finish()?))
     }
 }

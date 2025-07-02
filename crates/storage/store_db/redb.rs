@@ -2,12 +2,17 @@ use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountAddressRLP, AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountInfoRLP,
-    AccountStateRLP, AccountStorageKeyRLP, AccountStorageValueRLP, BlockBodyRLP, BlockHashRLP,
-    BlockHeaderRLP, BlockNumberRLP, BlockRLP, PayloadBundleRLP, ReceiptRLP, Rlp,
-    TransactionHashRLP, TriePathsRLP, TupleRLP,
+    AccountAddressRLP, AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountInfoLogEntryRLP,
+    AccountInfoRLP, AccountStateRLP, AccountStorageKeyRLP, AccountStorageLogEntryRLP,
+    AccountStorageValueRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockNumHashRLP,
+    BlockNumberRLP, BlockRLP, PayloadBundleRLP, ReceiptRLP, Rlp, TransactionHashRLP, TriePathsRLP,
+    TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
+use crate::store_db::codec::{
+    account_info_log_entry::AccountInfoLogEntry, account_storage_log_entry::AccountStorageLogEntry,
+    block_num_hash::BlockNumHash,
+};
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use ethrex_common::{
     Address, H256, U256,
@@ -20,7 +25,11 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
-use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
+use redb::{
+    AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable,
+    TableDefinition, TypeName, Value,
+};
+use tracing::{info, warn};
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -71,6 +80,14 @@ const ACCOUNT_STORAGE_TABLE: TableDefinition<
     (AccountAddressRLP, AccountStorageKeyRLP),
     AccountStorageValueRLP,
 > = TableDefinition::new("AccountStorage");
+const ACCOUNTS_STATE_WRITE_LOG_TABLE: MultimapTableDefinition<
+    (BlockNumHashRLP, BlockNumHashRLP),
+    AccountInfoLogEntryRLP,
+> = MultimapTableDefinition::new("AccountsStateWriteLog");
+const ACCOUNTS_STORAGE_WRITE_LOG_TABLE: MultimapTableDefinition<
+    (BlockNumHashRLP, BlockNumHashRLP),
+    AccountStorageLogEntryRLP,
+> = MultimapTableDefinition::new("AccountsStorageWriteLog");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -310,7 +327,96 @@ impl RedBStore {
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
-        todo!();
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+
+        let old_snapshot_meta = self
+            .read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())?
+            .map(|a| a.value().to())?;
+
+        let mut block_num = old_snapshot_meta.0;
+        let mut snapshot_hash = old_snapshot_meta.1;
+        let mut key = old_snapshot_meta;
+
+        let canonical_table = write_txn.open_table(CANONICAL_BLOCK_HASHES_TABLE)?;
+        let mut canonical_hash = canonical_table
+            .get(block_num)?
+            .map(|v| v.value().to())
+            .transpose()?
+            .unwrap_or_default();
+
+        let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+        let mut account_storage_table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+        let state_logs_table = write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+        let storage_logs_table = write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
+
+        while canonical_hash != snapshot_hash {
+            warn!("UNDO: searching for {key:?}");
+
+            // Procesar logs de estado de cuentas
+            let key_tuple = (key.into(), key.into());
+            let mut state_log_iter = state_logs_table.get(key_tuple)?;
+            while let Some(Ok(state_log_result)) = state_log_iter.next() {
+                let log_entry = state_log_result.value().to()?;
+                tracing::warn!("UNDO: found state log for {key:?}");
+
+                let addr_key = log_entry.address.into();
+                let old_info = log_entry.previous_info;
+
+                if old_info != AccountInfo::default() {
+                    account_info_table.insert(addr_key, old_info.into())?;
+                } else {
+                    account_info_table.remove(addr_key)?;
+                }
+
+                // Actualizar para el siguiente bloque según los logs encontrados
+                BlockNumHash(block_num, snapshot_hash) = key;
+            }
+
+            // Procesar logs de storage
+            let mut storage_log_iter = storage_logs_table.get(key_tuple)?;
+            while let Some(Ok(storage_log_result)) = storage_log_iter.next() {
+                let log_entry = storage_log_result.value().to()?;
+                tracing::warn!(
+                    "UNDO: encontrado log de storage para {:?}: {:?}",
+                    key,
+                    log_entry
+                );
+
+                let old_value = log_entry.old_value;
+                let slot = log_entry.slot;
+                let addr = log_entry.address;
+                let storage_key = (addr.into(), slot.into());
+
+                if !old_value.is_zero() {
+                    account_storage_table.insert(storage_key, old_value.into())?;
+                } else {
+                    account_storage_table.remove(storage_key)?;
+                }
+
+                // Actualizar para el siguiente bloque según los logs encontrados
+                BlockNumHash(block_num, snapshot_hash) = key;
+            }
+
+            if key == BlockNumHash(block_num, snapshot_hash) {
+                tracing::info!("logs agotados: de vuelta a la cadena canónica");
+                break;
+            }
+
+            // Actualizar para el siguiente bloque
+            canonical_hash = canonical_table
+                .get(block_num)?
+                .map(|v| v.value().to())
+                .transpose()?
+                .unwrap_or_default();
+            key = BlockNumHash(block_num, snapshot_hash);
+        }
+
+        // Actualizar el metadata con el bloque canónico
+        let mut metadata_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+        metadata_table.insert((), key.into())?;
+
+        write_txn.commit()?;
+        Ok(())
     }
 
     async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
@@ -1576,6 +1682,8 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(ACCOUNT_INFO_TABLE)?;
     table_creation_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
     table_creation_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+    table_creation_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+    table_creation_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)

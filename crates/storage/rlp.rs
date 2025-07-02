@@ -1,6 +1,10 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
+use crate::store_db::codec::{
+    account_info_log_entry::AccountInfoLogEntry, account_storage_log_entry::AccountStorageLogEntry,
+    block_num_hash::BlockNumHash,
+};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -28,6 +32,11 @@ pub type AccountAddressRLP = Rlp<Address>;
 pub type AccountInfoRLP = Rlp<AccountInfo>;
 pub type AccountStorageKeyRLP = Rlp<H256>;
 pub type AccountStorageValueRLP = Rlp<U256>;
+
+// Additional RLP types for logs
+pub type AccountInfoLogEntryRLP = Rlp<AccountInfoLogEntry>;
+pub type AccountStorageLogEntryRLP = Rlp<AccountStorageLogEntry>;
+pub type BlockNumHashRLP = Rlp<BlockNumHash>;
 
 // Block types
 pub type BlockNumberRLP = Rlp<BlockNumber>;
