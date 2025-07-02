@@ -360,21 +360,25 @@ pub async fn import_blocks(
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
 
+    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+        info!("Importing blocks from directory: {path}");
         let mut entries: Vec<_> = read_dir(path)
             .expect("Failed to read blocks directory")
             .map(|res| res.expect("Failed to open file in directory").path())
             .collect();
 
-        entries.sort(); // Sort entries so that we execute 1.rlp, 2.rlp, 3... in the correct order
+        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
+        entries.sort();
 
-        let mut chains = vec![];
-        for entry in entries {
-            let value = utils::read_chain_file(entry.as_path().to_str().unwrap());
-            chains.push(value);
-        }
-
-        chains
+        entries
+            .iter()
+            .map(|entry| {
+                let path_str = entry.to_str().expect("Couldn't convert path to string");
+                info!("Importing blocks from chain file: {path_str}");
+                utils::read_chain_file(path_str)
+            })
+            .collect()
     } else {
         info!("Importing blocks from chain file: {path}");
         vec![utils::read_chain_file(path)]
@@ -382,6 +386,7 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
+        // Execute block by block
         for block in &blocks {
             let hash = block.hash();
             let number = block.header.number;
@@ -402,13 +407,15 @@ pub async fn import_blocks(
                 .add_block(block)
                 .await
                 .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
+        }
 
-            // Set executed block as canonical
-            store
-                .set_canonical_block(number, hash)
-                .await
-                .inspect_err(|error| warn!("Failed to apply fork choice: {}", error))?;
+        _ = store
+            .mark_chain_as_canonical(&blocks)
+            .await
+            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 
+        // Make head canonical and label all special blocks correctly.
+        if let Some(block) = blocks.last() {
             store
                 .update_finalized_block_number(block.header.number)
                 .await?;
