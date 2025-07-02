@@ -4,7 +4,6 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::admin::NodeInfo;
-use eyre::Chain;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 

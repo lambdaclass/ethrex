@@ -392,8 +392,7 @@ async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &st
             use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
             if test_should_fail {
                 ExecutionWitnessResult {
-                    state_trie_nodes: Some(Vec::new()),
-                    storage_trie_nodes: Some(HashMap::new()),
+                    state: Some(Vec::new()),
                     ..Default::default()
                 }
             } else {
