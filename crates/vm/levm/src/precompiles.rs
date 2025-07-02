@@ -5,10 +5,10 @@ use bls12_381::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256, serde_utils::bool, types::Fork, utils::u256_from_big_endian,
+    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
+    utils::u256_from_big_endian,
 };
 use keccak_hash::keccak256;
-use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
@@ -972,30 +972,6 @@ fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
     versioned_hash.into()
 }
 
-/// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
-fn verify_kzg_proof(
-    commitment_bytes: &[u8; 48],
-    z: &[u8; 32],
-    y: &[u8; 32],
-    proof_bytes: &[u8; 48],
-) -> Result<bool, VMError> {
-    let commitment_bytes = Bytes48(*commitment_bytes);
-    let z_bytes = Bytes32(*z);
-    let y_bytes = Bytes32(*y);
-    let proof_bytes = Bytes48(*proof_bytes);
-    let settings = KzgSettings::load_trusted_setup_file()
-        .map_err(|err| PrecompileError::KzgError(err.to_string()))?;
-
-    kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
-        &commitment_bytes,
-        &z_bytes,
-        &y_bytes,
-        &proof_bytes,
-        &settings,
-    )
-    .map_err(|err| PrecompileError::KzgError(err.to_string()).into())
-}
-
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
     // Big endian FIELD_ELEMENTS_PER_BLOB bytes
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1054,7 +1030,7 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     }
 
     // This verifies the proof from a point (x, y) and a commitment
-    if !verify_kzg_proof(&commitment, &x, &y, &proof).unwrap_or(false) {
+    if !verify_kzg_proof(commitment, x, y, proof).unwrap_or(false) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 

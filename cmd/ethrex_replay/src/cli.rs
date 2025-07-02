@@ -87,12 +87,12 @@ impl SubcommandExecute {
                 let chain_config = get_chain_config(&network)?;
                 let block = or_latest(block, &rpc_url).await?;
                 let cache = get_blockdata(&rpc_url, chain_config, block).await?;
-                let body = async {
+                let future = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
                     exec(cache).await?;
-                    Ok((gas_used, ()))
+                    Ok(gas_used)
                 };
-                run_and_measure(bench, body).await?;
+                run_and_measure(future, bench).await?;
             }
             SubcommandExecute::BlockRange {
                 start,
@@ -108,12 +108,12 @@ impl SubcommandExecute {
                 }
                 let chain_config = get_chain_config(&network)?;
                 let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
-                let body = async {
-                    let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
+                let future = async {
+                    let gas_used = cache.blocks[0].header.gas_used as f64;
                     exec(cache).await?;
-                    Ok((gas_used, ()))
+                    Ok(gas_used)
                 };
-                run_and_measure(bench, body).await?;
+                run_and_measure(future, bench).await?;
             }
             SubcommandExecute::Transaction {
                 tx,
@@ -187,13 +187,12 @@ impl SubcommandProve {
                 let chain_config = get_chain_config(&network)?;
                 let block = or_latest(block, &rpc_url).await?;
                 let cache = get_blockdata(&rpc_url, chain_config, block).await?;
-                let body = async {
+                let future = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
-                    let res = prove(cache).await?;
-                    Ok((gas_used, res))
+                    prove(cache).await?;
+                    Ok(gas_used)
                 };
-                let res = run_and_measure(bench, body).await?;
-                println!("{res}");
+                run_and_measure(future, bench).await?;
             }
             SubcommandProve::BlockRange {
                 start,
@@ -209,13 +208,12 @@ impl SubcommandProve {
                 }
                 let chain_config = get_chain_config(&network)?;
                 let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
-                let body = async {
-                    let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
-                    let res = prove(cache).await?;
-                    Ok((gas_used, res))
+                let future = async {
+                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    prove(cache).await?;
+                    Ok(gas_used)
                 };
-                let res = run_and_measure(bench, body).await?;
-                println!("{res}");
+                run_and_measure(future, bench).await?;
             }
         }
         Ok(())
