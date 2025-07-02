@@ -54,6 +54,8 @@ pub enum EthClientError {
     FailedToSignPayload(String),
     #[error("Failed to get node status: {0}")]
     GetNodeStatusError(#[from] GetNodeStatusError),
+    #[error("eth_getBatchByNumber request error: {0}")]
+    GetBatchByNumberError(#[from] GetBatchByNumberError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -246,6 +248,18 @@ pub enum GetMaxPriorityFeeError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetNodeStatusError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBatchByNumberError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]

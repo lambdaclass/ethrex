@@ -1,6 +1,5 @@
 #![expect(clippy::expect_used)]
 #![expect(clippy::panic)]
-#![expect(clippy::indexing_slicing)]
 
 use std::cmp::min;
 use std::fmt::Display;
@@ -11,7 +10,7 @@ use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_rpc::clients::Overrides;
-use ethrex_rpc::clients::eth::BlockByNumber;
+use ethrex_rpc::clients::eth::{BlockByNumber, RpcBatch};
 use ethrex_rpc::types::block::{BlockBodyWrapper, RpcBlock};
 use ethrex_rpc::types::receipt::RpcLog;
 use ratatui::widgets::TableState;
@@ -229,29 +228,27 @@ impl NodeStatusTable {
     }
 }
 
-pub struct CommittedBatchesTable {
+pub struct BatchesTable {
     pub state: TableState,
-    // batch number | commit tx hash
-    pub items: Vec<(String, String)>,
-    last_l1_block_fetched: U256,
+    // batch number | # blocks | # messages | commit tx hash | verify tx hash
+    #[expect(clippy::type_complexity)]
+    pub items: Vec<(u64, u64, usize, Option<H256>, Option<H256>)>,
+    last_l1_block_fetched: u64,
     on_chain_proposer_address: Address,
 }
 
-impl CommittedBatchesTable {
+impl BatchesTable {
     pub async fn new(
-        common_bridge_address: Address,
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
+        rollup_client: &EthClient,
     ) -> Self {
-        let mut last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(common_bridge_address)
-            .await
-            .expect("Failed to get last fetched L1 block")
-            .into();
+        let mut last_l1_block_fetched = 0;
         let items = Self::refresh_items(
             &mut last_l1_block_fetched,
             on_chain_proposer_address,
             eth_client,
+            rollup_client,
         )
         .await;
         Self {
@@ -262,11 +259,12 @@ impl CommittedBatchesTable {
         }
     }
 
-    async fn on_tick(&mut self, eth_client: &EthClient) {
+    async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
         let mut new_latest_batches = Self::refresh_items(
             &mut self.last_l1_block_fetched,
             self.on_chain_proposer_address,
             eth_client,
+            rollup_client,
         )
         .await;
 
@@ -283,59 +281,73 @@ impl CommittedBatchesTable {
     }
 
     async fn refresh_items(
-        last_l1_block_fetched: &mut U256,
+        last_l2_batch_fetched: &mut u64,
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
-    ) -> Vec<(String, String)> {
-        let logs =
-            Self::get_logs(last_l1_block_fetched, on_chain_proposer_address, eth_client).await;
-
-        let processed_logs = Self::process_logs(&logs, eth_client).await;
-
-        processed_logs
-            .iter()
-            .map(|(_log, batch_number, tx_hash)| {
-                (format!("{batch_number}"), format!("{tx_hash:#x}"))
-            })
-            .collect()
-    }
-
-    async fn get_logs(
-        last_l1_block_fetched: &mut U256,
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-    ) -> Vec<RpcLog> {
-        monitor::utils::get_logs(
-            last_l1_block_fetched,
+        rollup_client: &EthClient,
+    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+        let new_batches = Self::get_batches(
+            last_l2_batch_fetched,
             on_chain_proposer_address,
-            "BatchCommitted(bytes32)",
             eth_client,
+            rollup_client,
         )
-        .await
+        .await;
+
+        Self::process_batches(new_batches).await
     }
 
-    async fn process_logs(logs: &[RpcLog], eth_client: &EthClient) -> Vec<(RpcLog, U256, H256)> {
-        let mut log_txs = Vec::new();
+    async fn get_batches(
+        last_l2_batch_known: &mut u64,
+        on_chain_proposer_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Vec<RpcBatch> {
+        let last_l2_batch_number = eth_client
+            .get_last_committed_batch(on_chain_proposer_address)
+            .await
+            .expect("Failed to get latest L2 batch");
 
-        for log in logs {
-            if let Some(tx) = eth_client
-                .get_transaction_by_hash(log.transaction_hash)
+        let mut new_batches = Vec::new();
+        while *last_l2_batch_known < last_l2_batch_number {
+            let new_last_l2_fetched_batch = min(*last_l2_batch_known + 1, last_l2_batch_number);
+
+            let new_batch = rollup_client
+                .get_batch_by_number(new_last_l2_fetched_batch)
                 .await
-                .unwrap_or_else(|_| {
-                    panic!("Failed to get transaction by hash {}", log.transaction_hash)
-                })
-            {
-                let calldata_derived_batch_number = U256::from_big_endian(&tx.data[4..36]);
+                .unwrap_or_else(|err| {
+                    panic!("Failed to get batch by number ({new_last_l2_fetched_batch}): {err}")
+                });
 
-                log_txs.push((log.clone(), calldata_derived_batch_number, tx.hash));
-            }
+            // Update the last L1 block fetched.
+            *last_l2_batch_known = new_last_l2_fetched_batch;
+
+            new_batches.push(new_batch);
         }
 
-        log_txs.sort_by(|(_, batch_number_a, _), (_, batch_number_b, _)| {
-            batch_number_b.cmp(batch_number_a)
-        });
+        new_batches
+    }
 
-        log_txs
+    async fn process_batches(
+        new_batches: Vec<RpcBatch>,
+    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+        let mut new_blocks_processed = new_batches
+            .iter()
+            .map(|batch| {
+                (
+                    batch.batch.number,
+                    batch.batch.last_block - batch.batch.first_block + 1,
+                    batch.batch.message_hashes.len(),
+                    batch.batch.commit_tx,
+                    batch.batch.verify_tx,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        new_blocks_processed
+            .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
+
+        new_blocks_processed
     }
 }
 
@@ -658,7 +670,7 @@ pub struct EthrexMonitor<'a> {
     pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
     pub mempool: MempoolTable,
-    pub committed_batches: CommittedBatchesTable,
+    pub batches_table: BatchesTable,
     pub blocks_table: BlocksTable,
     pub l1_to_l2_messages: L1ToL2MessagesTable,
 
@@ -687,10 +699,10 @@ impl<'a> EthrexMonitor<'a> {
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
             node_status: NodeStatusTable::new(&rollup_client).await,
             mempool: MempoolTable::new(&rollup_client).await,
-            committed_batches: CommittedBatchesTable::new(
-                cfg.l1_watcher.bridge_address,
+            batches_table: BatchesTable::new(
                 cfg.l1_committer.on_chain_proposer_address,
                 &eth_client,
+                &rollup_client,
             )
             .await,
             blocks_table: BlocksTable::new(&rollup_client).await,
@@ -763,7 +775,9 @@ impl<'a> EthrexMonitor<'a> {
             .on_tick(&self.eth_client, &self.rollup_client)
             .await;
         self.mempool.on_tick(&self.rollup_client).await;
-        self.committed_batches.on_tick(&self.eth_client).await;
+        self.batches_table
+            .on_tick(&self.eth_client, &self.rollup_client)
+            .await;
         self.blocks_table.on_tick(&self.rollup_client).await;
         self.l1_to_l2_messages.on_tick(&self.eth_client).await;
     }

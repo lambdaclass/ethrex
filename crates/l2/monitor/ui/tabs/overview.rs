@@ -18,13 +18,12 @@ pub const ETHREX_LOGO: &str = r#"
 
 pub const HASH_LENGTH_IN_DIGITS: u16 = 66; // 64 hex characters + 2 for "0x" prefix
 pub const ADDRESS_LENGTH_IN_DIGITS: u16 = 42; // 40 hex characters + 2 for "0x" prefix
-pub const BLOCK_NUMBER_LENGTH_IN_DIGITS: u16 = 9; // 1e8
-pub const BATCH_NUMBER_LENGTH_IN_DIGITS: u16 = 9; // 1e8
+pub const NUMBER_LENGTH_IN_DIGITS: u16 = 9; // 1e8
 pub const TX_NUMBER_LENGTH_IN_DIGITS: u16 = 4;
 pub const GAS_USED_LENGTH_IN_DIGITS: u16 = 8; // 1e7
 pub const BLOCK_SIZE_LENGTH_IN_DIGITS: u16 = 6; // 1e6
 
-pub const LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS: u16 = BLOCK_NUMBER_LENGTH_IN_DIGITS
+pub const LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS: u16 = NUMBER_LENGTH_IN_DIGITS
     + TX_NUMBER_LENGTH_IN_DIGITS
     + HASH_LENGTH_IN_DIGITS
     + ADDRESS_LENGTH_IN_DIGITS
@@ -35,6 +34,7 @@ pub const LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS: u16 = BLOCK_NUMBER_LENGTH_
 pub fn draw(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(10),
+        Constraint::Fill(1),
         Constraint::Fill(1),
         Constraint::Fill(1),
         Constraint::Fill(1),
@@ -55,10 +55,11 @@ pub fn draw(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
             draw_global_chain_status(frame, app, chunks[1]);
         }
     }
-    draw_latest_batches_and_blocks(frame, app, chunks[1]);
-    draw_mempool(frame, app, chunks[2]);
-    draw_l1_to_l2_messages(frame, app, chunks[3]);
-    draw_text(frame, chunks[4]);
+    draw_batches(frame, app, chunks[1]);
+    draw_blocks(frame, app, chunks[2]);
+    draw_mempool(frame, app, chunks[3]);
+    draw_l1_to_l2_messages(frame, app, chunks[4]);
+    draw_text(frame, chunks[5]);
 }
 
 fn draw_ethrex_logo(frame: &mut Frame, area: Rect) {
@@ -112,82 +113,94 @@ fn draw_global_chain_status(frame: &mut Frame, app: &mut EthrexMonitor, area: Re
     );
 }
 
-fn draw_latest_batches_and_blocks(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
+fn draw_batches(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
     let constraints = vec![
-        Constraint::Fill(1), // The committed batches table will continue growing, there's no reason to limit its length now.
-        Constraint::Length(LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS),
+        Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+        Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+        Constraint::Length(17),
+        Constraint::Length(HASH_LENGTH_IN_DIGITS),
+        Constraint::Length(HASH_LENGTH_IN_DIGITS),
     ];
-    let chunks = Layout::horizontal(constraints).split(area);
-    {
-        let constraints = vec![
-            Constraint::Length(BATCH_NUMBER_LENGTH_IN_DIGITS),
-            Constraint::Fill(1),
-        ];
-        let rows = app
-            .committed_batches
-            .items
-            .iter()
-            .map(|(number, commit_tx_hash)| {
-                Row::new(vec![
-                    Span::styled(number, Style::default()),
-                    Span::styled(commit_tx_hash, Style::default()),
-                ])
-            });
-        let committed_batches_table = Table::new(rows, constraints)
-            .header(Row::new(vec!["Number", "Commit Tx Hash"]).style(Style::default()))
-            .block(
-                Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
-                    .title(Span::styled(
-                        "Committed Batches",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-            );
-        frame.render_stateful_widget(
-            committed_batches_table,
-            chunks[0],
-            &mut app.committed_batches.state,
+    let rows = app.batches_table.items.iter().map(
+        |(number, n_blocks, n_messages, commit_tx_hash, verify_tx_hash)| {
+            Row::new(vec![
+                Span::styled(number.to_string(), Style::default()),
+                Span::styled(n_blocks.to_string(), Style::default()),
+                Span::styled(n_messages.to_string(), Style::default()),
+                Span::styled(
+                    commit_tx_hash
+                        .map_or_else(|| "Uncommitted".to_string(), |hash| format!("{hash:#x}")),
+                    Style::default(),
+                ),
+                Span::styled(
+                    verify_tx_hash
+                        .map_or_else(|| "Unverified".to_string(), |hash| format!("{hash:#x}")),
+                    Style::default(),
+                ),
+            ])
+        },
+    );
+    let committed_batches_table = Table::new(rows, constraints)
+        .header(
+            Row::new(vec![
+                "Number",
+                "# Blocks",
+                "# L2 to L1 Messages",
+                "Commit Tx Hash",
+                "Verify Tx Hash",
+            ])
+            .style(Style::default()),
+        )
+        .block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(Span::styled(
+                    "L2 Batches",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
         );
+    frame.render_stateful_widget(committed_batches_table, area, &mut app.batches_table.state);
+}
 
-        let constraints = vec![
-            Constraint::Length(BLOCK_NUMBER_LENGTH_IN_DIGITS),
-            Constraint::Length(TX_NUMBER_LENGTH_IN_DIGITS),
-            Constraint::Length(HASH_LENGTH_IN_DIGITS),
-            Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
-            Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
-            Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
-            Constraint::Length(BLOCK_SIZE_LENGTH_IN_DIGITS),
-        ];
-        let rows = app.blocks_table.items.iter().map(
-            |(number, n_txs, hash, coinbase, gas, blob_bas, size)| {
-                Row::new(vec![
-                    Span::styled(number, Style::default()),
-                    Span::styled(n_txs.to_string(), Style::default()),
-                    Span::styled(hash, Style::default()),
-                    Span::styled(coinbase, Style::default()),
-                    Span::styled(gas.to_string(), Style::default()),
-                    Span::styled(blob_bas.to_string(), Style::default()),
-                    Span::styled(size.to_string(), Style::default()),
-                ])
-            },
+fn draw_blocks(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
+    let constraints = vec![
+        Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+        Constraint::Length(TX_NUMBER_LENGTH_IN_DIGITS),
+        Constraint::Length(HASH_LENGTH_IN_DIGITS),
+        Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+        Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
+        Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
+        Constraint::Length(BLOCK_SIZE_LENGTH_IN_DIGITS),
+    ];
+    let rows = app.blocks_table.items.iter().map(
+        |(number, n_txs, hash, coinbase, gas, blob_bas, size)| {
+            Row::new(vec![
+                Span::styled(number, Style::default()),
+                Span::styled(n_txs.to_string(), Style::default()),
+                Span::styled(hash, Style::default()),
+                Span::styled(coinbase, Style::default()),
+                Span::styled(gas.to_string(), Style::default()),
+                Span::styled(blob_bas.to_string(), Style::default()),
+                Span::styled(size.to_string(), Style::default()),
+            ])
+        },
+    );
+    let latest_blocks_table = Table::new(rows, constraints)
+        .header(
+            Row::new(vec![
+                "Number", "#Txs", "Hash", "Coinbase", "Gas", "Blob Gas", "Size",
+            ])
+            .style(Style::default()),
+        )
+        .block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(Span::styled(
+                    "L2 Blocks",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
         );
-        let latest_blocks_table = Table::new(rows, constraints)
-            .header(
-                Row::new(vec![
-                    "Number", "#Txs", "Hash", "Coinbase", "Gas", "Blob Gas", "Size",
-                ])
-                .style(Style::default()),
-            )
-            .block(
-                Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
-                    .title(Span::styled(
-                        "Latest Blocks",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-            );
-        frame.render_stateful_widget(latest_blocks_table, chunks[1], &mut app.blocks_table.state);
-    }
+    frame.render_stateful_widget(latest_blocks_table, area, &mut app.blocks_table.state);
 }
 
 fn draw_mempool(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
