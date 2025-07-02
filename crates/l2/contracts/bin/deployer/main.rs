@@ -148,8 +148,7 @@ async fn deploy_contracts(
     let on_chain_proposer_deployment = deploy_with_proxy(
         opts.private_key,
         eth_client,
-        &opts.contracts_path.join("solc_out"),
-        "OnChainProposer.bin",
+        &opts.contracts_path.join("solc_out/OnChainProposer.bin"),
         &salt,
     )
     .await?;
@@ -167,8 +166,7 @@ async fn deploy_contracts(
     let bridge_deployment = deploy_with_proxy(
         opts.private_key,
         eth_client,
-        &opts.contracts_path.join("solc_out"),
-        "CommonBridge.bin",
+        &opts.contracts_path.join("solc_out/CommonBridge.bin"),
         &salt,
     )
     .await?;
@@ -187,8 +185,7 @@ async fn deploy_contracts(
         let sequencer_registry_deployment = deploy_with_proxy(
             opts.private_key,
             eth_client,
-            &opts.contracts_path.join("solc_out"),
-            "SequencerRegistry.bin",
+            &opts.contracts_path.join("solc_out/SequencerRegistry.bin"),
             &salt,
         )
         .await?;

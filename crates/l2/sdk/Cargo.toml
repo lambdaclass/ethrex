@@ -29,6 +29,9 @@ lazy_static.workspace = true
 name = "ethrex_l2_sdk"
 path = "src/sdk.rs"
 
+[build-dependencies]
+ethrex-sdk-contract-utils = { path = "contract_utils" }
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

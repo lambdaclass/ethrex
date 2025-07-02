@@ -42,6 +42,11 @@ pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
 
+const ERC1967_PROXY_BYTECODE: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/contracts/solc_out/ERC1967Proxy.bin"
+));
+
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
     #[error("Failed to parse address from hex")]
@@ -387,15 +392,11 @@ pub async fn deploy_contract(
 async fn deploy_proxy(
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-    contract_binaries: &Path,
     implementation_address: Address,
     salt: &[u8],
 ) -> Result<(H256, Address), DeployError> {
-    let mut init_code = hex::decode(
-        std::fs::read_to_string(contract_binaries.join("ERC1967Proxy.bin"))
-            .map_err(DeployError::FailedToReadInitCode)?,
-    )
-    .map_err(DeployError::FailedToDecodeBytecode)?;
+    let mut init_code =
+        hex::decode(ERC1967_PROXY_BYTECODE).map_err(DeployError::FailedToDecodeBytecode)?;
 
     init_code.extend(H256::from(implementation_address).0);
     init_code.extend(H256::from_low_u64_be(0x40).0);
@@ -413,26 +414,19 @@ async fn deploy_proxy(
     Ok((deploy_tx_hash, proxy_address))
 }
 
+/// Deploys a contract behind an OpenZeppelin's `ERC1967Proxy`.
 pub async fn deploy_with_proxy(
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-    contract_binaries: &Path,
-    contract_name: &str,
+    contract_path: &Path,
     salt: &[u8],
 ) -> Result<ProxyDeployment, DeployError> {
-    let (implementation_tx_hash, implementation_address) = deploy_contract(
-        &[],
-        &contract_binaries.join(contract_name),
-        &deployer_private_key,
-        salt,
-        eth_client,
-    )
-    .await?;
+    let (implementation_tx_hash, implementation_address) =
+        deploy_contract(&[], &contract_path, &deployer_private_key, salt, eth_client).await?;
 
     let (proxy_tx_hash, proxy_address) = deploy_proxy(
         deployer_private_key,
         eth_client,
-        contract_binaries,
         implementation_address,
         salt,
     )
