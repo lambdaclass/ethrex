@@ -7,6 +7,8 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
@@ -27,7 +29,7 @@ contract CommonBridge is
     /// of the L2 transaction that requested the withdrawal.
     /// @dev The key is the hash of the L2 transaction that requested the
     /// withdrawal.
-    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    /// @dev Deprecated.
     mapping(bytes32 => bool) public claimedWithdrawals;
 
     /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
@@ -64,6 +66,13 @@ contract CommonBridge is
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
+    /// there is a non-zero value in the mapping for the message id
+    /// of the L2 transaction that requested the withdrawal.
+    /// @dev The key is the message id of the L1Message of the transaction.
+    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    mapping(uint256 => bool) public claimedWithdrawalIDs;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -94,7 +103,20 @@ contract CommonBridge is
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
 
+    /// @inheritdoc ICommonBridge
+    function getPendingDepositLogs() public view returns (bytes32[] memory) {
+        return pendingDepositLogs;
+    }
+    
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
+    }
+
     function _sendToL2(address from, SendValues memory sendValues) private {
+        _burnGas(sendValues.gasLimit);
+
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes20(sendValues.to),
@@ -124,7 +146,7 @@ contract CommonBridge is
     function sendToL2(SendValues calldata sendValues) public {
         _sendToL2(msg.sender, sendValues);
     }
-    
+
     /// @inheritdoc ICommonBridge
     function deposit(address l2Recipient) public payable {
         _deposit(l2Recipient);
@@ -132,7 +154,10 @@ contract CommonBridge is
 
     function _deposit(address l2Recipient) private {
         deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
-        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
+        bytes memory callData = abi.encodeCall(
+            ICommonBridgeL2.mintETH,
+            (l2Recipient)
+        );
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
@@ -238,7 +263,7 @@ contract CommonBridge is
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) public {
         _claimWithdrawal(
@@ -247,7 +272,7 @@ contract CommonBridge is
             ETH_TOKEN,
             claimedAmount,
             withdrawalBatchNumber,
-            withdrawalLogIndex,
+            withdrawalMessageId,
             withdrawalProof
         );
         (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
@@ -261,7 +286,7 @@ contract CommonBridge is
         address tokenL2,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
         _claimWithdrawal(
@@ -270,7 +295,7 @@ contract CommonBridge is
             tokenL2,
             claimedAmount,
             withdrawalBatchNumber,
-            withdrawalLogIndex,
+            withdrawalMessageId,
             withdrawalProof
         );
         require(
@@ -286,7 +311,7 @@ contract CommonBridge is
         address tokenL2,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) private {
         require(
@@ -296,9 +321,6 @@ contract CommonBridge is
         deposits[tokenL1][tokenL2] -= claimedAmount;
         bytes32 msgHash = keccak256(
             abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
-        );
-        bytes32 withdrawalId = keccak256(
-            abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex)
         );
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
@@ -310,17 +332,17 @@ contract CommonBridge is
             "CommonBridge: the batch that emitted the withdrawal logs was not verified"
         );
         require(
-            claimedWithdrawals[withdrawalId] == false,
+            claimedWithdrawalIDs[withdrawalMessageId] == false,
             "CommonBridge: the withdrawal was already claimed"
         );
-        claimedWithdrawals[withdrawalId] = true;
-        emit WithdrawalClaimed(withdrawalId);
+        claimedWithdrawalIDs[withdrawalMessageId] = true;
+        emit WithdrawalClaimed(withdrawalMessageId);
         require(
             _verifyMessageProof(
                 l2WithdrawalTxHash,
                 msgHash,
                 withdrawalBatchNumber,
-                withdrawalLogIndex,
+                withdrawalMessageId,
                 withdrawalProof
             ),
             "CommonBridge: Invalid proof"
@@ -331,27 +353,23 @@ contract CommonBridge is
         bytes32 l2WithdrawalTxHash,
         bytes32 msgHash,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
+            abi.encodePacked(
+                l2WithdrawalTxHash,
+                L2_BRIDGE_ADDRESS,
+                msgHash,
+                withdrawalMessageId
+            )
         );
-        for (uint256 i = 0; i < withdrawalProof.length; i++) {
-            if (withdrawalLogIndex % 2 == 0) {
-                withdrawalLeaf = keccak256(
-                    abi.encodePacked(withdrawalLeaf, withdrawalProof[i])
-                );
-            } else {
-                withdrawalLeaf = keccak256(
-                    abi.encodePacked(withdrawalProof[i], withdrawalLeaf)
-                );
-            }
-            withdrawalLogIndex /= 2;
-        }
         return
-            withdrawalLeaf ==
-            batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber];
+            MerkleProof.verify(
+                withdrawalProof,
+                batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
+                withdrawalLeaf
+            );
     }
 
     /// @notice Allow owner to upgrade the contract.
