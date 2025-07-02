@@ -1,3 +1,5 @@
+use std::sync::{Arc, atomic::AtomicU64};
+
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{Store, TrieUpdates};
@@ -9,21 +11,30 @@ pub struct TrieWriter {
     sender: mpsc::Sender<TrieUpdates>,
     handle: JoinHandle<()>,
     store: Store,
+    queued: Arc<AtomicU64>,
 }
 
 impl TrieWriter {
     pub fn new(store: Store) -> Self {
+        let queued = Arc::new(AtomicU64::new(0));
         let (sender, receiver) = mpsc::channel(WRITER_CHANNEL_SIZE);
-        let handle = tokio::spawn(Self::writer_loop(store.clone(), receiver));
+        let handle = tokio::spawn(Self::writer_loop(store.clone(), receiver, queued.clone()));
         Self {
             sender,
             handle,
             store,
+            queued,
         }
     }
 
-    pub async fn writer_loop(store: Store, mut receiver: mpsc::Receiver<TrieUpdates>) {
+    pub async fn writer_loop(
+        store: Store,
+        mut receiver: mpsc::Receiver<TrieUpdates>,
+        queued: Arc<AtomicU64>,
+    ) {
         while let Some(update) = receiver.recv().await {
+            let queued = queued.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!("Trie updates in queue: {queued}");
             store.store_trie_updates(update).await.unwrap();
         }
     }
@@ -35,6 +46,8 @@ impl TrieWriter {
         }
         // before sending the updates to the task, we need to update the dirty nodes
         self.store.update_cache(&update);
+        self.queued
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // then we can send the updates to the task
         self.sender.send(update).await.unwrap();
     }
