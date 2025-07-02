@@ -46,7 +46,7 @@ jobs:
       - name: Build ethrex L2
         # replace --features l2 with --all-features
         run: |
-          cargo build --release --features l2 --bin ethrex
+          cargo build --release --features "l2,metrics,rollup_storage_sql" --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
