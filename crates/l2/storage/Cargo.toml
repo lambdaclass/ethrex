@@ -17,14 +17,12 @@ libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
-tokio = { version = "1.41.1", optional = true, default-features = false, features = [
-    "rt",
-] }
+tokio = { version = "1.41.1", default-features = false, features = ["rt"] }
 
 [features]
 default = []
-libmdbx = ["dep:libmdbx", "dep:tokio"]
-redb = ["dep:redb", "dep:tokio"]
+libmdbx = ["dep:libmdbx"]
+redb = ["dep:redb"]
 l2 = []
 
 [lib]

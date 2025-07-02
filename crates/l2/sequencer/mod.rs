@@ -136,17 +136,17 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        // let _ = BlockFetcher::spawn(
-        //     &cfg,
-        //     store.clone(),
-        //     rollup_store.clone(),
-        //     blockchain.clone(),
-        //     shared_state.clone(),
-        // )
-        // .await
-        // .inspect_err(|err| {
-        //     error!("Error starting Block Fetcher: {err}");
-        // });
+        let _ = BlockFetcher::spawn(
+            &cfg,
+            store.clone(),
+            rollup_store.clone(),
+            blockchain.clone(),
+            shared_state.clone(),
+        )
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Fetcher: {err}");
+        });
     }
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
