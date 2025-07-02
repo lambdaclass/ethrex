@@ -162,7 +162,7 @@ impl Command {
                         store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
-                        p2p_based_context
+                        p2p_based_context,
                     )
                     .await;
                 } else {

@@ -486,8 +486,8 @@ mod tests {
             broadcast,
             Some(P2PBasedContext {
                 store_rollup: StoreRollup::default(),
-                committer_key: Arc::new(committer_key)
-            })
+                committer_key: Arc::new(committer_key),
+            }),
         );
         connection
             .capabilities
