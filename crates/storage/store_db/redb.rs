@@ -1404,11 +1404,37 @@ impl StoreEngine for RedBStore {
 
     async fn setup_genesis_flat_account_info(
         &self,
-        _genesis_block_number: u64,
-        _genesis_block_hash: H256,
-        _genesis_accounts: &[(Address, u64, U256, H256, bool)],
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
-        todo!();
+        self.write(
+            CURRENT_SNAPSHOT_BLOCK_TABLE,
+            (),
+            (genesis_block_number.into(), genesis_block_hash.into()),
+        )
+        .await?;
+
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+        {
+            let mut table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+            for (addr, nonce, balance, code_hash, removed) in genesis_accounts {
+                let address = <Address as Into<AccountAddressRLP>>::into(*addr);
+                if *removed {
+                    table.remove(address)?;
+                } else {
+                    let account_info = AccountInfoRLP::from(AccountInfo {
+                        nonce: *nonce,
+                        balance: *balance,
+                        code_hash: *code_hash,
+                    });
+                    table.insert(address, account_info)?;
+                }
+            }
+        }
+
+        write_txn.commit()?;
+        Ok(())
     }
 
     fn get_current_account_info(
