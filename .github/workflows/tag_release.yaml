@@ -137,7 +137,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Set up QEMU
-        if: ${{ matrix.platform == "ubuntu-24.04-arm" }}
+        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
@@ -187,7 +187,7 @@ jobs:
           ~/.risc0/bin/rzup install rust
 
       - name: Set up QEMU
-        if: ${{ matrix.platform == "ubuntu-24.04-arm" }}
+        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
