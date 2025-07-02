@@ -13,27 +13,43 @@ concurrency:
 
 jobs:
   add-to-project:
-    name: Add pull request to project
+    name: Add pull request to appropriate project(s)
     runs-on: ubuntu-latest
     steps:
-      - name: Check PR title and choose project
+      - name: Match PR title to projects
         id: check_title
         env:
           TITLE: ${{ github.event.pull_request.title }}
         run: |
-          if [[ "$TITLE" =~ \(.*l1.*\) || "$TITLE" =~ \(.*levm.*\) || "$TITLE" =~ \(.*core.*\) ]]; then
-            echo "match=true" >> $GITHUB_OUTPUT
-            echo "project=https://github.com/orgs/lambdaclass/projects/31" >> $GITHUB_OUTPUT
-          elif [[ "$TITLE" =~ \(.*l2.*\) ]]; then
-            echo "match=true" >> $GITHUB_OUTPUT
-            echo "project=https://github.com/orgs/lambdaclass/projects/37" >> $GITHUB_OUTPUT
-          else
-            echo "match=false" >> $GITHUB_OUTPUT
+          match_ethrex_l1=false
+          match_ethrex_l2=false
+
+          if [[ "$TITLE" =~ \(.*l1.*\) || "$TITLE" =~ \(.*levm.*\) ]]; then
+            match_ethrex_l1=true
           fi
 
-      - name: Add to project if title matches
-        if: steps.check_title.outputs.match == 'true'
+          if [[ "$TITLE" =~ \(.*l2.*\) ]]; then
+            match_ethrex_l2=true
+          fi
+
+          if [[ "$TITLE" =~ \(.*core.*\) ]]; then
+            match_ethrex_l1=true
+            match_ethrex_l2=true
+          fi
+
+          echo "match_ethrex_l1=$match_ethrex_l1" >> $GITHUB_OUTPUT
+          echo "match_ethrex_l2=$match_ethrex_l2" >> $GITHUB_OUTPUT
+
+      - name: Add PR to ethrex_l1 project
+        if: steps.check_title.outputs.match_ethrex_l1 == 'true'
         uses: actions/add-to-project@v1.0.2
         with:
-          project-url: ${{ steps.check_title.outputs.project }}
+          project-url: https://github.com/orgs/lambdaclass/projects/31
+          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
+
+      - name: Add PR to ethrex_l2 project
+        if: steps.check_title.outputs.match_ethrex_l2 == 'true'
+        uses: actions/add-to-project@v1.0.2
+        with:
+          project-url: https://github.com/orgs/lambdaclass/projects/37
           github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
