@@ -33,7 +33,9 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose
   "alloc",
   "experimental",
 ] }
-
+ark-ff = "0.4"
+ark-ec = "0.4"
+ark-bn254 = "0.4"
 [dev-dependencies]
 hex.workspace = true
 colored = "2.1.0"
