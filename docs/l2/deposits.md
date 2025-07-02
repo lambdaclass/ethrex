@@ -208,7 +208,8 @@ sequenceDiagram
 
 <!-- TODO: extend this version once we have generic L1->L2 messages -->
 
-Privileged transactions are sent as a `PrivilegedTxSent` event.
+Privileged transactions are signaled by the L1 bridge through `PrivilegedTxSent` events.
+These events are emitted by the `CommonBridge` contract on L1 and processed by the L1 watcher on each L2 node.
 
 ```solidity
 event PrivilegedTxSent (
@@ -221,7 +222,10 @@ event PrivilegedTxSent (
 );
 ```
 
-The hash of the privileged transaction is computed as follows:
+As seen before, this same event is used for native deposits, but with the `from` artificially set to the L2 bridge address, which is also the `to` address.
+
+For tracking purposes, we might want to know the hash of the L2 transaction.
+We can compute it as follows:
 
 ```solidity
 keccak256(
