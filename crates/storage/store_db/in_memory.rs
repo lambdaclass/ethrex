@@ -303,6 +303,11 @@ impl StoreEngine for Store {
                 }
             };
 
+            if current_snapshot == (block_num, snapshot_hash).into() {
+                info!("UNDO: logs exhausted: back to canonical chain");
+                break;
+            }
+
             // Get the canonical hash of the parent block
             canonical_hash = store
                 .canonical_hashes
