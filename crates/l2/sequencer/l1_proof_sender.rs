@@ -207,7 +207,10 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         return Ok(());
     }
 
-    let last_block_hash = get_last_block_hash(&state.store, batch_to_send)?;
+    let Some(batch) = state.rollup_store.get_batch(batch_to_send).await? else {
+        return Err(ProofSenderError::InternalError("TODO".to_string()));
+    };
+    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
 
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();
