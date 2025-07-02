@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751484276771,
+  "lastUpdate": 1751488811499,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4202,6 +4202,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0067071959798994975,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "eee2e9d5bd2c218e710c42b873e174332d21693a",
+          "message": "refactor(l2): refactor privileged transactions (#3365)\n\n**Motivation**\n\nWe want to unify the terminology used to refer to sending privileged\ntransactions to the L2, since they are not just deposits.\n\nAlso, the `DepositInitiated` (now `PrivilegedTxSent`) event must be\ncleaned up: `l2MintTxHash` is irrelevant since it can be recomputed, and\nit doesn't make sense to index `amount` but not `from`.\n\nSome clean up (for example, removing `recipient`) was already done in\n#3320.\n\n**Description**\n\n* Removes the l2 transaction from the deposit event\n* Adds `indexed` to `from` and removes it from `address`\n* Renames deposit to 'privileged transactions' where more appropriate\n\nCloses #3233\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-07-02T19:56:25Z",
+          "tree_id": "4b8a36c061ca344254acf3e14d89d0b515efed4c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/eee2e9d5bd2c218e710c42b873e174332d21693a"
+        },
+        "date": 1751488804852,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006510887804878049,
             "unit": "Mgas/s"
           }
         ]
