@@ -64,9 +64,11 @@ jobs:
           - macos-latest
         include:
           - platform: ubuntu-latest
+            rustflags: -C target-cpu=native
             os: linux
             arch: x86-64
           - platform: ubuntu-24.04-arm
+            rustflags: -C target-cpu=native
             os: linux
             arch: arm64
           - platform: macos-latest
@@ -88,7 +90,7 @@ jobs:
       - name: Build prover
         run: |
           cd crates/l2
-          [[ "${{ matrix.os }}" != "macos" ]] && export RUSTFLAGS='-C target-cpu=native'
+          export RUSTFLAGS="${{ matrix.rustflags }}"
           cargo build --release --features "l2" \
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
