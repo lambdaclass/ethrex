@@ -3,8 +3,9 @@ use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 use crate::error::StoreError;
 use crate::rlp::{
     AccountAddressRLP, AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountInfoRLP,
-    AccountStateRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP,
-    ReceiptRLP, Rlp, TransactionHashRLP, TriePathsRLP, TupleRLP,
+    AccountStateRLP, AccountStorageKeyRLP, AccountStorageValueRLP, BlockBodyRLP, BlockHashRLP,
+    BlockHeaderRLP, BlockRLP, PayloadBundleRLP, ReceiptRLP, Rlp, TransactionHashRLP, TriePathsRLP,
+    TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
@@ -64,6 +65,10 @@ const STORAGE_HEAL_PATHS_TABLE: TableDefinition<AccountHashRLP, TriePathsRLP> =
     TableDefinition::new("StorageHealPaths");
 const ACCOUNT_INFO_TABLE: TableDefinition<AccountAddressRLP, AccountInfoRLP> =
     TableDefinition::new("AccountInfo");
+const ACCOUNT_STORAGE_TABLE: TableDefinition<
+    (AccountAddressRLP, AccountStorageKeyRLP),
+    AccountStorageValueRLP,
+> = TableDefinition::new("AccountStorage");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -1376,12 +1381,20 @@ impl StoreEngine for RedBStore {
         todo!();
     }
 
-    fn get_current_storage(
-        &self,
-        _address: Address,
-        _key: H256,
-    ) -> Result<Option<U256>, StoreError> {
-        todo!();
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        let read_txn = self.db.begin_read().map_err(Box::new)?;
+        let table = read_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+
+        let composite_key = (
+            <Address as Into<AccountAddressRLP>>::into(address),
+            <H256 as Into<AccountStorageKeyRLP>>::into(key),
+        );
+
+        table
+            .get(composite_key)?
+            .map(|v| v.value().to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn setup_genesis_flat_account_info(
@@ -1508,6 +1521,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(STATE_SNAPSHOT_TABLE)?;
     table_creation_txn.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
     table_creation_txn.open_table(ACCOUNT_INFO_TABLE)?;
+    table_creation_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)
