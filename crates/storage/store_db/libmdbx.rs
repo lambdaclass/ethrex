@@ -84,6 +84,18 @@ dupsort!(
     ( AccountsStorageWriteLog ) (BlockNumHash, BlockNumHash)[BlockNumHash] => AccountStorageLogEntry
 );
 
+type StateTriePruningLogEntry = [u8; 32];
+dupsort!(
+    /// Trie node insertion logs for pruning.
+    ( StateTriePruningLog ) BlockNumHash => StateTriePruningLogEntry
+);
+
+type StorageTriesPruningLogEntry = (StorageTriesNodesSeekKey, StorageTriesNodesSuffixKey);
+dupsort!(
+    /// Trie node insertion logs for pruning.
+    ( StorateTriesPruningLog ) BlockNumHash => StorageTriesPruningLogEntry
+);
+
 dupsort!(
     /// Receipts table.
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
