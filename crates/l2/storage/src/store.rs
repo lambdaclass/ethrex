@@ -190,7 +190,7 @@ impl Store {
     }
 
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, StoreError> {
-        let _ = self.storage_lock.read().await;
+        let _read_guard = self.storage_lock.read().await;
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
         };
@@ -245,7 +245,7 @@ impl Store {
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), StoreError> {
-        let _ = self.storage_lock.write().await;
+        let _write_guard = self.storage_lock.write().await;
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
         for block_number in blocks.iter() {
