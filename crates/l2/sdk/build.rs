@@ -1,3 +1,5 @@
+//! Build script for the L2 SDK crate.
+//! This script downloads dependencies and compiles contracts to be embedded as constants in the SDK.
 use std::env;
 use std::path::Path;
 
@@ -8,6 +10,7 @@ fn main() {
     ethrex_sdk_contract_utils::download_contract_deps(&contracts_path)
         .expect("failed to download contract dependencies");
 
+    // Compile the ERC1967Proxy contract
     let proxy_contract_path = "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
     ethrex_sdk_contract_utils::compile_contract(&contracts_path, proxy_contract_path, false)
         .expect("failed to compile ERC1967Proxy contract");
