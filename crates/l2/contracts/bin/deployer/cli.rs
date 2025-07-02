@@ -332,6 +332,8 @@ impl Default for DeployerOptions {
             randomize_contract_deployment: false,
             validium: false,
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
+            // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+            // (also found on fixtures/keys/private_keys_l1.txt)
             on_chain_proposer_owner: H160([
                 0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
