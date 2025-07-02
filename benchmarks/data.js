@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751491180764,
+  "lastUpdate": 1751492589921,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4260,6 +4260,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006542803921568628,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "40a7deacf016a3856e432928b5a86d45234b602e",
+          "message": "chore(l1): sync tooling fixes (#3064)\n\n**Motivation**\n\nAdding some minor fixes to the recently merged sync tooling.\n\n**Description**\n\nAdded some stuff to the tooling that was recently merged related to\nflamegraphs, also fixed one of the logs added which we noticed\nintroduced some noise to the info logs.\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-07-02T21:06:40Z",
+          "tree_id": "97307fd199489700ebc9e19323f6f8325c49c9a1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/40a7deacf016a3856e432928b5a86d45234b602e"
+        },
+        "date": 1751492577491,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0067071959798994975,
             "unit": "Mgas/s"
           }
         ]
