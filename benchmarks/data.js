@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751479087979,
+  "lastUpdate": 1751480211084,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4115,6 +4115,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006386277511961722,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ef121af47cb619ad8d617fd96f469e06526ef55c",
+          "message": "refactor(l1, l2): decouple L2 metrics logic from L1's & remove l2 feature flag from `ethrex-blockchain` (#3371)\n\n> [!WARNING]\n> Merge after https://github.com/lambdaclass/ethrex/pull/3367\n\n**Motivation**\n\nTo completely remove the `l2` feature flag from `cmd/ethrex` in favor of\nhaving a single binary for running ethrex (L1 and L2), there are some\nlocal dependencies from which to remove this feature first. These are:\n\n1. `ethrex-vm`.\n2. `ethrex-levm`.\n3. `ethrex-blockchain`. \n\n1 and 2 are removed in https://github.com/lambdaclass/ethrex/pull/3367,\nand 3 is meant to be removed in this PR.\n\n**Description**\n\nDecouples the L2 metrics logic from the L1's, allowing to remove the use\nof the `l2` feature flag from the crate `ethrex-blockchain`.\n\n- Creates a `crates/blockchain/metrics/l2` module with `metrics.rs` and\n`api.rs` submodules.\n- Makes use of this new module in `cmd/ethrex`.\n- Removes `l2` feature flag from `ethrex-blockchain` crate.\n- Removes the import of `ethrex-blockchain/l2` where needed.",
+          "timestamp": "2025-07-02T17:52:19Z",
+          "tree_id": "053cd741ce7397434b883f78d3c8dc20d8bc06db",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ef121af47cb619ad8d617fd96f469e06526ef55c"
+        },
+        "date": 1751480200131,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006844779487179487,
             "unit": "Mgas/s"
           }
         ]
