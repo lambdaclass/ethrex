@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751411534859,
+  "lastUpdate": 1751470688027,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4057,6 +4057,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006775289340101523,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e46e4cbbfe3a6e95d16d3541086eddf7d55546b1",
+          "message": "fix(l2): force JSON format for ProgramInput (#3397)\n\n**Motivation**\n\nThis is to avoid the old #3370 bug\n\n**Description**\n\n- creates newtype JSONProgramInput which is always serialized into JSON\nfirst\n- uses it for sp1 instead of the original ProgramInput",
+          "timestamp": "2025-07-02T13:59:06Z",
+          "tree_id": "e9d161bfb8333300d8756afb087e18955dad9b0c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e46e4cbbfe3a6e95d16d3541086eddf7d55546b1"
+        },
+        "date": 1751470676721,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006479281553398058,
             "unit": "Mgas/s"
           }
         ]
