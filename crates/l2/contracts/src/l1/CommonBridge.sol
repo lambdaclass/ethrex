@@ -118,7 +118,31 @@ contract CommonBridge is
         while (startingGas - gasleft() < amount) {}
     }
 
-    function _sendToL2(address from, SendValues memory sendValues) private {
+
+    bytes3 internal constant EIP7702_PREFIX = 0xef0100;
+    uint160 internal constant ADDRESS_ALIASING = uint160(0x1111000000000000000000000000000000001111);
+    function _getAddressAlias(address from) private view returns (address) {
+        // If the source is being faked, keep it as-is.
+        if (from != msg.sender) return from;
+        // If sender is origin, the account is an EOA
+        if (from == tx.origin) return from;
+        // Check for a delegated EOA
+        if (from.code.length > 0) {
+            if (bytes3(from.code) == EIP7702_PREFIX) {
+                return from;
+            }
+        }
+        return address(uint160(from) + ADDRESS_ALIASING);
+    }
+
+    function _sendToL2(address _from, SendValues memory sendValues) private {
+        address from = _getAddressAlias(_from);
+        // Aliasing is used when the address is not an EOA
+        if (_from.code.length > 0) {
+            if (bytes3(_from.code) != EIP7702_PREFIX) {
+                from = address(uint160(_from) + ADDRESS_ALIASING);
+            }
+        }
         _burnGas(sendValues.gasLimit);
 
         bytes32 l2MintTxHash = keccak256(
