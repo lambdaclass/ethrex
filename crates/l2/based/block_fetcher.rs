@@ -207,6 +207,10 @@ impl BlockFetcherState {
         Ok(())
     }
 
+    /// Fetch the batches from the logs in the L1
+    /// After that, adds the new batch blocks into the local blockchain
+    /// And build a new batch with its assossiated batch number, which is stored
+    /// in a queue to wait for validation
     pub async fn fetch_pending_batches(&mut self) -> Result<(), BlockFetcherError> {
         let batch_committed_logs = self.fetch_logs_with_batches().await?;
 
@@ -236,7 +240,9 @@ impl BlockFetcherState {
                 );
             }
 
-            let batch = self.build_batch(&batch_blocks, batch_number).await?;
+            let batch = self
+                .build_batch_from_blocks(&batch_blocks, batch_number)
+                .await?;
             info!(
                 "Committed batch number {} waiting for verification.",
                 batch.number
@@ -247,6 +253,7 @@ impl BlockFetcherState {
         Ok(())
     }
 
+    /// Traverse the pending batches queue and stores the ones that are safe (verified).
     pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
         while let Some(batch) = self.pending_verify_batches.pop_front() {
             if self.batch_is_safe(&batch).await? {
@@ -320,6 +327,8 @@ impl BlockFetcherState {
         Ok(batch_committed_logs)
     }
 
+    /// checks if a given batch is safe by accessing a mapping in the `OnChainProposer` contract.
+    /// If it returns true for the current batch, it means that it have been verified.
     async fn batch_is_safe(&mut self, batch: &Batch) -> Result<bool, BlockFetcherError> {
         let Some(batch_last_block) = self.store.get_block_header(batch.last_block)? else {
             return Err(BlockFetcherError::InternalError("TODO".to_string()));
@@ -348,7 +357,7 @@ impl BlockFetcherState {
         Ok(*last_byte > 0)
     }
 
-    async fn build_batch(
+    async fn build_batch_from_blocks(
         &mut self,
         batch: &[Block],
         batch_number: U256,
