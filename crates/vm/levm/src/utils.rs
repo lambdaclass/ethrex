@@ -382,9 +382,8 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let (authority_account, _address_was_cold) = self
-                .db
-                .access_account(&mut self.substate, authority_address)?;
+            let authority_account = self.db.get_account(authority_address)?;
+            self.substate.accessed_addresses.insert(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -394,7 +393,7 @@ impl<'a> VM<'a> {
             }
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
-            // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
+            // If it doesn't exist, it means the nonce is zero. The get_account() function will return AccountInfo::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
             if authority_account.info.nonce != auth_tuple.nonce {
                 continue;

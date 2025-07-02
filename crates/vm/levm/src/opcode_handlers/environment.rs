@@ -29,7 +29,8 @@ impl<'a> VM<'a> {
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
 
-        let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
+        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let account = self.db.get_account(address)?;
         let account_balance = account.info.balance;
 
         let current_call_frame = self.current_call_frame_mut()?;
@@ -248,8 +249,8 @@ impl<'a> VM<'a> {
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
-
-        let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
+        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let account = self.db.get_account(address)?;
 
         let account_code_length = account.code.len().into();
 
@@ -272,7 +273,7 @@ impl<'a> VM<'a> {
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let current_memory_size = call_frame.memory.len();
 
-        let (_, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
+        let address_was_cold = self.substate.accessed_addresses.insert(address);
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -381,17 +382,10 @@ impl<'a> VM<'a> {
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
-
-        let (account_is_empty, account_code_hash, address_was_cold) = {
-            let (account, address_was_cold) =
-                self.db.access_account(&mut self.substate, address)?;
-            (
-                account.is_empty(),
-                account.info.code_hash.0,
-                address_was_cold,
-            )
-        };
-
+        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let account = self.db.get_account(address)?;
+        let account_is_empty = account.is_empty();
+        let account_code_hash = account.info.code_hash.0;
         let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
