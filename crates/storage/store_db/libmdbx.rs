@@ -193,12 +193,14 @@ impl Store {
         let store = Store { db: db.clone() };
 
         // we prune the database in a separate thread to avoid blocking the main thread
-        let _handle = thread::spawn(move || {
-            loop {
-                thread::sleep(std::time::Duration::from_secs(15));
-                store.prune_state_and_storage_log().unwrap();
-            }
-        });
+        let _join = thread::Builder::new()
+            .name("trie_pruner🗑️".to_string())
+            .spawn(move || {
+                loop {
+                    thread::sleep(std::time::Duration::from_secs(15));
+                    store.prune_state_and_storage_log().unwrap();
+                }
+            });
 
         Ok(Self { db })
     }
