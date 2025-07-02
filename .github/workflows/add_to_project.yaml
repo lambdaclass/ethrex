@@ -15,8 +15,19 @@ jobs:
     name: Add pull request to project
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/add-to-project@v1.0.2
-        if: contains(github.event.pull_request.title, 'l1') || contains(github.event.pull_request.title, 'levm') || contains(github.event.pull_request.title, 'core')
+      - name: Check PR title with regex
+        id: check_title
+        run: |
+          title="${{ github.event.pull_request.title }}"
+          if [[ "$title" =~ .*l1.* || "$title" =~ .*levm.* || "$title" =~ .*core.* ]]; then
+            echo "match=true" >> $GITHUB_OUTPUT
+          else
+            echo "match=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add to project if title matches
+        if: steps.check_title.outputs.match == 'true'
+        uses: actions/add-to-project@v1.0.2
         with:
-          project-url: https://github.com/orgs/lambdaclass/projects/31 # ethrex_l1 project number
+          project-url: https://github.com/orgs/lambdaclass/projects/31
           github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
