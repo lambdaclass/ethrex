@@ -93,7 +93,7 @@ dupsort!(
 type StorageTriesPruningLogEntry = (StorageTriesNodesSeekKey, StorageTriesNodesSuffixKey);
 dupsort!(
     /// Trie node insertion logs for pruning.
-    ( StorateTriesPruningLog ) BlockNumHash => StorageTriesPruningLogEntry
+    ( StorageTriesPruningLog ) BlockNumHash => StorageTriesPruningLogEntry
 );
 
 dupsort!(
@@ -356,10 +356,19 @@ impl StoreEngine for Store {
                 tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)?;
             }
 
+            let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+            let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+
             // for each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
+                // before inserting, we insert the node into the pruning log
+                cursor_state_trie_pruning_log.upsert(
+                    final_block,
+                    StateTriePruningLogEntry::from(node_hash.finalize().0),
+                )?;
+
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
             }
 
@@ -372,6 +381,8 @@ impl StoreEngine for Store {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    cursor_storage_trie_pruning_log.upsert(final_block, (key_1, key_2))?;
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
                 }
