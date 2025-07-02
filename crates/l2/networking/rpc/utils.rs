@@ -1,8 +1,6 @@
-use ethrex_common::H256;
 use ethrex_rpc::utils::RpcErrorMetadata;
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
-use keccak_hash::keccak;
 use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -86,30 +84,4 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     let trimmed = maybe_hex.trim_start_matches("0x");
     let maybe_parsed = u64::from_str_radix(trimmed, 16);
     maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
-}
-
-pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
-    if index >= data.len() {
-        return None;
-    }
-
-    let mut proof = vec![];
-    let mut current = data.clone();
-    let mut first = true;
-    while current.len() > 1 || first {
-        first = false;
-        proof.push(*current.get(index ^ 1).or(current.get(index))?);
-        index /= 2;
-        current = current
-            .chunks(2)
-            .map(|chunk| -> H256 {
-                let left = *chunk.first().unwrap_or(&H256::zero());
-                let right = *chunk.get(1).unwrap_or(&left);
-                keccak([left.as_bytes(), right.as_bytes()].concat())
-                    .as_fixed_bytes()
-                    .into()
-            })
-            .collect();
-    }
-    Some(proof)
 }
