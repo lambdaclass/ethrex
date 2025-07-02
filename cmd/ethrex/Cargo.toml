@@ -58,15 +58,7 @@ name = "ethrex"
 path = "./lib.rs"
 
 [features]
-l2 = [
-  "dep:ethrex-l2",
-  "dep:ethrex-l2-common",
-  "dep:ethrex-sdk",
-  "dep:ethrex-l2-rpc",
-  "dep:tui-logger",
-  "ethrex-blockchain/l2",
-  "ethrex-storage-rollup",
-]debug = ["ethrex-vm/debug"]
+debug = ["ethrex-vm/debug"]
 default = ["libmdbx", "c-kzg", "blst", "l2"]
 dev = ["dep:ethrex-dev", "debug"]
 c-kzg = [
@@ -79,6 +71,15 @@ metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
 libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup?/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
+l2 = [
+  "dep:ethrex-l2",
+  "dep:ethrex-l2-common",
+  "dep:ethrex-sdk",
+  "dep:ethrex-l2-rpc",
+  "dep:tui-logger",
+  "ethrex-blockchain/l2",
+  "ethrex-storage-rollup",
+]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]

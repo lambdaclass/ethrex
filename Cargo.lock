@@ -3927,8 +3927,8 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
- "vergen-git2",
  "tui-logger",
+ "vergen-git2",
 ]
 
 [[package]]
