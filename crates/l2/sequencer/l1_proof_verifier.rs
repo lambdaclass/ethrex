@@ -185,6 +185,14 @@ impl L1ProofVerifier {
         )
         .await?;
 
+        // Store the verify transaction hash for each batch that was aggregated.
+        for i in 0..aggregated_proofs_count {
+            let batch_number = first_batch_number + i;
+            self.rollup_store
+                .store_verify_tx_by_batch(batch_number, verify_tx_hash)
+                .await?;
+        }
+
         Ok(Some(verify_tx_hash))
     }
 

@@ -3,7 +3,7 @@ use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_store,
+        init_network, init_store,
     },
     l2::{self, options::Options},
     networks::Network,
@@ -173,7 +173,7 @@ impl Command {
 
                 // Initialize metrics if enabled
                 if opts.node_opts.metrics_enabled {
-                    init_metrics(&opts.node_opts, tracker.clone());
+                    l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
                 if opts.node_opts.p2p_enabled {
@@ -444,6 +444,8 @@ impl Command {
                                 deposit_logs_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
+                                commit_tx: None,
+                                verify_tx: None,
                             };
 
                             // Store batch info in L2 storage

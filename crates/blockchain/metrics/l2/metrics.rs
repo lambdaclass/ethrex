@@ -3,9 +3,9 @@ use std::sync::LazyLock;
 
 use crate::MetricsError;
 
-pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
+pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 
-pub struct MetricsL2 {
+pub struct Metrics {
     status_tracker: IntGaugeVec,
     operations_tracker: IntGaugeVec,
     l1_gas_price: IntGauge,
@@ -13,15 +13,15 @@ pub struct MetricsL2 {
     blob_usage: Gauge,
 }
 
-impl Default for MetricsL2 {
+impl Default for Metrics {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MetricsL2 {
+impl Metrics {
     pub fn new() -> Self {
-        MetricsL2 {
+        Metrics {
             status_tracker: IntGaugeVec::new(
                 Opts::new(
                     "l2_blocks_tracker",
@@ -58,7 +58,7 @@ impl MetricsL2 {
 
     pub fn set_block_type_and_block_number(
         &self,
-        block_type: MetricsL2BlockType,
+        block_type: MetricsBlockType,
         block_number: u64,
     ) -> Result<(), MetricsError> {
         let builder = self
@@ -74,7 +74,7 @@ impl MetricsL2 {
 
     pub fn set_operation_by_type(
         &self,
-        operation_type: MetricsL2OperationType,
+        operation_type: MetricsOperationType,
         amount: u64,
     ) -> Result<(), MetricsError> {
         let builder = self
@@ -119,35 +119,35 @@ impl MetricsL2 {
     }
 }
 
-/// [MetricsL2BlockType::LastCommittedBatch] and [MetricsL2BlockType::LastVerifiedBatch] Matche the crates/l2/contracts/src/l1/OnChainProposer.sol variables
-pub enum MetricsL2BlockType {
+/// [MetricsBlockType::LastCommittedBatch] and [MetricsBlockType::LastVerifiedBatch] Matche the crates/l2/contracts/src/l1/OnChainProposer.sol variables
+pub enum MetricsBlockType {
     LastCommittedBlock,
     LastVerifiedBlock,
     LastCommittedBatch,
     LastVerifiedBatch,
 }
 
-pub enum MetricsL2OperationType {
+pub enum MetricsOperationType {
     Deposits,
     L1Messages,
 }
 
-impl MetricsL2BlockType {
+impl MetricsBlockType {
     pub fn to_str(&self) -> &str {
         match self {
-            MetricsL2BlockType::LastCommittedBlock => "lastCommittedBlock",
-            MetricsL2BlockType::LastVerifiedBlock => "lastVerifiedBlock",
-            MetricsL2BlockType::LastCommittedBatch => "lastCommittedBatch",
-            MetricsL2BlockType::LastVerifiedBatch => "lastVerifiedBatch",
+            MetricsBlockType::LastCommittedBlock => "lastCommittedBlock",
+            MetricsBlockType::LastVerifiedBlock => "lastVerifiedBlock",
+            MetricsBlockType::LastCommittedBatch => "lastCommittedBatch",
+            MetricsBlockType::LastVerifiedBatch => "lastVerifiedBatch",
         }
     }
 }
 
-impl MetricsL2OperationType {
+impl MetricsOperationType {
     fn to_str(&self) -> &str {
         match self {
-            MetricsL2OperationType::Deposits => "processedDeposits",
-            MetricsL2OperationType::L1Messages => "processedMessages",
+            MetricsOperationType::Deposits => "processedDeposits",
+            MetricsOperationType::L1Messages => "processedMessages",
         }
     }
 }

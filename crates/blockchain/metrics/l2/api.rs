@@ -1,6 +1,6 @@
 use axum::{Router, routing::get};
 
-use crate::{MetricsApiError, metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
+use crate::{MetricsApiError, api, l2::metrics::METRICS};
 
 pub async fn start_prometheus_metrics_api(
     address: String,
@@ -18,20 +18,14 @@ pub async fn start_prometheus_metrics_api(
 }
 
 #[allow(unused_mut)]
-pub(crate) async fn get_metrics() -> String {
-    let mut ret_string = match METRICS_TX.gather_metrics() {
-        Ok(string) => string,
-        Err(_) => {
-            tracing::error!("Failed to register METRICS_TX");
-            String::new()
-        }
-    };
+async fn get_metrics() -> String {
+    let mut ret_string = api::get_metrics().await;
 
     ret_string.push('\n');
-    match METRICS_BLOCKS.gather_metrics() {
+    match METRICS.gather_metrics() {
         Ok(string) => ret_string.push_str(&string),
         Err(_) => {
-            tracing::error!("Failed to register METRICS_BLOCKS");
+            tracing::error!("Failed to register METRICS_L2");
             return String::new();
         }
     }

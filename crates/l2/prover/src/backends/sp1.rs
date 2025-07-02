@@ -4,7 +4,7 @@ use sp1_sdk::{
 };
 use std::{fmt::Debug, sync::LazyLock};
 use tracing::info;
-use zkvm_interface::io::ProgramInput;
+use zkvm_interface::io::{JSONProgramInput, ProgramInput};
 
 use ethrex_l2_common::{
     calldata::Value,
@@ -53,7 +53,7 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&input);
+    stdin.write(&JSONProgramInput(input));
 
     let setup = &*PROVER_SETUP;
 
@@ -68,7 +68,7 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&input);
+    stdin.write(&JSONProgramInput(input));
 
     let setup = &*PROVER_SETUP;
 
