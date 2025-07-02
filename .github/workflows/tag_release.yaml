@@ -197,6 +197,7 @@ jobs:
         run: |
           cd crates/l2
           RUSTFLAGS='-C target-cpu=native' \
+          NVCC_PREPEND_FLAGS='-arch=sm_70' \
           cargo build --release --features "risc0,gpu,l2" \
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
