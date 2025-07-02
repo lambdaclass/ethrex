@@ -18,17 +18,18 @@ use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
-use ethrex_common::types::{
-    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
-    kzg_commitment_to_versioned_hash,
+use ethrex_common::{
+    kzg::KzgError,
+    types::{
+        BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, blob_from_bytes,
+        kzg_commitment_to_versioned_hash,
+    },
 };
 use ethrex_l2_common::{
     deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
     l1_messages::get_block_l1_messages,
     state_diff::{StateDiff, StateDiffError, prepare_state_diff},
 };
-#[cfg(feature = "l2")]
-use kzg_rs::{Blob, Bytes48, KzgProof, get_kzg_settings};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
@@ -55,7 +56,7 @@ pub enum StatelessExecutionError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[cfg(feature = "l2")]
     #[error("KZG error (proof couldn't be verified): {0}")]
-    KzgError(kzg_rs::KzgError),
+    KzgError(#[from] KzgError),
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
@@ -86,13 +87,6 @@ pub enum StatelessExecutionError {
     InvalidDeposit,
     #[error("Internal error: {0}")]
     Internal(String),
-}
-
-#[cfg(feature = "l2")]
-impl From<kzg_rs::KzgError> for StatelessExecutionError {
-    fn from(value: kzg_rs::KzgError) -> Self {
-        StatelessExecutionError::KzgError(value)
-    }
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -364,23 +358,17 @@ fn compute_l1messages_and_deposits_digests(
 #[cfg(feature = "l2")]
 fn verify_blob(
     state_diff: StateDiff,
-    blob_commitment: Commitment,
-    blob_proof: Proof,
+    commitment: Commitment,
+    proof: Proof,
 ) -> Result<H256, StatelessExecutionError> {
+    use ethrex_common::kzg::verify_blob_kzg_proof;
+
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
-    let blob = Blob::from_slice(&blob_data)?;
 
-    let is_blob_proof_valid = KzgProof::verify_blob_kzg_proof(
-        blob,
-        &Bytes48::from_slice(&blob_commitment)?,
-        &Bytes48::from_slice(&blob_proof)?,
-        &get_kzg_settings(),
-    )?;
-
-    if !is_blob_proof_valid {
+    if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
         return Err(StatelessExecutionError::InvalidBlobProof);
     }
 
-    Ok(kzg_commitment_to_versioned_hash(&blob_commitment))
+    Ok(kzg_commitment_to_versioned_hash(&commitment))
 }
