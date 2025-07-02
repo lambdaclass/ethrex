@@ -269,7 +269,7 @@ impl RLPxMessage for DisconnectMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct PingMessage {}
 
 impl RLPxMessage for PingMessage {
@@ -295,7 +295,7 @@ impl RLPxMessage for PingMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct PongMessage {}
 
 impl RLPxMessage for PongMessage {

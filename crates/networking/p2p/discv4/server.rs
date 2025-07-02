@@ -225,7 +225,7 @@ impl Discv4Server {
                     return Ok(());
                 }
 
-                let _ = RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
+                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())
             }
@@ -518,7 +518,7 @@ impl Discv4Server {
                     return Ok(());
                 }
 
-                let _ = RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
+                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())
             }

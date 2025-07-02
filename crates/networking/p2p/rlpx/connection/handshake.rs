@@ -90,9 +90,8 @@ pub(crate) async fn perform(
             peer_addr,
             stream,
         }) => {
-            let mut stream = match Arc::try_unwrap(stream) {
-                Ok(s) => s,
-                Err(_) => return Err(RLPxError::StateError("Cannot use the stream".to_string())),
+            let Some(mut stream) = Arc::into_inner(stream) else {
+                return Err(RLPxError::StateError("Cannot use the stream".to_string()));
             };
             let remote_state = receive_auth(&context.signer, &mut stream).await?;
             let local_state = send_ack(remote_state.public_key, &mut stream).await?;

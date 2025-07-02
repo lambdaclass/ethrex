@@ -84,6 +84,8 @@ pub struct Receiver {
 #[derive(Clone)]
 pub struct Established {
     pub(crate) signer: SigningKey,
+    // Sending part of the TcpStream to connect with the remote peer
+    // The receiving part is owned by the stream listen loop task
     pub(crate) sink: Arc<Mutex<SplitSink<Framed<TcpStream, RLPxCodec>, Message>>>,
     pub(crate) node: Node,
     pub(crate) storage: Store,
@@ -168,17 +170,14 @@ impl RLPxConnection {
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
-    ) -> Result<RLPxConnectionHandle, std::io::Error> {
+    ) -> RLPxConnectionHandle {
         let state = RLPxConnectionState::new_as_receiver(context, peer_addr, stream);
-        Ok(RLPxConnection::start(state))
+        RLPxConnection::start(state)
     }
 
-    pub async fn spawn_as_initiator(
-        context: P2PContext,
-        node: &Node,
-    ) -> Result<RLPxConnectionHandle, std::io::Error> {
+    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> RLPxConnectionHandle {
         let state = RLPxConnectionState::new_as_initiator(context, node);
-        Ok(RLPxConnection::start(state.clone()))
+        RLPxConnection::start(state.clone())
     }
 }
 

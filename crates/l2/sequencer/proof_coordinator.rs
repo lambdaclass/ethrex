@@ -357,7 +357,6 @@ impl GenServer for ConnectionHandler {
         _handle: &GenServerHandle<Self>,
         state: Self::State,
     ) -> CastResponse<Self> {
-        info!("Receiving message");
         match message {
             ConnInMessage::Connection { stream, addr } => {
                 if let Err(err) = handle_connection(&state, stream).await {
@@ -378,48 +377,43 @@ async fn handle_connection(
     let mut buffer = Vec::new();
     // TODO: This should be fixed in https://github.com/lambdaclass/ethrex/issues/3316
     // (stream should not be wrapped in an Arc)
-    match Arc::try_unwrap(stream) {
-        Err(_) => {
-            error!("Unable to use stream");
-        }
-        Ok(mut stream) => {
-            stream.read_to_end(&mut buffer).await?;
+    if let Some(mut stream) = Arc::into_inner(stream) {
+        stream.read_to_end(&mut buffer).await?;
 
-            let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
-            match data {
-                Ok(ProofData::BatchRequest { commit_hash }) => {
-                    if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
-                        error!("Failed to handle BatchRequest: {e}");
-                    }
-                }
-                Ok(ProofData::ProofSubmit {
-                    batch_number,
-                    batch_proof,
-                }) => {
-                    if let Err(e) =
-                        handle_submit(state, &mut stream, batch_number, batch_proof).await
-                    {
-                        error!("Failed to handle ProofSubmit: {e}");
-                    }
-                }
-                Ok(ProofData::ProverSetup {
-                    prover_type,
-                    payload,
-                }) => {
-                    if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
-                        error!("Failed to handle ProverSetup: {e}");
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to parse request: {e}");
-                }
-                _ => {
-                    warn!("Invalid request");
+        let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+        match data {
+            Ok(ProofData::BatchRequest { commit_hash }) => {
+                if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
+                    error!("Failed to handle BatchRequest: {e}");
                 }
             }
-            debug!("Connection closed");
+            Ok(ProofData::ProofSubmit {
+                batch_number,
+                batch_proof,
+            }) => {
+                if let Err(e) = handle_submit(state, &mut stream, batch_number, batch_proof).await {
+                    error!("Failed to handle ProofSubmit: {e}");
+                }
+            }
+            Ok(ProofData::ProverSetup {
+                prover_type,
+                payload,
+            }) => {
+                if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
+                    error!("Failed to handle ProverSetup: {e}");
+                }
+            }
+            Ok(_) => {
+                warn!("Invalid request");
+            }
+            Err(e) => {
+                warn!("Failed to parse request: {e}");
+            }
         }
-    };
+        debug!("Connection closed");
+    } else {
+        error!("Unable to use stream");
+    }
     Ok(())
 }
 
