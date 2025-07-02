@@ -190,9 +190,7 @@ impl Store {
         // FIXME 🔥🔥🔥🔥!!!
         let db = Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?);
 
-        let store = Store {
-            db: Arc::clone(&db),
-        };
+        let store = Store { db: db.clone() };
 
         // we prune the database in a separate thread to avoid blocking the main thread
         let _handle = thread::spawn(move || {
@@ -1820,6 +1818,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(FlatTablesBlockMetadata),
         table_info!(FlatAccountStorage),
         table_info!(FlatAccountInfo),
+        table_info!(StateTriePruningLog),
+        table_info!(StorageTriesPruningLog),
         table_info!(AccountsStorageWriteLog),
         table_info!(AccountsStateWriteLog),
     ]
@@ -1832,6 +1832,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
             max_size: Some(MAX_MAP_SIZE),
             ..Default::default()
         }),
+        max_tables: Some(1024),
+        max_readers: Some(1024),
         ..Default::default()
     };
     Database::create_with_options(path, options, &tables)
