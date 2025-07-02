@@ -2,32 +2,32 @@ participants:
   - el_type: ethrex
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.0-beta.0
-    validator_count: 16
+    validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
     cl_type: nimbus
     cl_image: statusim/nimbus-eth2:multiarch-latest
-    validator_count: 16
+    validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
     cl_type: teku
     cl_image: consensys/teku:latest
-    validator_count: 16
+    validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
     cl_type: prysm
     cl_image: gcr.io/prysmaticlabs/prysm/beacon-chain:latest
-    validator_count: 16
+    validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
     cl_type: lodestar
     cl_image: chainsafe/lodestar:next
-    validator_count: 16
+    validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
     cl_type: grandine
     cl_image: sifrai/grandine:stable
-    validator_count: 16
+    validator_count: 32
     ethereum_metrics_exporter_enabled: true
 
 network_params:
@@ -36,12 +36,9 @@ network_params:
   electra_fork_epoch: 0 # This field won't be needed when ethereum-package is merged
 
 additional_services:
-  - assertoor
+  #- assertoor
   - dora
-  - tx_fuzz
-
-tx_fuzz_params:
-  tx_fuzz_extra_args: ["--txcount=3", "--accounts=80"]
+  - spamoor
 
 assertoor_params:
   run_stability_check: false
