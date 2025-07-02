@@ -31,6 +31,7 @@ path = "src/sdk.rs"
 
 [build-dependencies]
 ethrex-sdk-contract-utils = { path = "contract_utils" }
+hex.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"

@@ -42,9 +42,9 @@ pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
 
-const ERC1967_PROXY_BYTECODE: &str = include_str!(concat!(
+const ERC1967_PROXY_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
-    "/contracts/solc_out/ERC1967Proxy.bin"
+    "/contracts/solc_out/ERC1967Proxy.bytecode"
 ));
 
 #[derive(Debug, thiserror::Error)]
@@ -395,8 +395,7 @@ async fn deploy_proxy(
     implementation_address: Address,
     salt: &[u8],
 ) -> Result<(H256, Address), DeployError> {
-    let mut init_code =
-        hex::decode(ERC1967_PROXY_BYTECODE).map_err(DeployError::FailedToDecodeBytecode)?;
+    let mut init_code = ERC1967_PROXY_BYTECODE.to_vec();
 
     init_code.extend(H256::from(implementation_address).0);
     init_code.extend(H256::from_low_u64_be(0x40).0);
