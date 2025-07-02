@@ -87,8 +87,8 @@ pub async fn get_witness(
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
     let mut witness: ExecutionWitnessResult = get_result(res)?;
-    witness.chain_config = chain_config.clone();
-    return Ok(witness);
+    witness.chain_config = *chain_config;
+    Ok(witness)
 }
 
 pub async fn get_witness_range(
@@ -109,8 +109,8 @@ pub async fn get_witness_range(
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
     let mut witness: ExecutionWitnessResult = get_result(res)?;
-    witness.chain_config = chain_config.clone();
-    return Ok(witness);
+    witness.chain_config = *chain_config;
+    Ok(witness)
 }
 
 fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> eyre::Result<T> {

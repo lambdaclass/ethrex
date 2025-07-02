@@ -20,7 +20,7 @@ pub async fn get_blockdata(
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{block_number}.json");
     if let Ok(mut cache) = load_cache(&file_name) {
-        cache.witness.chain_config = chain_config.clone();
+        cache.witness.chain_config = chain_config;
         return Ok(cache);
     }
     let block = get_block(rpc_url, block_number)
@@ -48,7 +48,7 @@ pub async fn get_rangedata(
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{from}-{to}.json");
     if let Ok(mut cache) = load_cache(&file_name) {
-        cache.witness.chain_config = chain_config.clone();
+        cache.witness.chain_config = chain_config;
         return Ok(cache);
     }
     let mut blocks = Vec::with_capacity(to - from);
