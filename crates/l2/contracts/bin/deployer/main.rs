@@ -28,9 +28,9 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address)";
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address)";
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[])";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -296,6 +296,17 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
+fn read_vk(path: &str) -> Bytes {
+    std::fs::read(path)
+    .unwrap_or_else(|_| {
+        warn!(
+            ?path,
+            "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
+        );
+        vec![0u8; 32]
+    }).into()
+}
+
 async fn initialize_contracts(
     contract_addresses: ContractAddresses,
     eth_client: &EthClient,
@@ -311,14 +322,8 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = std::fs::read(&opts.sp1_vk_path)
-    .unwrap_or_else(|_| {
-        warn!(
-            path = opts.sp1_vk_path,
-            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
-        );
-        vec![0u8; 32]
-    }).into();
+    let sp1_vk = read_vk(&opts.sp1_vk_path);
+    let risc0_vk = read_vk(&opts.risc0_vk_path);
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -334,6 +339,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.tdx_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
+            Value::FixedBytes(risc0_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
         ];
@@ -384,6 +390,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.tdx_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
+            Value::FixedBytes(risc0_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
