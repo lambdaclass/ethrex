@@ -27,6 +27,9 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
+      - name: Check solc
+        run: solc --version
+
       - name: Set up Rust cache
         # if: ${{ always() && github.event_name == 'merge_group' }}
         uses: Swatinem/rust-cache@v2
