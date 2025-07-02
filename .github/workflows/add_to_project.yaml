@@ -18,9 +18,10 @@ jobs:
     steps:
       - name: Check PR title with regex
         id: check_title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
         run: |
-          title="${{ github.event.pull_request.title }}"
-          if [[ "$title" =~ \(.*l1.*\) || "$title" =~ \(.*levm.*\) || "$title" =~ \(.*core.*\) ]]; then
+          if [[ "$TITLE" =~ \(.*l1.*\) || "$TITLE" =~ \(.*levm.*\) || "$TITLE" =~ \(.*core.*\) ]]; then
             echo "match=true" >> $GITHUB_OUTPUT
           else
             echo "match=false" >> $GITHUB_OUTPUT
