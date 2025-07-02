@@ -353,15 +353,6 @@ impl Syncer {
                 }
                 current = step;
             }
-            // for batch_number in current_batch_number..=new_batch_head {
-            //     let Some(batch) = self.peers.request_batch(batch_number).await else {
-            //         warn!("Sync failed to request batch seal, aborting");
-            //         return Ok(());
-            //     };
-            //     // Store the batch number in the rollup store
-            //     rollup_store.seal_batch(batch).await?;
-            //     info!("Sealed batch number {batch_number}");
-            // }
         }
         match sync_mode {
             SyncMode::Snap => {

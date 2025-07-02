@@ -197,13 +197,11 @@ impl Store {
                 .to_owned(),
         ))?;
 
-        let state_root =
-            self.get_state_root_by_batch(batch_number)
-                .await?
-                .ok_or(StoreError::Custom(
-                "Failed while trying to retrieve the state root of a known batch. This is a bug."
-                    .to_owned(),
-            ))?;
+        let state_root = self.get_state_root_by_batch(batch_number).await?.ok_or(
+            StoreError::Custom(format!(
+                "Failed while trying to retrieve the state root of a known batch: {batch_number}. This is a bug."
+            )),
+        )?;
         let blobs_bundle = BlobsBundle::create_from_blobs(
             &self
                 .get_blobs_by_batch(batch_number)
