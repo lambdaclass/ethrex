@@ -36,6 +36,7 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      # Required for build scripts
       - name: Install solc
         uses: pontem-network/get-solc@master
         with:

@@ -22,6 +22,12 @@ jobs:
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+      # Required for build scripts
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
       - name: RISC-V SP1 toolchain install
         run: |
           curl -L https://sp1.succinct.xyz | bash
