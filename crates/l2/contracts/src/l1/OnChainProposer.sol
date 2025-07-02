@@ -298,15 +298,15 @@ contract OnChainProposer is
 
         lastVerifiedBatch = batchNumber;
         // The first 2 bytes are the number of privileged transactions.
-        uint16 transactions_count = uint16(
+        uint16 privileged_transaction_count = uint16(
             bytes2(
                 batchCommitments[batchNumber]
                     .processedPrivilegedTransactionsRollingHash
             )
         );
-        if (transactions_count > 0) {
+        if (privileged_transaction_count > 0) {
             ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                transactions_count
+                privileged_transaction_count
             );
         }
 
@@ -365,15 +365,15 @@ contract OnChainProposer is
             );
 
             // The first 2 bytes are the number of transactions.
-            uint16 transaction_count = uint16(
+            uint16 privileged_transaction_count = uint16(
                 bytes2(
                     batchCommitments[batchNumber]
                         .processedPrivilegedTransactionsRollingHash
                 )
             );
-            if (transaction_count > 0) {
+            if (privileged_transaction_count > 0) {
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                    transaction_count
+                    privileged_transaction_count
                 );
             }
 
