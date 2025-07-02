@@ -1,6 +1,6 @@
 use crate::nibbles::Nibbles;
-use crate::node::{ExtensionNode, LeafNode};
-use crate::{Node, NodeHash};
+use crate::node::{BranchNode, ExtensionNode, LeafNode};
+use crate::{Node, NodeHash, NodeRef};
 use ethrex_common::H256;
 
 pub fn minimal_encode(node: &Node, buffer: &mut Vec<u8>) {
@@ -67,14 +67,44 @@ pub fn minimal_encode(node: &Node, buffer: &mut Vec<u8>) {
     }
 }
 
+// TODO:
+// 0. Run sync/import on server on updated branch
+// 1. Finish decode
+// 2. Merge snapshots
+// 3. Run sync/import with that
+
 pub fn minimal_decode(input: &[u8]) -> anyhow::Result<Node> {
     let first = input
         .first()
         .ok_or_else(|| anyhow::anyhow!("Input is empty"))?;
     match first {
         0x00 => {
-            // @@@@@@@@@@@@@@@@@@
-            todo!("Branch node decoding not implemented yet");
+            let occupied_bitmap = (input[1] as u16) << 8 | input[2] as u16;
+            let hashed_bitmap = (input[3] as u16) << 8 | input[4] as u16;
+            let mut choices = BranchNode::EMPTY_CHOICES;
+            let mut next_byte = 5;
+            for i in 0..16 {
+                if hashed_bitmap & (1 << i) != 0 {
+                    if occupied_bitmap & (1 << i) == 0 {
+                        bail!("invalid occupancy bitmap: hashed value must be marked occupied");
+                    }
+                    if next_byte + 32 >= input.len() {
+                        bail!("input too short");
+                    }
+                    let hash = input[next_byte..next_byte + 32].try_into().unwrap();
+                    next_byte += 32;
+                    choices[i] = NodeRef::Hash(NodeHash::Hashed(hash));
+                } else if occupied_bitmap & (1 << i) != 0 {
+                    let len = input[next_byte] as usize;
+                    if next_byte + 1 + len >= input.len() {
+                        bail!("input too short");
+                    }
+                    let mut data = [0u8; 31];
+                    data[..len].copy_from_slice(&input[next_byte + 1..next_byte + 1 + len]);
+                    choices[i] = NodeRef::Hash(NodeHash::Inline((data, input[next_byte])));
+                    next_byte += len + 1;
+                }
+            }
         }
         0x01 => {
             // Extension node
@@ -88,7 +118,7 @@ pub fn minimal_decode(input: &[u8]) -> anyhow::Result<Node> {
                     "Input too short for Extension node child hash"
                 ));
             }
-            let hash = &input[1..33];
+            let hash = &input[1..33].try_into().unwrap();
             let child_hash = NodeHash::Hashed(hash);
 
             let prefix = Nibbles::decode_compact(&input[33..])?;
