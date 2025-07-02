@@ -91,7 +91,7 @@ impl<'a> VM<'a> {
         let callframe = self.current_call_frame_mut()?;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
-                .ok_or(InternalError::Overflow)?,
+                .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
         // OPERATION
@@ -187,7 +187,7 @@ impl<'a> VM<'a> {
         let callframe = self.current_call_frame_mut()?;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
-                .ok_or(InternalError::Overflow)?,
+                .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
@@ -307,7 +307,7 @@ impl<'a> VM<'a> {
         let callframe = self.current_call_frame_mut()?;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
-                .ok_or(InternalError::Overflow)?,
+                .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
         // OPERATION
@@ -402,7 +402,7 @@ impl<'a> VM<'a> {
         let callframe = self.current_call_frame_mut()?;
         callframe.increase_consumed_gas(
             cost.checked_add(eip7702_gas_consumed)
-                .ok_or(InternalError::Overflow)?,
+                .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
         // OPERATION
