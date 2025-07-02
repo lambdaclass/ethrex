@@ -1,8 +1,11 @@
 use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::MetricsGathererError};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
-use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType, MetricsL2OperationType};
-use ethrex_metrics::metrics_transactions::METRICS_TX;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::{
+    l2::metrics::{METRICS, MetricsBlockType, MetricsOperationType},
+    metrics_transactions::METRICS_TX,
+};
 use ethrex_rpc::clients::eth::EthClient;
 use spawned_concurrency::tasks::{
     CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
@@ -123,8 +126,8 @@ async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsG
         .await
     {
         if let Some(last_block) = last_verified_batch_blocks.last() {
-            METRICS_L2.set_block_type_and_block_number(
-                MetricsL2BlockType::LastVerifiedBlock,
+            METRICS.set_block_type_and_block_number(
+                MetricsBlockType::LastVerifiedBlock,
                 *last_block,
             )?;
         }
@@ -136,25 +139,25 @@ async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsG
             operations_metrics[1],
             operations_metrics[2],
         );
-        METRICS_L2.set_operation_by_type(MetricsL2OperationType::Deposits, deposits)?;
-        METRICS_L2.set_operation_by_type(MetricsL2OperationType::L1Messages, messages)?;
+        METRICS.set_operation_by_type(MetricsOperationType::Deposits, deposits)?;
+        METRICS.set_operation_by_type(MetricsOperationType::L1Messages, messages)?;
         METRICS_TX.set_tx_count(transactions)?;
     }
 
-    METRICS_L2.set_block_type_and_block_number(
-        MetricsL2BlockType::LastCommittedBatch,
+    METRICS.set_block_type_and_block_number(
+        MetricsBlockType::LastCommittedBatch,
         last_committed_batch,
     )?;
-    METRICS_L2.set_block_type_and_block_number(
-        MetricsL2BlockType::LastVerifiedBatch,
+    METRICS.set_block_type_and_block_number(
+        MetricsBlockType::LastVerifiedBatch,
         last_verified_batch,
     )?;
-    METRICS_L2.set_l1_gas_price(
+    METRICS.set_l1_gas_price(
         l1_gas_price
             .try_into()
             .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
     );
-    METRICS_L2.set_l2_gas_price(
+    METRICS.set_l2_gas_price(
         l2_gas_price
             .try_into()
             .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,

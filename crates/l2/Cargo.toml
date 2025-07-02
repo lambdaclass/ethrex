@@ -50,7 +50,7 @@ zkvm_interface = { path = "./prover/zkvm/interface/" }
 rand = "0.8.5"
 
 [build-dependencies]
-vergen-git2 = { version = "1.0.7"}
+vergen-git2 = { version = "1.0.7" }
 
 [lib]
 path = "./l2.rs"
@@ -65,5 +65,5 @@ panic = "deny"
 
 [features]
 default = ["l2"]
-metrics = ["ethrex-blockchain/metrics", "ethrex-metrics/l2"]
-l2 = ["ethrex-blockchain/l2", "zkvm_interface/l2"]
+metrics = ["ethrex-blockchain/metrics"]
+l2 = ["zkvm_interface/l2"]
