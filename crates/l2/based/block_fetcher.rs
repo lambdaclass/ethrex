@@ -478,17 +478,22 @@ impl GenServer for BlockFetcher {
 }
 
 async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
-    while !state.is_up_to_date().await? {
-        info!("Node is not up to date. Syncing via L1");
+    match state.is_up_to_date().await? {
+        true => {
+            info!("Node is up to date");
+        }
+        false => {
+            info!("Node is not up to date. Syncing via L1");
+        }
+    }
 
+    while !state.is_up_to_date().await? {
         state.update_l2_head().await?;
 
         state.fetch_pending_batches().await?;
 
         state.store_safe_batches().await?;
     }
-
-    info!("Node is up to date");
 
     Ok(())
 }
