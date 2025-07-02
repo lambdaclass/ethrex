@@ -9,10 +9,7 @@ use crate::rlp::{
     TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
-use crate::store_db::codec::{
-    account_info_log_entry::AccountInfoLogEntry, account_storage_log_entry::AccountStorageLogEntry,
-    block_num_hash::BlockNumHash,
-};
+use crate::store_db::codec::block_num_hash::BlockNumHash;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use ethrex_common::{
     Address, H256, U256,
@@ -29,7 +26,7 @@ use redb::{
     AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable,
     TableDefinition, TypeName, Value,
 };
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -329,9 +326,11 @@ impl StoreEngine for RedBStore {
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write().map_err(Box::new)?;
 
-        let old_snapshot_meta = self
-            .read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())?
-            .map(|a| a.value().to())?;
+        let Some(snapshot_data) = self.read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())? else {
+            return Ok(());
+        };
+        let (block_num_rlp, block_hash_rlp) = snapshot_data.value();
+        let old_snapshot_meta = BlockNumHash(block_num_rlp.to()?, block_hash_rlp.to()?);
 
         let mut block_num = old_snapshot_meta.0;
         let mut snapshot_hash = old_snapshot_meta.1;
@@ -352,23 +351,22 @@ impl StoreEngine for RedBStore {
         while canonical_hash != snapshot_hash {
             warn!("UNDO: searching for {key:?}");
 
-            // Procesar logs de estado de cuentas
             let key_tuple = (key.into(), key.into());
-            let mut state_log_iter = state_logs_table.get(key_tuple)?;
+            let mut state_log_iter = state_logs_table.get(key_tuple.clone())?;
             while let Some(Ok(state_log_result)) = state_log_iter.next() {
                 let log_entry = state_log_result.value().to()?;
                 tracing::warn!("UNDO: found state log for {key:?}");
 
-                let addr_key = log_entry.address.into();
+                let address = <Address as Into<AccountAddressRLP>>::into(log_entry.address);
                 let old_info = log_entry.previous_info;
+                let old_info_rlp = <AccountInfo as Into<AccountInfoRLP>>::into(old_info.clone());
 
                 if old_info != AccountInfo::default() {
-                    account_info_table.insert(addr_key, old_info.into())?;
+                    account_info_table.insert(address, old_info_rlp)?;
                 } else {
-                    account_info_table.remove(addr_key)?;
+                    account_info_table.remove(address)?;
                 }
 
-                // Actualizar para el siguiente bloque según los logs encontrados
                 BlockNumHash(block_num, snapshot_hash) = key;
             }
 
@@ -386,14 +384,14 @@ impl StoreEngine for RedBStore {
                 let slot = log_entry.slot;
                 let addr = log_entry.address;
                 let storage_key = (addr.into(), slot.into());
+                let old_value_rlp = <U256 as Into<AccountStorageValueRLP>>::into(old_value);
 
                 if !old_value.is_zero() {
-                    account_storage_table.insert(storage_key, old_value.into())?;
+                    account_storage_table.insert(storage_key, old_value_rlp)?;
                 } else {
                     account_storage_table.remove(storage_key)?;
                 }
 
-                // Actualizar para el siguiente bloque según los logs encontrados
                 BlockNumHash(block_num, snapshot_hash) = key;
             }
 
@@ -402,7 +400,6 @@ impl StoreEngine for RedBStore {
                 break;
             }
 
-            // Actualizar para el siguiente bloque
             canonical_hash = canonical_table
                 .get(block_num)?
                 .map(|v| v.value().to())
@@ -411,11 +408,13 @@ impl StoreEngine for RedBStore {
             key = BlockNumHash(block_num, snapshot_hash);
         }
 
-        // Actualizar el metadata con el bloque canónico
-        let mut metadata_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
-        metadata_table.insert((), key.into())?;
+        self.write(
+            CURRENT_SNAPSHOT_BLOCK_TABLE,
+            (),
+            (key.0.into(), key.1.into()),
+        )
+        .await?;
 
-        write_txn.commit()?;
         Ok(())
     }
 
