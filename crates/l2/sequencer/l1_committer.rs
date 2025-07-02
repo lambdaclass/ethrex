@@ -213,6 +213,8 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 deposit_logs_hash,
                 message_hashes,
                 blobs_bundle,
+                commit_tx: None,
+                verify_tx: None,
             };
 
             state.rollup_store.seal_batch(batch.clone()).await?;
@@ -250,6 +252,11 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                     )
                 });
             );
+
+            state
+                .rollup_store
+                .store_commit_tx_by_batch(batch.number, commit_tx_hash)
+                .await?;
 
             info!(
                 "Commitment sent for batch {}, with tx hash {commit_tx_hash:#x}.",
