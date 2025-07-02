@@ -31,7 +31,7 @@ Off-chain:
 
 1. On each L2 node, the L1 watcher processes `PrivilegedTxSent` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
 2. The privileged transaction is an [EIP-2718 typed transaction](https://eips.ethereum.org/EIPS/eip-2718), somewhat similar to an [EIP-1559 transaction](https://eips.ethereum.org/EIPS/eip-1559), but with some changes.
-   For deposits, the important differences are that the sender of the transaction is set by our L1 bridge.
+   For this case, the important difference is that the sender of the transaction is set by our L1 bridge.
    This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.
 3. Privileged transactions sent by the L2 bridge don't deduct from the bridge's balance their value.
    In practice, this means ETH equal to the transactions `value` is minted.
@@ -39,7 +39,8 @@ Off-chain:
 On L2:
 
 1. The privileged transaction calls `mintETH` on the `CommonBridgeL2` with the intended recipient as parameter.
-2. The bridge sends the minted ETH to the recipient.
+2. The bridge verifies the sender is itself, which can only happen for deposits sent through the L1 bridge.
+3. The bridge sends the minted ETH to the recipient.
    In case of failure, it initiates an ETH withdrawal for the same amount.
 
 Back on L1:
@@ -107,14 +108,15 @@ Off-chain:
 
 1. On each L2 node, the L1 watcher processes `PrivilegedTxSent` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
 2. The privileged transaction is an [EIP-2718 typed transaction](https://eips.ethereum.org/EIPS/eip-2718), somewhat similar to an [EIP-1559 transaction](https://eips.ethereum.org/EIPS/eip-1559), but with some changes.
-   For deposits, the important differences are that the sender of the transaction is set by our L1 bridge.
+   For this case, the important differences is that the sender of the transaction is set by our L1 bridge.
    This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.
 
 On L2:
 
 1. The privileged transaction performs a call to `mintERC20` on the `CommonBridgeL2` from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.
-2. The bridge calls `l1Address()` on the L2 token, to verify it matches the received L1 token address.
-3. The bridge calls `crosschainMint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
+2. The bridge verifies the sender is itself, which can only happen for deposits sent through the L1 bridge.
+3. The bridge calls `l1Address()` on the L2 token, to verify it matches the received L1 token address.
+4. The bridge calls `crosschainMint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
    In case of failure, it initiates an ERC20 withdrawal for the same amount.
 
 Back on L1:
