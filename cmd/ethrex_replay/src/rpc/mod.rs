@@ -1,4 +1,5 @@
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use ethrex_common::types::{
+    block_execution_witness::{ExecutionWitnessResult, ExecutionWitnessError}, Block, ChainConfig};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::admin::NodeInfo;
 use serde::de::DeserializeOwned;
@@ -57,8 +58,16 @@ pub async fn get_node_info(rpc_url: &str) -> eyre::Result<NodeInfo> {
     });
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
+    let res = response.json::<serde_json::Value>().await?;
+    println!("node_info: {}", res);
+    let res = get_result(res);
+    println!("node_info: {:?}", res);
+    res
+}
 
-    todo!()
+pub async fn get_chain_config(rpc_url: &str) -> eyre::Result<ChainConfig> {
+    let node = get_node_info(rpc_url).await?;
+    node.protocols.eth.ok_or(ExecutionWitnessError::MissingChainConfig.into())
 }
 
 pub async fn get_witness(
@@ -72,10 +81,13 @@ pub async fn get_witness(
         "method": "debug_executionWitness",
         "params": [block_number]
     });
+    println!("get_witness");
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
-    get_result(res)
+    let mut witness: ExecutionWitnessResult = get_result(res)?;
+    witness.chain_config = get_chain_config(rpc_url).await?;
+    return Ok(witness);
 }
 
 pub async fn get_witness_range(
@@ -91,10 +103,13 @@ pub async fn get_witness_range(
         "method": "debug_executionWitness",
         "params": [from, to]
     });
+    println!("get_witness_range");
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
-    get_result(res)
+    let mut witness: ExecutionWitnessResult = get_result(res)?;
+    witness.chain_config = get_chain_config(rpc_url).await?;
+    return Ok(witness);
 }
 
 fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> eyre::Result<T> {

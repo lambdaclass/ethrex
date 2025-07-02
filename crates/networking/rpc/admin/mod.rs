@@ -1,6 +1,7 @@
+use bytes::buf::Chain;
 use ethrex_common::types::ChainConfig;
 use ethrex_storage::Store;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -8,7 +9,7 @@ use crate::{rpc::NodeData, utils::RpcErr};
 mod peers;
 pub use peers::peers;
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NodeInfo {
     enode: String,
     enr: String,
@@ -16,19 +17,18 @@ pub struct NodeInfo {
     ip: String,
     name: String,
     ports: Ports,
-    protocols: HashMap<String, Protocol>,
+    pub protocols: Protocols,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Protocols {
+    pub eth: Option<ChainConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct Ports {
     discovery: u16,
     listener: u16,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(untagged)]
-enum Protocol {
-    Eth(ChainConfig),
 }
 
 pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
@@ -37,12 +37,11 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         Ok(enr) => enr,
         Err(_) => "".into(),
     };
-    let mut protocols = HashMap::new();
 
     let chain_config = storage
         .get_chain_config()
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    protocols.insert("eth".to_string(), Protocol::Eth(chain_config));
+    let protocols = Protocols { eth: Some(chain_config) };
 
     let node_info = NodeInfo {
         enode: enode_url,

@@ -73,6 +73,8 @@ pub struct ExecutionWitnessResult {
 
 #[derive(thiserror::Error, Debug)]
 pub enum ExecutionWitnessError {
+    #[error("Couldn't obtain chain config")]
+    MissingChainConfig,
     #[error("Failed to rebuild tries: {0}")]
     RebuildTrie(String),
     #[error("Failed to apply account updates {0}")]
