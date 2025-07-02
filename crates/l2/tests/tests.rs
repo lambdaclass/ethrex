@@ -167,7 +167,7 @@ async fn test_upgrade(
         &[
             Value::Address(COMMON_BRIDGE_L2_ADDRESS),
             Value::Address(deploy_address),
-            U256::from(100_000),
+            Value::Uint(U256::from(100_000)),
             Value::Bytes(Bytes::new()),
         ],
     )
