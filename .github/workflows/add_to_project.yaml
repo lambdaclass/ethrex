@@ -20,7 +20,7 @@ jobs:
         id: check_title
         run: |
           title="${{ github.event.pull_request.title }}"
-          if [[ "$title" =~ .*l1.* || "$title" =~ .*levm.* || "$title" =~ .*core.* ]]; then
+          if [[ "$title" =~ \(.*l1.*\) || "$title" =~ \(.*levm.*\) || "$title" =~ \(.*core.*\) ]]; then
             echo "match=true" >> $GITHUB_OUTPUT
           else
             echo "match=false" >> $GITHUB_OUTPUT
