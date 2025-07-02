@@ -123,6 +123,26 @@ impl BlockFetcherState {
         .await
     }
 
+    async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
+        match self.is_up_to_date().await? {
+            true => {
+                info!("Node is up to date");
+            }
+            false => {
+                info!("Node is not up to date. Syncing via L1");
+                while !self.is_up_to_date().await? {
+                    self.update_l2_head().await?;
+
+                    self.fetch_pending_batches().await?;
+
+                    self.store_safe_batches().await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn update_l2_head(&mut self) -> Result<(), BlockFetcherError> {
         let latest_committed_batch = self
             .eth_client
@@ -464,9 +484,9 @@ impl GenServer for BlockFetcher {
         state: &mut Self::State,
     ) -> spawned_concurrency::CastResponse {
         if let SequencerStatus::Following = state.sequencer_state.status().await {
-            let _ = fetch(state).await.inspect_err(|err| {
+            if let Err(err) = state.fetch().await {
                 error!("Block Fetcher Error: {err}");
-            });
+            }
         }
         send_after(
             Duration::from_millis(state.fetch_interval_ms),
@@ -475,26 +495,6 @@ impl GenServer for BlockFetcher {
         );
         CastResponse::NoReply
     }
-}
-
-async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
-    match state.is_up_to_date().await? {
-        true => {
-            info!("Node is up to date");
-        }
-        false => {
-            info!("Node is not up to date. Syncing via L1");
-            while !state.is_up_to_date().await? {
-                state.update_l2_head().await?;
-
-                state.fetch_pending_batches().await?;
-
-                state.store_safe_batches().await?;
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Given the logs from the event `BatchCommitted`,
