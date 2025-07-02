@@ -3,9 +3,10 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use ethrex_common::{
-    H256,
+    Address, H256,
     types::{
-        AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt, payload::PayloadBundle,
+        AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
+        payload::PayloadBundle,
     },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -23,6 +24,8 @@ pub type AccountCodeRLP = Rlp<Bytes>;
 pub type AccountHashRLP = Rlp<H256>;
 pub type AccountStateRLP = Rlp<AccountState>;
 pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
+pub type AccountAddressRLP = Rlp<Address>;
+pub type AccountInfoRLP = Rlp<AccountInfo>;
 
 // Block types
 pub type BlockHashRLP = Rlp<BlockHash>;

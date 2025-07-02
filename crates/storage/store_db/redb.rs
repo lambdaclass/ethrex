@@ -2,17 +2,17 @@ use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, ReceiptRLP, Rlp, TransactionHashRLP,
-    TriePathsRLP, TupleRLP,
+    AccountAddressRLP, AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountInfoRLP,
+    AccountStateRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP,
+    ReceiptRLP, Rlp, TransactionHashRLP, TriePathsRLP, TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, Index, Receipt, payload::PayloadBundle,
+        AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, Index, Receipt, payload::PayloadBundle,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -62,6 +62,8 @@ const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32],
     MultimapTableDefinition::new("StorageSnapshotTable");
 const STORAGE_HEAL_PATHS_TABLE: TableDefinition<AccountHashRLP, TriePathsRLP> =
     TableDefinition::new("StorageHealPaths");
+const ACCOUNT_INFO_TABLE: TableDefinition<AccountAddressRLP, AccountInfoRLP> =
+    TableDefinition::new("AccountInfo");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -1393,9 +1395,15 @@ impl StoreEngine for RedBStore {
 
     fn get_current_account_info(
         &self,
-        _address: Address,
+        address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        todo!();
+        self.read_sync(
+            ACCOUNT_INFO_TABLE,
+            <Address as Into<AccountAddressRLP>>::into(address),
+        )?
+        .map(|p| p.value().to())
+        .transpose()
+        .map_err(StoreError::RLPDecode)
     }
 }
 
@@ -1499,6 +1507,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(SNAP_STATE_TABLE)?;
     table_creation_txn.open_table(STATE_SNAPSHOT_TABLE)?;
     table_creation_txn.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+    table_creation_txn.open_table(ACCOUNT_INFO_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)
