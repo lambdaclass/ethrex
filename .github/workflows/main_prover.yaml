@@ -3,6 +3,8 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -81,6 +83,7 @@ jobs:
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
+          sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
