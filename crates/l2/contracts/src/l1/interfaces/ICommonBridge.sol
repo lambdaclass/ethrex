@@ -144,4 +144,7 @@ interface ICommonBridge {
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;
+
+    /// @notice Returns pending privileged transactions
+    function pendingTxHashes() external returns (bytes32[]);
 }
