@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-02
+
+- Minor mstore improvements [#3417](https://github.com/lambdaclass/ethrex/pull/3417)
+
 ### 2025-06-27
 
 - Reduce handle_debug runtime cost [#3356](https://github.com/lambdaclass/ethrex/pull/3356)
