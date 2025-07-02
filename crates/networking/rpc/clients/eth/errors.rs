@@ -38,7 +38,7 @@ pub enum EthClientError {
     GetTransactionByHashError(#[from] GetTransactionByHashError),
     #[error("ethrex_getWithdrawalProof request error: {0}")]
     GetMessageProofError(#[from] GetMessageProofError),
-    #[error("degub_executionWitness request error: {0}")]
+    #[error("debug_executionWitness request error: {0}")]
     GetWitnessError(#[from] GetWitnessError),
     #[error("eth_maxPriorityFeePerGas request error: {0}")]
     GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
