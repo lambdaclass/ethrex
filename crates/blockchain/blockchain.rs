@@ -76,7 +76,7 @@ fn log_batch_progress(batch_size: usize, current_block: usize) {
     if progress_needed {
         PERCENT_MARKS.iter().for_each(|mark| {
             if (batch_size * mark) / 100 == current_block {
-                info!("{mark}% of batch processed");
+                info!("[SYNCING] {mark}% of batch processed");
             }
         });
     }
