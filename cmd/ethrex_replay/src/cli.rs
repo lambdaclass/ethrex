@@ -5,7 +5,7 @@ use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
-use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
+use crate::fetcher::{get_batchdata, get_blockdata, get_rangedata, or_latest};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 
@@ -73,6 +73,22 @@ enum SubcommandExecute {
         network: String,
         #[arg(long, required = false)]
         l2: bool,
+    },
+    #[command(about = "Execute an L2 batch.")]
+    Batch {
+        #[arg(help = "Batch number to use.")]
+        batch: usize,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: String,
+        #[arg(
+            long,
+            env = "NETWORK",
+            required = true,
+            help = "ChainID of the network to use"
+        )]
+        network: String,
+        #[arg(long, required = false)]
+        bench: bool,
     },
 }
 
@@ -147,6 +163,22 @@ impl SubcommandExecute {
                     print_transition(transition);
                 }
             }
+            SubcommandExecute::Batch {
+                batch,
+                rpc_url,
+                network,
+                bench,
+            } => {
+                let chain_config = get_chain_config(&network)?;
+                let eth_client = EthClient::new(&rpc_url)?;
+                let cache = get_batchdata(eth_client, chain_config, batch).await?;
+                let future = async {
+                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    exec(cache).await?;
+                    Ok(gas_used)
+                };
+                run_and_measure(future, bench).await?;
+            }
         }
         Ok(())
     }
@@ -185,6 +217,22 @@ enum SubcommandProve {
             env = "NETWORK",
             required = false,
             long_help = "Name or ChainID of the network to use. The networks currently supported include holesky, sepolia, hoodi and mainnet."
+        )]
+        network: String,
+        #[arg(long, required = false)]
+        bench: bool,
+    },
+    #[command(about = "Execute an L2 batch.")]
+    Batch {
+        #[arg(help = "Batch number to use.")]
+        batch: usize,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: String,
+        #[arg(
+            long,
+            env = "NETWORK",
+            required = true,
+            help = "ChainID of the network to use"
         )]
         network: String,
         #[arg(long, required = false)]
@@ -233,6 +281,14 @@ impl SubcommandProve {
                     Ok(gas_used)
                 };
                 run_and_measure(future, bench).await?;
+            }
+            SubcommandProve::Batch {
+                batch,
+                rpc_url,
+                network,
+                bench,
+            } => {
+                not_implemented!("Batch proving is not implemented yet.");
             }
         }
         Ok(())

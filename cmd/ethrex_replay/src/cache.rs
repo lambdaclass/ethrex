@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: ExecutionWitnessResult,
+    // TODO: add batch fields under L2 feature
 }
 
 pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
