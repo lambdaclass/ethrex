@@ -33,11 +33,6 @@ jobs:
         with:
           cache-on-failure: "true"
 
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-
       - name: RISC-V SP1 toolchain install
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
