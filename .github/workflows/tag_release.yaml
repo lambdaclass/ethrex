@@ -137,6 +137,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Set up QEMU
+        if: ${{ matrix.platform == "ubuntu-24.04-arm" }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
@@ -158,18 +159,14 @@ jobs:
           path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
   build-prover-risc0:
-    if: false # Remove when fixed RISC0
     strategy:
       matrix:
-        platform:
-          - ubuntu-latest
-          - macos-latest
         include:
           - platform: ubuntu-latest
             os: linux
             arch: x86-64
-          - platform: macos-latest
-            os: macos
+          - platform: ubuntu-24.04-arm
+            os: linux
             arch: arm64
     runs-on: ${{ matrix.platform }}
     steps:
@@ -186,9 +183,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L https://risczero.com/install | bash
-          ~/.risc0/bin/rzup install
-          ~/.risc0/bin/rzup install cargo-risczero 1.2.0
-          ~/.risc0/bin/rzup default cargo-risczero 1.2.0
+          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install rust
+
+      - name: Set up QEMU
+        if: ${{ matrix.platform == "ubuntu-24.04-arm" }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
