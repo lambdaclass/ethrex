@@ -4087,7 +4087,6 @@ dependencies = [
  "futures-util",
  "hex",
  "lazy_static",
- "reqwest 0.12.20",
  "revm 19.7.0",
  "revm-inspectors",
  "revm-primitives 15.2.0",
