@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751488811499,
+  "lastUpdate": 1751491180764,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4231,6 +4231,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006510887804878049,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "95a28c6887bf8fa788044dd0d4b744f261409e52",
+          "message": "fix(l2): risc0 replay job (#3448)",
+          "timestamp": "2025-07-02T20:31:55Z",
+          "tree_id": "d0205853ef4b83bdbd04fc69bd6d15b2a57abe9b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/95a28c6887bf8fa788044dd0d4b744f261409e52"
+        },
+        "date": 1751491173248,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006542803921568628,
             "unit": "Mgas/s"
           }
         ]
