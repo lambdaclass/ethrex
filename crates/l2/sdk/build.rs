@@ -1,5 +1,6 @@
 //! Build script for the L2 SDK crate.
 //! This script downloads dependencies and compiles contracts to be embedded as constants in the SDK.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::env;
 use std::path::Path;
 

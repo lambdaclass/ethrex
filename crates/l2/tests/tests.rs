@@ -4,11 +4,9 @@ use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::{H160, types::BlockNumber};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_sdk::calldata::{self};
-use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, claim_erc20withdraw, compile_contract, deposit_erc20,
-    get_address_from_secret_key, wait_for_transaction_receipt,
+    COMMON_BRIDGE_L2_ADDRESS, L1ToL2TransactionData, calldata, claim_erc20withdraw,
+    compile_contract, deposit_erc20, get_address_from_secret_key, wait_for_transaction_receipt,
 };
 use ethrex_rpc::clients::eth::from_hex_string_to_u256;
 use ethrex_rpc::clients::eth::{BlockByNumber, EthClient, eth_sender::Overrides};

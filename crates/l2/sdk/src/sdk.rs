@@ -423,7 +423,7 @@ pub async fn deploy_with_proxy(
     salt: &[u8],
 ) -> Result<ProxyDeployment, DeployError> {
     let (implementation_tx_hash, implementation_address) =
-        deploy_contract(&[], &contract_path, &deployer_private_key, salt, eth_client).await?;
+        deploy_contract(&[], contract_path, &deployer_private_key, salt, eth_client).await?;
 
     let (proxy_tx_hash, proxy_address) = deploy_proxy(
         deployer_private_key,
