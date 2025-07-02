@@ -147,11 +147,11 @@ impl Display for BlockIdentifier {
         match self {
             BlockIdentifier::Number(num) => num.fmt(f),
             BlockIdentifier::Tag(tag) => match tag {
-                BlockTag::Earliest => "Earliest".fmt(f),
-                BlockTag::Finalized => "Finalized".fmt(f),
-                BlockTag::Safe => "Safe".fmt(f),
-                BlockTag::Latest => "Latest".fmt(f),
-                BlockTag::Pending => "Pending".fmt(f),
+                BlockTag::Earliest => "earliest".fmt(f),
+                BlockTag::Finalized => "finalized".fmt(f),
+                BlockTag::Safe => "safe".fmt(f),
+                BlockTag::Latest => "latest".fmt(f),
+                BlockTag::Pending => "pending".fmt(f),
             },
         }
     }
