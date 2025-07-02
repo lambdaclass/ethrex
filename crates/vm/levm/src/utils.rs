@@ -393,7 +393,7 @@ impl<'a> VM<'a> {
             }
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
-            // If it doesn't exist, it means the nonce is zero. The get_account() function will return AccountInfo::default()
+            // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
             if authority_account.info.nonce != auth_tuple.nonce {
                 continue;

@@ -30,8 +30,7 @@ impl<'a> VM<'a> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
 
         let address_was_cold = self.substate.accessed_addresses.insert(address);
-        let account = self.db.get_account(address)?;
-        let account_balance = account.info.balance;
+        let account_balance = self.db.get_account(address)?.info.balance;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -250,9 +249,7 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
         let address_was_cold = self.substate.accessed_addresses.insert(address);
-        let account = self.db.get_account(address)?;
-
-        let account_code_length = account.code.len().into();
+        let account_code_length = self.db.get_account(address)?.code.len().into();
 
         let current_call_frame = self.current_call_frame_mut()?;
 

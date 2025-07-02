@@ -547,8 +547,7 @@ impl<'a> VM<'a> {
         };
 
         let target_account_is_cold = self.substate.accessed_addresses.insert(beneficiary);
-        let target_account = self.db.get_account(beneficiary)?;
-        let target_account_is_empty = target_account.is_empty();
+        let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
 
         let current_account = self.db.get_account(to)?;
         let balance = current_account.info.balance;
