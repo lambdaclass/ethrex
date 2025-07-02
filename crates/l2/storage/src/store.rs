@@ -191,6 +191,7 @@ impl Store {
 
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, StoreError> {
         let _ = self.storage_lock.read().await;
+        println!("Getting batch {batch_number} from database");
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
         };
@@ -203,12 +204,20 @@ impl Store {
             "Failed while trying to retrieve the last block of a known batch. This is a bug."
                 .to_owned(),
         ))?;
-
+        println!(
+            "Retrieved blocks {:?} to {:?} for batch {:?}",
+            first_block, last_block, batch_number
+        );
+        println!("Retrieving state root for batch {batch_number} from database");
         let state_root = self.get_state_root_by_batch(batch_number).await?.ok_or(
             StoreError::Custom(format!(
                 "Failed while trying to retrieve the state root of a known batch: {batch_number}. This is a bug."
             )),
         )?;
+        println!(
+            "Retrieved state root {:?} for batch {:?}",
+            state_root, batch_number
+        );
         let blobs_bundle = BlobsBundle::create_from_blobs(
             &self
                 .get_blobs_by_batch(batch_number)
@@ -248,20 +257,42 @@ impl Store {
         let _ = self.storage_lock.write().await;
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
+        println!(
+            "sealing batch {} with blocks {:?} to {:?}",
+            batch.number, batch.first_block, batch.last_block
+        );
         for block_number in blocks.iter() {
             self.store_batch_number_by_block(*block_number, batch.number)
                 .await?;
         }
+        println!(
+            "storing blocks {:?} to {:?} for batch {:?}",
+            batch.first_block, batch.last_block, batch.number
+        );
         self.store_block_numbers_by_batch(batch.number, blocks)
             .await?;
+        println!("storing withdrawal hashes for batch {:?}", batch.number);
         self.store_withdrawal_hashes_by_batch(batch.number, batch.withdrawal_hashes)
             .await?;
+        println!(
+            "storing deposit logs hash {:?} for batch {:?}",
+            batch.deposit_logs_hash, batch.number
+        );
         self.store_deposit_logs_hash_by_batch(batch.number, batch.deposit_logs_hash)
             .await?;
+        println!("storing blobs for batch {:?}", batch.number);
         self.store_blobs_by_batch(batch.number, batch.blobs_bundle.blobs)
             .await?;
+        println!(
+            "storing state root {:?} for batch {:?}",
+            batch.state_root, batch.number
+        );
         self.store_state_root_by_batch(batch.number, batch.state_root)
             .await?;
+        println!(
+            "storing batch number {:?} for batch {:?}",
+            batch.number, batch.number
+        );
         self.engine.set_latest_batch_number(batch.number).await?;
         Ok(())
     }
