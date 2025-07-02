@@ -3,7 +3,8 @@ name: Add to Projectt
 on:
   pull_request:
     types:
-      - labeled
+      - opened
+      - edited
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -18,4 +19,3 @@ jobs:
         with:
           project-url: https://github.com/orgs/lambdaclass/projects/31 # ethrex_l1 number
           github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
-          labeled: ci
