@@ -930,7 +930,7 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_remaining
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::Underflow)?;
+            .ok_or(ExceptionalHalt::OutOfGas)?;
 
         Ok((
             new_memory_size,
