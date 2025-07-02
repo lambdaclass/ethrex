@@ -36,6 +36,11 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
       - name: Run cargo check
         run: cargo check --workspace
 
@@ -142,7 +147,7 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
-          
+
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
         with:
