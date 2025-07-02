@@ -342,7 +342,7 @@ async fn prepare_batch_from_block(
                 .unwrap_or(0)
         );
         // Get block messages and privileged transactions
-        let messages = get_block_l1_messages(&txs, &receipts);
+        let messages = get_block_l1_messages(&receipts);
         let privileged_transactions = get_block_privileged_transactions(&txs);
 
         // Get block account updates.

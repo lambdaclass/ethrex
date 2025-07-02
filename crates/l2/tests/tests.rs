@@ -373,7 +373,6 @@ async fn test_erc20_roundtrip(
         token_l1,
         token_l2,
         token_amount,
-        res.tx_info.transaction_hash,
         rich_wallet_private_key,
         l1_client,
         &proof,
@@ -915,12 +914,11 @@ async fn test_n_withdraws(
 
     let mut withdraw_claim_txs_receipts = vec![];
 
-    for (x, (tx, proof)) in withdraw_txs.iter().zip(proofs.iter()).enumerate() {
+    for (x, proof) in proofs.iter().enumerate() {
         println!("Claiming withdrawal on L1 {x}/{n}");
 
         let withdraw_claim_tx = ethrex_l2_sdk::claim_withdraw(
             withdraw_value,
-            *tx,
             withdrawer_address,
             *withdrawer_private_key,
             eth_client,
