@@ -68,6 +68,7 @@ pub async fn start_l2(
     });
     let _ = L1Committer::spawn(
         store.clone(),
+        blockchain.clone(),
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),

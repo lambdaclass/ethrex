@@ -59,6 +59,9 @@ color-eyre = "0.6.5"
 zkvm_interface = { path = "./prover/zkvm/interface/" }
 
 
+[build-dependencies]
+vergen-git2 = { version = "1.0.7"}
+
 [lib]
 path = "./l2.rs"
 
@@ -77,4 +80,4 @@ panic = "deny"
 [features]
 default = ["l2"]
 metrics = ["ethrex-blockchain/metrics", "ethrex-metrics/l2"]
-l2 = ["ethrex-blockchain/l2", "ethrex-vm/l2", "zkvm_interface/l2"]
+l2 = ["ethrex-blockchain/l2", "zkvm_interface/l2"]

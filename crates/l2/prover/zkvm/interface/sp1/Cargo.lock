@@ -1316,8 +1316,10 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "keccak-hash",
+ "lambdaworks-crypto",
  "lazy_static",
  "serde",
+ "sha3",
  "thiserror",
 ]
 
@@ -1911,6 +1913,18 @@ dependencies = [
  "sha2",
  "sp1_bls12_381",
  "spin",
+]
+
+[[package]]
+name = "lambdaworks-crypto"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ec4b462bbec171e1af821f3d9fff72e17de93b3d1022f29aa70fec8262c1cee"
+dependencies = [
+ "lambdaworks-math",
+ "serde",
+ "sha2",
+ "sha3",
 ]
 
 [[package]]

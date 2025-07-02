@@ -10,6 +10,7 @@ use crate::{
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
+use ethrex_blockchain::BlockchainType;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -141,7 +142,8 @@ impl Command {
                 let store = init_store(&data_dir, genesis).await;
                 let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain =
+                    init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
 
                 let signer = get_signer(&data_dir);
 
@@ -457,6 +459,8 @@ impl Command {
                                 deposit_logs_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
+                                commit_tx: None,
+                                verify_tx: None,
                             };
 
                             // Store batch info in L2 storage
