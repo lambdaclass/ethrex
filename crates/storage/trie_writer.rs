@@ -2,7 +2,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{Store, TrieUpdates};
 
-const WRITER_CHANNEL_SIZE: usize = 1000;
+const WRITER_CHANNEL_SIZE: usize = 40000;
 
 #[derive(Debug)]
 pub struct TrieWriter {
