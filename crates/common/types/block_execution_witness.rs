@@ -130,6 +130,10 @@ impl ExecutionWitnessResult {
             ExecutionWitnessError::NoBlockHeaders
         )?.state_root;
         let state_trie = rebuild_trie(state_root, state.clone())?;
+
+        for header in &self.headers {
+            self.block_headers.insert(header.number, header.clone());
+        }
         
         // So keys can either be account addresses or storage slots
         // addresses are 20 u8 long

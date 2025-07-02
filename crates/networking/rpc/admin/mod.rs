@@ -9,7 +9,7 @@ mod peers;
 pub use peers::peers;
 
 #[derive(Serialize, Debug)]
-struct NodeInfo {
+pub struct NodeInfo {
     enode: String,
     enr: String,
     id: String,

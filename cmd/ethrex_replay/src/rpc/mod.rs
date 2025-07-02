@@ -1,5 +1,6 @@
 use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rpc::admin::NodeInfo;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
@@ -45,6 +46,19 @@ pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<Block
     let encoded_block = decode_hex(get_result(res)?)?;
     let block = Block::decode_unfinished(&encoded_block)?;
     Ok(block.0)
+}
+
+pub async fn get_node_info(rpc_url: &str) -> eyre::Result<NodeInfo> {
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "admin_nodeInfo",
+        "params": []
+    });
+
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
+
+    todo!()
 }
 
 pub async fn get_witness(
