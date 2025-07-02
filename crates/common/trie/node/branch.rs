@@ -15,22 +15,22 @@ pub struct BranchNode {
 impl BranchNode {
     /// Empty choice array for more convenient node-building
     pub const EMPTY_CHOICES: [NodeRef; 16] = [
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
-        NodeRef::const_default(),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
+        NodeRef::Hash(NodeHash::Inline(([0; 31], 0))),
     ];
 
     /// Creates a new branch node given its children, without any stored value
