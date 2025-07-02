@@ -16,13 +16,17 @@ jobs:
     name: Add pull request to project
     runs-on: ubuntu-latest
     steps:
-      - name: Check PR title with regex
+      - name: Check PR title and choose project
         id: check_title
         env:
           TITLE: ${{ github.event.pull_request.title }}
         run: |
           if [[ "$TITLE" =~ \(.*l1.*\) || "$TITLE" =~ \(.*levm.*\) || "$TITLE" =~ \(.*core.*\) ]]; then
             echo "match=true" >> $GITHUB_OUTPUT
+            echo "project=https://github.com/orgs/lambdaclass/projects/31" >> $GITHUB_OUTPUT
+          elif [[ "$TITLE" =~ \(.*l2.*\) ]]; then
+            echo "match=true" >> $GITHUB_OUTPUT
+            echo "project=https://github.com/orgs/lambdaclass/projects/37" >> $GITHUB_OUTPUT
           else
             echo "match=false" >> $GITHUB_OUTPUT
           fi
@@ -31,5 +35,5 @@ jobs:
         if: steps.check_title.outputs.match == 'true'
         uses: actions/add-to-project@v1.0.2
         with:
-          project-url: https://github.com/orgs/lambdaclass/projects/31
+          project-url: ${{ steps.check_title.outputs.project }}
           github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
