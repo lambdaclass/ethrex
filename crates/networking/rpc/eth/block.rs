@@ -151,7 +151,7 @@ impl RpcHandler for GetBlockTransactionCountRequest {
         };
         let transaction_count = block_body.transactions.len();
 
-        serde_json::to_value(format!("{:#x}", transaction_count))
+        serde_json::to_value(format!("{transaction_count:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -330,7 +330,7 @@ impl RpcHandler for GetBlobBaseFee {
                 .unwrap_or_default(),
         );
 
-        serde_json::to_value(format!("{:#x}", blob_base_fee))
+        serde_json::to_value(format!("{blob_base_fee:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

@@ -32,7 +32,7 @@ run-image: build-image ## 🏃 Run the Docker image
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run --bin ethrex --features dev -- \
-			--network ./test_data/genesis-l1.json \
+			--network ./fixtures/genesis/l1.json \
 			--http.port 8545 \
 			--http.addr 0.0.0.0 \
 			--authrpc.port 8551 \
@@ -56,12 +56,12 @@ checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum p
 ENCLAVE ?= lambdanet
 
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/network_params.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/network_params_client_comparision.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_client_comparision.yaml
 	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
 localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
@@ -116,9 +116,9 @@ SIM_PARALLELISM ?= 16
 # The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
 # The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
 
-HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
-HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
-HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
+HIVE_CLIENT_FILE := ../fixtures/network/hive_clients/ethrex.yml
+HIVE_CLIENT_FILE_GIT := ../fixtures/network/hive_clients/ethrex_git.yml
+HIVE_CLIENT_FILE_LOCAL := ../fixtures/network/hive_clients/ethrex_local.yml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
@@ -151,28 +151,28 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--features "dev" \
 	--  \
 	--evm $$LEVM \
-	--network test_data/genesis-l2.json \
+	--network fixtures/genesis/l2.json \
 	--http.port 1729 \
 	--dev \
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
 
 load-test-erc20:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
 
 load-test-io:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
-test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
-	solc ./test_data/ERC20.sol -o $@
+fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
+	solc ./fixtures/contracts/ERC20/ERC20.sol -o $@
 
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
@@ -185,7 +185,7 @@ mermaid-init.js mermaid.min.js &:
 		&& exit 1)
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
-	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck
+	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck mdbook-katex
 
 docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 	mdbook build

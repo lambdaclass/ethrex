@@ -3,22 +3,23 @@ use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
+        init_metrics, init_network, init_store,
     },
-    l2::options::Options,
+    l2::{self, options::Options},
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
+use ethrex_blockchain::BlockchainType;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
-use ethrex_l2_sdk::calldata::Value;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
     EthClient,
@@ -103,7 +104,7 @@ pub enum Command {
             long = "network",
             default_value_t = Network::default(),
             value_name = "GENESIS_FILE_PATH",
-            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis*`.",
             env = "ETHREX_NETWORK",
             value_parser = clap::value_parser!(Network),
         )]
@@ -134,9 +135,10 @@ impl Command {
 
                 let genesis = network.get_genesis()?;
                 let store = init_store(&data_dir, genesis).await;
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain =
+                    init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
 
                 let signer = get_signer(&data_dir);
 
@@ -155,7 +157,7 @@ impl Command {
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
-                init_rpc_api(
+                l2::initializers::init_rpc_api(
                     &opts.node_opts,
                     &opts,
                     peer_table.clone(),
@@ -305,11 +307,11 @@ impl Command {
                             .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
                         {
                             let blob_path =
-                                data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
+                                data_dir.join(format!("{target_slot}-{}.blob", blob.index));
                             std::fs::write(blob_path, blob.blob)?;
                         }
 
-                        println!("Saved blobs for slot {}", target_slot);
+                        println!("Saved blobs for slot {target_slot}");
                     }
 
                     current_block += U256::one();
@@ -442,6 +444,8 @@ impl Command {
                                 deposit_logs_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
+                                commit_tx: None,
+                                verify_tx: None,
                             };
 
                             // Store batch info in L2 storage
@@ -487,7 +491,7 @@ impl Command {
                     info!("Private key not given, not updating contract.");
                 }
                 info!("Updating store...");
-                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
                 let last_kept_block = rollup_store
                     .get_block_numbers_by_batch(batch)
                     .await?
