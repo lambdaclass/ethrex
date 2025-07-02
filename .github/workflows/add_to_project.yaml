@@ -42,6 +42,7 @@ jobs:
 
       - name: Add PR to ethrex_l1 project
         if: steps.check_title.outputs.match_ethrex_l1 == 'true'
+        continue-on-error: true
         uses: actions/add-to-project@v1.0.2
         with:
           project-url: https://github.com/orgs/lambdaclass/projects/31
@@ -49,6 +50,7 @@ jobs:
 
       - name: Add PR to ethrex_l2 project
         if: steps.check_title.outputs.match_ethrex_l2 == 'true'
+        continue-on-error: true
         uses: actions/add-to-project@v1.0.2
         with:
           project-url: https://github.com/orgs/lambdaclass/projects/37
