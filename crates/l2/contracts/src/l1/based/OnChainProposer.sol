@@ -58,19 +58,14 @@ contract OnChainProposer is
     uint256 public lastCommittedBatch;
 
     address public BRIDGE;
+    /// @dev Deprecated variable.
     address public PICOVERIFIER;
-    address public R0VERIFIER;
-    address public SP1VERIFIER;
-    address public TDXVERIFIER;
+    address public RISC0_VERIFIER_ADDRESS;
+    address public SP1_VERIFIER_ADDRESS;
+    address public TDX_VERIFIER_ADDRESS;
     address public SEQUENCER_REGISTRY;
 
     bytes32 public SP1_VERIFICATION_KEY;
-
-    /// @notice Address used to avoid the verification process.
-    /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
-    /// the verification process will not happen.
-    /// @dev Used only in dev mode.
-    address public constant DEV_MODE = address(0xAA);
 
     /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
@@ -79,6 +74,18 @@ contract OnChainProposer is
     /// @notice The address of the AlignedProofAggregatorService contract.
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
     address public ALIGNEDPROOFAGGREGATOR;
+
+    bytes32 public RISC0_VERIFICATION_KEY;
+
+    /// @notice True if a Risc0 proof is required for batch verification.
+    bool REQUIRE_RISC0_PROOF;
+    /// @notice True if a SP1 proof is required for batch verification.
+    bool REQUIRE_SP1_PROOF;
+    /// @notice True if a TDX proof is required for batch verification.
+    bool REQUIRE_TDX_PROOF;
+
+    /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
+    bool ALIGNED;
 
     modifier onlyLeaderSequencer() {
         require(
@@ -100,83 +107,38 @@ contract OnChainProposer is
     function initialize(
         bool _validium,
         address owner,
+        bool requireRisc0Proof,
+        bool requireSp1Proof,
+        bool requireTdxProof,
+        bool aligned,
         address r0verifier,
         address sp1verifier,
         address tdxverifier,
         address alignedProofAggregator,
         bytes32 sp1Vk,
+        bytes32 risc0Vk,
         bytes32 genesisStateRoot,
         address sequencer_registry
     ) public initializer {
         VALIDIUM = _validium;
 
-        // Set the AlignedProofAggregator address
-        require(
-            ALIGNEDPROOFAGGREGATOR == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            alignedProofAggregator != address(0),
-            "OnChainProposer: alignedProofAggregator is the zero address"
-        );
-        require(
-            alignedProofAggregator != address(this),
-            "OnChainProposer: alignedProofAggregator is the contract address"
-        );
+        // Risc0 constants
+        REQUIRE_RISC0_PROOF = requireRisc0Proof;
+        RISC0_VERIFIER_ADDRESS = r0verifier;
+        RISC0_VERIFICATION_KEY = risc0Vk;
 
-        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
-
-        // Set the Risc0Groth16Verifier address
-        require(
-            R0VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            r0verifier != address(0),
-            "OnChainProposer: r0verifier is the zero address"
-        );
-        require(
-            r0verifier != address(this),
-            "OnChainProposer: r0verifier is the contract address"
-        );
-        R0VERIFIER = r0verifier;
-
-        // Set the SP1Groth16Verifier address
-        require(
-            SP1VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            sp1verifier != address(0),
-            "OnChainProposer: sp1verifier is the zero address"
-        );
-        require(
-            sp1verifier != address(this),
-            "OnChainProposer: sp1verifier is the contract address"
-        );
-        SP1VERIFIER = sp1verifier;
-
-        // Set the TDXVerifier address
-        require(
-            TDXVERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            tdxverifier != address(0),
-            "OnChainProposer: tdxverifier is the zero address"
-        );
-        require(
-            tdxverifier != address(this),
-            "OnChainProposer: tdxverifier is the contract address"
-        );
-        TDXVERIFIER = tdxverifier;
-
-        // Set the SP1 program verification key
-        require(
-            SP1_VERIFICATION_KEY == bytes32(0),
-            "OnChainProposer: contract already initialized"
-        );
+        // SP1 constants
+        REQUIRE_SP1_PROOF = requireSp1Proof;
+        SP1_VERIFIER_ADDRESS = sp1verifier;
         SP1_VERIFICATION_KEY = sp1Vk;
+
+        // TDX constants
+        REQUIRE_TDX_PROOF = requireTdxProof;
+        TDX_VERIFIER_ADDRESS = tdxverifier;
+
+        // Aligned Layer constants
+        ALIGNED = aligned;
+        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -299,7 +261,6 @@ contract OnChainProposer is
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,
@@ -308,42 +269,37 @@ contract OnChainProposer is
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external {
-        // TODO: Refactor validation
-        // TODO: imageid, programvkey and riscvvkey should be constants
-        // TODO: organize each zkvm proof arguments in their own structs
-        require(
-            ALIGNEDPROOFAGGREGATOR == DEV_MODE,
-            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchesAligned instead"
-        );
+        require(!ALIGNED, "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.");
+
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
             "OnChainProposer: cannot verify an uncommitted batch"
         );
 
-        if (R0VERIFIER != DEV_MODE) {
+        if (REQUIRE_RISC0_PROOF) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, risc0Journal);
-            IRiscZeroVerifier(R0VERIFIER).verify(
+            IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(
                 risc0BlockProof,
-                risc0ImageId,
+                RISC0_VERIFICATION_KEY,
                 sha256(risc0Journal)
             );
         }
 
-        if (SP1VERIFIER != DEV_MODE) {
+        if (REQUIRE_SP1_PROOF) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, sp1PublicValues[16:]);
-            ISP1Verifier(SP1VERIFIER).verifyProof(
+            ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                 SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
             );
         }
 
-        if (TDXVERIFIER != DEV_MODE) {
+        if (REQUIRE_TDX_PROOF) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
+            ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(tdxPublicValues, tdxSignature);
         }
 
         lastVerifiedBatch = batchNumber;
@@ -369,10 +325,8 @@ contract OnChainProposer is
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
     ) external override {
-        require(
-            ALIGNEDPROOFAGGREGATOR != DEV_MODE,
-            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
-        );
+        require(ALIGNED, "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.");
+
         require(
             alignedPublicInputsList.length == alignedMerkleProofsList.length,
             "OnChainProposer: input/proof array length mismatch"
