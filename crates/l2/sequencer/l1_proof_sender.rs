@@ -358,6 +358,11 @@ pub async fn send_proof_to_contract(
     )
     .await?;
 
+    state
+        .rollup_store
+        .store_verify_tx_by_batch(batch_number, verify_tx_hash)
+        .await?;
+
     info!(
         ?batch_number,
         ?verify_tx_hash,

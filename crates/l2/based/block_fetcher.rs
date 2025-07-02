@@ -16,6 +16,7 @@ use ethrex_l2_common::{
     calldata::Value,
     deposits::compute_deposit_logs_hash,
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
+    privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
@@ -60,8 +61,10 @@ pub enum BlockFetcherError {
     EvmError(#[from] ethrex_vm::EvmError),
     #[error("Failed to produce the blob bundle")]
     BlobBundleError,
-    #[error("Failed to compute deposit logs hash: {0}")]
-    DepositError(#[from] ethrex_l2_common::deposits::DepositError),
+    #[error("Failed to compute privileged transactions hash: {0}")]
+    PrivilegedTransactionError(
+        #[from] ethrex_l2_common::privileged_transactions::PrivilegedTransactionError,
+    ),
     #[error("Spawned GenServer Error")]
     GenServerError(spawned_concurrency::GenServerError),
     #[error("Failed to encode calldata: {0}")]
@@ -203,7 +206,6 @@ impl BlockFetcherState {
                 }
             }
         }
-
         Ok(())
     }
 
@@ -213,6 +215,8 @@ impl BlockFetcherState {
     /// in a queue to wait for validation
     pub async fn fetch_pending_batches(&mut self) -> Result<(), BlockFetcherError> {
         let batch_committed_logs = self.fetch_logs_with_batches().await?;
+        process_committed_logs(batch_committed_logs, state, last_l2_batch_number_known).await?;
+        process_verified_logs(batch_verified_logs, state).await?;
 
         for (batch_committed_log, batch_number) in batch_committed_logs {
             let batch_commit_tx_calldata = self
@@ -277,6 +281,7 @@ impl BlockFetcherState {
         let last_l1_block_number = self.eth_client.get_block_number().await?;
 
         let mut batch_committed_logs = Vec::new();
+        let mut batch_verified_logs = Vec::new();
         while self.last_l1_block_fetched < last_l1_block_number {
             let new_last_l1_fetched_block = min(
                 self.last_l1_block_fetched + self.fetch_block_step,
@@ -508,7 +513,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //     bytes32 newStateRoot,
     //     bytes32 stateDiffKZGVersionedHash,
     //     bytes32 messagesLogsMerkleRoot,
-    //     bytes32 processedDepositLogsRollingHash,
+    //     bytes32 processedPrivilegedTransactionsRollingHash,
     //     bytes[] calldata _rlpEncodedBlocks
     // ) external;
 
@@ -517,7 +522,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //          || 32 bytes (new state root) 36..68
     //          || 32 bytes (state diff KZG versioned hash) 68..100
     //          || 32 bytes (messages logs merkle root) 100..132
-    //          || 32 bytes (processed deposit logs rolling hash) 132..164
+    //          || 32 bytes (processed privileged transactions rolling hash) 132..164
 
     let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
         BlockFetcherError::WrongBatchCalldata("Couldn't get batch length bytes".to_owned()),
@@ -563,4 +568,34 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     }
 
     Ok(batch)
+}
+
+/// Process the logs from the event `BatchVerified`.
+/// Gets the batch number from the logs and stores the verify transaction hash in the rollup store
+async fn process_verified_logs(
+    batch_verified_logs: Vec<RpcLog>,
+    state: &mut BlockFetcherState,
+) -> Result<(), BlockFetcherError> {
+    for batch_verified_log in batch_verified_logs {
+        let batch_number = U256::from_big_endian(
+            batch_verified_log
+                .log
+                .topics
+                .get(1)
+                .ok_or(BlockFetcherError::InternalError(
+                    "Failed to get verified batch number from BatchVerified log".to_string(),
+                ))?
+                .as_bytes(),
+        );
+
+        let verify_tx_hash = batch_verified_log.transaction_hash;
+
+        state
+            .rollup_store
+            .store_verify_tx_by_batch(batch_number.as_u64(), verify_tx_hash)
+            .await?;
+
+        info!("Stored verify transaction hash {verify_tx_hash:#x} for batch {batch_number}");
+    }
+    Ok(())
 }
