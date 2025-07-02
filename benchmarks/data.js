@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751492589921,
+  "lastUpdate": 1751493251976,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4289,6 +4289,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0067071959798994975,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4f66425fae9d872e4d75fb3e6a1c52058247b8d4",
+          "message": "fix(l1): incorrect tx size check causing peers to be rejected (#3450)\n\n**Motivation**\nA bug currently causes peers' pooled transactions to be incorrectly\nrejected due to a mismatch in transaction size validation.\n\n**Description**\nWhen a `PooledTransactions` message is received, the implementation\nvalidates that the transactions match the originally requested ones\n(which are requested by sending `GetPooledTransactions`).\n\nOne of these validations checks that the size of each received\ntransaction matches the expected size. However, the transaction size was\nbeing computed incorrectly, leading to false rejections.\n\nThis PR fixes the error by computing the transaction size in the right\nway. Now, the transaction size is computed according to the\n[specification](https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x08):\n\n> `txsizeₙ` refers to the length of the 'consensus encoding' of a typed\ntransaction, i.e. the byte size of `tx-type || tx-data` for typed\ntransactions, and the size of the RLP-encoded `legacy-tx` for non-typed\nlegacy transactions.\n\nTo achieve this, we now use the `encode_canonical_to_vec()` method,\nwhich returns the appropriate encoding for both typed and legacy\ntransactions. The length of this encoding is then used as the\ntransaction size.\n\nThis can be tested by setting up a localnet with `make localnet`,\nwaiting around 2 minutes and checking that there are no logs like the\nfollowing\n\n```bash\n\n2025-07-02T19:56:51.324981Z  WARN ethrex_p2p::rlpx::utils: [0x03dd…06fa(172.16.0.11:30303)]: disconnected from peer. Reason: Invalid pooled transaction size, differs from expected\n```\n\nCloses #3251",
+          "timestamp": "2025-07-02T21:25:16Z",
+          "tree_id": "d9b129f2aa29ec48b32138b2111a4f8ca7df5d64",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4f66425fae9d872e4d75fb3e6a1c52058247b8d4"
+        },
+        "date": 1751493251277,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
             "unit": "Mgas/s"
           }
         ]
