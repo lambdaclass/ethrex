@@ -59,10 +59,7 @@ pub async fn get_node_info(rpc_url: &str) -> eyre::Result<NodeInfo> {
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
-    println!("node_info: {}", res);
-    let res = get_result(res);
-    println!("node_info: {:?}", res);
-    res
+    get_result(res)
 }
 
 pub async fn get_chain_config(rpc_url: &str) -> eyre::Result<ChainConfig> {
@@ -81,7 +78,6 @@ pub async fn get_witness(
         "method": "debug_executionWitness",
         "params": [block_number]
     });
-    println!("get_witness");
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
@@ -103,7 +99,6 @@ pub async fn get_witness_range(
         "method": "debug_executionWitness",
         "params": [from, to]
     });
-    println!("get_witness_range");
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
