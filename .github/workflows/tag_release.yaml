@@ -186,6 +186,12 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - uses: Jimver/cuda-toolkit@v0.2.24
+        id: cuda-toolkit
+        with:
+          cuda: '12.6.0'
+          log-file-suffix: '${{ matrix.platform }}.txt'
+
       - name: Build prover
         run: |
           cd crates/l2
