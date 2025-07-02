@@ -51,12 +51,10 @@ pub fn load_range(memory: &mut Memory, offset: U256, size: usize) -> Result<&[u8
         .ok_or(OutOfBounds.into())
 }
 
-pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(), VMError> {
+pub fn try_store_word(memory: &mut Memory, offset: usize, word: U256) -> Result<(), VMError> {
     let new_size: usize = offset
-        .checked_add(WORD_SIZE_IN_BYTES_USIZE.into())
-        .ok_or(OutOfBounds)?
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        .checked_add(WORD_SIZE_IN_BYTES_USIZE)
+        .ok_or(OutOfBounds)?;
 
     try_resize(memory, new_size)?;
     try_store(
@@ -68,18 +66,18 @@ pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(
 }
 
 pub fn try_store_data(memory: &mut Memory, offset: U256, data: &[u8]) -> Result<(), VMError> {
-    let new_size = offset
-        .checked_add(data.len().into())
-        .ok_or(OutOfBounds)?
+    let offset: usize = offset
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+    let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
+
     try_resize(memory, new_size)?;
     try_store(memory, data, offset, data.len())
 }
 
 pub fn try_store_range(
     memory: &mut Memory,
-    offset: U256,
+    offset: usize,
     size: usize,
     data: &[u8],
 ) -> Result<(), VMError> {
@@ -87,11 +85,7 @@ pub fn try_store_range(
         return Ok(());
     }
 
-    let new_size = offset
-        .checked_add(size.into())
-        .ok_or(OutOfBounds)?
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+    let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
     try_resize(memory, new_size)?;
     try_store(memory, data, offset, size)
 }
@@ -99,30 +93,16 @@ pub fn try_store_range(
 fn try_store(
     memory: &mut Memory,
     data: &[u8],
-    at_offset: U256,
+    at_offset: usize,
     data_size: usize,
 ) -> Result<(), VMError> {
     if data_size == 0 {
         return Ok(());
     }
 
-    let at_offset: usize = at_offset
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+    #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+    memory[at_offset..at_offset + data_size].copy_from_slice(data);
 
-    for (byte_to_store, memory_slot) in data.iter().zip(
-        memory
-            .get_mut(
-                at_offset
-                    ..at_offset
-                        .checked_add(data_size)
-                        .ok_or(InternalError::Overflow)?,
-            )
-            .ok_or(OutOfBounds)?
-            .iter_mut(),
-    ) {
-        *memory_slot = *byte_to_store;
-    }
     Ok(())
 }
 

@@ -835,6 +835,9 @@ impl<'a> VM<'a> {
             ret_size,
             ..
         } = executed_call_frame;
+        let ret_offset: usize = ret_offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let parent_call_frame = self.current_call_frame_mut()?;
 
