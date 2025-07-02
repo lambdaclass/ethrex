@@ -1,4 +1,9 @@
-use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    cmp::min,
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
 use ethrex_common::{
@@ -77,7 +82,7 @@ pub struct BlockFetcherState {
 
     latest_committed_batch: u64,
     latest_safe_batch: u64,
-    pending_batches: Vec<Batch>,
+    pending_batches: VecDeque<Batch>,
 }
 
 impl BlockFetcherState {
@@ -105,25 +110,30 @@ impl BlockFetcherState {
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
             latest_committed_batch: 0,
             latest_safe_batch: 0,
-            pending_batches: vec![],
+            pending_batches: VecDeque::new(),
         })
     }
 
     pub async fn is_up_to_date(&mut self) -> Result<bool, BlockFetcherError> {
-        Ok(false)
+        node_is_up_to_date::<BlockFetcherError>(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            &self.rollup_store,
+        )
+        .await
     }
 
     pub async fn update_l2_head(&mut self) -> Result<(), BlockFetcherError> {
-        self.latest_committed_batch = self
+        let latest_committed_batch = self
             .eth_client
             .get_last_committed_batch(self.on_chain_proposer_address)
             .await?;
 
-        info!(
+        debug!(
             "Node is {} batches behind. Last batch safe batch: {}, last committed batch number: {}",
-            self.latest_committed_batch - self.latest_safe_batch,
+            latest_committed_batch - self.latest_safe_batch,
             self.latest_safe_batch,
-            self.latest_committed_batch
+            latest_committed_batch
         );
 
         Ok(())
@@ -138,7 +148,6 @@ impl BlockFetcherState {
         missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
 
         for (batch_committed_log, batch_number) in missing_batches_logs {
-            info!("HOLA");
             let batch_commit_tx_calldata = self
                 .eth_client
                 .get_transaction_by_hash(batch_committed_log.transaction_hash)
@@ -165,21 +174,23 @@ impl BlockFetcherState {
             }
 
             let batch = self.get_batch(&batch_blocks, batch_number).await?;
-            self.pending_batches.push(batch);
+            info!(
+                "Committed batch number {} waiting for verification.",
+                batch.number
+            );
+            self.pending_batches.push_back(batch);
+            self.latest_committed_batch += 1;
         }
         Ok(())
     }
 
     pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
-        for batch in self.pending_batches.clone() {
+        while let Some(batch) = self.pending_batches.pop_front() {
             if self.batch_is_safe(&batch).await? {
-                info!("Batch is safe!!!!!!!!");
-                // self.store_batch(&batch).await?;
-                // self.seal_batch(&batch).await?;
-                // store_batch(state, &batch).await?;
-
-                // seal_batch(state, &batch, batch_number).await?;
+                info!("Safe batch sealed {}.", batch.number);
+                self.rollup_store.seal_batch(batch).await?;
             } else {
+                self.pending_batches.push_front(batch);
                 break;
             }
         }
@@ -226,13 +237,12 @@ impl BlockFetcherState {
     }
 
     async fn batch_is_safe(&mut self, batch: &Batch) -> Result<bool, BlockFetcherError> {
-        info!("checking if batch is safe");
-
         let Some(batch_last_block) = self.store.get_block_header(batch.last_block)? else {
             return Err(BlockFetcherError::InternalError("TODO".to_string()));
         };
 
         let values = vec![Value::FixedBytes(batch_last_block.hash().0.to_vec().into())];
+
         let calldata = encode_calldata("verifiedBatches(bytes32)", &values)?;
 
         let result = self
@@ -576,37 +586,3 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
 
     Ok(batch)
 }
-
-// async fn store_batch(
-//     state: &mut BlockFetcherState,
-//     batch: &[Block],
-// ) -> Result<(), BlockFetcherError> {
-//     for block in batch.iter() {
-//         state.blockchain.add_block(block).await?;
-
-//         let block_hash = block.hash();
-
-//         apply_fork_choice(&state.store, block_hash, block_hash, block_hash).await?;
-
-//         info!(
-//             "Added fetched block {} with hash {block_hash:#x}",
-//             block.header.number,
-//         );
-//     }
-
-//     Ok(())
-// }
-
-// async fn seal_batch(
-//     state: &mut BlockFetcherState,
-//     batch: &[Block],
-//     batch_number: U256,
-// ) -> Result<(), BlockFetcherError> {
-//     let batch = get_batch(state, batch, batch_number).await?;
-
-//     state.rollup_store.seal_batch(batch).await?;
-
-//     info!("Sealed batch {batch_number}.");
-
-//     Ok(())
-// }
