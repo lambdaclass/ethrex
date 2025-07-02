@@ -79,10 +79,77 @@ pub struct BlockFetcherState {
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
     fetch_block_step: U256,
-
     latest_committed_batch: u64,
-    latest_safe_batch: u64,
-    pending_batches: VecDeque<Batch>,
+    pending_verify_batches: VecDeque<Batch>,
+}
+
+#[derive(Clone)]
+pub enum InMessage {
+    Fetch,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+}
+
+pub struct BlockFetcher;
+
+impl BlockFetcher {
+    pub async fn spawn(
+        cfg: &SequencerConfig,
+        store: Store,
+        rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
+        sequencer_state: SequencerState,
+    ) -> Result<(), BlockFetcherError> {
+        let state =
+            BlockFetcherState::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
+        let mut block_fetcher = BlockFetcher::start(state);
+        block_fetcher
+            .cast(InMessage::Fetch)
+            .await
+            .map_err(BlockFetcherError::GenServerError)
+    }
+}
+
+impl GenServer for BlockFetcher {
+    type InMsg = InMessage;
+    type OutMsg = OutMessage;
+    type State = BlockFetcherState;
+    type Error = BlockFetcherError;
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn handle_call(
+        &mut self,
+        _message: Self::InMsg,
+        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
+        _state: &mut Self::State,
+    ) -> spawned_concurrency::CallResponse<Self::OutMsg> {
+        CallResponse::Reply(OutMessage::Done)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        _message: Self::InMsg,
+        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
+        state: &mut Self::State,
+    ) -> spawned_concurrency::CastResponse {
+        if let SequencerStatus::Following = state.sequencer_state.status().await {
+            if let Err(err) = state.fetch().await {
+                error!("Block Fetcher Error: {err}");
+            }
+        }
+        send_after(
+            Duration::from_millis(state.fetch_interval_ms),
+            _tx.clone(),
+            Self::InMsg::Fetch,
+        );
+        CastResponse::NoReply
+    }
 }
 
 impl BlockFetcherState {
@@ -109,8 +176,7 @@ impl BlockFetcherState {
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
             latest_committed_batch: 0,
-            latest_safe_batch: 0,
-            pending_batches: VecDeque::new(),
+            pending_verify_batches: VecDeque::new(),
         })
     }
 
@@ -131,8 +197,6 @@ impl BlockFetcherState {
             false => {
                 info!("Node is not up to date. Syncing via L1");
                 while !self.is_up_to_date().await? {
-                    self.update_l2_head().await?;
-
                     self.fetch_pending_batches().await?;
 
                     self.store_safe_batches().await?;
@@ -143,31 +207,10 @@ impl BlockFetcherState {
         Ok(())
     }
 
-    pub async fn update_l2_head(&mut self) -> Result<(), BlockFetcherError> {
-        let latest_committed_batch = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
-
-        debug!(
-            "Node is {} batches behind. Last batch safe batch: {}, last committed batch number: {}",
-            latest_committed_batch - self.latest_safe_batch,
-            self.latest_safe_batch,
-            latest_committed_batch
-        );
-
-        Ok(())
-    }
-
     pub async fn fetch_pending_batches(&mut self) -> Result<(), BlockFetcherError> {
-        let batch_committed_logs = self.get_logs().await?;
+        let batch_committed_logs = self.fetch_logs_with_batches().await?;
 
-        let mut missing_batches_logs =
-            filter_logs(&batch_committed_logs, self.latest_committed_batch).await?;
-
-        missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
-
-        for (batch_committed_log, batch_number) in missing_batches_logs {
+        for (batch_committed_log, batch_number) in batch_committed_logs {
             let batch_commit_tx_calldata = self
                 .eth_client
                 .get_transaction_by_hash(batch_committed_log.transaction_hash)
@@ -193,34 +236,37 @@ impl BlockFetcherState {
                 );
             }
 
-            let batch = self.get_batch(&batch_blocks, batch_number).await?;
+            let batch = self.build_batch(&batch_blocks, batch_number).await?;
             info!(
                 "Committed batch number {} waiting for verification.",
                 batch.number
             );
-            self.pending_batches.push_back(batch);
+            self.pending_verify_batches.push_back(batch);
             self.latest_committed_batch += 1;
         }
         Ok(())
     }
 
     pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
-        while let Some(batch) = self.pending_batches.pop_front() {
+        while let Some(batch) = self.pending_verify_batches.pop_front() {
             if self.batch_is_safe(&batch).await? {
                 info!("Safe batch sealed {}.", batch.number);
                 self.rollup_store.seal_batch(batch).await?;
             } else {
-                self.pending_batches.push_front(batch);
+                self.pending_verify_batches.push_front(batch);
                 break;
             }
         }
         Ok(())
     }
 
-    /// Fetch logs from the L1 chain for the BatchCommitted event.
+    /// Fetch logs from the L1 chain for the `BatchCommitted`` event.
     /// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
-    /// and going up to the current block number.
-    async fn get_logs(&mut self) -> Result<Vec<RpcLog>, BlockFetcherError> {
+    /// and going up to the current L1 block number.
+    /// Given the logs from the event `BatchCommitted`,
+    /// this function gets the committed batches that are missing in the local store.
+    /// It does that by comparing if the batch number is greater than the last known batch number.
+    async fn fetch_logs_with_batches(&mut self) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {
         let last_l1_block_number = self.eth_client.get_block_number().await?;
 
         let mut batch_committed_logs = Vec::new();
@@ -250,8 +296,26 @@ impl BlockFetcherState {
             // Update the last L1 block fetched.
             self.last_l1_block_fetched = new_last_l1_fetched_block;
 
-            batch_committed_logs.extend_from_slice(&logs);
+            // get the batch number for every batch
+            for log in logs {
+                let committed_batch_number = U256::from_big_endian(
+                    log.log
+                        .topics
+                        .get(1)
+                        .ok_or(BlockFetcherError::InternalError(
+                            "Failed to get committed batch number from BatchCommitted log"
+                                .to_string(),
+                        ))?
+                        .as_bytes(),
+                );
+
+                if committed_batch_number > self.latest_committed_batch.into() {
+                    batch_committed_logs.push((log, committed_batch_number));
+                }
+            }
         }
+
+        batch_committed_logs.sort_by_key(|(_log, batch_number)| *batch_number);
 
         Ok(batch_committed_logs)
     }
@@ -284,7 +348,7 @@ impl BlockFetcherState {
         Ok(*last_byte > 0)
     }
 
-    async fn get_batch(
+    async fn build_batch(
         &mut self,
         batch: &[Block],
         batch_number: U256,
@@ -426,105 +490,6 @@ impl BlockFetcherState {
         }
         Ok(get_block_l1_messages(&txs, &receipts))
     }
-}
-
-#[derive(Clone)]
-pub enum InMessage {
-    Fetch,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {
-    Done,
-}
-
-pub struct BlockFetcher;
-
-impl BlockFetcher {
-    pub async fn spawn(
-        cfg: &SequencerConfig,
-        store: Store,
-        rollup_store: StoreRollup,
-        blockchain: Arc<Blockchain>,
-        sequencer_state: SequencerState,
-    ) -> Result<(), BlockFetcherError> {
-        let state =
-            BlockFetcherState::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
-        let mut block_fetcher = BlockFetcher::start(state);
-        block_fetcher
-            .cast(InMessage::Fetch)
-            .await
-            .map_err(BlockFetcherError::GenServerError)
-    }
-}
-
-impl GenServer for BlockFetcher {
-    type InMsg = InMessage;
-    type OutMsg = OutMessage;
-    type State = BlockFetcherState;
-    type Error = BlockFetcherError;
-
-    fn new() -> Self {
-        Self {}
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> spawned_concurrency::CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
-    async fn handle_cast(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> spawned_concurrency::CastResponse {
-        if let SequencerStatus::Following = state.sequencer_state.status().await {
-            if let Err(err) = state.fetch().await {
-                error!("Block Fetcher Error: {err}");
-            }
-        }
-        send_after(
-            Duration::from_millis(state.fetch_interval_ms),
-            _tx.clone(),
-            Self::InMsg::Fetch,
-        );
-        CastResponse::NoReply
-    }
-}
-
-/// Given the logs from the event `BatchCommitted`,
-/// this function gets the committed batches that are missing in the local store.
-/// It does that by comparing if the batch number is greater than the last known batch number.
-async fn filter_logs(
-    logs: &[RpcLog],
-    last_batch_number_known: u64,
-) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {
-    let mut filtered_logs = Vec::new();
-
-    // Filter missing batches logs
-    for batch_committed_log in logs.iter().cloned() {
-        let committed_batch_number = U256::from_big_endian(
-            batch_committed_log
-                .log
-                .topics
-                .get(1)
-                .ok_or(BlockFetcherError::InternalError(
-                    "Failed to get committed batch number from BatchCommitted log".to_string(),
-                ))?
-                .as_bytes(),
-        );
-
-        if committed_batch_number > last_batch_number_known.into() {
-            filtered_logs.push((batch_committed_log, committed_batch_number));
-        }
-    }
-
-    Ok(filtered_logs)
 }
 
 // TODO: Move to calldata module (SDK)
