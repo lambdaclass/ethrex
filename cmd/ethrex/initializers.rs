@@ -33,10 +33,55 @@ pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(log_filter)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    if let Some(log_filename) = &opts.log_filename {
+        // Create the log directory if it doesn't exist
+        let log_dir_path = Path::new(&opts.log_dir);
+        if let Err(e) = std::fs::create_dir_all(log_dir_path) {
+            eprintln!(
+                "Failed to create log directory '{}': {}",
+                log_dir_path.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+
+        // Construct the full log file path
+        let log_file_path = log_dir_path.join(log_filename);
+
+        // Open file for writing
+        let file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file_path)
+        {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!(
+                    "Failed to open log file '{}': {}",
+                    log_file_path.display(),
+                    e
+                );
+                std::process::exit(1);
+            }
+        };
+
+        let subscriber = FmtSubscriber::builder()
+            .with_env_filter(log_filter)
+            .with_writer(file)
+            .with_ansi(false)
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+    } else {
+        let subscriber = FmtSubscriber::builder()
+            .with_env_filter(log_filter)
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+    }
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {

@@ -118,6 +118,21 @@ pub struct Options {
         help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
+        long = "log.filename",
+        value_name = "LOG_FILENAME",
+        help = "Filename for log file (will be created in log.dir)",
+        help_heading = "Node options"
+    )]
+    pub log_filename: Option<String>,
+    #[arg(
+        long = "log.dir",
+        default_value = "logs",
+        value_name = "LOG_DIRECTORY",
+        help = "Directory where log files will be written",
+        help_heading = "Node options"
+    )]
+    pub log_dir: String,
+    #[arg(
         long = "http.addr",
         default_value = "localhost",
         value_name = "ADDRESS",
@@ -217,6 +232,8 @@ impl Default for Options {
             dev: Default::default(),
             evm: Default::default(),
             force: false,
+            log_filename: Default::default(),
+            log_dir: "logs".to_string(),
         }
     }
 }
