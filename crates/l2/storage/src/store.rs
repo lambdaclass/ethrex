@@ -285,7 +285,7 @@ impl Store {
             message_hashes,
             privileged_transactions_hash,
             commit_tx,
-            verify_tx
+            verify_tx,
         }))
     }
 
