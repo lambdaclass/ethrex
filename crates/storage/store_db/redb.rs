@@ -1379,11 +1379,33 @@ impl StoreEngine for RedBStore {
 
     async fn setup_genesis_flat_account_storage(
         &self,
-        _genesis_block_number: u64,
-        _genesis_block_hash: H256,
-        _genesis_accounts: &[(Address, H256, U256)],
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
-        todo!();
+        self.write(
+            CURRENT_SNAPSHOT_BLOCK_TABLE,
+            (),
+            (genesis_block_number.into(), genesis_block_hash.into()),
+        )
+        .await?;
+
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+        {
+            let mut table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+            for (addr, slot, val) in genesis_accounts {
+                let address = <Address as Into<AccountAddressRLP>>::into(*addr);
+                let key = <H256 as Into<AccountStorageKeyRLP>>::into(*slot);
+                let value = <U256 as Into<AccountStorageValueRLP>>::into(*val);
+                if !val.is_zero() {
+                    table.insert((address, key), value)?;
+                } else {
+                    table.remove((address, key))?;
+                }
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
