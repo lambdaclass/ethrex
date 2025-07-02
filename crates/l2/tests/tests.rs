@@ -163,10 +163,11 @@ async fn test_upgrade(
         l1_client,
         &private_key,
         common_bridge_address(),
-        "upgradeL2Contract(address,address,bytes)",
+        "upgradeL2Contract(address,address,uint256,bytes)",
         &[
             Value::Address(COMMON_BRIDGE_L2_ADDRESS),
             Value::Address(deploy_address),
+            U256::from(100_000),
             Value::Bytes(Bytes::new()),
         ],
     )

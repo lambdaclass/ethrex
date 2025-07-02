@@ -376,11 +376,11 @@ contract CommonBridge is
             );
     }
 
-    function upgradeL2Contract(address l2Contract, address newImplementation, bytes calldata data) public onlyOwner {
+    function upgradeL2Contract(address l2Contract, address newImplementation, uint256 gasLimit, bytes calldata data) public onlyOwner {
         bytes memory callData = abi.encodeCall(ITransparentUpgradeableProxy.upgradeToAndCall, (newImplementation, data));
         SendValues memory sendValues = SendValues({
             to: l2Contract,
-            gasLimit: 21000 * 5,
+            gasLimit: gasLimit,
             value: 0,
             data: callData
         });
