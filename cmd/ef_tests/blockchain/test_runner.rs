@@ -5,7 +5,7 @@ use crate::{
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
@@ -44,8 +44,8 @@ pub fn parse_and_execute(
         let result = rt.block_on(run_ef_test(&test_key, &test, evm));
 
         if let Err(e) = result {
-            eprintln!("Test {} failed: {:?}", test_key, e);
-            failures.push(format!("{}: {:?}", test_key, e));
+            eprintln!("Test {test_key} failed: {e:?}");
+            failures.push(format!("{test_key}: {e:?}"));
         }
     }
 
@@ -69,7 +69,10 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::new(evm, store.clone());
+    // Blockchain EF tests are meant for L1.
+    let blockchain_type = BlockchainType::L1;
+
+    let blockchain = Blockchain::new(evm, store.clone(), blockchain_type);
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
@@ -87,15 +90,13 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
             Err(error) => {
                 if !expects_exception {
                     return Err(format!(
-                        "Transaction execution unexpectedly failed on test: {}, with error {:?}",
-                        test_key, error
+                        "Transaction execution unexpectedly failed on test: {test_key}, with error {error:?}",
                     ));
                 }
                 let expected_exception = block_fixture.expect_exception.clone().unwrap();
                 if !exception_is_expected(expected_exception.clone(), &error) {
                     return Err(format!(
-                        "Returned exception {:?} does not match expected {:?}",
-                        error, expected_exception,
+                        "Returned exception {error:?} does not match expected {expected_exception:?}",
                     ));
                 }
                 break;
@@ -103,8 +104,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
             Ok(_) => {
                 if expects_exception {
                     return Err(format!(
-                        "Expected transaction execution to fail in test: {} with error: {:?}",
-                        test_key,
+                        "Expected transaction execution to fail in test: {test_key} with error: {:?}",
                         block_fixture.expect_exception.clone()
                     ));
                 }

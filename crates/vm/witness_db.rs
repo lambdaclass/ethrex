@@ -78,8 +78,7 @@ impl VmDatabase for ExecutionWitnessResult {
         match self.code_map.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => Err(EvmError::DB(format!(
-                "Could not find code for hash {}",
-                code_hash
+                "Could not find code for hash {code_hash}"
             ))),
         }
     }

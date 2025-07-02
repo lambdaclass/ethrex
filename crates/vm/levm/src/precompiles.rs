@@ -4,9 +4,11 @@ use bls12_381::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{Address, H160, H256, U256, serde_utils::bool, types::Fork};
+use ethrex_common::{
+    Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
+    utils::u256_from_big_endian,
+};
 use keccak_hash::keccak256;
-use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
@@ -31,38 +33,14 @@ use lambdaworks_math::{
     unsigned_integer::element,
 };
 use num_bigint::BigUint;
-#[cfg(feature = "l2")]
-use p256::{
-    EncodedPoint, FieldElement as P256FieldElement, NistP256,
-    ecdsa::{Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier},
-    elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
-};
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 
-// Secp256r1 curve parameters
-// See https://neuromancer.sk/std/secg/secp256r1
-#[cfg(feature = "l2")]
-const P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
-#[cfg(feature = "l2")]
-const P256_N: P256Uint = NistP256::ORDER;
-#[cfg(feature = "l2")]
-const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
-#[cfg(feature = "l2")]
-const P256_B_UINT: P256Uint =
-    P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
-#[cfg(feature = "l2")]
-lazy_static::lazy_static! {
-    static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
-}
-
 use sha3::Digest;
 use std::ops::Mul;
 
-#[cfg(feature = "l2")]
-use crate::gas_cost::P256VERIFY_COST;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
@@ -143,12 +121,6 @@ pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x11,
 ]);
 
-#[cfg(feature = "l2")]
-pub const P256VERIFY_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00,
-]);
-
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
@@ -171,9 +143,6 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_MAP_FP_TO_G1_ADDRESS,
     BLS12_MAP_FP2_TO_G2_ADDRESS,
 ];
-
-#[cfg(feature = "l2")]
-pub const RIP_PRECOMPILES: [H160; 1] = [P256VERIFY_ADDRESS];
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
@@ -222,11 +191,6 @@ pub fn is_precompile(address: &Address, fork: Fork) -> bool {
         return false;
     }
 
-    #[cfg(feature = "l2")]
-    if RIP_PRECOMPILES.contains(address) {
-        return true;
-    }
-
     PRECOMPILES.contains(address) || PRECOMPILES_POST_CANCUN.contains(address)
 }
 
@@ -261,8 +225,6 @@ pub fn execute_precompile(
         address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
             bls12_map_fp2_tp_g2(calldata, gas_remaining)?
         }
-        #[cfg(feature = "l2")]
-        address if address == P256VERIFY_ADDRESS => p_256_verify(calldata, gas_remaining)?,
         _ => return Err(InternalError::InvalidPrecompileAddress.into()),
     };
 
@@ -270,7 +232,10 @@ pub fn execute_precompile(
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.
-fn increase_precompile_consumed_gas(gas_cost: u64, gas_remaining: &mut u64) -> Result<(), VMError> {
+pub(crate) fn increase_precompile_consumed_gas(
+    gas_cost: u64,
+    gas_remaining: &mut u64,
+) -> Result<(), VMError> {
     *gas_remaining = gas_remaining
         .checked_sub(gas_cost)
         .ok_or(PrecompileError::NotEnoughGas)?;
@@ -279,7 +244,7 @@ fn increase_precompile_consumed_gas(gas_cost: u64, gas_remaining: &mut u64) -> R
 
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
 /// more than `target_len`, the excess bytes are discarded.
-fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
+pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     let mut padded_calldata = calldata.to_vec();
     if padded_calldata.len() < target_len {
         padded_calldata.resize(target_len, 0);
@@ -303,7 +268,7 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
         return Ok(Bytes::new());
     };
 
-    let v = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
 
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
     if !(v == U256::from(27) || v == U256::from(28)) {
@@ -380,19 +345,19 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    let base_size = U256::from_big_endian(
+    let base_size = u256_from_big_endian(
         calldata
             .get(0..32)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    let exponent_size = U256::from_big_endian(
+    let exponent_size = u256_from_big_endian(
         calldata
             .get(32..64)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
 
-    let modulus_size = U256::from_big_endian(
+    let modulus_size = u256_from_big_endian(
         calldata
             .get(64..96)
             .ok_or(PrecompileError::ParsingInputError)?,
@@ -524,10 +489,10 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
 
     // If points are zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let first_point_is_zero = U256::from_big_endian(first_point_x).is_zero()
-        && U256::from_big_endian(first_point_y).is_zero();
-    let second_point_is_zero = U256::from_big_endian(second_point_x).is_zero()
-        && U256::from_big_endian(second_point_y).is_zero();
+    let first_point_is_zero = u256_from_big_endian(first_point_x).is_zero()
+        && u256_from_big_endian(first_point_y).is_zero();
+    let second_point_is_zero = u256_from_big_endian(second_point_x).is_zero()
+        && u256_from_big_endian(second_point_y).is_zero();
 
     let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
         .map_err(|_| PrecompileError::ParsingInputError)?;
@@ -565,8 +530,8 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
             .map_err(|_| PrecompileError::ParsingInputError)?;
         let sum = first_point.operate_with(&second_point).to_affine();
 
-        if U256::from_big_endian(&sum.x().to_bytes_be()) == U256::zero()
-            || U256::from_big_endian(&sum.y().to_bytes_be()) == U256::zero()
+        if u256_from_big_endian(&sum.x().to_bytes_be()) == U256::zero()
+            || u256_from_big_endian(&sum.y().to_bytes_be()) == U256::zero()
         {
             Ok(Bytes::from([0u8; 64].to_vec()))
         } else {
@@ -600,7 +565,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     // If point is zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
     let point_is_zero =
-        U256::from_big_endian(point_x).is_zero() && U256::from_big_endian(point_y).is_zero();
+        u256_from_big_endian(point_x).is_zero() && u256_from_big_endian(point_y).is_zero();
     if point_is_zero {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
@@ -618,8 +583,8 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
         Ok(Bytes::from([0u8; 64].to_vec()))
     } else {
         let mul = point.operate_with_self(scalar).to_affine();
-        if U256::from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
-            || U256::from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
+        if u256_from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
+            || u256_from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
         {
             Ok(Bytes::from([0u8; 64].to_vec()))
         } else {
@@ -647,8 +612,8 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (U256::from_big_endian(first_point_x) == U256::zero())
-        ^ (U256::from_big_endian(first_point_y) == U256::zero())
+    if (u256_from_big_endian(first_point_x) == U256::zero())
+        ^ (u256_from_big_endian(first_point_y) == U256::zero())
     {
         return Err(PrecompileError::DefaultError.into());
     }
@@ -675,8 +640,8 @@ fn parse_second_point_coordinates(
     let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
-        ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
+    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
+        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
     {
         return Err(PrecompileError::DefaultError.into());
     }
@@ -685,17 +650,17 @@ fn parse_second_point_coordinates(
     let second_point_y_second_part = input_data.get(128..160).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
-        ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
+    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
+        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
     {
         return Err(PrecompileError::DefaultError.into());
     }
 
     // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-    if U256::from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-        || U256::from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-        || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-        || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
+    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
     {
         return Err(PrecompileError::DefaultError.into());
     }
@@ -1012,7 +977,7 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::Slicing)?);
+    let rounds = u256_from_big_endian(calldata.get(0..4).ok_or(InternalError::Slicing)?);
 
     let rounds: usize = rounds
         .try_into()
@@ -1045,33 +1010,6 @@ fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
     let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(commitment_bytes).into();
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
     versioned_hash.into()
-}
-
-/// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
-fn verify_kzg_proof(
-    commitment_bytes: &[u8; 48],
-    z: &[u8; 32],
-    y: &[u8; 32],
-    proof_bytes: &[u8; 48],
-) -> Result<bool, VMError> {
-    let commitment_bytes =
-        Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
-    let z_bytes = Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
-    let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
-    let proof_bytes =
-        Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
-
-    let settings =
-        KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::EvaluationError)?;
-
-    kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
-        &commitment_bytes,
-        &z_bytes,
-        &y_bytes,
-        &proof_bytes,
-        &settings,
-    )
-    .map_err(|_| PrecompileError::EvaluationError.into())
 }
 
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
@@ -1132,7 +1070,7 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     }
 
     // This verifies the proof from a point (x, y) and a commitment
-    if !verify_kzg_proof(&commitment, &x, &y, &proof).unwrap_or(false) {
+    if !verify_kzg_proof(commitment, x, y, proof).unwrap_or(false) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
@@ -1581,100 +1519,4 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     }
     scalar_le.reverse();
     Ok(Scalar::from_raw(scalar_le))
-}
-
-#[cfg(feature = "l2")]
-/// Signature verification in the “secp256r1” elliptic curve
-/// If the verification succeeds, returns 1 in a 32-bit big-endian format.
-/// If the verification fails, returns an empty `Bytes` object.
-/// Implemented following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L1.
-pub fn p_256_verify(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
-    let gas_cost = P256VERIFY_COST;
-    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
-
-    // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 160);
-
-    // Parse parameters
-    let message_hash = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let r = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let s = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let x = calldata
-        .get(96..128)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let y = calldata
-        .get(128..160)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    if !validate_p256_parameters(r, s, x, y)? {
-        return Ok(Bytes::new());
-    }
-
-    // Build verifier
-    let Ok(verifier) = VerifyingKey::from_encoded_point(&EncodedPoint::from_affine_coordinates(
-        x.into(),
-        y.into(),
-        false,
-    )) else {
-        return Ok(Bytes::new());
-    };
-
-    // Build signature
-    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::Slicing)?;
-    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::Slicing)?;
-
-    let Ok(signature) = P256Signature::from_scalars(r, s) else {
-        return Ok(Bytes::new());
-    };
-
-    // Verify message signature
-    let success = verifier.verify_prehash(message_hash, &signature).is_ok();
-
-    // If the verification succeeds, returns 1 in a 32-bit big-endian format.
-    // If the verification fails, returns an empty `Bytes` object.
-    if success {
-        let mut result = [0; 32];
-        result[31] = 1;
-        Ok(Bytes::from(result.to_vec()))
-    } else {
-        Ok(Bytes::new())
-    }
-}
-
-#[cfg(feature = "l2")]
-/// Following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L86
-fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bool, VMError> {
-    let [r, s, x, y] = [r, s, x, y].map(P256Uint::from_be_slice);
-
-    // Verify that the r and s values are in (0, n) (exclusive)
-    if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N {
-        return Ok(false);
-    }
-
-    // Verify that both x and y are in [0, p) (inclusive 0, exclusive p)
-    if x >= P256_P || y >= P256_P {
-        return Ok(false);
-    }
-
-    // Verify that the point formed by (x, y) is on the curve
-    let x: Option<P256FieldElement> = P256FieldElement::from_uint(x).into();
-    let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
-
-    let (Some(x), Some(y)) = (x, y) else {
-        return Err(InternalError::Slicing.into());
-    };
-
-    // Curve equation: `y² = x³ + ax + b`
-    let a_x = P256_A.multiply(&x);
-    if y.square() == x.pow_vartime(&[3u64]).add(&a_x).add(&P256_B) {
-        return Ok(true);
-    }
-
-    Ok(false)
 }

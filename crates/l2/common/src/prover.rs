@@ -1,7 +1,7 @@
-use ethrex_common::H256;
-use ethrex_l2_sdk::calldata::Value;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
+
+use crate::calldata::Value;
 
 /// Enum used to identify the different proving systems.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,6 +11,18 @@ pub enum ProverType {
     SP1,
     Aligned,
     TDX,
+}
+
+impl From<ProverType> for u32 {
+    fn from(value: ProverType) -> u32 {
+        match value {
+            ProverType::Exec => 0,
+            ProverType::RISC0 => 1,
+            ProverType::SP1 => 2,
+            ProverType::Aligned => 4,
+            ProverType::TDX => 5,
+        }
+    }
 }
 
 impl ProverType {
@@ -31,11 +43,7 @@ impl ProverType {
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
-                vec![
-                    Value::Bytes(vec![].into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                ]
+                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::SP1 => {
                 vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]

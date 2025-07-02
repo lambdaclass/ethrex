@@ -9,6 +9,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
 use libmdbx::{
     DatabaseOptions, Mode, PageSize, RW, ReadWriteOptions,
@@ -77,6 +78,9 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(DepositLogsHash),
         table_info!(LastSentBatchProof),
         table_info!(AccountUpdatesByBlockNumber),
+        table_info!(BatchProofs),
+        table_info!(CommitTxByBatch),
+        table_info!(VerifyTxByBatch),
     ]
     .into_iter()
     .collect();
@@ -218,6 +222,44 @@ impl StoreEngineRollup for Store {
             .map(|blobs| blobs.to()))
     }
 
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read::<CommitTxByBatch>(batch_number)
+            .await?
+            .map(|tx| tx.to()))
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write::<CommitTxByBatch>(batch_number, commit_tx.into())
+            .await
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read::<VerifyTxByBatch>(batch_number)
+            .await?
+            .map(|tx| tx.to()))
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write::<VerifyTxByBatch>(batch_number, verify_tx.into())
+            .await
+    }
+
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         let exists = self
             .read::<BlockNumbersByBatch>(*batch_number)
@@ -298,6 +340,28 @@ impl StoreEngineRollup for Store {
         self.write::<AccountUpdatesByBlockNumber>(block_number, serialized)
             .await
     }
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&proof)?;
+        self.write::<BatchProofs>((batch_number, proof_type.into()), serialized)
+            .await
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
+        self.read::<BatchProofs>((batch_number, proof_type.into()))
+            .await?
+            .map(|s| bincode::deserialize(&s))
+            .transpose()
+            .map_err(RollupStoreError::from)
+    }
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
@@ -375,4 +439,20 @@ table!(
 table!(
     /// List of serialized account updates by block number
     ( AccountUpdatesByBlockNumber ) BlockNumber => Vec<u8>
+);
+
+table!(
+    /// Stores batch proofs, keyed by (BatchNumber, ProverType as u8).
+    /// Value is the bincode-encoded BatchProof data.
+    (BatchProofs) (u64, u32) => Vec<u8>
+);
+
+table!(
+    /// Commit transaction by batch number
+    ( CommitTxByBatch ) u64 => Rlp<H256>
+);
+
+table!(
+    /// Verify transaction by batch number
+    ( VerifyTxByBatch ) u64 => Rlp<H256>
 );

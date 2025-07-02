@@ -11,7 +11,6 @@ interface ICommonBridge {
     /// @param amount the amount of tokens being deposited.
     /// @param to the address that will be called in the L2.
     /// @param depositId Id used to differentiate deposits with same amount and recipient.
-    /// @param recipient the address that initiated the deposit and will receive the tokens.
     /// @param from the address that initiated the deposit.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
@@ -19,11 +18,10 @@ interface ICommonBridge {
     /// deposit in L2. Could be used to track the status of the deposit finalization
     /// on L2. You can use this hash to retrive the tx data.
     /// It is the result of keccak(abi.encode(transaction)).
-    event DepositInitiated(
+    event L1ToL2Message(
         uint256 indexed amount,
         address indexed to,
         uint256 indexed depositId,
-        address recipient,
         address from,
         uint256 gasLimit,
         bytes data,
@@ -41,19 +39,13 @@ interface ICommonBridge {
 
     /// @notice A withdrawal has been claimed.
     /// @dev Event emitted when a withdrawal is claimed.
-    /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
-    /// @param claimee the address that claimed the withdrawal.
-    /// @param claimedAmount the amount that was claimed.
-    event WithdrawalClaimed(
-        bytes32 indexed l2WithdrawalTxHash,
-        address indexed claimee,
-        uint256 indexed claimedAmount
-    );
+    /// @param withdrawalId the message Id of the claimed withdrawal
+    event WithdrawalClaimed(uint256 indexed withdrawalId);
 
-    struct DepositValues {
+    struct SendValues {
         address to;
-        address recipient;
         uint256 gasLimit;
+        uint256 value;
         bytes data;
     }
 
@@ -62,12 +54,19 @@ interface ICommonBridge {
     /// logs to be processed.
     function getPendingDepositLogs() external view returns (bytes32[] memory);
 
+    /// @notice Method that sends a transaction to L2.
+    /// @dev The deposit process starts here by emitting a L1ToL2Message
+    /// event. This event will later be intercepted by the L2 operator to
+    /// be inserted as a transaction.
+    /// @param sendValues the parameters of the transaction being sent.
+    function sendToL2(SendValues calldata sendValues) external;
+
     /// @notice Method that starts an L2 ETH deposit process.
-    /// @dev The deposit process starts here by emitting a DepositInitiated
+    /// @dev The deposit process starts here by emitting a L1ToL2Message
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
-    /// @param depositValues the values needed to create the deposit.
-    function deposit(DepositValues calldata depositValues) external payable;
+    /// @param l2Recipient the address on L2 that will receive the deposit.
+    function deposit(address l2Recipient) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number`
     /// pending deposit logs.
@@ -120,14 +119,31 @@ interface ICommonBridge {
     /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
     /// @param claimedAmount the amount that will be claimed.
     /// @param withdrawalProof the merkle path to the withdrawal log.
-    /// @param withdrawalLogIndex the index of the withdrawal log in the block.
-    /// This is the index of the withdraw transaction relative to the block's
-    /// withdrawal transctions.
-    /// A pseudocode would be [tx if tx is withdrawx for tx in block.txs()].index(leaf_tx).
+    /// @param withdrawalLogIndex the index of the message log in the block.
+    /// This is the index of the withdraw transaction relative to the block's messages.
     /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawal(
         bytes32 l2WithdrawalTxHash,
+        uint256 claimedAmount,
+        uint256 l2WithdrawalBatchNumber,
+        uint256 withdrawalLogIndex,
+        bytes32[] calldata withdrawalProof
+    ) external;
+
+    /// @notice Claims an ERC20 withdrawal
+    /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
+    /// @param tokenL1 Address of the token on the L1
+    /// @param tokenL2 Address of the token on the L2
+    /// @param claimedAmount the amount that will be claimed.
+    /// @param withdrawalProof the merkle path to the withdrawal log.
+    /// @param withdrawalLogIndex the index of the message log in the batch.
+    /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
+    /// was emitted.
+    function claimWithdrawalERC20(
+        bytes32 l2WithdrawalTxHash,
+        address tokenL1,
+        address tokenL2,
         uint256 claimedAmount,
         uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,

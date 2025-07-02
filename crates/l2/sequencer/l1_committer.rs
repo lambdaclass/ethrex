@@ -5,7 +5,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -14,23 +14,24 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_common::{
+    calldata::Value,
     deposits::{compute_deposit_logs_hash, get_block_deposits},
-    l1_messages::{compute_merkle_root, get_block_l1_messages, get_l1_message_hash},
+    l1_messages::{get_block_l1_messages, get_l1_message_hash},
+    merkle_tree::compute_merkle_root,
     state_diff::{StateDiff, prepare_state_diff},
 };
-use ethrex_l2_sdk::calldata::{Value, encode_calldata};
-use ethrex_metrics::metrics;
+use ethrex_l2_sdk::calldata::encode_calldata;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType};
+use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
+use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::{
     BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides,
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{Evm, EvmEngine};
 use secp256k1::SecretKey;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
@@ -44,6 +45,7 @@ const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,byt
 #[derive(Clone)]
 pub struct CommitterState {
     eth_client: EthClient,
+    blockchain: Arc<Blockchain>,
     on_chain_proposer_address: Address,
     store: Store,
     rollup_store: StoreRollup,
@@ -61,6 +63,7 @@ impl CommitterState {
     pub fn new(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
+        blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
         based: bool,
@@ -76,6 +79,7 @@ impl CommitterState {
                 Some(eth_config.maximum_allowed_max_fee_per_gas),
                 Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
             )?,
+            blockchain,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
             rollup_store,
@@ -107,6 +111,7 @@ pub struct L1Committer;
 impl L1Committer {
     pub async fn spawn(
         store: Store,
+        blockchain: Arc<Blockchain>,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
@@ -114,6 +119,7 @@ impl L1Committer {
         let state = CommitterState::new(
             &cfg.l1_committer,
             &cfg.eth,
+            blockchain,
             store.clone(),
             rollup_store.clone(),
             cfg.based.based,
@@ -213,6 +219,8 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 deposit_logs_hash,
                 message_hashes,
                 blobs_bundle,
+                commit_tx: None,
+                verify_tx: None,
             };
 
             state.rollup_store.seal_batch(batch.clone()).await?;
@@ -238,9 +246,9 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
     match send_commitment(state, &batch).await {
         Ok(commit_tx_hash) => {
             metrics!(
-            let _ = METRICS_L2
+            let _ = METRICS
                 .set_block_type_and_block_number(
-                    MetricsL2BlockType::LastCommittedBlock,
+                    MetricsBlockType::LastCommittedBlock,
                     batch.last_block,
                 )
                 .inspect_err(|e| {
@@ -250,6 +258,11 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                     )
                 });
             );
+
+            state
+                .rollup_store
+                .store_commit_tx_by_batch(batch.number, commit_tx_hash)
+                .await?;
 
             info!(
                 "Commitment sent for batch {}, with tx hash {commit_tx_hash:#x}.",
@@ -346,7 +359,7 @@ async fn prepare_batch_from_block(
 
             let vm_db =
                 StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
-            let mut vm = Evm::new(EvmEngine::default(), vm_db);
+            let mut vm = state.blockchain.new_evm(vm_db)?;
             vm.execute_block(&block_to_commit)?;
             vm.get_state_transitions()?
         };
@@ -430,7 +443,7 @@ async fn prepare_batch_from_block(
         }
         #[allow(clippy::as_conversions)]
         let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
-        METRICS_L2.set_blob_usage_percentage(blob_usage_percentage);
+        METRICS.set_blob_usage_percentage(blob_usage_percentage);
     );
 
     let deposit_logs_hash = compute_deposit_logs_hash(deposit_logs_hashes)?;
@@ -466,7 +479,7 @@ async fn send_commitment(
     state: &mut CommitterState,
     batch: &Batch,
 ) -> Result<H256, CommitterError> {
-    let messages_merkle_root = compute_merkle_root(&batch.message_hashes)?;
+    let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
     let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
 
     let mut calldata_values = vec![
