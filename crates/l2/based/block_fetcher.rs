@@ -484,15 +484,14 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
         }
         false => {
             info!("Node is not up to date. Syncing via L1");
+            while !state.is_up_to_date().await? {
+                state.update_l2_head().await?;
+
+                state.fetch_pending_batches().await?;
+
+                state.store_safe_batches().await?;
+            }
         }
-    }
-
-    while !state.is_up_to_date().await? {
-        state.update_l2_head().await?;
-
-        state.fetch_pending_batches().await?;
-
-        state.store_safe_batches().await?;
     }
 
     Ok(())
