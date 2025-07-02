@@ -169,7 +169,8 @@
 
                 <div id="content" class="content">
                     <main>
-                        <style>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
 .mdbook-alerts {
   padding: 8px 16px;
   margin-bottom: 16px;
@@ -404,11 +405,45 @@ ETHREX_ETH_RPC_URL=&lt;url&gt;
 <p>Make sure to have funds, if you want to perform a quick test <code>0.2[ether]</code> on each account should be enough.</p>
 </div>
 <ul>
-<li><code>Finally</code>, to start the <code>proposer</code>/<code>l2 node</code>, run:
+<li>
+<p><code>Finally</code>, to start the <code>proposer</code>/<code>l2 node</code>, run:</p>
 <ul>
 <li><code>make rm-db-l2 &amp;&amp; make down</code></li>
-<li><code>make deploy-l1 &amp;&amp; make init-l2</code></li>
+<li><code>make deploy-l1 &amp;&amp; make init-l2</code> (if running a risc0 prover, see the next step before invoking the L1 contract deployer)</li>
 </ul>
+</li>
+<li>
+<p>If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions <a href="https://github.com/risc0/risc0-ethereum/tree/main/contracts/script">here</a>.</p>
+</li>
+<li>
+<p>For a local L1 running with ethrex, we do the following:</p>
+<ol>
+<li>clone the risc0-ethereum repo</li>
+<li>edit the <code>risc0-ethereum/contracts/deployment.toml</code> file by adding
+<pre><code class="language-toml">[chains.ethrex]
+name = "Ethrex local devnet"
+id = 9
+</code></pre>
+</li>
+<li>export env. variables (we are using an ethrex's rich L1 account)
+<pre><code class="language-bash">export VERIFIER_ESTOP_OWNER="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+export DEPLOYER_PRIVATE_KEY="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+export DEPLOYER_ADDRESS="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+export CHAIN_KEY="ethrex"
+export RPC_URL="http://localhost:8545"
+
+export ETHERSCAN_URL="dummy"
+export ETHERSCAN_API_KEY="dummy"
+</code></pre>
+the last two variables need to be defined with some value even if not used, else the deployment script fails.</li>
+<li>cd into <code>risc0-ethereum/</code></li>
+<li>run the deployment script
+<pre><code class="language-bash">bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
+</code></pre>
+</li>
+<li>if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the <code>ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=&lt;address&gt;</code> env. variable.
+if you get an error like <code>risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)</code>, try to update the git submodules (foundry dependencies) with <code>git submodule update --init --recursive</code>.</li>
+</ol>
 </li>
 </ul>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
