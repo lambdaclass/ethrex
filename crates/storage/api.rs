@@ -1,8 +1,9 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::Address;
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction, payload::PayloadBundle,
+    AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, Transaction, payload::PayloadBundle,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -22,6 +23,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Store changes in a batch from a vec of blocks
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
+
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError>;
+
+    async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
@@ -317,6 +322,27 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError>;
+
+    async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError>;
+
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError>;
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError>;
+
+    fn get_current_account_info(&self, address: Address)
+    -> Result<Option<AccountInfo>, StoreError>;
 
     /// Sets storage trie paths in need of healing, grouped by hashed address
     /// This will overwite previously stored paths for the received storages but will not remove other storage's paths

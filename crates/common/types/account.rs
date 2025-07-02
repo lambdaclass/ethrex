@@ -25,7 +25,7 @@ pub struct Account {
     pub storage: HashMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,

@@ -1,21 +1,21 @@
+use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
+
+use crate::error::StoreError;
 use crate::rlp::{
-    AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP, TriePathsRLP,
+    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, ReceiptRLP, Rlp, TransactionHashRLP,
+    TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, TrieUpdates};
+use crate::store_db::codec::account_address::AccountAddress;
+use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
+use crate::store_db::codec::block_num_hash::BlockNumHash;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
-use crate::{
-    error::StoreError,
-    rlp::{
-        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-        PayloadBundleRLP, ReceiptRLP, TupleRLP,
-    },
-};
-use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
-    H256, U256,
+    Address, H256, U256,
     types::{
-        Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-        payload::PayloadBundle,
+        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+        BlockNumber, ChainConfig, Index, Receipt, payload::PayloadBundle,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -306,6 +306,31 @@ impl RedBStore {
 impl StoreEngine for RedBStore {
     async fn apply_trie_updates(&self, _trie_updates: TrieUpdates) -> Result<(), StoreError> {
         todo!()
+    }
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn store_account_info_logs(
+        &self,
+        _account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn store_account_storage_logs(
+        &self,
+        _account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        todo!();
     }
 
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
@@ -1359,6 +1384,39 @@ impl StoreEngine for RedBStore {
             <H256 as Into<BlockHashRLP>>::into(latest_valid),
         )
         .await
+    }
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        _genesis_block_number: u64,
+        _genesis_block_hash: H256,
+        _genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    fn get_current_storage(
+        &self,
+        _address: Address,
+        _key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        todo!();
+    }
+
+    async fn setup_genesis_flat_account_info(
+        &self,
+        _genesis_block_number: u64,
+        _genesis_block_hash: H256,
+        _genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    fn get_current_account_info(
+        &self,
+        _address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        todo!();
     }
 }
 

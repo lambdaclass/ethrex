@@ -384,7 +384,7 @@ pub async fn import_blocks(
         utils::read_chain_file(path)
     };
     let size = blocks.len();
-    for block in &blocks {
+    for block in blocks.iter() {
         let hash = block.hash();
         let number = block.header.number;
         info!("Adding block {number} with hash {hash:#x}.");
@@ -414,6 +414,11 @@ pub async fn import_blocks(
 
     // Make head canonical and label all special blocks correctly.
     if let Some(block) = blocks.last() {
+        _ = store
+            .reconstruct_snapshots_for_new_canonical_chain(block.hash())
+            .await
+            .inspect_err(|error| warn!("Failed to reconstruct snapshot: {}", error));
+
         store
             .update_finalized_block_number(block.header.number)
             .await?;
