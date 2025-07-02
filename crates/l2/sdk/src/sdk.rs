@@ -850,3 +850,7 @@ pub fn address_to_word(address: Address) -> U256 {
     }
     U256::from_big_endian(&word)
 }
+
+pub fn get_erc1967_slot(name: &str) -> U256 {
+    U256::from_big_endian(&keccak(name).0) - U256::one()
+}

@@ -8,7 +8,8 @@ use ethrex_l2_sdk::calldata::{self};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, claim_erc20withdraw, compile_contract, deposit_erc20,
-    get_address_from_secret_key, wait_for_transaction_receipt,
+    download_contract_deps, get_address_from_secret_key, get_erc1967_slot,
+    wait_for_transaction_receipt,
 };
 use ethrex_rpc::clients::eth::from_hex_string_to_u256;
 use ethrex_rpc::clients::eth::{BlockByNumber, EthClient, eth_sender::Overrides};
@@ -84,6 +85,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let deposit_recipient_address = get_address_from_secret_key(&rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
 
+    test_upgrade(&eth_client, &proposer_client).await?;
+
     test_deposit(
         &rich_wallet_private_key,
         bridge_address,
@@ -136,6 +139,45 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("l2_integration_test is done");
+    Ok(())
+}
+
+async fn test_upgrade(
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let private_key = l1_rich_wallet_private_key();
+
+    let contracts_path = Path::new("contracts");
+    download_contract_deps(contracts_path).unwrap();
+    compile_contract(contracts_path, "src/l2/CommonBridgeL2.sol", false)?;
+
+    let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
+    let deploy_address = test_deploy(&bridge_code, &private_key, l2_client).await?;
+
+    let impl_slot = get_erc1967_slot("eip1967.proxy.implementation");
+    let initial_impl = l2_client
+        .get_storage_at(COMMON_BRIDGE_L2_ADDRESS, impl_slot, BlockByNumber::Latest)
+        .await?;
+    let tx_receipt = test_send(
+        l1_client,
+        &private_key,
+        common_bridge_address(),
+        "upgradeL2Contract(address,address,bytes)",
+        &[
+            Value::Address(COMMON_BRIDGE_L2_ADDRESS),
+            Value::Address(deploy_address),
+            Value::Bytes(Bytes::new()),
+        ],
+    )
+    .await;
+    let _ = wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client)
+        .await?;
+    let final_impl = l2_client
+        .get_storage_at(COMMON_BRIDGE_L2_ADDRESS, impl_slot, BlockByNumber::Latest)
+        .await?;
+    println!("upgraded {initial_impl:#x} -> {final_impl:#x}");
+    assert_ne!(initial_impl, final_impl);
     Ok(())
 }
 

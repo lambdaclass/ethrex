@@ -9,10 +9,9 @@ use ethrex_common::{Address, H160, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, address_to_word, compile_contract,
-    download_contract_deps,
+    download_contract_deps, get_erc1967_slot,
 };
 use genesis_tool::genesis::write_genesis_as_json;
-use keccak_hash::keccak;
 mod cli;
 mod error;
 
@@ -37,10 +36,6 @@ fn main() -> Result<(), SystemContractsUpdaterError> {
     compile_contract(&opts.contracts_path, "src/l2/L2ToL1Messenger.sol", true)?;
     update_genesis_file(&opts.l2_genesis_path)?;
     Ok(())
-}
-
-fn get_erc1967_slot(name: &str) -> U256 {
-    U256::from_big_endian(&keccak(name).0) - U256::one()
 }
 
 fn add_with_proxy(
