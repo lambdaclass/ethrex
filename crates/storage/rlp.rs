@@ -5,7 +5,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
+        AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
         payload::PayloadBundle,
     },
 };
@@ -30,6 +30,7 @@ pub type AccountStorageKeyRLP = Rlp<H256>;
 pub type AccountStorageValueRLP = Rlp<U256>;
 
 // Block types
+pub type BlockNumberRLP = Rlp<BlockNumber>;
 pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;

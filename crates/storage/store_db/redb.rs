@@ -4,8 +4,8 @@ use crate::error::StoreError;
 use crate::rlp::{
     AccountAddressRLP, AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountInfoRLP,
     AccountStateRLP, AccountStorageKeyRLP, AccountStorageValueRLP, BlockBodyRLP, BlockHashRLP,
-    BlockHeaderRLP, BlockRLP, PayloadBundleRLP, ReceiptRLP, Rlp, TransactionHashRLP, TriePathsRLP,
-    TupleRLP,
+    BlockHeaderRLP, BlockNumberRLP, BlockRLP, PayloadBundleRLP, ReceiptRLP, Rlp,
+    TransactionHashRLP, TriePathsRLP, TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
@@ -63,6 +63,8 @@ const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32],
     MultimapTableDefinition::new("StorageSnapshotTable");
 const STORAGE_HEAL_PATHS_TABLE: TableDefinition<AccountHashRLP, TriePathsRLP> =
     TableDefinition::new("StorageHealPaths");
+const CURRENT_SNAPSHOT_BLOCK_TABLE: TableDefinition<(), (BlockNumberRLP, BlockHashRLP)> =
+    TableDefinition::new("CurrentSnapshotBlock");
 const ACCOUNT_INFO_TABLE: TableDefinition<AccountAddressRLP, AccountInfoRLP> =
     TableDefinition::new("AccountInfo");
 const ACCOUNT_STORAGE_TABLE: TableDefinition<
@@ -316,7 +318,10 @@ impl StoreEngine for RedBStore {
     }
 
     fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
-        todo!();
+        self.read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())?
+            .map(|a| a.value().1.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
@@ -1522,6 +1527,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
     table_creation_txn.open_table(ACCOUNT_INFO_TABLE)?;
     table_creation_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+    table_creation_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)
