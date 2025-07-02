@@ -6,10 +6,6 @@ pub enum ContractCompilationError {
     FailedToGetStringFromPath,
     #[error("Deployer compilation error: {0}")]
     CompilationError(String),
-    #[error("Could not read file")]
-    FailedToReadFile(#[from] std::io::Error),
-    // #[error("Failed to serialize/deserialize")]
-    // SerializationError(#[from] serde_json::Error),
 }
 
 pub fn compile_contract(
@@ -23,9 +19,8 @@ pub fn compile_contract(
         "--bin"
     };
 
-    // Both the contract path and the output path are relative to where the Makefile is.
-    if !Command::new("solc")
-        .arg(bin_flag)
+    let mut cmd = Command::new("solc");
+    cmd.arg(bin_flag)
         .arg(
             "@openzeppelin/contracts=".to_string()
                 + general_contracts_path
@@ -66,7 +61,9 @@ pub fn compile_contract(
             general_contracts_path
                 .to_str()
                 .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
+        );
+
+    let cmd_succeeded = cmd
         .spawn()
         .map_err(|err| {
             ContractCompilationError::CompilationError(format!("Failed to spawn solc: {err}"))
@@ -75,8 +72,10 @@ pub fn compile_contract(
         .map_err(|err| {
             ContractCompilationError::CompilationError(format!("Failed to wait for solc: {err}"))
         })?
-        .success()
-    {
+        .success();
+
+    // Both the contract path and the output path are relative to where the Makefile is.
+    if !cmd_succeeded {
         return Err(ContractCompilationError::CompilationError(
             format!("Failed to compile {contract_path}").to_owned(),
         ));
