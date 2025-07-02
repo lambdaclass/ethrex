@@ -191,7 +191,7 @@ jobs:
         with:
           cuda: '12.5.0'
           method: 'network'
-          sub-packages: 'toolkit'
+          sub-packages: ["nvcc"]
 
       - name: Build prover
         run: |
