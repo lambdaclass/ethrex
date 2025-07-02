@@ -28,7 +28,7 @@ ifndef NETWORK
 endif
 	mkdir -p $(DATA_PATH)/$(NETWORK)_data
 
-gen_jwt: create_data_dir ## Create the jwt for a given network. NETWORK environment variable required.
+gen-jwt: create_data_dir ## Create the jwt for a given network. NETWORK environment variable required.
 ifndef NETWORK
 	$(error "Sync network not provided")
 endif
@@ -42,7 +42,8 @@ ifndef NETWORK
 	$(error "Sync network not provided")
 endif
 #	samply record --unstable-presymbolicate --save-only -- 
-	make start_ethrex_$(NETWORK) >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
+	mkdir -p logs
+	make start-ethrex-$(NETWORK) >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
 
 
 flamegraph-main: ## Run flamegraph on main branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. Execution logs are output to log file.
@@ -53,6 +54,7 @@ ifndef NETWORK
 	$(error "Sync network not provided")
 endif
 	cd $(ETHREX_DIR) && git checkout main
+	mkdir -p logs
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph: ## Run flamegraph on the currently checked out branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. Execution logs are output to log file.
@@ -62,6 +64,7 @@ endif
 ifndef NETWORK
 	$(error "Sync network not provided")
 endif
+	mkdir -p logs
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-branch: ## Run flamegraph on custom branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. xecution logs are output to log file.
@@ -75,6 +78,7 @@ ifndef NETWORK
 	$(error "Sync network not provided")
 endif
 	cd $(ETHREX_DIR) && git checkout $(BRANCH)
+	mkdir -p logs
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-holesky: ## Run flamegraph on holesky.
@@ -90,7 +94,7 @@ flamegraph-holesky: ## Run flamegraph on holesky.
 		--evm $(EVM) \
 
 flamegraph-hoodi: ## Run flamegraph on hoodi.
-	-cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
@@ -151,7 +155,7 @@ else
 endif
 
 
-start_ethrex_hoodi: ## Start ethrex for hoodi
+start-ethrex-hoodi: ## Start ethrex for hoodi
 	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
@@ -166,7 +170,7 @@ start_ethrex_hoodi: ## Start ethrex for hoodi
     		--bootnodes $(HOODI_BOOTNODES) \
     		--evm $(EVM)
 
-start_ethrex_holesky: ## Start ethrex for holesky
+start-ethrex-holesky: ## Start ethrex for holesky
 	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
@@ -181,21 +185,21 @@ start_ethrex_holesky: ## Start ethrex for holesky
     		--bootnodes $(HOLESKY_BOOTNODES) \
     		--evm $(EVM)
 
-start_hoodi_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for hoodi
+start-hoodi-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for hoodi
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
 	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 &
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && make start_ethrex_hoodi
+	cd $(ETHREX_DIR)/tooling/sync && make start-ethrex-hoodi
 
-start_holesky_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
+start-holesky-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
 	@echo "Starting L1 docker compose with metrics..."
 	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
 	cd $(ETHREX_DIR)/tooling/sync && nohup make holesky-lighthouse > /dev/null 2>&1 &
 	@echo "Starting ethrex..."
-	cd $(ETHREX_DIR)/tooling/sync && make start_ethrex_holesky
+	cd $(ETHREX_DIR)/tooling/sync && make start-ethrex-holesky
 
 tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME
