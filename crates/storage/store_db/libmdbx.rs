@@ -117,7 +117,7 @@ table!(
 
 // Trie storages
 
-table!(
+dupsort!(
     /// state trie nodes
     ( StateTrieNodes ) NodeHash => Vec<u8>
 );
