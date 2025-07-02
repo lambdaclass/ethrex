@@ -87,13 +87,15 @@ dupsort!(
 type StateTriePruningLogEntry = [u8; 32];
 dupsort!(
     /// Trie node insertion logs for pruning.
-    ( StateTriePruningLog ) BlockNumHash => StateTriePruningLogEntry
+    /// includes the block number as the search key.
+    ( StateTriePruningLog ) BlockNumHash[u64] => StateTriePruningLogEntry
 );
 
 type StorageTriesPruningLogEntry = (StorageTriesNodesSeekKey, StorageTriesNodesSuffixKey);
 dupsort!(
     /// Trie node insertion logs for pruning.
-    ( StorageTriesPruningLog ) BlockNumHash => StorageTriesPruningLogEntry
+    /// includes the block number as the search key.
+    ( StorageTriesPruningLog ) BlockNumHash[u64] => StorageTriesPruningLogEntry
 );
 
 dupsort!(
@@ -295,6 +297,37 @@ impl Store {
             .map(|block_hash| block_hash.to())
             .transpose()
             .map_err(StoreError::from)
+    }
+
+    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+        let tx = self.db.begin_readwrite()?;
+
+        let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+        let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+
+        // get last block
+        let last_state_trie_pruning_log = cursor_state_trie_pruning_log.last()?;
+        if let Some((BlockNumHash(key_num, _), _)) = last_state_trie_pruning_log {
+            // delete nodes in back order
+            let start_key = key_num - 256; // we keep the last 256 blocks
+            for nodehash in cursor_state_trie_pruning_log.walk_back(Some(start_key)) {
+                let (_, nodehash_value) = nodehash?;
+                let k_delete = NodeHash::Hashed(nodehash_value.into());
+                tx.delete::<StateTrieNodes>(k_delete, None)?;
+            }
+        }
+
+        let last_storage_trie_pruning_log = cursor_storage_trie_pruning_log.last()?;
+        if let Some((BlockNumHash(key_num, _), _)) = last_storage_trie_pruning_log {
+            // delete nodes in back order
+            let start_key = key_num - 256; // we keep the last 256 blocks
+            for nodehash in cursor_storage_trie_pruning_log.walk_back(Some(start_key)) {
+                let (_, nodehash_value) = nodehash?;
+                tx.delete::<StorageTriesNodes>(nodehash_value, None)?;
+            }
+        }
+
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 }
 
