@@ -7,9 +7,6 @@ use crate::rlp::{
     TriePathsRLP, TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
-use crate::store_db::codec::account_address::AccountAddress;
-use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
-use crate::store_db::codec::block_num_hash::BlockNumHash;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use ethrex_common::{
     Address, H256, U256,
@@ -308,20 +305,6 @@ impl StoreEngine for RedBStore {
     }
 
     async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
-        todo!();
-    }
-
-    async fn store_account_info_logs(
-        &self,
-        _account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
-    ) -> Result<(), StoreError> {
-        todo!();
-    }
-
-    async fn store_account_storage_logs(
-        &self,
-        _account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
-    ) -> Result<(), StoreError> {
         todo!();
     }
 

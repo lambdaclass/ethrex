@@ -4,9 +4,8 @@ use crate::{
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
     store_db::codec::{
-        account_info_log_entry::{self, AccountInfoLogEntry},
-        account_storage_log_entry::AccountStorageLogEntry,
-        block_num_hash::BlockNumHash,
+        account_info_log_entry::AccountInfoLogEntry,
+        account_storage_log_entry::AccountStorageLogEntry, block_num_hash::BlockNumHash,
     },
 };
 use bytes::Bytes;
@@ -60,7 +59,17 @@ struct StoreInner {
     account_storage: HashMap<(Address, H256), U256>,
     /// Current snapshot block number and hash
     current_snapshot_block: Option<BlockNumHash>,
+    /// Account info write log table.
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
     account_state_logs: HashMap<BlockNumHash, Vec<(BlockNumHash, AccountInfoLogEntry)>>,
+    /// Storage write log table.
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
     account_storage_logs: HashMap<BlockNumHash, Vec<(BlockNumHash, AccountStorageLogEntry)>>,
 }
 
@@ -242,11 +251,16 @@ impl StoreEngine for Store {
 
             // Restore account info for the block of the current snapshot
             if let Some(entries) = store.account_state_logs.get(&current_snapshot).cloned() {
+                // Iterate through the account info logs for the current snapshot
                 for (parent_block, log) in entries {
-                    // Avoid infinite loop
+                    warn!(
+                        "UNDO: found account info log for {current_snapshot:?}: {parent_block:?}"
+                    );
+                    // TODO: Is this needed?
                     if current_snapshot == parent_block {
                         break;
                     }
+
                     // Restore previous state
                     if log.previous_info == AccountInfo::default() {
                         debug!("UNDO: removing account info for {:?}", log.address);
@@ -258,6 +272,8 @@ impl StoreEngine for Store {
                             .insert(log.address, log.previous_info.clone());
                     }
 
+                    // We update this here to ensure it's the previous block according
+                    // to the logs found.
                     BlockNumHash(block_num, snapshot_hash) = parent_block;
                 }
             };
@@ -265,10 +281,11 @@ impl StoreEngine for Store {
             // Restore account storage for the block of the current snapshot
             if let Some(entries) = store.account_storage_logs.get(&current_snapshot).cloned() {
                 for (parent_block, log) in entries {
-                    // Avoid infinite loop
+                    // TODO: Is this needed?
                     if current_snapshot == parent_block {
                         break;
                     }
+
                     // Restore previous state
                     if log.old_value.is_zero() {
                         debug!("UNDO: removing account storage for {:?}", log.address);
@@ -279,17 +296,21 @@ impl StoreEngine for Store {
                             .account_storage
                             .insert((log.address, log.slot), log.old_value);
                     }
-                    // Move to the parent block
+
+                    // We update this here to ensure it's the previous block according
+                    // to the logs found.
                     BlockNumHash(block_num, snapshot_hash) = parent_block;
                 }
             };
 
+            // Get the canonical hash of the parent block
             canonical_hash = store
                 .canonical_hashes
                 .get(&block_num)
                 .copied()
                 .unwrap_or_default();
 
+            // Update the current snapshot with the parent block
             current_snapshot = BlockNumHash(block_num, snapshot_hash);
         }
 
@@ -317,7 +338,7 @@ impl StoreEngine for Store {
             return Ok(());
         };
 
-        // Iterate through canonical blocks starting from the next block after current snapshot
+        // Asuming that we are in the bifurcation point, we start from the next block
         let start_block = current_snapshot.0 + 1;
 
         for target_block_num in start_block.. {
@@ -328,32 +349,6 @@ impl StoreEngine for Store {
             };
 
             let target_block = BlockNumHash(target_block_num, canonical_hash);
-
-            let has_state = store
-                .account_state_logs
-                .get(&target_block)
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .any(|(parent, _)| *parent == current_snapshot)
-                })
-                .unwrap_or(false);
-
-            let has_storage = store
-                .account_storage_logs
-                .get(&target_block)
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .any(|(parent, _)| *parent == current_snapshot)
-                })
-                .unwrap_or(false);
-
-            // If there are no logs for this block, skip it
-            if !has_state && !has_storage {
-                info!("REPLAY: skipping block since it has no logs {target_block:?}");
-                continue;
-            }
 
             warn!("REPLAY: processing block {target_block:?}");
 
@@ -397,7 +392,7 @@ impl StoreEngine for Store {
                 }
             }
 
-            // Update current snapshot to this block
+            // Update current snapshot to the target block that we just processed
             current_snapshot = target_block;
 
             // Stop if we've reached the target head
