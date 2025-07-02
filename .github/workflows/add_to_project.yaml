@@ -1,4 +1,4 @@
-name: PR title
+name: Add to Project
 
 on:
   pull_request_target:
@@ -6,6 +6,7 @@ on:
       - opened
       - edited
       - synchronize
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -15,6 +16,8 @@ jobs:
   add-to-project:
     name: Add pull request to project
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/add-to-project@1.0.2
         with:
