@@ -110,7 +110,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
 
 pub fn init_tracing() {
     let level_filter = EnvFilter::builder()
-        .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::command=off");
+        .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
     let subscriber = tracing_subscriber::registry()
         .with(TuiTracingSubscriberLayer)
         .with(level_filter);

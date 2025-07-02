@@ -16,7 +16,7 @@ pub const ETHREX_LOGO: &str = r#"
 ███████╗░░░██║░░░██║░░██║██║░░██║███████╗██╔╝╚██╗
 ╚══════╝░░░╚═╝░░░╚═╝░░╚═╝╚═╝░░╚═╝╚══════╝╚═╝░░╚═╝"#;
 
-pub const H256_LENGTH_IN_DIGITS: u16 = 66; // 64 hex characters + 2 for "0x" prefix
+pub const HASH_LENGTH_IN_DIGITS: u16 = 66; // 64 hex characters + 2 for "0x" prefix
 pub const ADDRESS_LENGTH_IN_DIGITS: u16 = 42; // 40 hex characters + 2 for "0x" prefix
 pub const BLOCK_NUMBER_LENGTH_IN_DIGITS: u16 = 9; // 1e8
 pub const BATCH_NUMBER_LENGTH_IN_DIGITS: u16 = 9; // 1e8
@@ -26,7 +26,7 @@ pub const BLOCK_SIZE_LENGTH_IN_DIGITS: u16 = 6; // 1e6
 
 pub const LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS: u16 = BLOCK_NUMBER_LENGTH_IN_DIGITS
     + TX_NUMBER_LENGTH_IN_DIGITS
-    + H256_LENGTH_IN_DIGITS
+    + HASH_LENGTH_IN_DIGITS
     + ADDRESS_LENGTH_IN_DIGITS
     + GAS_USED_LENGTH_IN_DIGITS
     + GAS_USED_LENGTH_IN_DIGITS
@@ -35,6 +35,7 @@ pub const LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS: u16 = BLOCK_NUMBER_LENGTH_
 pub fn draw(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(10),
+        Constraint::Fill(1),
         Constraint::Fill(1),
         Constraint::Fill(1),
         Constraint::Length(1),
@@ -56,7 +57,8 @@ pub fn draw(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
     }
     draw_latest_batches_and_blocks(frame, app, chunks[1]);
     draw_mempool(frame, app, chunks[2]);
-    draw_text(frame, chunks[3]);
+    draw_l1_to_l2_messages(frame, app, chunks[3]);
+    draw_text(frame, chunks[4]);
 }
 
 fn draw_ethrex_logo(frame: &mut Frame, area: Rect) {
@@ -150,7 +152,7 @@ fn draw_latest_batches_and_blocks(frame: &mut Frame, app: &mut EthrexMonitor, ar
         let constraints = vec![
             Constraint::Length(BLOCK_NUMBER_LENGTH_IN_DIGITS),
             Constraint::Length(TX_NUMBER_LENGTH_IN_DIGITS),
-            Constraint::Length(H256_LENGTH_IN_DIGITS),
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
             Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
             Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
@@ -212,6 +214,50 @@ fn draw_mempool(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
                 )),
         );
     frame.render_stateful_widget(mempool_table, area, &mut app.mempool.state);
+}
+
+fn draw_l1_to_l2_messages(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
+    let constraints = vec![
+        Constraint::Length(9),
+        Constraint::Length(10),
+        Constraint::Length(HASH_LENGTH_IN_DIGITS),
+        Constraint::Length(HASH_LENGTH_IN_DIGITS),
+        Constraint::Fill(1),
+    ];
+
+    let rows =
+        app.l1_to_l2_messages
+            .items
+            .iter()
+            .map(|(status, kind, l1_tx_hash, l2_tx_hash, amount)| {
+                Row::new(vec![
+                    Span::styled(format!("{status}"), Style::default()),
+                    Span::styled(format!("{kind}"), Style::default()),
+                    Span::styled(format!("{l1_tx_hash:#x}"), Style::default()),
+                    Span::styled(format!("{l2_tx_hash:#x}"), Style::default()),
+                    Span::styled(amount.to_string(), Style::default()),
+                ])
+            });
+
+    let l1_to_l2_messages_table = Table::new(rows, constraints)
+        .header(
+            Row::new(vec!["Status", "Kind", "L1 Tx Hash", "L2 Tx Hash", "Value"])
+                .style(Style::default()),
+        )
+        .block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(Span::styled(
+                    "L1 to L2 Messages",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+        );
+
+    frame.render_stateful_widget(
+        l1_to_l2_messages_table,
+        area,
+        &mut app.l1_to_l2_messages.state,
+    );
 }
 
 fn draw_text(frame: &mut Frame, area: Rect) {

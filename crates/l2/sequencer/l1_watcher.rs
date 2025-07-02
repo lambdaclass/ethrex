@@ -320,7 +320,7 @@ async fn deposit_already_processed(
     Ok(!pending_deposits.contains(&deposit_hash))
 }
 
-struct DepositData {
+pub struct DepositData {
     pub value: U256,
     pub to_address: H160,
     pub deposit_id: U256,
@@ -331,7 +331,7 @@ struct DepositData {
 }
 
 impl DepositData {
-    fn from_log(log: RpcLogInfo) -> Result<DepositData, L1WatcherError> {
+    pub fn from_log(log: RpcLogInfo) -> Result<DepositData, L1WatcherError> {
         let value = format!(
             "{:#x}",
             log.topics

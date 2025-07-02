@@ -3,20 +3,21 @@
 #![expect(clippy::indexing_slicing)]
 
 use std::cmp::min;
+use std::fmt::Display;
 
 use crossterm::event::{KeyCode, MouseEventKind};
 use ethrex_common::{Address, H256, U256};
+use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::types::block::{BlockBodyWrapper, RpcBlock};
 use ethrex_rpc::types::receipt::RpcLog;
-use keccak_hash::keccak;
 use ratatui::widgets::TableState;
 use tui_logger::{TuiWidgetEvent, TuiWidgetState};
 
-use crate::SequencerConfig;
+use crate::{DepositData, SequencerConfig, monitor};
 
 pub struct TabsState<'a> {
     pub titles: Vec<&'a str>,
@@ -304,33 +305,13 @@ impl CommittedBatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
     ) -> Vec<RpcLog> {
-        let last_l1_block_number = eth_client
-            .get_block_number()
-            .await
-            .expect("Failed to get latest L1 block");
-
-        let mut batch_committed_logs = Vec::new();
-        while *last_l1_block_fetched < last_l1_block_number {
-            let new_last_l1_fetched_block = min(*last_l1_block_fetched + 50, last_l1_block_number);
-
-            // Fetch logs from the L1 chain for the BatchCommitted event.
-            let logs = eth_client
-                .get_logs(
-                    *last_l1_block_fetched + 1,
-                    new_last_l1_fetched_block,
-                    on_chain_proposer_address,
-                    keccak(b"BatchCommitted(bytes32)"),
-                )
-                .await
-                .expect("Failed to fetch BatchCommitted logs");
-
-            // Update the last L1 block fetched.
-            *last_l1_block_fetched = new_last_l1_fetched_block;
-
-            batch_committed_logs.extend_from_slice(&logs);
-        }
-
-        batch_committed_logs
+        monitor::utils::get_logs(
+            last_l1_block_fetched,
+            on_chain_proposer_address,
+            "BatchCommitted(bytes32)",
+            eth_client,
+        )
+        .await
     }
 
     async fn process_logs(logs: &[RpcLog], eth_client: &EthClient) -> Vec<(RpcLog, U256, H256)> {
@@ -523,6 +504,151 @@ impl MempoolTable {
     }
 }
 
+pub struct L1ToL2MessagesTable {
+    pub state: TableState,
+    // Status | Kind | L1 tx hash | L2 tx hash | amount
+    pub items: Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)>,
+    last_l1_block_fetched: U256,
+    common_bridge_address: Address,
+}
+
+#[derive(Debug, Clone)]
+pub enum L1ToL2MessageStatus {
+    Pending,
+    Processed,
+}
+
+impl Display for L1ToL2MessageStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            L1ToL2MessageStatus::Pending => write!(f, "Pending"),
+            L1ToL2MessageStatus::Processed => write!(f, "Processed"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum L1ToL2MessageKind {
+    Deposit,
+    Message,
+}
+
+impl From<&DepositData> for L1ToL2MessageKind {
+    fn from(data: &DepositData) -> Self {
+        if data.from == COMMON_BRIDGE_L2_ADDRESS && data.to_address == COMMON_BRIDGE_L2_ADDRESS {
+            Self::Deposit
+        } else {
+            Self::Message
+        }
+    }
+}
+
+impl Display for L1ToL2MessageKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            L1ToL2MessageKind::Deposit => write!(f, "Deposit"),
+            L1ToL2MessageKind::Message => write!(f, "Message"),
+        }
+    }
+}
+
+impl L1ToL2MessagesTable {
+    pub async fn new(common_bridge_address: Address, eth_client: &EthClient) -> Self {
+        let mut last_l1_block_fetched = eth_client
+            .get_last_fetched_l1_block(common_bridge_address)
+            .await
+            .expect("Failed to get last fetched L1 block")
+            .into();
+        let items = Self::refresh_items(
+            &mut last_l1_block_fetched,
+            common_bridge_address,
+            eth_client,
+        )
+        .await;
+        Self {
+            state: TableState::default(),
+            items,
+            last_l1_block_fetched,
+            common_bridge_address,
+        }
+    }
+
+    async fn on_tick(&mut self, eth_client: &EthClient) {
+        let mut new_l1_to_l2_messages = Self::refresh_items(
+            &mut self.last_l1_block_fetched,
+            self.common_bridge_address,
+            eth_client,
+        )
+        .await;
+
+        let n_new_latest_batches = new_l1_to_l2_messages.len();
+
+        if n_new_latest_batches > 50 {
+            new_l1_to_l2_messages.truncate(50);
+            self.items.extend_from_slice(&new_l1_to_l2_messages);
+        } else {
+            self.items.truncate(50 - n_new_latest_batches);
+            self.items.extend_from_slice(&new_l1_to_l2_messages);
+            self.items.rotate_right(n_new_latest_batches);
+        }
+    }
+
+    async fn refresh_items(
+        last_l1_block_fetched: &mut U256,
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+    ) -> Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)> {
+        let logs = Self::get_logs(last_l1_block_fetched, common_bridge_address, eth_client).await;
+        Self::process_logs(&logs, common_bridge_address, eth_client).await
+    }
+
+    async fn get_logs(
+        last_l1_block_fetched: &mut U256,
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+    ) -> Vec<RpcLog> {
+        monitor::utils::get_logs(
+            last_l1_block_fetched,
+            common_bridge_address,
+            "L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)",
+            eth_client,
+        )
+        .await
+    }
+
+    async fn process_logs(
+        logs: &[RpcLog],
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+    ) -> Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)> {
+        let mut processed_logs = Vec::new();
+
+        let pending_l1_to_l2_messages = eth_client
+            .get_pending_deposit_logs(common_bridge_address)
+            .await
+            .expect("Failed to get pending L1 to L2 messages");
+
+        for log in logs {
+            let l1_to_l2_message =
+                DepositData::from_log(log.log.clone()).expect("Failed to parse L1ToL2Message log");
+
+            processed_logs.push((
+                if pending_l1_to_l2_messages.contains(&log.transaction_hash) {
+                    L1ToL2MessageStatus::Pending
+                } else {
+                    L1ToL2MessageStatus::Processed
+                },
+                L1ToL2MessageKind::from(&l1_to_l2_message),
+                log.transaction_hash,
+                l1_to_l2_message.deposit_tx_hash,
+                l1_to_l2_message.value,
+            ));
+        }
+
+        processed_logs
+    }
+}
+
 pub struct EthrexMonitor<'a> {
     pub title: &'a str,
     pub should_quit: bool,
@@ -534,6 +660,7 @@ pub struct EthrexMonitor<'a> {
     pub mempool: MempoolTable,
     pub committed_batches: CommittedBatchesTable,
     pub blocks_table: BlocksTable,
+    pub l1_to_l2_messages: L1ToL2MessagesTable,
 
     pub eth_client: EthClient,
     pub rollup_client: EthClient,
@@ -567,6 +694,8 @@ impl<'a> EthrexMonitor<'a> {
             )
             .await,
             blocks_table: BlocksTable::new(&rollup_client).await,
+            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address, &eth_client)
+                .await,
             eth_client,
             rollup_client,
         }
@@ -636,5 +765,6 @@ impl<'a> EthrexMonitor<'a> {
         self.mempool.on_tick(&self.rollup_client).await;
         self.committed_batches.on_tick(&self.eth_client).await;
         self.blocks_table.on_tick(&self.rollup_client).await;
+        self.l1_to_l2_messages.on_tick(&self.eth_client).await;
     }
 }

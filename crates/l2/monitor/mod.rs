@@ -12,6 +12,7 @@ use ratatui::backend::{Backend, CrosstermBackend};
 
 pub mod app;
 pub mod ui;
+pub(crate) mod utils;
 
 pub use app::EthrexMonitor;
 pub use ui::render;
