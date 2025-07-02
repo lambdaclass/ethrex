@@ -19,7 +19,8 @@ pub async fn get_blockdata(
     block_number: usize,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{}.json", block_number);
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(mut cache) = load_cache(&file_name) {
+        cache.witness.chain_config = chain_config.clone();
         return Ok(cache);
     }
     let block = get_block(rpc_url, block_number)
@@ -27,7 +28,7 @@ pub async fn get_blockdata(
         .wrap_err("failed to fetch block")?;
 
     println!("populating rpc db cache");
-    let witness = get_witness(rpc_url, block_number)
+    let witness = get_witness(rpc_url, block_number, &chain_config)
         .await
         .wrap_err("Failed to get execution witness")?;
 
@@ -46,7 +47,8 @@ pub async fn get_rangedata(
     to: usize,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{}-{}.json", from, to);
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(mut cache) = load_cache(&file_name) {
+        cache.witness.chain_config = chain_config.clone();
         return Ok(cache);
     }
     let mut blocks = Vec::with_capacity(to - from);
@@ -57,7 +59,7 @@ pub async fn get_rangedata(
         blocks.push(block);
     }
 
-    let witness = get_witness_range(rpc_url, from, to)
+    let witness = get_witness_range(rpc_url, from, to, &chain_config)
         .await
         .wrap_err("Failed to get execution witness for range")?;
     let cache = Cache { blocks, witness };

@@ -5,7 +5,7 @@ use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
 use crate::plot_composition::plot;
-use crate::rpc::get_tx_block;
+use crate::rpc::{get_chain_config_rpc, get_tx_block};
 use crate::run::{exec, prove, run_tx};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
@@ -28,12 +28,11 @@ enum SubcommandExecute {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
             env = "NETWORK",
             required = false,
             help = "Name or ChainID of the network to use"
         )]
-        network: String,
+        network: Option<String>,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -47,12 +46,11 @@ enum SubcommandExecute {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
             env = "NETWORK",
             required = false,
             help = "Name or ChainID of the network to use"
         )]
-        network: String,
+        network: Option<String>,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -64,12 +62,11 @@ enum SubcommandExecute {
         rpc_url: String,
         #[arg(
             long,
-            default_value = "mainnet",
             env = "NETWORK",
             required = false,
             help = "Name or ChainID of the network to use"
         )]
-        network: String,
+        network: Option<String>,
     },
 }
 
@@ -82,7 +79,12 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
+                println!("foo");
+                let chain_config = match network {
+                    Some(net) => get_chain_config(&net)?,
+                    None => get_chain_config_rpc(&rpc_url).await?,
+                };
+                println!("{:?}", chain_config);
                 let block = or_latest(block, &rpc_url).await?;
                 let cache = get_blockdata(&rpc_url, chain_config, block).await?;
                 let body = async {
@@ -104,7 +106,10 @@ impl SubcommandExecute {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = get_chain_config(&network)?;
+                let chain_config = match network {
+                    Some(net) => get_chain_config(&net)?,
+                    None => get_chain_config_rpc(&rpc_url).await?,
+                };  
                 let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
                 let body = async {
                     let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
@@ -118,7 +123,10 @@ impl SubcommandExecute {
                 rpc_url,
                 network,
             } => {
-                let chain_config = get_chain_config(&network)?;
+                let chain_config = match network {
+                    Some(net) => get_chain_config(&net)?,
+                    None => get_chain_config_rpc(&rpc_url).await?,
+                };
                 let block_number = get_tx_block(&tx, &rpc_url).await?;
                 let cache = get_blockdata(&rpc_url, chain_config, block_number).await?;
                 let (receipt, transitions) = run_tx(cache, &tx).await?;
