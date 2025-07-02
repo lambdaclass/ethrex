@@ -27,8 +27,13 @@ jobs:
           toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
 
-      - name: Add Rust Cache
+      - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -56,8 +61,13 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
-      - name: Caching
+      - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
 
       - name: Run tests
         run: |
@@ -159,7 +169,7 @@ jobs:
             test_pattern: ""
           - name: "Devp2p tests"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs 
+            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
             #|BlobViolations
             # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
           - name: "Engine Auth and EC tests"
@@ -203,7 +213,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 
+        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
         # We use 8 here instead of 16 due to performance issues in some tests
         # Notably the tests "Invalid Missing Ancestor Syncing ReOrG" in engine cancun
 
