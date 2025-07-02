@@ -271,14 +271,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
-        let supported_capabilities: Vec<Capability> = [
+        let mut supported_capabilities: Vec<Capability> = [
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
-            #[cfg(feature = "l2")]
-            &super::l2::SUPPORTED_BASED_CAPABILITIES[..],
         ]
         .concat();
+        if let L2ConnState::Disconnected(_) = self.l2_state {
+            supported_capabilities.push(super::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+        }
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             supported_capabilities,
             PublicKey::from(self.signer.verifying_key()),
