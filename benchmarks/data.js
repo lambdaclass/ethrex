@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751480211084,
+  "lastUpdate": 1751482070902,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4144,6 +4144,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006844779487179487,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "94380962+sofiazcoaga@users.noreply.github.com",
+            "name": "sofiazcoaga",
+            "username": "sofiazcoaga"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2983a9baead8000a97075bc1c683917db91f3f59",
+          "message": "refactor(levm): obtain gas calculation params from auxiliar function (#3420)\n\n**Motivation** \n\nThis PR addresses\n[issue](https://github.com/lambdaclass/ethrex/issues/3095).\n\n**Description**\n\nOpcodes CALL, CALLCODE, DELEGATECALL and STATICCALL had each a custom\ngas calculation function but used the same input arguments and obtained\nthem with the same process.\n\nNow a new method called `get_call_gas_params()` includes these common\ncalculations and gets invoked by all opcodes handlers.",
+          "timestamp": "2025-07-02T18:24:45Z",
+          "tree_id": "a016c67fe51999cd1800a796edb74494eecd7fc7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2983a9baead8000a97075bc1c683917db91f3f59"
+        },
+        "date": 1751482059850,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006775289340101523,
             "unit": "Mgas/s"
           }
         ]
