@@ -165,9 +165,6 @@ jobs:
           - platform: ubuntu-latest
             os: linux
             arch: x86-64
-          - platform: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -185,12 +182,6 @@ jobs:
           curl -L https://risczero.com/install | bash
           ~/.risc0/bin/rzup install cargo-risczero 2.1.0
           ~/.risc0/bin/rzup install rust
-
-      - name: Set up QEMU
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: amd64
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
