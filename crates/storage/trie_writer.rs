@@ -30,6 +30,9 @@ impl TrieWriter {
 
     /// Send a message to the TrieWriter task to persist the [`TrieUpdates`].
     pub async fn write(&self, update: TrieUpdates) {
+        if update.account_updates.is_empty() && update.storage_updates.is_empty() {
+            return;
+        }
         // before sending the updates to the task, we need to update the dirty nodes
         self.store.update_cache(&update);
         // then we can send the updates to the task

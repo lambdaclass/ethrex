@@ -86,11 +86,11 @@ pub struct AccountUpdatesList {
 
 impl Store {
     pub fn update_cache(&self, trie_updates: &TrieUpdates) {
-        {
+        if !trie_updates.account_updates.is_empty() {
             let mut write_guard_state = self.dirty_state_nodes.write().unwrap();
             write_guard_state.extend(trie_updates.account_updates.iter().cloned());
         }
-        {
+        if !trie_updates.storage_updates.is_empty() {
             let mut write_guard_storage = self.dirty_storage_nodes.write().unwrap();
             write_guard_storage.extend(trie_updates.storage_updates.iter().flat_map(
                 |(storage_root, storage_updates)| {
@@ -103,8 +103,10 @@ impl Store {
     }
 
     pub async fn store_trie_updates(&self, trie_updates: TrieUpdates) -> Result<(), StoreError> {
-        self.engine.apply_trie_updates(trie_updates.clone()).await?;
-        {
+        if !trie_updates.account_updates.is_empty() || !trie_updates.storage_updates.is_empty() {
+            self.engine.apply_trie_updates(trie_updates.clone()).await?;
+        }
+        if !trie_updates.storage_updates.is_empty() {
             let mut guard = self.dirty_storage_nodes.write().unwrap();
             for (address_hash, updates) in trie_updates.storage_updates {
                 for (node_hash, _) in updates {
@@ -112,7 +114,7 @@ impl Store {
                 }
             }
         }
-        {
+        if !trie_updates.account_updates.is_empty() {
             let mut guard = self.dirty_state_nodes.write().unwrap();
             for (node_hash, _) in trie_updates.account_updates {
                 guard.remove(&node_hash);
