@@ -614,7 +614,7 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
         return Ok(Bytes::from(vec![0u8; 64]));
     }
 
-    let point = G1AffineArk::new(x, y);
+    let point = G1AffineArk::new(x, y).into_group();
     let result = point.mul(scalar).into_affine();
 
     if result.x.is_zero() || result.y.is_zero() {
