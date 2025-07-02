@@ -41,6 +41,7 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use std::thread;
 
 // Define tables
 table!(
@@ -186,9 +187,19 @@ pub struct Store {
 }
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
-        })
+        // FIXME 🔥🔥🔥🔥!!!
+        let db = Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?);
+
+        let store = Store {
+            db: Arc::clone(&db),
+        };
+
+        // we prune the database in a separate thread to avoid blocking the main thread
+        let _handle = thread::spawn(move || {
+            store.prune_state_and_storage_log().unwrap();
+        });
+
+        Ok(Self { db })
     }
 
     // Helper method to write into a libmdbx table
