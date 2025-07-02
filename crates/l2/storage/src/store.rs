@@ -11,17 +11,20 @@ use ethrex_common::{
     types::{Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use ethrex_storage::error::StoreError;
+use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngineRollup>,
+    storage_lock: Arc<RwLock<()>>,
 }
 
 impl Default for Store {
     fn default() -> Self {
         Self {
             engine: Arc::new(InMemoryStore::new()),
+            storage_lock: Arc::new(RwLock::new(())),
         }
     }
 }
@@ -43,13 +46,16 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStoreRollup::new(_path)?),
+                storage_lock: Arc::new(RwLock::new(())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                storage_lock: Arc::new(RwLock::new(())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStoreRollup::new()?),
+                storage_lock: Arc::new(RwLock::new(())),
             },
         };
         info!("Started l2 store engine");
@@ -184,6 +190,7 @@ impl Store {
     }
 
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, StoreError> {
+        let _ = self.storage_lock.read().await;
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
         };
@@ -197,13 +204,11 @@ impl Store {
                 .to_owned(),
         ))?;
 
-        let state_root =
-            self.get_state_root_by_batch(batch_number)
-                .await?
-                .ok_or(StoreError::Custom(
-                "Failed while trying to retrieve the state root of a known batch. This is a bug."
-                    .to_owned(),
-            ))?;
+        let state_root = self.get_state_root_by_batch(batch_number).await?.ok_or(
+            StoreError::Custom(format!(
+                "Failed while trying to retrieve the state root of a known batch: {batch_number}. This is a bug."
+            )),
+        )?;
         let blobs_bundle = BlobsBundle::create_from_blobs(
             &self
                 .get_blobs_by_batch(batch_number)
@@ -240,6 +245,7 @@ impl Store {
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), StoreError> {
+        let _ = self.storage_lock.write().await;
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
         for block_number in blocks.iter() {

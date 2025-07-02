@@ -33,9 +33,6 @@ pub struct SyncManager {
     rollup_store: StoreRollup,
     /// The batch number to be synced to
     new_batch_head: Arc<Mutex<u64>>,
-    /// The batch number it is currently syncing to
-    #[cfg(feature = "l2")]
-    last_batch_number: Arc<Mutex<u64>>,
 }
 
 impl SyncManager {
@@ -61,12 +58,10 @@ impl SyncManager {
             store: store.clone(),
             #[cfg(feature = "l2")]
             rollup_store,
-            #[cfg(feature = "l2")]
-            last_batch_number: Arc::new(Mutex::new(1)),
             new_batch_head: Arc::new(Mutex::new(1)),
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
-        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
+        // Otherwise we will incorrectly assume the node is already synced and work on invalid state
         if store
             .get_header_download_checkpoint()
             .await
@@ -88,9 +83,6 @@ impl SyncManager {
                 .expect("Failed to start Storage Engine"),
             #[cfg(feature = "l2")]
             rollup_store: StoreRollup::default(),
-            #[cfg(feature = "l2")]
-            last_batch_number: Arc::new(Mutex::new(1)),
-            // #[cfg(feature = "l2")]
             new_batch_head: Arc::new(Mutex::new(1)),
         }
     }
@@ -146,8 +138,6 @@ impl SyncManager {
         #[cfg(feature = "l2")]
         let rollup_store = self.rollup_store.clone();
         #[cfg(feature = "l2")]
-        let last_batch_number = self.last_batch_number.clone();
-        #[cfg(feature = "l2")]
         let new_batch_head = self.new_batch_head.clone();
 
         tokio::spawn(async move {
@@ -176,16 +166,9 @@ impl SyncManager {
                     continue;
                 }
                 #[cfg(feature = "l2")]
-                let last_batch_number_value = {
-                    let Ok(last_batch_number) = last_batch_number.try_lock() else {
-                        error!("Failed to read latest batch number, unable to sync");
-                        return;
-                    };
-                    let last_batch_number_value = *last_batch_number;
-                    let last_batch_number_on_store =
-                        rollup_store.get_latest_batch_number().await.unwrap_or(0);
-                    last_batch_number_value.min(last_batch_number_on_store)
-                };
+                let last_batch_number_value =
+                    rollup_store.get_latest_batch_number().await.unwrap_or(1);
+
                 #[cfg(feature = "l2")]
                 let new_batch_head = {
                     let Ok(new_batch_head) = new_batch_head.try_lock() else {
@@ -208,17 +191,6 @@ impl SyncManager {
                         new_batch_head,
                     )
                     .await;
-                #[cfg(feature = "l2")]
-                {
-                    last_batch_number
-                        .try_lock()
-                        .map(|mut last_batch_number| {
-                            *last_batch_number = new_batch_head;
-                        })
-                        .unwrap_or_else(|_| {
-                            error!("Failed to update last batch number after sync");
-                        });
-                }
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()
