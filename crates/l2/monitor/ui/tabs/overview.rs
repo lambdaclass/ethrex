@@ -205,9 +205,9 @@ fn draw_blocks(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
 
 fn draw_mempool(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
     let constraints = vec![
-        Constraint::Fill(1),
-        Constraint::Fill(1),
-        Constraint::Fill(1),
+        Constraint::Length(HASH_LENGTH_IN_DIGITS),
+        Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+        Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
     ];
     let rows = app.mempool.items.iter().map(|(hash, sender, nonce)| {
         Row::new(vec![
