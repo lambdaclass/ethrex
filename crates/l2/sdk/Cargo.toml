@@ -7,6 +7,7 @@ edition.workspace = true
 ethrex-common.workspace = true
 ethrex-rpc.workspace = true
 ethrex-l2-common.workspace = true
+ethrex-sdk-contract-utils = { path = "contract_utils" }
 
 ethereum-types.workspace = true
 tokio.workspace = true
