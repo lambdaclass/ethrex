@@ -137,12 +137,6 @@ contract CommonBridge is
 
     function _sendToL2(address _from, SendValues memory sendValues) private {
         address from = _getAddressAlias(_from);
-        // Aliasing is used when the address is not an EOA
-        if (_from.code.length > 0) {
-            if (bytes3(_from.code) != EIP7702_PREFIX) {
-                from = address(uint160(_from) + ADDRESS_ALIASING);
-            }
-        }
         _burnGas(sendValues.gasLimit);
 
         bytes32 l2MintTxHash = keccak256(
