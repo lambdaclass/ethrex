@@ -189,8 +189,7 @@ jobs:
       - uses: Jimver/cuda-toolkit@v0.2.24
         id: cuda-toolkit
         with:
-          cuda: '12.6.0'
-          log-file-suffix: '${{ matrix.platform }}.txt'
+          cuda: '12.5.0'
 
       - name: Build prover
         run: |
