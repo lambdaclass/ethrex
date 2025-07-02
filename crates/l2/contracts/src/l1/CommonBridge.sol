@@ -126,9 +126,10 @@ contract CommonBridge is
         if (from != msg.sender) return from;
         // If sender is origin, the account is an EOA
         if (from == tx.origin) return from;
-        // Check for a delegated EOA
+        // Check for an EIP7702 delegate it account
         if (from.code.length > 0) {
             if (bytes3(from.code) == EIP7702_PREFIX) {
+                // And treat it as an EOA
                 return from;
             }
         }
