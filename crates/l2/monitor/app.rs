@@ -117,18 +117,41 @@ impl GlobalChainStatusTable {
             .get_last_verified_batch(on_chain_proposer_address)
             .await
             .expect("Failed to get last verified batch");
-        let current_batch = if sequencer_registry_address.is_some() {
-            "NaN".to_string() // TODO: Implement current batch retrieval (should be last known + 1)
+        let last_committed_block =
+            if last_committed_batch == 0 {
+                0
+            } else {
+                rollup_client
+            .get_batch_by_number(last_committed_batch)
+            .await
+            .unwrap_or_else(|err| {
+                panic!("Failed to get last committed batch ({last_committed_batch}) data: {err}")
+            })
+            .batch
+            .last_block
+            };
+        let last_verified_block = if last_verified_batch == 0 {
+            0
         } else {
-            (last_committed_batch + 1).to_string()
+            rollup_client
+                .get_batch_by_number(last_verified_batch)
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("Failed to get last verified batch ({last_verified_batch}) data: {err}")
+                })
+                .batch
+                .last_block
         };
-        let last_committed_block = "NaN"; // TODO: Implement committed block retrieval
-        let last_verified_block = "NaN"; // TODO: Implement verified block retrieval
         let current_block = rollup_client
             .get_block_number()
             .await
             .expect("Failed to get latest L2 block")
             + 1;
+        let current_batch = if sequencer_registry_address.is_some() {
+            "NaN".to_string() // TODO: Implement current batch retrieval (should be last known + 1)
+        } else {
+            (last_committed_batch + 1).to_string()
+        };
 
         if sequencer_registry_address.is_some() {
             vec![
