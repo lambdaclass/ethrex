@@ -503,9 +503,11 @@ mod tests {
             latest_batch_sent: 0,
             store_rollup: StoreRollup::default(),
             committer_key: SigningKeySecp256k1::from_slice(
-                &hex::decode(
-                    "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-                ).unwrap()).unwrap().into(),
+                &hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924")
+                    .unwrap(),
+            )
+            .unwrap()
+            .into(),
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
             next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
         };
