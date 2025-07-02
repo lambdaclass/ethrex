@@ -3,6 +3,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::{H160, types::BlockNumber};
+use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
@@ -100,7 +101,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    test_transfer_with_deposit(
+    test_transfer_with_privileged_tx(
         &rich_wallet_private_key,
         &transfer_return_private_key,
         &eth_client,
@@ -110,12 +111,16 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     test_gas_burning(&eth_client).await?;
 
-    test_deposit_with_contract_call(&proposer_client, &eth_client).await?;
+    test_privileged_tx_with_contract_call(&proposer_client, &eth_client).await?;
 
-    test_deposit_with_contract_call_revert(&proposer_client, &eth_client).await?;
+    test_privileged_tx_with_contract_call_revert(&proposer_client, &eth_client).await?;
 
-    test_deposit_not_enough_balance(&transfer_return_private_key, &eth_client, &proposer_client)
-        .await?;
+    test_privileged_tx_not_enough_balance(
+        &transfer_return_private_key,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
 
     test_erc20_roundtrip(bridge_address, &proposer_client, &eth_client).await?;
 
@@ -142,7 +147,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 /// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
 /// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
 /// The deposit will trigger the call to the contract.
-async fn test_deposit_with_contract_call(
+async fn test_privileged_tx_with_contract_call(
     proposer_client: &EthClient,
     eth_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -219,7 +224,7 @@ async fn test_deposit_with_contract_call(
 
 /// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
 /// The call to the contract should revert but the deposit should be successful.
-async fn test_deposit_with_contract_call_revert(
+async fn test_privileged_tx_with_contract_call_revert(
     proposer_client: &EthClient,
     eth_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -562,7 +567,7 @@ async fn test_transfer(
     Ok(())
 }
 
-async fn test_transfer_with_deposit(
+async fn test_transfer_with_privileged_tx(
     transferer_private_key: &SecretKey,
     receiver_private_key: &SecretKey,
     eth_client: &EthClient,
@@ -641,7 +646,7 @@ async fn test_gas_burning(eth_client: &EthClient) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-async fn test_deposit_not_enough_balance(
+async fn test_privileged_tx_not_enough_balance(
     receiver_private_key: &SecretKey,
     eth_client: &EthClient,
     proposer_client: &EthClient,
@@ -1265,7 +1270,7 @@ async fn wait_for_l2_deposit_receipt(
     eth_client: &EthClient,
     proposer_client: &EthClient,
 ) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
-    let topic = keccak(b"L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)");
+    let topic = keccak(b"PrivilegedTxSent(address,address,uint256,uint256,uint256,bytes)");
     let logs = eth_client
         .get_logs(
             U256::from(l1_receipt_block_number),
@@ -1274,8 +1279,18 @@ async fn wait_for_l2_deposit_receipt(
             topic,
         )
         .await?;
+    let data = PrivilegedTransactionData::from_log(logs.first().unwrap().log.clone())?;
 
-    let l2_deposit_tx_hash = H256::from_slice(logs.first().unwrap().log.data.get(96..128).unwrap());
+    let l2_deposit_tx_hash = data
+        .into_tx(
+            eth_client,
+            proposer_client.get_chain_id().await?.try_into().unwrap(),
+            0,
+        )
+        .await
+        .unwrap()
+        .get_privileged_hash()
+        .unwrap();
 
     println!("Waiting for deposit transaction receipt on L2");
 

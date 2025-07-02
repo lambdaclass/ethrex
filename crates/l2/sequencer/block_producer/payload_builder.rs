@@ -13,7 +13,7 @@ use ethrex_common::{
 };
 use ethrex_l2_common::l1_messages::get_block_l1_messages;
 use ethrex_l2_common::state_diff::{
-    AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, L1MESSAGE_LOG_LEN,
+    AccountStateDiff, BLOCK_HEADER_LEN, L1MESSAGE_LOG_LEN, PRIVILEGED_TX_LOG_LEN,
     SIMPLE_TX_STATE_DIFF_SIZE, StateDiffError,
 };
 use ethrex_metrics::metrics;
@@ -95,7 +95,7 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
 ) -> Result<(), BlockProducerError> {
-    // version (u8) + header fields (struct) + messages_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
+    // version (u8) + header fields (struct) + messages_len (u16) + privileged_tx_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + *BLOCK_HEADER_LEN + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
     let mut account_diffs = HashMap::new();
@@ -183,7 +183,7 @@ pub async fn fill_transactions(
             &merged_diffs,
             &head_tx,
             &receipt,
-            *DEPOSITS_LOG_LEN,
+            *PRIVILEGED_TX_LOG_LEN,
             *L1MESSAGE_LOG_LEN,
         )?;
 
@@ -206,7 +206,7 @@ pub async fn fill_transactions(
         // Pull transaction from the mempool
         blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
-        // We only add the messages and deposits length because the accounts diffs may change
+        // We only add the messages and privileged transaction length because the accounts diffs may change
         acc_size_without_accounts += tx_size_without_accounts;
         size_accounts_diffs = new_accounts_diff_size;
         // Include the new accounts diffs
@@ -367,7 +367,7 @@ fn merge_diffs(
 }
 
 /// Calculates the size of the state diffs introduced by the transaction, including
-/// the size of messages and deposits logs for this transaction, and the total
+/// the size of messages and privileged transactions, and the total
 /// size of all account diffs accumulated so far in the block.
 /// This is necessary because each transaction can modify accounts that were already
 /// changed by previous transactions, so we must recalculate the total diff size each time.
@@ -375,7 +375,7 @@ fn calculate_tx_diff_size(
     merged_diffs: &HashMap<Address, AccountStateDiff>,
     head_tx: &HeadTransaction,
     receipt: &Receipt,
-    deposits_log_len: usize,
+    privileged_tx_log_len: usize,
     messages_log_len: usize,
 ) -> Result<(usize, usize), BlockProducerError> {
     let mut tx_state_diff_size = 0;
@@ -396,8 +396,8 @@ fn calculate_tx_diff_size(
         new_accounts_diff_size += encoded.len();
     }
 
-    if is_deposit_l2(head_tx) {
-        tx_state_diff_size += deposits_log_len;
+    if is_privileged_tx(head_tx) {
+        tx_state_diff_size += privileged_tx_log_len;
     }
     tx_state_diff_size +=
         get_block_l1_messages(&[Transaction::from(head_tx.clone())], &[receipt.clone()]).len()
@@ -406,6 +406,6 @@ fn calculate_tx_diff_size(
     Ok((tx_state_diff_size, new_accounts_diff_size))
 }
 
-fn is_deposit_l2(tx: &Transaction) -> bool {
+fn is_privileged_tx(tx: &Transaction) -> bool {
     matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
 }

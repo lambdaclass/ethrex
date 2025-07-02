@@ -4,7 +4,7 @@ use crate::utils::error::UtilsError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
-use ethrex_l2_common::deposits::DepositError;
+use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_rpc::clients::EngineClientError;
@@ -233,8 +233,8 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
-    #[error("Deposit error: {0}")]
-    DepositError(#[from] DepositError),
+    #[error("Privileged Transaction error: {0}")]
+    PrivilegedTransactionError(#[from] PrivilegedTransactionError),
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }

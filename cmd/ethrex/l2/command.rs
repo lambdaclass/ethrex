@@ -441,7 +441,7 @@ impl Command {
                                 first_block: first_block_number,
                                 last_block: new_block.number,
                                 state_root: new_block.state_root,
-                                deposit_logs_hash: H256::zero(),
+                                privileged_transactions_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
                                 commit_tx: None,

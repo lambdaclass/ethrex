@@ -1271,7 +1271,7 @@ impl Transaction {
 
     pub fn compute_hash(&self) -> H256 {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
-            return tx.get_deposit_hash().unwrap_or_default();
+            return tx.get_privileged_hash().unwrap_or_default();
         }
         keccak_hash::keccak(self.encode_canonical_to_vec())
     }
@@ -1354,10 +1354,10 @@ impl TxType {
 }
 
 impl PrivilegedL2Transaction {
-    /// Returns the formatted hash of the deposit transaction,
-    /// or None if the transaction is not a deposit.
-    /// The hash is computed as keccak256(to || value || deposit_id == nonce || from || gas_limit || keccak256(calldata))
-    pub fn get_deposit_hash(&self) -> Option<H256> {
+    /// Returns the formatted hash of the privileged transaction,
+    /// or None if the transaction is not a privileged transaction.
+    /// The hash is computed as keccak256(from || to || transaction_id  || value || gas_limit || keccak256(calldata))
+    pub fn get_privileged_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {
             TxKind::Call(to) => to,
@@ -1367,16 +1367,16 @@ impl PrivilegedL2Transaction {
         let value = self.value.to_big_endian();
 
         // The nonce should be a U256,
-        // in solidity the depositId is a U256.
+        // in solidity the transactionId is a U256.
         let u256_nonce = U256::from(self.nonce);
         let nonce = u256_nonce.to_big_endian();
 
         Some(keccak_hash::keccak(
             [
-                to.as_bytes(),
-                &value,
-                &nonce,
                 self.from.as_bytes(),
+                to.as_bytes(),
+                &nonce,
+                &value,
                 &U256::from(self.gas_limit).to_big_endian(),
                 keccak(&self.data).as_bytes(),
             ]
