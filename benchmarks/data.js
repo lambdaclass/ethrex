@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751482070902,
+  "lastUpdate": 1751484276771,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4173,6 +4173,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006775289340101523,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1189f2f34bde1205ac7d3a1568ec28f536ea45df",
+          "message": "chore(l2): re-enable risc0 (#3172)\n\n**Motivation**\n\nrisc0 support was temporarily deprecated because of incompatible\nversions between some required ethrex's dependencies and the risc0\ntoolchain.\n\nNow the toolchain uses a newer version so this problem should be solved,\nbut the backend needs some maintenance to get it working again.\n\n**Description**\n\n- update risc0 to latest version\n- update risc0's build script for the new version\n- refactor kzg verification into ethrex-common\n- support kzg verification with both kzg-rs and c-kzg (sp1 is only\ncompatible with kzg-rs, risc0 only with c-kzg)\n- fix wrong public inputs encoding\n- fix wrong image id encoding\n- add risc0 verification key (also called image id) as a contract\nvariable\n- add risc0 lint job and refactor jobs for other backends\n- add docs for local testing (deployment of risc0 contracts)\n\nCloses #2145",
+          "timestamp": "2025-07-02T18:59:01Z",
+          "tree_id": "26a8a49c495eb83e22a7b0df4c708bc87119278b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1189f2f34bde1205ac7d3a1568ec28f536ea45df"
+        },
+        "date": 1751484268086,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0067071959798994975,
             "unit": "Mgas/s"
           }
         ]
