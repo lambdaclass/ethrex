@@ -22,13 +22,15 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 11] = [
+const DB_SCHEMA: [&str; 13] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE account_updates (block_number INT PRIMARY KEY, updates BLOB)",
+    "CREATE TABLE commit_txs (batch INT PRIMARY KEY, commit_tx BLOB)",
+    "CREATE TABLE verify_txs (batch INT PRIMARY KEY, verify_tx BLOB)",
     "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
@@ -333,6 +335,64 @@ impl StoreEngineRollup for SQLStore {
         } else {
             Ok(Some(bundles))
         }
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(vec![(
+            "INSERT OR REPLACE INTO commit_txs VALUES (?1, ?2)",
+            (batch_number, Vec::from(commit_tx.to_fixed_bytes())).into_params()?,
+        )])
+        .await
+    }
+
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT commit_tx FROM commit_txs WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+            return Ok(Some(H256::from_slice(&vec)));
+        }
+        Ok(None)
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(vec![(
+            "INSERT OR REPLACE INTO verify_txs VALUES (?1, ?2)",
+            (batch_number, Vec::from(verify_tx.to_fixed_bytes())).into_params()?,
+        )])
+        .await
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT verify_tx FROM verify_txs WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+            return Ok(Some(H256::from_slice(&vec)));
+        }
+        Ok(None)
     }
 
     async fn update_operations_count(

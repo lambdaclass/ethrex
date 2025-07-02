@@ -75,6 +75,8 @@ impl Store {
             privileged_transactions_hash: H256::zero(),
             message_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
+            commit_tx: None,
+            verify_tx: None,
         })
         .await?;
         // Sets the lastest sent batch proof to 0
@@ -193,6 +195,40 @@ impl Store {
             .await
     }
 
+    pub async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        self.engine.get_commit_tx_by_batch(batch_number).await
+    }
+
+    pub async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_commit_tx_by_batch(batch_number, commit_tx)
+            .await
+    }
+
+    pub async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        self.engine.get_verify_tx_by_batch(batch_number).await
+    }
+
+    pub async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_verify_tx_by_batch(batch_number, verify_tx)
+            .await
+    }
+
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, RollupStoreError> {
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
@@ -228,16 +264,17 @@ impl Store {
         let message_hashes = self
             .get_message_hashes_by_batch(batch_number)
             .await?
-            .ok_or(RollupStoreError::Custom(
-            "Failed while trying to retrieve the message hashes of a known batch. This is a bug."
-                .to_owned(),
-        ))?;
+            .unwrap_or_default();
         let privileged_transactions_hash = self
             .get_privileged_transactions_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
             "Failed while trying to retrieve the deposit logs hash of a known batch. This is a bug."
                 .to_owned(),
         ))?;
+
+        let commit_tx = self.get_commit_tx_by_batch(batch_number).await?;
+
+        let verify_tx = self.get_verify_tx_by_batch(batch_number).await?;
 
         Ok(Some(Batch {
             number: batch_number,
@@ -247,6 +284,8 @@ impl Store {
             blobs_bundle,
             message_hashes,
             privileged_transactions_hash,
+            commit_tx,
+            verify_tx
         }))
     }
 
@@ -270,6 +309,14 @@ impl Store {
             .await?;
         self.store_state_root_by_batch(batch.number, batch.state_root)
             .await?;
+        if let Some(commit_tx) = batch.commit_tx {
+            self.store_commit_tx_by_batch(batch.number, commit_tx)
+                .await?;
+        }
+        if let Some(verify_tx) = batch.verify_tx {
+            self.store_verify_tx_by_batch(batch.number, verify_tx)
+                .await?;
+        }
         Ok(())
     }
 

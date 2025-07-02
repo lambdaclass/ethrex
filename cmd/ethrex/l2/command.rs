@@ -444,6 +444,8 @@ impl Command {
                                 privileged_transactions_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
+                                commit_tx: None,
+                                verify_tx: None,
                             };
 
                             // Store batch info in L2 storage

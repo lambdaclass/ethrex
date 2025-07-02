@@ -41,6 +41,10 @@ const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
 const BATCH_PROOF_BY_BATCH_AND_TYPE: TableDefinition<(u64, u32), Vec<u8>> =
     TableDefinition::new("BatchProofByBatchAndType");
 
+const COMMIT_TX_BY_BATCH: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("CommitTxByBatch");
+
+const VERIFY_TX_BY_BATCH: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("VerifyTxByBatch");
+
 #[derive(Debug)]
 pub struct RedBStoreRollup {
     db: Arc<Database>,
@@ -121,6 +125,8 @@ pub fn init_db() -> Result<Database, RollupStoreError> {
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
     table_creation_txn.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
+    table_creation_txn.open_table(COMMIT_TX_BY_BATCH)?;
+    table_creation_txn.open_table(VERIFY_TX_BY_BATCH)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -260,6 +266,44 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(BLOB_BUNDLES, batch_number)
             .await?
             .map(|rlp| rlp.value().to()))
+    }
+
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read(COMMIT_TX_BY_BATCH, batch_number)
+            .await?
+            .map(|rlp| rlp.value().to()))
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write(COMMIT_TX_BY_BATCH, batch_number, commit_tx.into())
+            .await
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read(VERIFY_TX_BY_BATCH, batch_number)
+            .await?
+            .map(|rlp| rlp.value().to()))
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write(VERIFY_TX_BY_BATCH, batch_number, verify_tx.into())
+            .await
     }
 
     async fn update_operations_count(
