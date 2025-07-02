@@ -288,7 +288,7 @@
 <li>First two bytes are the number of entries, then come the tuples <code>(to_u160, amount_u256, tx_hash_u256)</code>.</li>
 </ul>
 </li>
-<li>Next the <code>DepositLogs</code> field:
+<li>Next the <code>PrivilegedTransactionLogs</code> field:
 <ul>
 <li>First two bytes are the number of entries, then come the tuples <code>(to_u160, value_u256)</code>.</li>
 </ul>
@@ -312,8 +312,8 @@ number_of_modified_accounts_u16 ||
 // Withdraw Logs
 number_of_withdraw_logs_u16 ||
 (to_u160 || amount_u256 || tx_hash_u256) ...
-// Deposit Logs
-number_of_deposit_logs_u16 ||
+// Privileged Transactions Logs
+number_of_privileged_transaction_logs_u16 ||
 (to_u160 || value_u256) ...
 </code></pre>
 <p>The sequencer will then make a commitment to this encoded state diff (explained in the EIP 4844 section how this is done) and send on the <code>commit</code> transaction:</p>
