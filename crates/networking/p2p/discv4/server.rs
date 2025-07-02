@@ -736,8 +736,6 @@ pub(super) mod tests {
     use ethrex_storage::Store;
     use ethrex_storage::error::StoreError;
 
-    #[cfg(feature = "l2")]
-    use ethrex_storage_rollup::StoreRollup;
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
     use std::net::{IpAddr, Ipv4Addr};

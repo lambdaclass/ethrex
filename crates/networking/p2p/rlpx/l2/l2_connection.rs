@@ -473,7 +473,7 @@ mod tests {
         let storage = test_store("store.db").await;
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let (broadcast, _) = broadcast::channel(10);
-        let committer_key = Some(SigningKeySecp256k1::new(&mut rand::rngs::OsRng));
+        let committer_key = SigningKeySecp256k1::new(&mut rand::rngs::OsRng);
 
         let mut connection = RLPxConnection::new(
             signer,
@@ -502,15 +502,10 @@ mod tests {
             blocks_on_queue: BTreeMap::new(),
             latest_batch_sent: 0,
             store_rollup: StoreRollup::default(),
-            committer_key: Some(
-                SigningKeySecp256k1::from_slice(
-                    &hex::decode(
-                        "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            ),
+            committer_key: SigningKeySecp256k1::from_slice(
+                &hex::decode(
+                    "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+                ).unwrap()).unwrap().into(),
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
             next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
         };
@@ -526,8 +521,7 @@ mod tests {
             .connection_state()
             .unwrap()
             .committer_key
-            .as_ref()
-            .unwrap();
+            .as_ref();
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(
                 &SignedMessage::from_digest(_block.hash().to_fixed_bytes()),
@@ -537,7 +531,7 @@ mod tests {
         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
 
         let message_to_send = NewBlock {
-            block: _block.clone(),
+            block: _block.clone().into(),
             signature,
             recovery_id,
         };
@@ -567,8 +561,7 @@ mod tests {
             .connection_state_mut()
             .unwrap()
             .committer_key
-            .as_ref()
-            .unwrap();
+            .as_ref();
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(
                 &SignedMessage::from_digest(get_hash_batch_sealed(&batch)),
