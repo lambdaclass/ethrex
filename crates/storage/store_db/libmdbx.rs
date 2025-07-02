@@ -196,7 +196,10 @@ impl Store {
 
         // we prune the database in a separate thread to avoid blocking the main thread
         let _handle = thread::spawn(move || {
-            store.prune_state_and_storage_log().unwrap();
+            loop {
+                thread::sleep(std::time::Duration::from_secs(15));
+                store.prune_state_and_storage_log().unwrap();
+            }
         });
 
         Ok(Self { db })
