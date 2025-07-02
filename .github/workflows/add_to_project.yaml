@@ -11,10 +11,8 @@ jobs:
   add-to-project:
     name: Add pull request to project
     runs-on: ubuntu-latest
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/add-to-project@v1.0.2
         with:
           project-url: https://github.com/orgs/lambdaclass/projects/31 # ethrex_l1 number
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
