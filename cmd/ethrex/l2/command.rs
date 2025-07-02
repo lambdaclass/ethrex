@@ -139,6 +139,17 @@ impl Command {
 
                 let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
+                let p2p_based_context = {
+                    if l2_sequencer_cfg.based.based {
+                        Some(P2PBasedContext {
+                            store_rollup: rollup_store.clone(),
+                            committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
+                        })
+                    } else {
+                        None
+                    }
+                };
+
                 if opts.node_opts.p2p_enabled {
                     init_network(
                         &opts.node_opts,
@@ -151,10 +162,7 @@ impl Command {
                         store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
-                        Some(P2PBasedContext {
-                            store_rollup: rollup_store.clone(),
-                            committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
-                        }),
+                        p2p_based_context
                     )
                     .await;
                 } else {
