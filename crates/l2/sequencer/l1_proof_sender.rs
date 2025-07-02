@@ -15,7 +15,7 @@ use tracing::{debug, error, info};
 
 use super::{
     configs::AlignedConfig,
-    utils::{get_latest_sent_batch, random_duration, send_verify_tx},
+    utils::{random_duration, send_verify_tx},
 };
 
 use crate::{
@@ -46,7 +46,6 @@ pub struct L1ProofSenderState {
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
-    sp1_elf_path: String,
     aligned_mode: bool,
 }
 
@@ -59,14 +58,12 @@ impl L1ProofSenderState {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
-        aligned_mode: bool,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
-        let sp1_elf_path = aligned_cfg.sp1_elf_path.clone();
 
         if cfg.dev_mode {
             return Ok(Self {
@@ -81,8 +78,7 @@ impl L1ProofSenderState {
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
                 fee_estimate,
-                sp1_elf_path,
-                aligned_mode,
+                aligned_mode: aligned_cfg.aligned_mode,
             });
         }
 
@@ -98,8 +94,7 @@ impl L1ProofSenderState {
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
-            sp1_elf_path,
-            aligned_mode,
+                aligned_mode: aligned_cfg.aligned_mode,
         })
     }
 }
@@ -131,7 +126,6 @@ impl L1ProofSender {
             &cfg.aligned,
             rollup_store,
             needed_proof_types,
-            cfg.aligned.aligned_mode,
         )
         .await?;
         let mut l1_proof_sender = L1ProofSender::start(state);
@@ -181,17 +175,7 @@ impl GenServer for L1ProofSender {
 }
 
 async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSenderError> {
-    let batch_to_send = 1 + get_latest_sent_batch(
-        state.needed_proof_types.clone(),
-        &state.rollup_store,
-        &state.eth_client,
-        state.on_chain_proposer_address,
-    )
-    .await
-    .map_err(|err| {
-        error!("Failed to get next batch to send: {err}");
-        ProofSenderError::InternalError(err.to_string())
-    })?;
+    let batch_to_send = 1 + state.rollup_store.get_latest_sent_batch_proof().await?;
 
     let last_committed_batch = state
         .eth_client
@@ -227,7 +211,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         }
         state
             .rollup_store
-            .set_lastest_sent_batch_proof(batch_to_send)
+            .set_latest_sent_batch_proof(batch_to_send)
             .await?;
     } else {
         let missing_proof_types: Vec<String> = missing_proof_types

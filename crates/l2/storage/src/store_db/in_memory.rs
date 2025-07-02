@@ -196,11 +196,11 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.operations_counts)
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         Ok(self.inner()?.lastest_sent_batch_proof)
     }
 
-    async fn set_lastest_sent_batch_proof(
+    async fn set_latest_sent_batch_proof(
         &self,
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {

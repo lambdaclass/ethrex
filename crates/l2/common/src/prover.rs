@@ -90,9 +90,9 @@ impl Display for ProverType {
     }
 }
 
-impl Into<Option<ProvingSystemId>> for ProverType {
-    fn into(self) -> Option<ProvingSystemId> {
-        match self {
+impl From<ProverType> for Option<ProvingSystemId> {
+    fn from(value: ProverType) -> Self {
+        match value {
             ProverType::RISC0 => Some(ProvingSystemId::Risc0),
             ProverType::SP1 => Some(ProvingSystemId::SP1),
             _ => None

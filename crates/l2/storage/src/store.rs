@@ -78,7 +78,7 @@ impl Store {
         })
         .await?;
         // Sets the lastest sent batch proof to 0
-        self.set_lastest_sent_batch_proof(0).await
+        self.set_latest_sent_batch_proof(0).await
     }
 
     /// Stores the block numbers by a given batch_number
@@ -288,16 +288,16 @@ impl Store {
     }
 
     /// Returns the lastest sent batch proof
-    pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        self.engine.get_lastest_sent_batch_proof().await
+    pub async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+        self.engine.get_latest_sent_batch_proof().await
     }
 
     /// Sets the lastest sent batch proof
-    pub async fn set_lastest_sent_batch_proof(
+    pub async fn set_latest_sent_batch_proof(
         &self,
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
-        self.engine.set_lastest_sent_batch_proof(batch_number).await
+        self.engine.set_latest_sent_batch_proof(batch_number).await
     }
 
     /// Returns the account updates yielded from executing a block

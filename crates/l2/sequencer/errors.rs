@@ -130,16 +130,20 @@ pub enum ProofSenderError {
     GenServerError(GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
-    #[error("Failed to read ELF file: {0}")]
-    FailedToReadELF(std::io::Error),
     #[error("Proof Sender failed to estimate Aligned fee: {0}")]
     AlignedFeeEstimateError(String),
     #[error("Proof Sender failed to get nonce from batcher: {0}")]
     AlignedGetNonceError(String),
     #[error("Proof Sender failed to submit proof(s): {0}")]
-    AlignedSubmitProofError(#[from] SubmitError),
+    AlignedSubmitProofError(Box<SubmitError>),
     #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
     AlignedWrongProofFormat,
+}
+
+impl From<SubmitError> for ProofSenderError {
+    fn from(value: SubmitError) -> Self {
+        ProofSenderError::AlignedSubmitProofError(value.into())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,6 +160,8 @@ pub enum ProofVerifierError {
     StoreError(#[from] StoreError),
     #[error("Block Producer failed because of a rollup store error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
+    #[error("Aligned does not support prover type {0}")]
+    UnsupportedProverType(String)
 }
 
 #[derive(Debug, thiserror::Error)]

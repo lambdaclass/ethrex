@@ -19,8 +19,6 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 
-use super::errors::SequencerError;
-
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
 }
@@ -110,21 +108,6 @@ pub async fn get_needed_proof_types(
         needed_proof_types.push(ProverType::Exec);
     }
     Ok(needed_proof_types)
-}
-
-pub async fn get_latest_sent_batch(
-    needed_proof_types: Vec<ProverType>,
-    rollup_store: &StoreRollup,
-    eth_client: &EthClient,
-    on_chain_proposer_address: Address,
-) -> Result<u64, SequencerError> {
-    if needed_proof_types.contains(&ProverType::Aligned) {
-        Ok(rollup_store.get_lastest_sent_batch_proof().await?)
-    } else {
-        Ok(eth_client
-            .get_last_verified_batch(on_chain_proposer_address)
-            .await?)
-    }
 }
 
 pub fn resolve_aligned_network(network: &str) -> Network {

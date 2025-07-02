@@ -33,6 +33,7 @@ const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchesAligned(uint256,by
 pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
     rollup_store: StoreRollup,
+    needed_proof_types: Vec<ProverType>,
 ) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
         &cfg.proof_coordinator,
@@ -40,6 +41,7 @@ pub async fn start_l1_proof_verifier(
         &cfg.eth,
         &cfg.aligned,
         rollup_store,
+        needed_proof_types,
     )
     .await?;
     l1_proof_verifier.run().await;
@@ -56,6 +58,8 @@ struct L1ProofVerifier {
     network: Network,
     rollup_store: StoreRollup,
     sp1_vk: [u8; 32],
+    risc0_vk: [u8; 32],
+    needed_proof_types: Vec<ProverType>,
 }
 
 impl L1ProofVerifier {
@@ -65,12 +69,16 @@ impl L1ProofVerifier {
         eth_cfg: &EthConfig,
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
+        needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let beacon_urls = parse_beacon_urls(&aligned_cfg.beacon_urls);
 
         let sp1_vk = eth_client
             .get_sp1_vk(committer_cfg.on_chain_proposer_address)
+            .await?;
+        let risc0_vk = eth_client
+            .get_risc0_vk(committer_cfg.on_chain_proposer_address)
             .await?;
 
         Ok(Self {
@@ -83,6 +91,8 @@ impl L1ProofVerifier {
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
             sp1_vk,
+            risc0_vk,
+            needed_proof_types,
         })
     }
 
@@ -103,18 +113,21 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        if self
-            .rollup_store
-            .get_proof_by_batch_and_type(first_batch_to_verify, ProverType::Aligned)
-            .await?
-            .is_none()
-        {
-            info!(
-                ?first_batch_to_verify,
-                "Missing Aligned proof, skipping verification"
-            );
-            return Ok(());
-        };
+        for prover_type in &self.needed_proof_types {
+            if self
+                .rollup_store
+                .get_proof_by_batch_and_type(first_batch_to_verify, *prover_type)
+                .await?
+                .is_none()
+            {
+                info!(
+                    ?first_batch_to_verify,
+                    ?prover_type,
+                    "Missing proof, skipping verification"
+                );
+                return Ok(());
+            };
+        }
 
         match self
             .verify_proofs_aggregation(first_batch_to_verify)
@@ -194,13 +207,15 @@ impl L1ProofVerifier {
         mut batch_number: u64,
     ) -> Result<Vec<(u64, BatchProof)>, ProofVerifierError> {
         let mut proofs = Vec::new();
-        while let Some(proof) = self
-            .rollup_store
-            .get_proof_by_batch_and_type(batch_number, ProverType::Aligned)
-            .await?
-        {
-            proofs.push((batch_number, proof));
-            batch_number += 1;
+        for prover_type in &self.needed_proof_types {
+            while let Some(proof) = self
+                .rollup_store
+                .get_proof_by_batch_and_type(batch_number, *prover_type)
+                .await?
+            {
+                proofs.push((batch_number, proof));
+                batch_number += 1;
+            }
         }
         Ok(proofs)
     }
@@ -214,9 +229,18 @@ impl L1ProofVerifier {
         let mut aggregated_proofs = Vec::new();
         for (batch_number, proof) in proofs {
             let public_inputs = proof.public_values();
+            let vk = match proof.prover_type() {
+                ProverType::RISC0 => self.risc0_vk,
+                ProverType::SP1 => self.sp1_vk,
+                unsupported_type => {
+                    return Err(ProofVerifierError::UnsupportedProverType(
+                        unsupported_type.to_string(),
+                    ));
+                }
+            };
 
             let verification_data = AggregationModeVerificationData::SP1 {
-                vk: self.sp1_vk,
+                vk,
                 public_inputs: public_inputs.clone(),
             };
             let commitment = H256(verification_data.commitment());
@@ -225,7 +249,10 @@ impl L1ProofVerifier {
                 self.check_proof_aggregation(verification_data).await?
             {
                 info!(
-                    "Proof for batch {batch_number} aggregated by Aligned with commitment {commitment:#x} and Merkle root {merkle_root:#x}"
+                    ?batch_number,
+                    commitment = %format_args!("{commitment:#x}"),
+                    merkle_root = %format_args!("{merkle_root:#x}"),
+                    "Proof aggregated by Aligned"
                 );
                 aggregated_proofs.push((public_inputs, merkle_path));
             }

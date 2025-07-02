@@ -98,9 +98,9 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError>;
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
 
-    async fn set_lastest_sent_batch_proof(&self, batch_number: u64)
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64)
     -> Result<(), RollupStoreError>;
 
     async fn get_account_updates_by_block_number(

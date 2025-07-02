@@ -1063,6 +1063,14 @@ impl EthClient {
             .await
     }
 
+    pub async fn get_risc0_vk(
+        &self,
+        on_chain_proposer_address: Address,
+    ) -> Result<[u8; 32], EthClientError> {
+        self._call_bytes32_variable(b"RISC0_VERIFICATION_KEY()", on_chain_proposer_address)
+            .await
+    }
+
     pub async fn get_last_fetched_l1_block(
         &self,
         common_bridge_address: Address,
