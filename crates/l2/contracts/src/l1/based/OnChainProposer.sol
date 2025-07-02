@@ -450,13 +450,13 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _checkAndUpdateInclusionQuota(uint16 transactions_count) private {
+    function _checkAndUpdateInclusionQuota(uint16 privileged_transaction_count) private {
         uint256 pending_count = ICommonBridge(BRIDGE).getPendingTransactionHashes().length;
         uint16 mimimum_to_include = MIN_INCLUDED_PRIVILEGED_TX > pending_count ? uint16(pending_count) : MIN_INCLUDED_PRIVILEGED_TX;
         if (block.timestamp > txInclusionDeadline) {
-            require(transactions_count >= mimimum_to_include, "OnChainProposer: batch does not include enough privileged transactions");
+            require(privileged_transaction_count >= mimimum_to_include, "OnChainProposer: batch does not include enough privileged transactions");
         }
-        if (transactions_count >= mimimum_to_include) {
+        if (privileged_transaction_count >= mimimum_to_include) {
             txInclusionDeadline = block.timestamp + PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
         }
     }
