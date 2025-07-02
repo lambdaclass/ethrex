@@ -102,6 +102,15 @@ contract CommonBridge is
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingTransactionHashes()
+        public
+        view
+        returns (bytes32[] memory)
+    {
+        return pendingTxHashes;
+    }
     
     /// Burns at least {amount} gas
     function _burnGas(uint256 amount) private view {
