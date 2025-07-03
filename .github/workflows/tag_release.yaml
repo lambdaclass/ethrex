@@ -17,14 +17,14 @@ jobs:
     strategy:
       matrix:
         platform:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
           - macos-latest
         include:
-          - platform: ubuntu-latest
+          - platform: ubuntu-22.04
             os: linux
             arch: x86-64
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             os: linux
             arch: arm64
           - platform: macos-latest
@@ -45,8 +45,8 @@ jobs:
 
       # TODO when https://github.com/lambdaclass/ethrex/pull/3381 is merged
       # Rename to Build ethrex
+      # replace --features l2 with --all-features
       - name: Build ethrex L2
-        # replace --features l2 with --all-features
         run: |
           cargo build --release --features "l2,metrics,rollup_storage_sql" --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
@@ -61,15 +61,15 @@ jobs:
     strategy:
       matrix:
         platform:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
           - macos-latest
         include:
-          - platform: ubuntu-latest
+          - platform: ubuntu-22.04
             rustflags: -C target-cpu=native
             os: linux
             arch: x86-64
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             rustflags: -C target-cpu=native
             os: linux
             arch: arm64
@@ -109,10 +109,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - platform: ubuntu-latest
+          - platform: ubuntu-22.04
             os: linux
             arch: x86-64
-          - platform: ubuntu-24.04-arm
+          - platform: ubuntu-22.04-arm
             os: linux
             arch: arm64
     runs-on: ${{ matrix.platform }}
@@ -137,7 +137,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Set up QEMU
-        if: ${{ matrix.platform == 'ubuntu-24.04-arm' }}
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
@@ -162,7 +162,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - platform: ubuntu-latest
+          - platform: ubuntu-22.04
             os: linux
             arch: x86-64
     runs-on: ${{ matrix.platform }}
