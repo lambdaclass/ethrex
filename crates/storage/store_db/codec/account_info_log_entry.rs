@@ -12,7 +12,6 @@ pub struct AccountInfoLogEntry {
     pub previous_info: AccountInfo,
 }
 
-#[cfg(feature = "libmdbx")] // TODO: remove this feature flag once other implementations are ready
 const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = 164;
 
 #[cfg(feature = "libmdbx")]
