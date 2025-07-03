@@ -12,7 +12,7 @@ use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
 use ethrex_common::types::{AccountInfo, AccountUpdate};
-use ethrex_common::{BigEndianHash, H256, U256};
+use ethrex_common::{H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 
 use revm::db::AccountStatus;

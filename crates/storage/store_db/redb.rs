@@ -1197,7 +1197,7 @@ impl StoreEngine for RedBStore {
             for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
                 table.insert(
                     <H256 as Into<AccountHashRLP>>::into(account_hash),
-                    (key.0, value.to_big_endian()),
+                    (key.0, value.to_be_bytes()),
                 )?;
             }
         }
@@ -1220,7 +1220,7 @@ impl StoreEngine for RedBStore {
                 for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
                     table.insert(
                         <H256 as Into<AccountHashRLP>>::into(account_hash),
-                        (key.0, value.to_big_endian()),
+                        (key.0, value.to_be_bytes()),
                     )?;
                 }
             }
@@ -1323,7 +1323,7 @@ impl StoreEngine for RedBStore {
                     if H256(key) < start {
                         None
                     } else {
-                        Some((H256(key), U256::from_big_endian(&val)))
+                        Some((H256(key), U256::from_be_bytes(val)))
                     }
                 })
             })

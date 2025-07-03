@@ -5,7 +5,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{H256, U256, types::Log};
+use ethrex_common::{H256, types::Log};
 
 // Logging Operations (5)
 // Opcodes: LOG0 ... LOG4

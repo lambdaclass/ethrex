@@ -4,7 +4,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian};
+use ethrex_common::U256;
 use sha2::digest::FixedOutput;
 use sha3::{Digest, Keccak256};
 

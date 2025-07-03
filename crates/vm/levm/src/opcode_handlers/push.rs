@@ -5,7 +5,7 @@ use crate::{
     vm::VM,
 };
 use ExceptionalHalt::OutOfBounds;
-use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
+use ethrex_common::{U256, types::Fork};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -18,7 +18,8 @@ impl<'a> VM<'a> {
 
         let mut buffer = [0u8; 32];
         let read_n_bytes = read_bytcode_slice::<N>(current_call_frame)?;
-        buffer[0..N].copy_from_slice(&read_n_bytes);
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        buffer[(32 - N)..].copy_from_slice(&read_n_bytes);
 
         let value = U256::from_be_bytes(buffer);
         current_call_frame.stack.push(&[value])?;
