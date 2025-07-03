@@ -122,7 +122,7 @@ impl L1ToL2MessagesTable {
         monitor::utils::get_logs(
             last_l1_block_fetched,
             common_bridge_address,
-            "L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)",
+            vec!["L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)"],
             eth_client,
         )
         .await

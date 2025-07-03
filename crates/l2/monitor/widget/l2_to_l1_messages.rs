@@ -123,29 +123,13 @@ impl L2ToL1MessagesTable {
     }
 
     async fn get_logs(last_l1_block_fetched: &mut U256, rollup_client: &EthClient) -> Vec<RpcLog> {
-        let mut l2_to_l1_message_logs = Vec::new();
-
-        let initiated_eth_withdrawal_logs = monitor::utils::get_logs(
+        monitor::utils::get_logs(
             last_l1_block_fetched,
             COMMON_BRIDGE_L2_ADDRESS,
-            "WithdrawalInitiated(address,address,uint256)",
+            vec![],
             rollup_client,
         )
-        .await;
-
-        l2_to_l1_message_logs.extend(initiated_eth_withdrawal_logs);
-
-        let initiated_erc20_withdrawal_logs = monitor::utils::get_logs(
-            last_l1_block_fetched,
-            COMMON_BRIDGE_L2_ADDRESS,
-            "ERC20WithdrawalInitiated(address,address,address,uint256)",
-            rollup_client,
-        )
-        .await;
-
-        l2_to_l1_message_logs.extend(initiated_erc20_withdrawal_logs);
-
-        l2_to_l1_message_logs
+        .await
     }
 
     async fn process_logs(

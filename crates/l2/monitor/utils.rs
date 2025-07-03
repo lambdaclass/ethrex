@@ -7,7 +7,7 @@ use keccak_hash::keccak;
 pub async fn get_logs(
     last_block_fetched: &mut U256,
     emitter: Address,
-    log_signature: &str,
+    logs_signatures: Vec<&str>,
     client: &EthClient,
 ) -> Vec<RpcLog> {
     let last_block_number = client
@@ -25,10 +25,13 @@ pub async fn get_logs(
                 *last_block_fetched + 1,
                 new_last_l1_fetched_block,
                 emitter,
-                keccak(log_signature.as_bytes()),
+                logs_signatures
+                    .iter()
+                    .map(|log_signature| keccak(log_signature.as_bytes()))
+                    .collect(),
             )
             .await
-            .unwrap_or_else(|_| panic!("Failed to fetch {log_signature} logs from {emitter}"));
+            .unwrap_or_else(|_| panic!("Failed to fetch {logs_signatures:?} logs from {emitter}"));
 
         // Update the last L1 block fetched.
         *last_block_fetched = new_last_l1_fetched_block;
