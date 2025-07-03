@@ -1,11 +1,14 @@
 use clap::{Parser, Subcommand};
-use ethrex_common::H256;
-use ethrex_common::types::{AccountUpdate, Receipt};
+use ethrex_common::{
+    H256,
+    types::{AccountUpdate, Block, Receipt},
+};
+use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
-use crate::fetcher::{get_batchdata, get_blockdata, get_rangedata, or_latest};
+use crate::fetcher::{get_batchdata, get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
 
@@ -106,7 +109,7 @@ impl SubcommandExecute {
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
-                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    let gas_used = get_total_gas_used(&cache.blocks);
                     exec(cache).await?;
                     Ok(gas_used)
                 };
@@ -128,7 +131,7 @@ impl SubcommandExecute {
                 let eth_client = EthClient::new(&rpc_url)?;
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
-                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    let gas_used = get_total_gas_used(&cache.blocks);
                     exec(cache).await?;
                     Ok(gas_used)
                 };
@@ -254,7 +257,7 @@ impl SubcommandProve {
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
-                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    let gas_used = get_total_gas_used(&cache.blocks);
                     prove(cache).await?;
                     Ok(gas_used)
                 };
@@ -276,7 +279,7 @@ impl SubcommandProve {
                 let eth_client = EthClient::new(&rpc_url)?;
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
-                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    let gas_used = get_total_gas_used(&cache.blocks);
                     prove(cache).await?;
                     Ok(gas_used)
                 };
@@ -350,6 +353,17 @@ pub async fn start() -> eyre::Result<()> {
         }
     };
     Ok(())
+}
+
+fn get_total_gas_used(blocks: &[Block]) -> f64 {
+    blocks.iter().map(|b| b.header.gas_used).sum::<u64>() as f64
+}
+
+fn or_latest(maybe_number: Option<usize>) -> eyre::Result<BlockIdentifier> {
+    Ok(match maybe_number {
+        Some(n) => BlockIdentifier::Number(n.try_into()?),
+        None => BlockIdentifier::Tag(BlockTag::Latest),
+    })
 }
 
 fn print_transition(update: AccountUpdate) {

@@ -1,18 +1,8 @@
 use ethrex_common::types::ChainConfig;
-use ethrex_rpc::{
-    EthClient,
-    types::block_identifier::{BlockIdentifier, BlockTag},
-};
+use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use eyre::WrapErr;
 
 use crate::cache::{Cache, load_cache, write_cache};
-
-pub fn or_latest(maybe_number: Option<usize>) -> eyre::Result<BlockIdentifier> {
-    Ok(match maybe_number {
-        Some(n) => BlockIdentifier::Number(n.try_into()?),
-        None => BlockIdentifier::Tag(BlockTag::Latest),
-    })
-}
 
 pub async fn get_blockdata(
     eth_client: EthClient,
