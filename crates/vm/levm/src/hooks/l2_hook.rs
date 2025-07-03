@@ -61,7 +61,7 @@ impl Hook for L2Hook {
         // NOT CHECKED: privileged transactions can't be of "create" type
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        // CHANGED: the gas should be charged, but the transaction shoudn't error
+        // CHANGED: the gas should be charged, but the transaction shouldn't error
         if vm.add_intrinsic_gas().is_err() {
             tx_should_fail = true;
         }
