@@ -199,7 +199,7 @@ jobs:
               --generate-code arch=compute_75,code=sm_75 \
               --generate-code arch=compute_80,code=[sm_80,sm_86,sm_87] \
               --generate-code arch=compute_89,code=sm_89 \
-              --generate-code arch=compute_90,code=[sm_90,sm90a]" \
+              --generate-code arch=compute_90,code=[sm_90,sm_90a]" \
           cargo build --release --features "risc0,gpu,l2" \
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
