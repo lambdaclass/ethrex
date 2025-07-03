@@ -131,6 +131,8 @@ contract CommonBridge is
     /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
     /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
     /// @dev We don't want this to affect users, so we need to detect if the caller is an EOA
+    /// @dev We still want L2 contracts to be able to know who called in on L1
+    /// @dev So we modify the calling address by with a constant
     function _getSenderAlias() private view returns (address) {
         // If sender is origin, the account is an EOA
         if (msg.sender == tx.origin) return msg.sender;
