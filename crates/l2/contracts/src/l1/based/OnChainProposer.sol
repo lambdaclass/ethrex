@@ -426,19 +426,19 @@ contract OnChainProposer is
             );
 
             // The first 2 bytes are the number of privileged transactions.
-            uint16 transaction_count = uint16(
+            uint16 transactioprivileged_transaction_countn_count = uint16(
                 bytes2(
                     batchCommitments[batchNumber]
                         .processedPrivilegedTransactionsRollingHash
                 )
             );
-            if (transaction_count > 0) {
+            if (privileged_transaction_count > 0) {
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                    transaction_count
+                    privileged_transaction_count
                 );
             }
 
-            _checkAndUpdateInclusionQuota(transaction_count);
+            _checkAndUpdateInclusionQuota(privileged_transaction_count);
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
