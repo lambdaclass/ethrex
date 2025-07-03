@@ -73,7 +73,6 @@ jobs:
           docker compose -f docker-compose-l2.yaml up --build contract_deployer
 
       - name: Ensure admin permissions in _work
-        if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
 
       - name: Start Sequencer
