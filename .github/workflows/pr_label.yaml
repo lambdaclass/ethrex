@@ -2,13 +2,11 @@ name: Label PR Based on Title
 
 on:
   pull_request:
-    types:
-      - opened
-      - edited
-      - synchronize
+    types: [opened, edited, synchronize]
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 concurrency:

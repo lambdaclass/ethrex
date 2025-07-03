@@ -2,7 +2,7 @@ name: Assign PR Author
 
 on:
   pull_request:
-    types: [opened, edited]
+    types: [opened]
 
 permissions:
   pull-requests: write
