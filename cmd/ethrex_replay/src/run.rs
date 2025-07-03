@@ -16,20 +16,18 @@ pub async fn exec(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         witness: db,
+        // L2 specific fields
+        blob_commitment,
+        blob_proof,
     } = cache;
     let input = ProgramInput {
         blocks,
         db,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        // The L2 specific fields (state_diff, blob_commitment, blob_proof)
-        // will be filled by Default::default() if the 'l2' feature of
-        // 'zkvm_interface' is active (due to workspace compilation).
-        // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
-        // these fields won't exist in ProgramInput, and ..Default::default()
-        // will correctly not try to fill them.
-        // A better solution would involve rethinking the `l2` feature or the
-        // inclusion of this crate in the workspace.
-        ..Default::default()
+        #[cfg(feature = "l2")]
+        blob_commitment: blob_commitment.unwrap_or([0; 48]),
+        #[cfg(feature = "l2")]
+        blob_proof: blob_proof.unwrap_or([0; 48]),
     };
     ethrex_prover_lib::execute(input).map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
@@ -39,21 +37,19 @@ pub async fn prove(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         witness: db,
+        // L2 specific fields
+        blob_commitment,
+        blob_proof,
     } = cache;
     ethrex_prover_lib::prove(
         ProgramInput {
             blocks,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            // The L2 specific fields (blob_commitment, blob_proof)
-            // will be filled by Default::default() if the 'l2' feature of
-            // 'zkvm_interface' is active (due to workspace compilation).
-            // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
-            // these fields won't exist in ProgramInput, and ..Default::default()
-            // will correctly not try to fill them.
-            // A better solution would involve rethinking the `l2` feature or the
-            // inclusion of this crate in the workspace.
-            ..Default::default()
+            #[cfg(feature = "l2")]
+            blob_commitment: blob_commitment.unwrap_or([0; 48]),
+            #[cfg(feature = "l2")]
+            blob_proof: blob_proof.unwrap_or([0; 48]),
         },
         false,
     )

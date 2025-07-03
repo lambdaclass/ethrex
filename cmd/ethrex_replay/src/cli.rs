@@ -176,7 +176,7 @@ impl SubcommandExecute {
                 let eth_client = EthClient::new(&rpc_url)?;
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
-                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    let gas_used = get_total_gas_used(&cache.blocks);
                     exec(cache).await?;
                     Ok(gas_used)
                 };
@@ -291,7 +291,15 @@ impl SubcommandProve {
                 network,
                 bench,
             } => {
-                not_implemented!("Batch proving is not implemented yet.");
+                let chain_config = get_chain_config(&network)?;
+                let eth_client = EthClient::new(&rpc_url)?;
+                let cache = get_batchdata(eth_client, chain_config, batch).await?;
+                let future = async {
+                    let gas_used = get_total_gas_used(&cache.blocks);
+                    prove(cache).await?;
+                    Ok(gas_used)
+                };
+                run_and_measure(future, bench).await?;
             }
         }
         Ok(())
