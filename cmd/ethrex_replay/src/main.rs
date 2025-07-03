@@ -4,7 +4,6 @@ mod cli;
 mod constants;
 mod fetcher;
 mod plot_composition;
-mod rpc;
 mod run;
 
 #[tokio::main]

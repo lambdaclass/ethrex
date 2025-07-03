@@ -11,7 +11,7 @@ use ethrex_rlp::{
 };
 use ethrex_storage::Store;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct BlockRangeUpdate {
     pub(crate) earliest_block: u64,
     pub(crate) lastest_block: u64,

@@ -3,6 +3,7 @@ use crate::{
         EthClient, RpcResponse,
         errors::{CallError, EthClientError},
     },
+    types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{RpcRequest, RpcRequestId},
 };
 use bytes::Bytes;
@@ -13,8 +14,6 @@ use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde_json::json;
-
-use super::BlockByNumber;
 
 #[derive(Default, Clone, Debug)]
 pub struct Overrides {
@@ -28,7 +27,7 @@ pub struct Overrides {
     pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
     pub gas_price_per_blob: Option<U256>,
-    pub block: Option<BlockByNumber>,
+    pub block: Option<BlockIdentifier>,
 }
 
 impl EthClient {
@@ -100,7 +99,9 @@ impl EthClient {
             .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
             .await?;
 
-        let nonce = self.get_nonce(deployer, BlockByNumber::Latest).await?;
+        let nonce = self
+            .get_nonce(deployer, BlockIdentifier::Tag(BlockTag::Latest))
+            .await?;
         let mut encode = vec![];
         (deployer, nonce).encode(&mut encode);
 

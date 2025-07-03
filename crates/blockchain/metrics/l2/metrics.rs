@@ -128,7 +128,7 @@ pub enum MetricsBlockType {
 }
 
 pub enum MetricsOperationType {
-    Deposits,
+    PrivilegedTransactions,
     L1Messages,
 }
 
@@ -146,7 +146,7 @@ impl MetricsBlockType {
 impl MetricsOperationType {
     fn to_str(&self) -> &str {
         match self {
-            MetricsOperationType::Deposits => "processedDeposits",
+            MetricsOperationType::PrivilegedTransactions => "processedPrivilegedTransactions",
             MetricsOperationType::L1Messages => "processedMessages",
         }
     }

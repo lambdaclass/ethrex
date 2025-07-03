@@ -1,5 +1,8 @@
 use crate::cache::Cache;
-use ethrex_common::types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt};
+use ethrex_common::{
+    H256,
+    types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
+};
 use ethrex_levm::{
     db::{CacheDB, gen_db::GeneralizedDatabase},
     vm::VMType,
@@ -32,12 +35,12 @@ pub async fn exec(cache: Cache) -> eyre::Result<()> {
     Ok(())
 }
 
-pub async fn prove(cache: Cache) -> eyre::Result<String> {
+pub async fn prove(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         witness: db,
     } = cache;
-    let out = ethrex_prover_lib::prove(
+    ethrex_prover_lib::prove(
         ProgramInput {
             blocks,
             db,
@@ -55,15 +58,12 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
         false,
     )
     .map_err(|e| eyre::Error::msg(e.to_string()))?;
-    #[cfg(feature = "sp1")]
-    return Ok(format!("{out:#?}"));
-    #[cfg(not(feature = "sp1"))]
-    Ok(serde_json::to_string(&out.0)?)
+    Ok(())
 }
 
 pub async fn run_tx(
     cache: Cache,
-    tx_id: &str,
+    tx_hash: H256,
     l2: bool,
 ) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
     let block = cache
@@ -93,7 +93,7 @@ pub async fn run_tx(
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         prover_db.apply_account_updates(&account_updates)?;
-        if format!("0x{:x}", tx.compute_hash()) == tx_id {
+        if tx.compute_hash() == tx_hash {
             return Ok((receipt, account_updates));
         }
     }

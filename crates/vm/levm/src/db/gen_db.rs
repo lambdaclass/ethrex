@@ -11,7 +11,6 @@ use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::utils::restore_cache_state;
-use crate::vm::Substate;
 use crate::vm::VM;
 
 use super::CacheDB;
@@ -54,21 +53,6 @@ impl GeneralizedDatabase {
         self.current_accounts_state
             .get(&address)
             .ok_or(InternalError::AccountNotFound)
-    }
-
-    /// **Accesses to an account's information.**
-    ///
-    /// Accessed accounts are stored in the `accessed_addresses` set.
-    /// Accessed accounts take place in some gas cost computation.
-    pub fn access_account(
-        &mut self,
-        accrued_substate: &mut Substate,
-        address: Address,
-    ) -> Result<(&Account, bool), InternalError> {
-        let address_was_cold = accrued_substate.accessed_addresses.insert(address);
-        let account = self.get_account(address)?;
-
-        Ok((account, address_was_cold))
     }
 
     /// Gets account from storage, storing in initial_accounts_state for efficiency when getting AccountUpdates.

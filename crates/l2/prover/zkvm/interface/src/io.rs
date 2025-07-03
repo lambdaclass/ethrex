@@ -83,8 +83,8 @@ pub struct ProgramOutput {
     /// merkle root of all messages in a batch
     pub l1messages_merkle_root: H256,
     #[cfg(feature = "l2")]
-    /// hash of all the deposit logs made in a batch
-    pub deposit_logs_hash: H256,
+    /// hash of all the privileged transactions made in a batch
+    pub privileged_transactions_hash: H256,
     #[cfg(feature = "l2")]
     /// blob commitment versioned hash
     pub blob_versioned_hash: H256,
@@ -100,7 +100,7 @@ impl ProgramOutput {
             #[cfg(feature = "l2")]
             self.l1messages_merkle_root.to_fixed_bytes(),
             #[cfg(feature = "l2")]
-            self.deposit_logs_hash.to_fixed_bytes(),
+            self.privileged_transactions_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),

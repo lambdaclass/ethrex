@@ -70,11 +70,6 @@ impl NodeHash {
         !matches!(self, NodeHash::Inline(v) if v.1 == 0)
     }
 
-    /// Const version of `Default` trait impl
-    pub const fn const_default() -> Self {
-        Self::Inline(([0; 31], 0))
-    }
-
     /// Encodes this NodeHash with the given encoder.
     pub fn encode<'a>(&self, mut encoder: Encoder<'a>) -> Encoder<'a> {
         match self {

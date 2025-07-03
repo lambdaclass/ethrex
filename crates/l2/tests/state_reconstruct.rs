@@ -5,7 +5,7 @@
 
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
 use secp256k1::SecretKey;
 
@@ -62,7 +62,7 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
 
     for (index, address) in addresses.iter().enumerate() {
         let balance = client
-            .get_balance(*address, block_number.into())
+            .get_balance(*address, BlockIdentifier::Number(block_number))
             .await
             .expect("Error getting balance");
         if index < rich_accounts as usize {
