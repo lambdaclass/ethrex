@@ -14,14 +14,14 @@ use serde::{Deserialize, Serialize};
 
 use lazy_static::lazy_static;
 
-use crate::{deposits::DepositLog, l1_messages::L1Message};
+use crate::{l1_messages::L1Message, privileged_transactions::PrivilegedTransactionLog};
 
 lazy_static! {
     /// The serialized length of a default l1message log
     pub static ref L1MESSAGE_LOG_LEN: usize = L1Message::default().encode().len();
 
-    /// The serialized length of a default deposit log
-    pub static ref DEPOSITS_LOG_LEN: usize = DepositLog::default().encode().len();
+    /// The serialized length of a default privileged transaction log
+    pub static ref PRIVILEGED_TX_LOG_LEN: usize = PrivilegedTransactionLog::default().encode().len();
 
     /// The serialized lenght of a default block header
     pub static ref BLOCK_HEADER_LEN: usize = encode_block_header(&BlockHeader::default()).len();
@@ -83,7 +83,7 @@ pub struct StateDiff {
     pub last_header: BlockHeader,
     pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
     pub l1_messages: Vec<L1Message>,
-    pub deposit_logs: Vec<DepositLog>,
+    pub privileged_transactions: Vec<PrivilegedTransactionLog>,
 }
 
 impl TryFrom<u8> for AccountStateDiffType {
@@ -127,7 +127,7 @@ impl Default for StateDiff {
             last_header: BlockHeader::default(),
             modified_accounts: BTreeMap::new(),
             l1_messages: Vec::new(),
-            deposit_logs: Vec::new(),
+            privileged_transactions: Vec::new(),
         }
     }
 }
@@ -177,11 +177,11 @@ impl StateDiff {
             encoded.extend(message_encoded);
         }
 
-        let deposits_len: u16 = self.deposit_logs.len().try_into()?;
-        encoded.extend(deposits_len.to_be_bytes());
-        for deposit in self.deposit_logs.iter() {
-            let deposit_encoded = deposit.encode();
-            encoded.extend(deposit_encoded);
+        let privileged_tx_len: u16 = self.privileged_transactions.len().try_into()?;
+        encoded.extend(privileged_tx_len.to_be_bytes());
+        for privileged_tx in self.privileged_transactions.iter() {
+            let privileged_tx_encoded = privileged_tx.encode();
+            encoded.extend(privileged_tx_encoded);
         }
 
         Ok(Bytes::from(encoded))
@@ -238,14 +238,14 @@ impl StateDiff {
             });
         }
 
-        let deposit_logs_len = decoder.get_u16()?;
+        let privileged_transactions_len = decoder.get_u16()?;
 
-        let mut deposit_logs = Vec::with_capacity(deposit_logs_len.into());
-        for _ in 0..deposit_logs_len {
+        let mut privileged_transactions = Vec::with_capacity(privileged_transactions_len.into());
+        for _ in 0..privileged_transactions_len {
             let address = decoder.get_address()?;
             let amount = decoder.get_u256()?;
 
-            deposit_logs.push(DepositLog {
+            privileged_transactions.push(PrivilegedTransactionLog {
                 address,
                 amount,
                 nonce: Default::default(),
@@ -257,7 +257,7 @@ impl StateDiff {
             last_header,
             modified_accounts,
             l1_messages: l1messages,
-            deposit_logs,
+            privileged_transactions,
         })
     }
 
@@ -575,7 +575,7 @@ pub fn prepare_state_diff(
     last_header: BlockHeader,
     db: &impl VmDatabase,
     l1messages: &[L1Message],
-    deposits: &[PrivilegedL2Transaction],
+    privileged_transactions: &[PrivilegedL2Transaction],
     account_updates: Vec<AccountUpdate>,
 ) -> Result<StateDiff, StateDiffError> {
     let mut modified_accounts = BTreeMap::new();
@@ -599,9 +599,9 @@ pub fn prepare_state_diff(
         version: StateDiff::default().version,
         last_header,
         l1_messages: l1messages.to_vec(),
-        deposit_logs: deposits
+        privileged_transactions: privileged_transactions
             .iter()
-            .map(|tx| DepositLog {
+            .map(|tx| PrivilegedTransactionLog {
                 address: match tx.to {
                     TxKind::Call(address) => address,
                     TxKind::Create => Address::zero(),
