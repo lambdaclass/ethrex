@@ -198,7 +198,7 @@ impl Store {
             .spawn(move || {
                 loop {
                     thread::sleep(std::time::Duration::from_secs(15));
-                    store.prune_state_and_storage_log().unwrap();
+                    store.prune_state_and_storage_log().unwrap(); // TODO: handle error properly
                 }
             });
 
