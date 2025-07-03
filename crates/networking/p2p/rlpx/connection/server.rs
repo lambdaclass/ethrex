@@ -481,6 +481,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
     if !matches!(error, RLPxError::DisconnectReceived(_)) {
+        state.table.lock().await.replace_peer(state.node.node_id());
         send_disconnect_message(state, match_disconnect_reason(&error)).await;
     }
 
@@ -489,6 +490,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         // already connected, don't discard it
         RLPxError::DisconnectReceived(DisconnectReason::AlreadyConnected)
         | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
+            state.table.lock().await.replace_peer(state.node.node_id());
             log_peer_debug(&state.node, "Peer already connected, don't replace it");
         }
         _ => {

@@ -57,6 +57,19 @@ impl KademliaTable {
             .find(|entry| entry.node.node_id() == node_id)
     }
 
+    pub fn valid_peers(&self) -> usize {
+        let mut result = 0;
+        for bucket in self.buckets.iter() {
+            for peer in bucket.peers.iter() {
+                if peer.correct_chain {
+                    result += 1;
+                }
+            }
+        }
+
+        result
+    }
+
     pub fn set_chain_id_as_valid(&mut self, node_id: H256) {
         let maybe_peer = self.get_by_node_id_mut(node_id);
         if let Some(peer) = maybe_peer {
