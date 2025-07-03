@@ -1,5 +1,7 @@
 name: Replay proving
 on:
+  pull_request:
+    branches: ["**"]
   push:
     branches: ["main"]
 
