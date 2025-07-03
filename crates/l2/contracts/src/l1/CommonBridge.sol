@@ -121,7 +121,7 @@ contract CommonBridge is
 
     /// EIP-7702 delegated accounts have code beginning with this.
     bytes3 internal constant EIP7702_PREFIX = 0xef0100;
-    /// Code size of an EIP-7702 delegated account
+    /// Code size in bytes of an EIP-7702 delegated account
     /// = len(EIP7702_PREFIX) + len(account)
     uint256 internal constant EIP7702_CODE_LENGTH = 23;
 
