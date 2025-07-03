@@ -498,7 +498,7 @@ impl StoreEngine for Store {
             let updated_block = BlockNumHash(block_num, snapshot_hash);
 
             if updated_block == current_block {
-                tracing::info!("logs exhausted: back to canonical chain");
+                tracing::warn!("logs exhausted: back to canonical chain");
                 break;
             }
 
@@ -588,9 +588,11 @@ impl StoreEngine for Store {
                 found_storage_log = storage_log_cursor.next()?;
             }
             if head_hash == updated_snapshot.1 {
+                tracing::warn!("REPLAY: reached head {head_hash:?}");
                 break;
             }
         }
+
         tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, updated_snapshot)?;
         tx.commit().map_err(|err| err.into())
     }
@@ -1499,7 +1501,6 @@ impl StoreEngine for Store {
         genesis_block_hash: H256,
         genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
-        // tracing::info!("called update_flat_storage");
         let tx = self
             .db
             .begin_readwrite()
@@ -1576,7 +1577,6 @@ impl StoreEngine for Store {
             .map(|v| v.1))
     }
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
-        // tracing::info!("called get_current_storage");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let res = tx
             .get::<FlatAccountStorage>((address.into(), key.into()))
@@ -1588,7 +1588,6 @@ impl StoreEngine for Store {
         &self,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        // tracing::info!("called get_current_account_info");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let res = tx
             .get::<FlatAccountInfo>(address.into())
