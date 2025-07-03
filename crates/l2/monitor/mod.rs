@@ -4,12 +4,10 @@
 #![expect(clippy::indexing_slicing)]
 
 pub(crate) mod app;
-pub(crate) mod ui;
 pub(crate) mod utils;
 pub(crate) mod widget;
 
 pub use app::EthrexMonitor;
-// pub use ui::render;
 
 use crate::SequencerConfig;
 use crate::sequencer::errors::SequencerError;
