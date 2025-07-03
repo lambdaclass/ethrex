@@ -50,11 +50,6 @@ impl VmDatabase for StoreVmDatabase {
         if Some(self.block_hash) == block_for_current_snapshot {
             self.store.get_current_account_info(address)
         } else {
-            tracing::warn!(
-                "account_info snapshot miss: expected: {:?} got: {:?}",
-                block_for_current_snapshot,
-                self.block_hash
-            );
             self.store
                 .get_account_info_by_hash(self.block_hash, address)
         }
@@ -70,11 +65,6 @@ impl VmDatabase for StoreVmDatabase {
         if Some(self.block_hash) == block_for_current_snapshot {
             self.store.get_current_storage(address, key)
         } else {
-            tracing::warn!(
-                "account_storage snapshot miss: expected: {:?} got: {:?}",
-                block_for_current_snapshot,
-                self.block_hash
-            );
             self.store
                 .get_storage_at_hash(self.block_hash, address, key)
         }

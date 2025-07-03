@@ -1,5 +1,7 @@
 use ethrex_common::H160;
 use ethrex_common::types::AccountInfo;
+#[cfg(feature = "redb")]
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Decoder};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
@@ -10,7 +12,6 @@ pub struct AccountInfoLogEntry {
     pub previous_info: AccountInfo,
 }
 
-#[cfg(feature = "libmdbx")] // TODO: remove this feature flag once other implementations are ready
 const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = 164;
 
 #[cfg(feature = "libmdbx")]
@@ -55,5 +56,34 @@ impl Decodable for AccountInfoLogEntry {
                 balance: previous_info_balance,
             },
         })
+    }
+}
+
+#[cfg(feature = "redb")]
+impl RLPEncode for AccountInfoLogEntry {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        use ethrex_rlp::structs::Encoder;
+
+        Encoder::new(buf)
+            .encode_field(&self.address)
+            .encode_field(&self.info)
+            .encode_field(&self.previous_info)
+            .finish();
+    }
+}
+
+#[cfg(feature = "redb")]
+impl RLPDecode for AccountInfoLogEntry {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(AccountInfoLogEntry, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (address, decoder) = decoder.decode_field("address")?;
+        let (info, decoder) = decoder.decode_field("info")?;
+        let (previous_info, decoder) = decoder.decode_field("previous_info")?;
+        let log_entry = AccountInfoLogEntry {
+            address,
+            info,
+            previous_info,
+        };
+        Ok((log_entry, decoder.finish()?))
     }
 }

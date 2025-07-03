@@ -25,13 +25,13 @@ impl Debug for SQLStore {
 const DB_SCHEMA: [&str; 13] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
-    "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
+    "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
     "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE account_updates (block_number INT PRIMARY KEY, updates BLOB)",
     "CREATE TABLE commit_txs (batch INT PRIMARY KEY, commit_tx BLOB)",
     "CREATE TABLE verify_txs (batch INT PRIMARY KEY, verify_tx BLOB)",
-    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, deposits INT, messages INT)",
+    "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
     "INSERT INTO latest_sent VALUES (0, 0)",
@@ -216,31 +216,35 @@ impl StoreEngineRollup for SQLStore {
         }
     }
 
-    async fn store_deposit_logs_hash_by_batch_number(
+    async fn store_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
-        deposit_logs_hash: H256,
+        privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(vec![
             (
-                "DELETE FROM deposits WHERE batch = ?1",
+                "DELETE FROM privileged_transactions WHERE batch = ?1",
                 vec![batch_number].into_params()?,
             ),
             (
-                "INSERT INTO deposits VALUES (?1, ?2)",
-                (batch_number, Vec::from(deposit_logs_hash.to_fixed_bytes())).into_params()?,
+                "INSERT INTO privileged_transactions VALUES (?1, ?2)",
+                (
+                    batch_number,
+                    Vec::from(privileged_transactions_hash.to_fixed_bytes()),
+                )
+                    .into_params()?,
             ),
         ])
         .await
     }
 
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
-                "SELECT * from deposits WHERE batch = ?1",
+                "SELECT * from privileged_transactions WHERE batch = ?1",
                 vec![batch_number],
             )
             .await?;
@@ -394,12 +398,12 @@ impl StoreEngineRollup for SQLStore {
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_transactions_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.execute(
-            "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, messages = messages + ?3", 
-            (transaction_inc, deposits_inc, messages_inc)).await?;
+            "UPDATE operation_count SET transactions = transactions + ?1, privileged_transactions = privileged_transactions + ?2, messages = messages + ?3", 
+            (transaction_inc, privileged_transactions_inc, messages_inc)).await?;
         Ok(())
     }
 
@@ -491,7 +495,7 @@ impl StoreEngineRollup for SQLStore {
                 [batch_number].into_params()?,
             ),
             (
-                "DELETE FROM deposits WHERE batch > ?1",
+                "DELETE FROM privileged_transactions WHERE batch > ?1",
                 [batch_number].into_params()?,
             ),
             (
@@ -564,7 +568,7 @@ mod tests {
         let tables = [
             "blocks",
             "messages",
-            "deposits",
+            "privileged_transactions",
             "state_roots",
             "blob_bundles",
             "account_updates",
@@ -593,8 +597,8 @@ mod tests {
                 ("messages", "batch") => "INT",
                 ("messages", "idx") => "INT",
                 ("messages", "message_hash") => "BLOB",
-                ("deposits", "batch") => "INT",
-                ("deposits", "deposit_hash") => "BLOB",
+                ("privileged_transactions", "batch") => "INT",
+                ("privileged_transactions", "transactions_hash") => "BLOB",
                 ("state_roots", "batch") => "INT",
                 ("state_roots", "state_root") => "BLOB",
                 ("blob_bundles", "batch") => "INT",
@@ -604,7 +608,7 @@ mod tests {
                 ("account_updates", "updates") => "BLOB",
                 ("operation_count", "_id") => "INT",
                 ("operation_count", "transactions") => "INT",
-                ("operation_count", "deposits") => "INT",
+                ("operation_count", "privileged_transactions") => "INT",
                 ("operation_count", "messages") => "INT",
                 ("latest_sent", "_id") => "INT",
                 ("latest_sent", "batch") => "INT",
