@@ -370,11 +370,14 @@ impl PrivilegedTransactionData {
 
         // 160..192 is taken by offset_data, which we do not need
 
-        let calldata_len = U256::from_big_endian(log.data.get(192..224).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse calldata_len from log: log.data[192..224] out of bounds".to_owned(),
-            ),
-        )?);
+        let calldata_len = U256::from_big_endian(
+            log.data
+                .get(192..224)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse calldata_len from log: log.data[192..224] out of bounds"
+                        .to_owned(),
+                ))?,
+        );
 
         let calldata = log
             .data
