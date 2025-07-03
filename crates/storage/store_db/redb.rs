@@ -1776,21 +1776,28 @@ impl StoreEngine for RedBStore {
         genesis_block_hash: H256,
         genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
-        let write_txn = self.db.begin_write().map_err(Box::new)?;
-        {
-            let mut table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
-            for (addr, slot, val) in genesis_accounts {
+        tracing::info!("Setting up genesis flat account storage");
+        
+        // Prepare all key-value pairs for batch write
+        let key_values: Vec<_> = genesis_accounts
+            .iter()
+            .filter(|(_, _, val)| !val.is_zero()) // Insert only non-zero values
+            .map(|(addr, slot, val)| {
                 let address = <Address as Into<AccountAddressRLP>>::into(*addr);
                 let key = <H256 as Into<AccountStorageKeyRLP>>::into(*slot);
                 let value = <U256 as Into<AccountStorageValueRLP>>::into(*val);
-                if !val.is_zero() {
-                    table.insert((address, key), value)?;
-                } else {
-                    table.remove((address, key))?;
-                }
-            }
-        }
+                ((address, key), value)
+            })
+            .collect();
 
+        tracing::info!("Finished preparing key-value pairs for batch write");
+
+        // Use batch write instead of individual inserts
+        self.write_batch(ACCOUNT_STORAGE_TABLE, key_values).await?;
+
+        tracing::info!("Finished batch write");
+
+        // Update snapshot metadata
         self.write(
             CURRENT_SNAPSHOT_BLOCK_TABLE,
             (),
@@ -1798,7 +1805,7 @@ impl StoreEngine for RedBStore {
         )
         .await?;
 
-        write_txn.commit()?;
+        tracing::info!("Finished setting up genesis flat account storage for {} accounts", genesis_accounts.len());
         Ok(())
     }
 
@@ -1824,24 +1831,31 @@ impl StoreEngine for RedBStore {
         genesis_block_hash: H256,
         genesis_accounts: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
-        let write_txn = self.db.begin_write().map_err(Box::new)?;
-        {
-            let mut table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
-            for (addr, nonce, balance, code_hash, removed) in genesis_accounts {
+        tracing::info!("Setting up genesis flat account info");
+        
+        // Prepare all key-value pairs for batch write (only non-removed accounts)
+        let key_values: Vec<_> = genesis_accounts
+            .iter()
+            .filter(|(_, _, _, _, removed)| !removed) // Only non-removed accounts
+            .map(|(addr, nonce, balance, code_hash, _)| {
                 let address = <Address as Into<AccountAddressRLP>>::into(*addr);
-                if *removed {
-                    table.remove(address)?;
-                } else {
-                    let account_info = AccountInfoRLP::from(AccountInfo {
-                        nonce: *nonce,
-                        balance: *balance,
-                        code_hash: *code_hash,
-                    });
-                    table.insert(address, account_info)?;
-                }
-            }
-        }
+                let account_info = AccountInfoRLP::from(AccountInfo {
+                    nonce: *nonce,
+                    balance: *balance,
+                    code_hash: *code_hash,
+                });
+                (address, account_info)
+            })
+            .collect();
 
+        tracing::info!("Prepared {} account info entries for batch write", key_values.len());
+
+        // Use batch write instead of individual inserts
+        self.write_batch(ACCOUNT_INFO_TABLE, key_values).await?;
+
+        tracing::info!("Finished batch write");
+
+        // Update snapshot metadata
         self.write(
             CURRENT_SNAPSHOT_BLOCK_TABLE,
             (),
@@ -1849,7 +1863,7 @@ impl StoreEngine for RedBStore {
         )
         .await?;
 
-        write_txn.commit()?;
+        tracing::info!("Finished setting up genesis flat account info for {} accounts", genesis_accounts.len());
         Ok(())
     }
 
