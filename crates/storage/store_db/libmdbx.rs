@@ -420,7 +420,7 @@ impl StoreEngine for Store {
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         let tx = self.db.begin_readwrite()?;
-        let Some(old_snapshot_data) =
+        let Some(current_snapshot) =
             tx.get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
         else {
             return Ok(()); // No snapshot to revert
@@ -432,28 +432,30 @@ impl StoreEngine for Store {
         let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
         let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
 
-        let mut block_num = old_snapshot_data.0;
+        let mut block_num = current_snapshot.0;
+        let mut snapshot_hash = current_snapshot.1;
+
         let mut canonical_hash = canonical_cursor
             .seek_exact(block_num)?
             .map(|(_, hash)| hash.to())
             .transpose()?
             .unwrap_or_default();
-        let mut snapshot_hash = old_snapshot_data.1;
-        let mut key = old_snapshot_data;
 
         while canonical_hash != snapshot_hash {
-            tracing::warn!("UNDO: searching for {key:?}");
-            let mut found_state_log = state_log_cursor.seek_closest(key)?;
-            let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
+            let current_block = BlockNumHash(block_num, snapshot_hash);
+            tracing::warn!("UNDO: searching for {current_block:?}");
+
+            let mut found_state_log = state_log_cursor.seek_closest(current_block)?;
+            let mut found_storage_log = storage_log_cursor.seek_closest(current_block)?;
 
             // Loop over account info logs and restore the previous state
             while let Some(((final_block, parent_block), log_entry)) = found_state_log {
-                if final_block != key {
+                if final_block != current_block {
                     break;
                 }
 
                 tracing::warn!(
-                    "UNDO: found state log for {key:?}: {final_block:?}/{parent_block:?}"
+                    "UNDO: found state log for {current_block:?}: {final_block:?}/{parent_block:?}"
                 );
 
                 let info = (log_entry.previous_info != AccountInfo::default())
@@ -466,18 +468,20 @@ impl StoreEngine for Store {
 
                 // We update this here to ensure it's the previous block according
                 // to the logs found.
-                BlockNumHash(block_num, snapshot_hash) = parent_block;
+                block_num = parent_block.0;
+                snapshot_hash = parent_block.1;
                 found_state_log = state_log_cursor.next()?;
             }
 
             // Loop over storage logs and restore the previous state
             while let Some(((final_block, parent_block), log_entry)) = found_storage_log {
-                tracing::warn!(
-                    "UNDO: found storage log for {key:?}: {final_block:?}/{parent_block:?}"
-                );
-                if final_block != key {
+                if final_block != current_block {
                     break;
                 }
+
+                tracing::warn!(
+                    "UNDO: found storage log for {current_block:?}: {final_block:?}/{parent_block:?}"
+                );
 
                 let storage_key = (log_entry.address.into(), log_entry.slot.into());
                 let new_value =
@@ -486,23 +490,28 @@ impl StoreEngine for Store {
 
                 // We update this here to ensure it's the previous block according
                 // to the logs found.
-                BlockNumHash(block_num, snapshot_hash) = parent_block;
+                block_num = parent_block.0;
+                snapshot_hash = parent_block.1;
                 found_storage_log = storage_log_cursor.next()?;
             }
-            if key == (block_num, snapshot_hash).into() {
+
+            let updated_block = BlockNumHash(block_num, snapshot_hash);
+
+            if updated_block == current_block {
                 tracing::info!("logs exhausted: back to canonical chain");
                 break;
             }
 
-            // Update the cursors
+            // Update the canonical hash for next iteration
             canonical_hash = canonical_cursor
                 .seek_exact(block_num)?
                 .map(|(_, hash)| hash.to())
                 .transpose()?
                 .unwrap_or_default();
-            key = (block_num, snapshot_hash).into();
         }
-        tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
+        let final_snapshot = BlockNumHash(block_num, snapshot_hash);
+
+        tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_snapshot)?;
         tx.commit().map_err(|err| err.into())
     }
 
