@@ -5,10 +5,10 @@ use ethereum_types::{Address, U256};
 use ethrex_common::{H160, types::BlockNumber};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_sdk::calldata::{self};
+use ethrex_l2_sdk::calldata::{self, encode_calldata};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, claim_erc20withdraw, compile_contract, deposit_erc20,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, compile_contract, deposit_erc20,
     get_address_from_secret_key, wait_for_transaction_receipt,
 };
 use ethrex_rpc::clients::eth::from_hex_string_to_u256;
@@ -121,6 +121,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         &proposer_client,
     )
     .await?;
+
+    test_aliasing(&proposer_client, &eth_client).await?;
 
     test_erc20_roundtrip(bridge_address, &proposer_client, &eth_client).await?;
 
@@ -385,6 +387,42 @@ async fn test_erc20_roundtrip(
     let l2_final_balance = test_balance_of(l2_client, token_l2, rich_address).await;
     assert_eq!(initial_balance, l1_final_balance);
     assert!(l2_final_balance.is_zero());
+    Ok(())
+}
+
+async fn test_aliasing(
+    l2_client: &EthClient,
+    l1_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rich_wallet_private_key = l1_rich_wallet_private_key();
+    let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
+    let caller_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
+    let send_to_l2_calldata = encode_calldata(
+        "sendToL2((address,uint256,uint256,bytes))",
+        &[Value::Tuple(vec![
+            Value::Address(H160::zero()),
+            Value::Uint(U256::from(100_000)),
+            Value::Uint(U256::zero()),
+            Value::Bytes(Bytes::new()),
+        ])],
+    )?;
+    let receipt_l1 = test_send(
+        l1_client,
+        &rich_wallet_private_key,
+        caller_l1,
+        "doCall(address,bytes)",
+        &[
+            Value::Address(bridge_address()?),
+            Value::Bytes(send_to_l2_calldata.into()),
+        ],
+    )
+    .await;
+    let receipt_l2 =
+        wait_for_l2_deposit_receipt(receipt_l1.block_info.block_number, l1_client, l2_client)
+            .await
+            .unwrap();
+    println!("alising {caller_l1:#x} to {:#x}", receipt_l2.tx_info.from);
+    assert_ne!(receipt_l2.tx_info.from, caller_l1);
     Ok(())
 }
 
