@@ -218,6 +218,117 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     Ok(())
 }
 
+/// Fetch logs from the L1 chain for the `BatchCommitted`` event.
+/// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
+/// and going up to the current L1 block number.
+/// Given the logs from the event `BatchCommitted`,
+/// this function gets the committed batches that are missing in the local store.
+/// It does that by comparing if the batch number is greater than the last known batch number.
+async fn fetch_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
+    let last_l1_block_number = state.eth_client.get_block_number().await?;
+
+    while state.last_l1_block_fetched < last_l1_block_number {
+        let new_last_l1_fetched_block = min(
+            state.last_l1_block_fetched + state.fetch_block_step,
+            last_l1_block_number,
+        );
+
+        debug!(
+            "Fetching logs from block {} to {}",
+            state.last_l1_block_fetched + 1,
+            new_last_l1_fetched_block
+        );
+
+        // Fetch logs from the L1 chain for the BatchCommitted event.
+        let commit_logs = state
+            .eth_client
+            .get_logs(
+                state.last_l1_block_fetched + 1,
+                new_last_l1_fetched_block,
+                state.on_chain_proposer_address,
+                keccak(b"BatchCommitted(uint256,bytes32)"),
+            )
+            .await?;
+
+        let verify_logs = state
+            .eth_client
+            .get_logs(
+                state.last_l1_block_fetched + 1,
+                new_last_l1_fetched_block,
+                state.on_chain_proposer_address,
+                keccak(b"BatchVerified(uint256)"),
+            )
+            .await?;
+
+        // Update the last L1 block fetched.
+        state.last_l1_block_fetched = new_last_l1_fetched_block;
+
+        // get the batch number for every commit log
+        for log in commit_logs {
+            let bytes = log
+                .log
+                .topics
+                .get(1)
+                .ok_or(BlockFetcherError::InternalError(
+                    "Failed to get committed batch number from BatchCommitted log".to_string(),
+                ))?
+                .as_bytes();
+
+            let committed_batch_number = u64::from_be_bytes(
+                bytes
+                    .get(bytes.len() - 8..)
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Invalid byte length for u64 conversion".to_string(),
+                    ))?
+                    .try_into()
+                    .map_err(|_| {
+                        BlockFetcherError::InternalError(
+                            "Invalid conversion from be bytes to u64".to_string(),
+                        )
+                    })?,
+            );
+
+            if committed_batch_number > state.latest_safe_batch {
+                state
+                    .pending_commit_logs
+                    .insert(committed_batch_number, log);
+            }
+        }
+
+        // get the batch number for every verify log
+        for log in verify_logs {
+            let bytes = log
+                .log
+                .topics
+                .get(1)
+                .ok_or(BlockFetcherError::InternalError(
+                    "Failed to get committed batch number from BatchCommitted log".to_string(),
+                ))?
+                .as_bytes();
+
+            let verify_batch_number = u64::from_be_bytes(
+                bytes
+                    .get(bytes.len() - 8..)
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Invalid byte length for u64 conversion".to_string(),
+                    ))?
+                    .try_into()
+                    .map_err(|_| {
+                        BlockFetcherError::InternalError(
+                            "Invalid conversion from be bytes to u64".to_string(),
+                        )
+                    })?,
+            );
+
+            if verify_batch_number > state.latest_safe_batch {
+                state.pending_verify_logs.insert(verify_batch_number, log);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Fetch the logs from the L1 (commit & verify).
 /// build a new batch with its batch number, which is stored
 /// in a queue to wait for validation
@@ -381,117 +492,6 @@ pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), Blo
             break;
         }
     }
-    Ok(())
-}
-
-/// Fetch logs from the L1 chain for the `BatchCommitted`` event.
-/// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
-/// and going up to the current L1 block number.
-/// Given the logs from the event `BatchCommitted`,
-/// this function gets the committed batches that are missing in the local store.
-/// It does that by comparing if the batch number is greater than the last known batch number.
-async fn fetch_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
-    let last_l1_block_number = state.eth_client.get_block_number().await?;
-
-    while state.last_l1_block_fetched < last_l1_block_number {
-        let new_last_l1_fetched_block = min(
-            state.last_l1_block_fetched + state.fetch_block_step,
-            last_l1_block_number,
-        );
-
-        debug!(
-            "Fetching logs from block {} to {}",
-            state.last_l1_block_fetched + 1,
-            new_last_l1_fetched_block
-        );
-
-        // Fetch logs from the L1 chain for the BatchCommitted event.
-        let commit_logs = state
-            .eth_client
-            .get_logs(
-                state.last_l1_block_fetched + 1,
-                new_last_l1_fetched_block,
-                state.on_chain_proposer_address,
-                keccak(b"BatchCommitted(uint256,bytes32)"),
-            )
-            .await?;
-
-        let verify_logs = state
-            .eth_client
-            .get_logs(
-                state.last_l1_block_fetched + 1,
-                new_last_l1_fetched_block,
-                state.on_chain_proposer_address,
-                keccak(b"BatchVerified(uint256)"),
-            )
-            .await?;
-
-        // Update the last L1 block fetched.
-        state.last_l1_block_fetched = new_last_l1_fetched_block;
-
-        // get the batch number for every commit log
-        for log in commit_logs {
-            let bytes = log
-                .log
-                .topics
-                .get(1)
-                .ok_or(BlockFetcherError::InternalError(
-                    "Failed to get committed batch number from BatchCommitted log".to_string(),
-                ))?
-                .as_bytes();
-
-            let committed_batch_number = u64::from_be_bytes(
-                bytes
-                    .get(bytes.len() - 8..)
-                    .ok_or(BlockFetcherError::InternalError(
-                        "Invalid byte length for u64 conversion".to_string(),
-                    ))?
-                    .try_into()
-                    .map_err(|_| {
-                        BlockFetcherError::InternalError(
-                            "Invalid conversion from be bytes to u64".to_string(),
-                        )
-                    })?,
-            );
-
-            if committed_batch_number > state.latest_safe_batch {
-                state
-                    .pending_commit_logs
-                    .insert(committed_batch_number, log);
-            }
-        }
-
-        // get the batch number for every verify log
-        for log in verify_logs {
-            let bytes = log
-                .log
-                .topics
-                .get(1)
-                .ok_or(BlockFetcherError::InternalError(
-                    "Failed to get committed batch number from BatchCommitted log".to_string(),
-                ))?
-                .as_bytes();
-
-            let verify_batch_number = u64::from_be_bytes(
-                bytes
-                    .get(bytes.len() - 8..)
-                    .ok_or(BlockFetcherError::InternalError(
-                        "Invalid byte length for u64 conversion".to_string(),
-                    ))?
-                    .try_into()
-                    .map_err(|_| {
-                        BlockFetcherError::InternalError(
-                            "Invalid conversion from be bytes to u64".to_string(),
-                        )
-                    })?,
-            );
-
-            if verify_batch_number > state.latest_safe_batch {
-                state.pending_verify_logs.insert(verify_batch_number, log);
-            }
-        }
-    }
-
     Ok(())
 }
 
