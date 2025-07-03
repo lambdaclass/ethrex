@@ -99,6 +99,37 @@ struct PendingBatch {
     last_block_hash: H256,
 }
 
+impl BlockFetcherState {
+    pub async fn new(
+        cfg: &SequencerConfig,
+        store: Store,
+        rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
+        sequencer_state: SequencerState,
+    ) -> Result<Self, BlockFetcherError> {
+        let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
+        let last_l1_block_fetched = eth_client
+            .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
+            .await?
+            .into();
+        Ok(Self {
+            eth_client,
+            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+            store,
+            rollup_store,
+            blockchain,
+            sequencer_state,
+            fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
+            last_l1_block_fetched,
+            fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
+            latest_safe_batch: 0,
+            pending_commit_logs: BTreeMap::new(),
+            pending_verify_logs: BTreeMap::new(),
+            pending_batches: VecDeque::new(),
+        })
+    }
+}
+
 #[derive(Clone)]
 pub enum InMessage {
     Fetch,
@@ -160,428 +191,393 @@ impl GenServer for BlockFetcher {
     }
 }
 
-impl BlockFetcherState {
-    pub async fn new(
-        cfg: &SequencerConfig,
-        store: Store,
-        rollup_store: StoreRollup,
-        blockchain: Arc<Blockchain>,
-        sequencer_state: SequencerState,
-    ) -> Result<Self, BlockFetcherError> {
-        let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
-        let last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
+pub async fn is_up_to_date(state: &mut BlockFetcherState) -> Result<bool, BlockFetcherError> {
+    node_is_up_to_date::<BlockFetcherError>(
+        &state.eth_client,
+        state.on_chain_proposer_address,
+        &state.rollup_store,
+    )
+    .await
+}
+
+/// Fetch the logs from the L1 (commit & verify).
+/// build a new batch with its batch number, which is stored
+/// in a queue to wait for validation
+pub async fn fetch_pending_batches(&mut self) -> Result<(), BlockFetcherError> {
+    self.fetch_logs().await?;
+
+    for (batch_number, batch_committed_log) in &self.pending_commit_logs.clone() {
+        if self
+            .pending_batches
+            .iter()
+            .any(|batch| batch.number == *batch_number)
+        {
+            // check if the batch has already been added
+            continue;
+        }
+        let batch_commit_tx_calldata = self
+            .eth_client
+            .get_transaction_by_hash(batch_committed_log.transaction_hash)
             .await?
-            .into();
-        Ok(Self {
-            eth_client,
-            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
-            store,
-            rollup_store,
-            blockchain,
-            sequencer_state,
-            fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
-            last_l1_block_fetched,
-            fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
-            latest_safe_batch: 0,
-            pending_commit_logs: BTreeMap::new(),
-            pending_verify_logs: BTreeMap::new(),
-            pending_batches: VecDeque::new(),
-        })
+            .ok_or(BlockFetcherError::InternalError(format!(
+                "Failed to get the receipt for transaction {:x}",
+                batch_committed_log.transaction_hash
+            )))?
+            .data;
+
+        let batch_blocks = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
+
+        let Some(last_block) = batch_blocks.last() else {
+            return Err(BlockFetcherError::InternalError(
+                "Batch block shouldn't be empty.".into(),
+            ));
+        };
+        self.pending_batches.push_back(PendingBatch {
+            number: *batch_number,
+            last_block_hash: last_block.header.hash(),
+        });
     }
+    Ok(())
+}
 
-    pub async fn is_up_to_date(&mut self) -> Result<bool, BlockFetcherError> {
-        node_is_up_to_date::<BlockFetcherError>(
-            &self.eth_client,
-            self.on_chain_proposer_address,
-            &self.rollup_store,
-        )
-        .await
-    }
+/// Traverse the pending batches queue and build and stores the ones that are safe (verified).
+pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
+    while let Some(pending_batch) = self.pending_batches.pop_front() {
+        if self.batch_is_safe(&pending_batch.last_block_hash).await?
+            && self.pending_commit_logs.contains_key(&pending_batch.number)
+            && self.pending_verify_logs.contains_key(&pending_batch.number)
+        {
+            info!("Safe batch sealed {}.", pending_batch.number);
+            let Some(commit_log) = self.pending_commit_logs.remove(&pending_batch.number) else {
+                return Err(BlockFetcherError::InternalError(
+                    "Commit log should be in the list.".into(),
+                ));
+            };
+            let Some(verify_log) = self.pending_verify_logs.remove(&pending_batch.number) else {
+                return Err(BlockFetcherError::InternalError(
+                    "Verify log should be in the list.".into(),
+                ));
+            };
 
-    /// Fetch the logs from the L1 (commit & verify).
-    /// build a new batch with its batch number, which is stored
-    /// in a queue to wait for validation
-    pub async fn fetch_pending_batches(&mut self) -> Result<(), BlockFetcherError> {
-        self.fetch_logs().await?;
-
-        for (batch_number, batch_committed_log) in &self.pending_commit_logs.clone() {
-            if self
-                .pending_batches
-                .iter()
-                .any(|batch| batch.number == *batch_number)
-            {
-                // check if the batch has already been added
-                continue;
-            }
             let batch_commit_tx_calldata = self
                 .eth_client
-                .get_transaction_by_hash(batch_committed_log.transaction_hash)
+                .get_transaction_by_hash(commit_log.transaction_hash)
                 .await?
                 .ok_or(BlockFetcherError::InternalError(format!(
                     "Failed to get the receipt for transaction {:x}",
-                    batch_committed_log.transaction_hash
+                    commit_log.transaction_hash
                 )))?
                 .data;
 
             let batch_blocks = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
+            for block in batch_blocks.iter() {
+                self.blockchain.add_block(block).await?;
 
-            let Some(last_block) = batch_blocks.last() else {
-                return Err(BlockFetcherError::InternalError(
-                    "Batch block shouldn't be empty.".into(),
-                ));
-            };
-            self.pending_batches.push_back(PendingBatch {
-                number: *batch_number,
-                last_block_hash: last_block.header.hash(),
-            });
-        }
-        Ok(())
-    }
+                let block_hash = block.hash();
 
-    /// Traverse the pending batches queue and build and stores the ones that are safe (verified).
-    pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
-        while let Some(pending_batch) = self.pending_batches.pop_front() {
-            if self.batch_is_safe(&pending_batch.last_block_hash).await?
-                && self.pending_commit_logs.contains_key(&pending_batch.number)
-                && self.pending_verify_logs.contains_key(&pending_batch.number)
-            {
-                info!("Safe batch sealed {}.", pending_batch.number);
-                let Some(commit_log) = self.pending_commit_logs.remove(&pending_batch.number)
-                else {
-                    return Err(BlockFetcherError::InternalError(
-                        "Commit log should be in the list.".into(),
-                    ));
-                };
-                let Some(verify_log) = self.pending_verify_logs.remove(&pending_batch.number)
-                else {
-                    return Err(BlockFetcherError::InternalError(
-                        "Verify log should be in the list.".into(),
-                    ));
-                };
+                apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
-                let batch_commit_tx_calldata = self
-                    .eth_client
-                    .get_transaction_by_hash(commit_log.transaction_hash)
-                    .await?
-                    .ok_or(BlockFetcherError::InternalError(format!(
-                        "Failed to get the receipt for transaction {:x}",
-                        commit_log.transaction_hash
-                    )))?
-                    .data;
-
-                let batch_blocks = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
-                for block in batch_blocks.iter() {
-                    self.blockchain.add_block(block).await?;
-
-                    let block_hash = block.hash();
-
-                    apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
-
-                    info!(
-                        "Added fetched block {} with hash {block_hash:#x}",
-                        block.header.number,
-                    );
-                }
-
-                let mut batch = self
-                    .build_batch_from_blocks(&batch_blocks, pending_batch.number)
-                    .await?;
-                batch.commit_tx = Some(commit_log.transaction_hash);
-                batch.verify_tx = Some(verify_log.transaction_hash);
-                self.latest_safe_batch = batch.number;
-                self.rollup_store.seal_batch(batch).await?;
-            } else {
-                // if the batch isn't verified yet, add it again to the queue
-                self.pending_batches.push_front(pending_batch);
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    /// Fetch logs from the L1 chain for the `BatchCommitted`` event.
-    /// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
-    /// and going up to the current L1 block number.
-    /// Given the logs from the event `BatchCommitted`,
-    /// this function gets the committed batches that are missing in the local store.
-    /// It does that by comparing if the batch number is greater than the last known batch number.
-    async fn fetch_logs(&mut self) -> Result<(), BlockFetcherError> {
-        let last_l1_block_number = self.eth_client.get_block_number().await?;
-
-        while self.last_l1_block_fetched < last_l1_block_number {
-            let new_last_l1_fetched_block = min(
-                self.last_l1_block_fetched + self.fetch_block_step,
-                last_l1_block_number,
-            );
-
-            debug!(
-                "Fetching logs from block {} to {}",
-                self.last_l1_block_fetched + 1,
-                new_last_l1_fetched_block
-            );
-
-            // Fetch logs from the L1 chain for the BatchCommitted event.
-            let commit_logs = self
-                .eth_client
-                .get_logs(
-                    self.last_l1_block_fetched + 1,
-                    new_last_l1_fetched_block,
-                    self.on_chain_proposer_address,
-                    keccak(b"BatchCommitted(uint256,bytes32)"),
-                )
-                .await?;
-
-            let verify_logs = self
-                .eth_client
-                .get_logs(
-                    self.last_l1_block_fetched + 1,
-                    new_last_l1_fetched_block,
-                    self.on_chain_proposer_address,
-                    keccak(b"BatchVerified(uint256)"),
-                )
-                .await?;
-
-            // Update the last L1 block fetched.
-            self.last_l1_block_fetched = new_last_l1_fetched_block;
-
-            // get the batch number for every commit log
-            for log in commit_logs {
-                let bytes = log
-                    .log
-                    .topics
-                    .get(1)
-                    .ok_or(BlockFetcherError::InternalError(
-                        "Failed to get committed batch number from BatchCommitted log".to_string(),
-                    ))?
-                    .as_bytes();
-
-                let committed_batch_number = u64::from_be_bytes(
-                    bytes
-                        .get(bytes.len() - 8..)
-                        .ok_or(BlockFetcherError::InternalError(
-                            "Invalid byte length for u64 conversion".to_string(),
-                        ))?
-                        .try_into()
-                        .map_err(|_| {
-                            BlockFetcherError::InternalError(
-                                "Invalid conversion from be bytes to u64".to_string(),
-                            )
-                        })?,
+                info!(
+                    "Added fetched block {} with hash {block_hash:#x}",
+                    block.header.number,
                 );
-
-                if committed_batch_number > self.latest_safe_batch {
-                    self.pending_commit_logs.insert(committed_batch_number, log);
-                }
             }
 
-            // get the batch number for every verify log
-            for log in verify_logs {
-                let bytes = log
-                    .log
-                    .topics
-                    .get(1)
-                    .ok_or(BlockFetcherError::InternalError(
-                        "Failed to get committed batch number from BatchCommitted log".to_string(),
-                    ))?
-                    .as_bytes();
-
-                let verify_batch_number = u64::from_be_bytes(
-                    bytes
-                        .get(bytes.len() - 8..)
-                        .ok_or(BlockFetcherError::InternalError(
-                            "Invalid byte length for u64 conversion".to_string(),
-                        ))?
-                        .try_into()
-                        .map_err(|_| {
-                            BlockFetcherError::InternalError(
-                                "Invalid conversion from be bytes to u64".to_string(),
-                            )
-                        })?,
-                );
-
-                if verify_batch_number > self.latest_safe_batch {
-                    self.pending_verify_logs.insert(verify_batch_number, log);
-                }
-            }
+            let mut batch = self
+                .build_batch_from_blocks(&batch_blocks, pending_batch.number)
+                .await?;
+            batch.commit_tx = Some(commit_log.transaction_hash);
+            batch.verify_tx = Some(verify_log.transaction_hash);
+            self.latest_safe_batch = batch.number;
+            self.rollup_store.seal_batch(batch).await?;
+        } else {
+            // if the batch isn't verified yet, add it again to the queue
+            self.pending_batches.push_front(pending_batch);
+            break;
         }
-
-        Ok(())
     }
+    Ok(())
+}
 
-    /// checks if a given batch is safe by accessing a mapping in the `OnChainProposer` contract.
-    /// If it returns true for the current batch, it means that it have been verified.
-    async fn batch_is_safe(&mut self, last_block_hash: &H256) -> Result<bool, BlockFetcherError> {
-        let values = vec![Value::FixedBytes(last_block_hash.0.to_vec().into())];
+/// Fetch logs from the L1 chain for the `BatchCommitted`` event.
+/// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
+/// and going up to the current L1 block number.
+/// Given the logs from the event `BatchCommitted`,
+/// this function gets the committed batches that are missing in the local store.
+/// It does that by comparing if the batch number is greater than the last known batch number.
+async fn fetch_logs(&mut self) -> Result<(), BlockFetcherError> {
+    let last_l1_block_number = self.eth_client.get_block_number().await?;
 
-        let calldata = encode_calldata("verifiedBatches(bytes32)", &values)?;
+    while self.last_l1_block_fetched < last_l1_block_number {
+        let new_last_l1_fetched_block = min(
+            self.last_l1_block_fetched + self.fetch_block_step,
+            last_l1_block_number,
+        );
 
-        let result = self
+        debug!(
+            "Fetching logs from block {} to {}",
+            self.last_l1_block_fetched + 1,
+            new_last_l1_fetched_block
+        );
+
+        // Fetch logs from the L1 chain for the BatchCommitted event.
+        let commit_logs = self
             .eth_client
-            .call(
+            .get_logs(
+                self.last_l1_block_fetched + 1,
+                new_last_l1_fetched_block,
                 self.on_chain_proposer_address,
-                calldata.into(),
-                Overrides::default(),
+                keccak(b"BatchCommitted(uint256,bytes32)"),
             )
             .await?;
 
-        let decoded_response = hex::decode(result.trim_start_matches("0x"))
-            .map_err(|e| BlockFetcherError::InternalError(e.to_string()))?;
+        let verify_logs = self
+            .eth_client
+            .get_logs(
+                self.last_l1_block_fetched + 1,
+                new_last_l1_fetched_block,
+                self.on_chain_proposer_address,
+                keccak(b"BatchVerified(uint256)"),
+            )
+            .await?;
 
-        let last_byte = decoded_response
-            .last()
-            .ok_or(BlockFetcherError::InternalError(
-                "Response should have at least one byte.".to_string(),
-            ))?;
+        // Update the last L1 block fetched.
+        self.last_l1_block_fetched = new_last_l1_fetched_block;
 
-        Ok(*last_byte > 0)
-    }
+        // get the batch number for every commit log
+        for log in commit_logs {
+            let bytes = log
+                .log
+                .topics
+                .get(1)
+                .ok_or(BlockFetcherError::InternalError(
+                    "Failed to get committed batch number from BatchCommitted log".to_string(),
+                ))?
+                .as_bytes();
 
-    async fn build_batch_from_blocks(
-        &mut self,
-        batch: &[Block],
-        batch_number: u64,
-    ) -> Result<Batch, BlockFetcherError> {
-        let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
-            .iter()
-            .flat_map(|block| {
-                block.body.transactions.iter().filter_map(|tx| {
-                    if let Transaction::PrivilegedL2Transaction(tx) = tx {
-                        Some(tx.clone())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect();
-        let privileged_transaction_hashes = privileged_transactions
-            .iter()
-            .filter_map(|tx| tx.get_privileged_hash())
-            .collect();
-
-        let mut messages = Vec::new();
-        for block in batch {
-            let block_messages = self.extract_block_messages(block.header.number).await?;
-            messages.extend(block_messages);
-        }
-        let privileged_transactions_hash =
-            compute_privileged_transactions_hash(privileged_transaction_hashes)?;
-
-        let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
-            "Batch is empty. This shouldn't happen.".to_owned(),
-        ))?;
-
-        let last_block = batch.last().ok_or(BlockFetcherError::InternalError(
-            "Batch is empty. This shouldn't happen.".to_owned(),
-        ))?;
-
-        let new_state_root = self
-            .store
-            .state_trie(last_block.hash())?
-            .ok_or(BlockFetcherError::InternalError(
-                "This block should be in the store".to_owned(),
-            ))?
-            .hash_no_commit();
-
-        // This is copied from the L1Committer, this should be reviewed.
-        let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
-        for block in batch {
-            let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
-            let mut vm = self.blockchain.new_evm(vm_db)?;
-            vm.execute_block(block)
-                .map_err(BlockFetcherError::EvmError)?;
-            let account_updates = vm
-                .get_state_transitions()
-                .map_err(BlockFetcherError::EvmError)?;
-
-            for account in account_updates {
-                let address = account.address;
-                if let Some(existing) = acc_account_updates.get_mut(&address) {
-                    existing.merge(account);
-                } else {
-                    acc_account_updates.insert(address, account);
-                }
-            }
-        }
-
-        let parent_block_hash = first_block.header.parent_hash;
-
-        let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
-
-        let state_diff = prepare_state_diff(
-            last_block.header.clone(),
-            &parent_db,
-            &messages,
-            &privileged_transactions,
-            acc_account_updates.into_values().collect(),
-        )
-        .map_err(|_| BlockFetcherError::BlobBundleError)?;
-
-        let (blobs_bundle, _) =
-            generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
-
-        Ok(Batch {
-            number: batch_number,
-            first_block: first_block.header.number,
-            last_block: last_block.header.number,
-            state_root: new_state_root,
-            privileged_transactions_hash,
-            message_hashes: self.get_batch_message_hashes(batch).await?,
-            blobs_bundle,
-            commit_tx: None,
-            verify_tx: None,
-        })
-    }
-
-    async fn get_batch_message_hashes(
-        &mut self,
-        batch: &[Block],
-    ) -> Result<Vec<H256>, BlockFetcherError> {
-        let mut message_hashes = Vec::new();
-
-        for block in batch {
-            let block_messages = self.extract_block_messages(block.header.number).await?;
-
-            for msg in &block_messages {
-                message_hashes.push(get_l1_message_hash(msg));
-            }
-        }
-
-        Ok(message_hashes)
-    }
-
-    async fn extract_block_messages(
-        &mut self,
-        block_number: BlockNumber,
-    ) -> Result<Vec<L1Message>, BlockFetcherError> {
-        let Some(block_body) = self.store.get_block_body(block_number).await? else {
-            return Err(BlockFetcherError::InternalError(format!(
-                "Block {block_number} is supposed to be in store at this point"
-            )));
-        };
-
-        let mut txs = vec![];
-        let mut receipts = vec![];
-        for (index, tx) in block_body.transactions.iter().enumerate() {
-            let receipt = self
-                .store
-                .get_receipt(
-                    block_number,
-                    index.try_into().map_err(|_| {
+            let committed_batch_number = u64::from_be_bytes(
+                bytes
+                    .get(bytes.len() - 8..)
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Invalid byte length for u64 conversion".to_string(),
+                    ))?
+                    .try_into()
+                    .map_err(|_| {
                         BlockFetcherError::InternalError(
-                            "Failed to convert index to u64".to_owned(),
+                            "Invalid conversion from be bytes to u64".to_string(),
                         )
                     })?,
-                )
-                .await?
-                .ok_or(BlockFetcherError::InternalError(
-                    "Transactions in a block should have a receipt".to_owned(),
-                ))?;
-            txs.push(tx.clone());
-            receipts.push(receipt);
+            );
+
+            if committed_batch_number > self.latest_safe_batch {
+                self.pending_commit_logs.insert(committed_batch_number, log);
+            }
         }
-        Ok(get_block_l1_messages(&txs, &receipts))
+
+        // get the batch number for every verify log
+        for log in verify_logs {
+            let bytes = log
+                .log
+                .topics
+                .get(1)
+                .ok_or(BlockFetcherError::InternalError(
+                    "Failed to get committed batch number from BatchCommitted log".to_string(),
+                ))?
+                .as_bytes();
+
+            let verify_batch_number = u64::from_be_bytes(
+                bytes
+                    .get(bytes.len() - 8..)
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Invalid byte length for u64 conversion".to_string(),
+                    ))?
+                    .try_into()
+                    .map_err(|_| {
+                        BlockFetcherError::InternalError(
+                            "Invalid conversion from be bytes to u64".to_string(),
+                        )
+                    })?,
+            );
+
+            if verify_batch_number > self.latest_safe_batch {
+                self.pending_verify_logs.insert(verify_batch_number, log);
+            }
+        }
     }
+
+    Ok(())
+}
+
+/// checks if a given batch is safe by accessing a mapping in the `OnChainProposer` contract.
+/// If it returns true for the current batch, it means that it have been verified.
+async fn batch_is_safe(&mut self, last_block_hash: &H256) -> Result<bool, BlockFetcherError> {
+    let values = vec![Value::FixedBytes(last_block_hash.0.to_vec().into())];
+
+    let calldata = encode_calldata("verifiedBatches(bytes32)", &values)?;
+
+    let result = self
+        .eth_client
+        .call(
+            self.on_chain_proposer_address,
+            calldata.into(),
+            Overrides::default(),
+        )
+        .await?;
+
+    let decoded_response = hex::decode(result.trim_start_matches("0x"))
+        .map_err(|e| BlockFetcherError::InternalError(e.to_string()))?;
+
+    let last_byte = decoded_response
+        .last()
+        .ok_or(BlockFetcherError::InternalError(
+            "Response should have at least one byte.".to_string(),
+        ))?;
+
+    Ok(*last_byte > 0)
+}
+
+async fn build_batch_from_blocks(
+    &mut self,
+    batch: &[Block],
+    batch_number: u64,
+) -> Result<Batch, BlockFetcherError> {
+    let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
+        .iter()
+        .flat_map(|block| {
+            block.body.transactions.iter().filter_map(|tx| {
+                if let Transaction::PrivilegedL2Transaction(tx) = tx {
+                    Some(tx.clone())
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+    let privileged_transaction_hashes = privileged_transactions
+        .iter()
+        .filter_map(|tx| tx.get_privileged_hash())
+        .collect();
+
+    let mut messages = Vec::new();
+    for block in batch {
+        let block_messages = self.extract_block_messages(block.header.number).await?;
+        messages.extend(block_messages);
+    }
+    let privileged_transactions_hash =
+        compute_privileged_transactions_hash(privileged_transaction_hashes)?;
+
+    let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
+        "Batch is empty. This shouldn't happen.".to_owned(),
+    ))?;
+
+    let last_block = batch.last().ok_or(BlockFetcherError::InternalError(
+        "Batch is empty. This shouldn't happen.".to_owned(),
+    ))?;
+
+    let new_state_root = self
+        .store
+        .state_trie(last_block.hash())?
+        .ok_or(BlockFetcherError::InternalError(
+            "This block should be in the store".to_owned(),
+        ))?
+        .hash_no_commit();
+
+    // This is copied from the L1Committer, this should be reviewed.
+    let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
+    for block in batch {
+        let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
+        let mut vm = self.blockchain.new_evm(vm_db)?;
+        vm.execute_block(block)
+            .map_err(BlockFetcherError::EvmError)?;
+        let account_updates = vm
+            .get_state_transitions()
+            .map_err(BlockFetcherError::EvmError)?;
+
+        for account in account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
+    }
+
+    let parent_block_hash = first_block.header.parent_hash;
+
+    let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
+
+    let state_diff = prepare_state_diff(
+        last_block.header.clone(),
+        &parent_db,
+        &messages,
+        &privileged_transactions,
+        acc_account_updates.into_values().collect(),
+    )
+    .map_err(|_| BlockFetcherError::BlobBundleError)?;
+
+    let (blobs_bundle, _) =
+        generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
+
+    Ok(Batch {
+        number: batch_number,
+        first_block: first_block.header.number,
+        last_block: last_block.header.number,
+        state_root: new_state_root,
+        privileged_transactions_hash,
+        message_hashes: self.get_batch_message_hashes(batch).await?,
+        blobs_bundle,
+        commit_tx: None,
+        verify_tx: None,
+    })
+}
+
+async fn get_batch_message_hashes(
+    &mut self,
+    batch: &[Block],
+) -> Result<Vec<H256>, BlockFetcherError> {
+    let mut message_hashes = Vec::new();
+
+    for block in batch {
+        let block_messages = self.extract_block_messages(block.header.number).await?;
+
+        for msg in &block_messages {
+            message_hashes.push(get_l1_message_hash(msg));
+        }
+    }
+
+    Ok(message_hashes)
+}
+
+async fn extract_block_messages(
+    &mut self,
+    block_number: BlockNumber,
+) -> Result<Vec<L1Message>, BlockFetcherError> {
+    let Some(block_body) = self.store.get_block_body(block_number).await? else {
+        return Err(BlockFetcherError::InternalError(format!(
+            "Block {block_number} is supposed to be in store at this point"
+        )));
+    };
+
+    let mut txs = vec![];
+    let mut receipts = vec![];
+    for (index, tx) in block_body.transactions.iter().enumerate() {
+        let receipt = self
+            .store
+            .get_receipt(
+                block_number,
+                index.try_into().map_err(|_| {
+                    BlockFetcherError::InternalError("Failed to convert index to u64".to_owned())
+                })?,
+            )
+            .await?
+            .ok_or(BlockFetcherError::InternalError(
+                "Transactions in a block should have a receipt".to_owned(),
+            ))?;
+        txs.push(tx.clone());
+        receipts.push(receipt);
+    }
+    Ok(get_block_l1_messages(&txs, &receipts))
 }
 
 async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
