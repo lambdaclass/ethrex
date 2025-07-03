@@ -448,40 +448,47 @@ impl StoreEngine for Store {
             tracing::warn!("UNDO: searching for {key:?}");
             let mut found_state_log = state_log_cursor.seek_closest(key)?;
             let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
-            // loop over log_entries, take log_value and restore it in the flat tables
-            while let Some((read_key_num_hash, log_entry)) = found_state_log {
-                tracing::warn!("UNDO: found state log for {key:?}: {read_key_num_hash:?}");
-                if read_key_num_hash.0 != key {
+
+            // Loop over account info logs and restore the previous state
+            while let Some(((final_block, parent_block), log_entry)) = found_state_log {
+                tracing::warn!(
+                    "UNDO: found state log for {key:?}: {final_block:?}/{parent_block:?}"
+                );
+                if final_block != key {
                     break;
                 }
-                let old_info = log_entry.previous_info;
-                let addr = log_entry.address.into();
-                let info =
-                    (old_info != AccountInfo::default()).then_some(EncodableAccountInfo(old_info));
-                Self::replace_value_or_delete(&mut flat_info_cursor, addr, info)?;
+
+                let info = (log_entry.previous_info != AccountInfo::default())
+                    .then_some(EncodableAccountInfo(log_entry.previous_info));
+                Self::replace_value_or_delete(
+                    &mut flat_info_cursor,
+                    log_entry.address.into(),
+                    info,
+                )?;
 
                 // We update this here to ensure it's the previous block according
                 // to the logs found.
-                BlockNumHash(block_num, snapshot_hash) = read_key_num_hash.1;
+                BlockNumHash(block_num, snapshot_hash) = parent_block;
                 found_state_log = state_log_cursor.next()?;
             }
 
-            while let Some((read_key_num_hash, log_entry)) = found_storage_log {
-                tracing::warn!("UNDO: found storage log for {key:?}: {read_key_num_hash:?}");
-                // TODO: Check if this should be 0
-                if read_key_num_hash.1 != key {
+            // Loop over storage logs and restore the previous state
+            while let Some(((final_block, parent_block), log_entry)) = found_storage_log {
+                tracing::warn!(
+                    "UNDO: found storage log for {key:?}: {final_block:?}/{parent_block:?}"
+                );
+                if final_block != key {
                     break;
                 }
-                let old_value = log_entry.old_value;
-                let slot = log_entry.slot;
-                let addr = log_entry.address;
-                let storage_key = (addr.into(), slot.into());
-                let value_aux = (!old_value.is_zero()).then_some(old_value.into());
-                Self::replace_value_or_delete(&mut flat_storage_cursor, storage_key, value_aux)?;
+
+                let storage_key = (log_entry.address.into(), log_entry.slot.into());
+                let new_value =
+                    (!log_entry.old_value.is_zero()).then_some(log_entry.old_value.into());
+                Self::replace_value_or_delete(&mut flat_storage_cursor, storage_key, new_value)?;
 
                 // We update this here to ensure it's the previous block according
                 // to the logs found.
-                BlockNumHash(block_num, snapshot_hash) = read_key_num_hash.1;
+                BlockNumHash(block_num, snapshot_hash) = parent_block;
                 found_storage_log = storage_log_cursor.next()?;
             }
             if key == (block_num, snapshot_hash).into() {
