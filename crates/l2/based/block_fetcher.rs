@@ -495,6 +495,54 @@ pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), Blo
     Ok(())
 }
 
+async fn get_batch_message_hashes(
+    state: &mut BlockFetcherState,
+    batch: &[Block],
+) -> Result<Vec<H256>, BlockFetcherError> {
+    let mut message_hashes = Vec::new();
+
+    for block in batch {
+        let block_messages = extract_block_messages(state, block.header.number).await?;
+
+        for msg in &block_messages {
+            message_hashes.push(get_l1_message_hash(msg));
+        }
+    }
+
+    Ok(message_hashes)
+}
+
+async fn extract_block_messages(
+    state: &mut BlockFetcherState,
+    block_number: BlockNumber,
+) -> Result<Vec<L1Message>, BlockFetcherError> {
+    let Some(block_body) = state.store.get_block_body(block_number).await? else {
+        return Err(BlockFetcherError::InternalError(format!(
+            "Block {block_number} is supposed to be in store at this point"
+        )));
+    };
+
+    let mut txs = vec![];
+    let mut receipts = vec![];
+    for (index, tx) in block_body.transactions.iter().enumerate() {
+        let receipt = state
+            .store
+            .get_receipt(
+                block_number,
+                index.try_into().map_err(|_| {
+                    BlockFetcherError::InternalError("Failed to convert index to u64".to_owned())
+                })?,
+            )
+            .await?
+            .ok_or(BlockFetcherError::InternalError(
+                "Transactions in a block should have a receipt".to_owned(),
+            ))?;
+        txs.push(tx.clone());
+        receipts.push(receipt);
+    }
+    Ok(get_block_l1_messages(&txs, &receipts))
+}
+
 /// checks if a given batch is safe by accessing a mapping in the `OnChainProposer` contract.
 /// If it returns true for the current batch, it means that it have been verified.
 async fn batch_is_safe(
@@ -620,52 +668,4 @@ async fn build_batch_from_blocks(
         commit_tx: None,
         verify_tx: None,
     })
-}
-
-async fn get_batch_message_hashes(
-    state: &mut BlockFetcherState,
-    batch: &[Block],
-) -> Result<Vec<H256>, BlockFetcherError> {
-    let mut message_hashes = Vec::new();
-
-    for block in batch {
-        let block_messages = extract_block_messages(state, block.header.number).await?;
-
-        for msg in &block_messages {
-            message_hashes.push(get_l1_message_hash(msg));
-        }
-    }
-
-    Ok(message_hashes)
-}
-
-async fn extract_block_messages(
-    state: &mut BlockFetcherState,
-    block_number: BlockNumber,
-) -> Result<Vec<L1Message>, BlockFetcherError> {
-    let Some(block_body) = state.store.get_block_body(block_number).await? else {
-        return Err(BlockFetcherError::InternalError(format!(
-            "Block {block_number} is supposed to be in store at this point"
-        )));
-    };
-
-    let mut txs = vec![];
-    let mut receipts = vec![];
-    for (index, tx) in block_body.transactions.iter().enumerate() {
-        let receipt = state
-            .store
-            .get_receipt(
-                block_number,
-                index.try_into().map_err(|_| {
-                    BlockFetcherError::InternalError("Failed to convert index to u64".to_owned())
-                })?,
-            )
-            .await?
-            .ok_or(BlockFetcherError::InternalError(
-                "Transactions in a block should have a receipt".to_owned(),
-            ))?;
-        txs.push(tx.clone());
-        receipts.push(receipt);
-    }
-    Ok(get_block_l1_messages(&txs, &receipts))
 }
