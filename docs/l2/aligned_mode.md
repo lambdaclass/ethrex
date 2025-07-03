@@ -4,7 +4,7 @@ This document explains how to run an Ethrex L2 node in **Aligned mode** and high
 
 ## How to Run
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > For this guide we assumed that there is an L1 running with all Aligned environment set.
 
 ### 1. Generate the SP1 ELF Program and Verification Key
@@ -31,9 +31,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--genesis-l1-path <GENESIS_L1_PATH> \
 	--genesis-l2-path <GENESIS_L2_PATH> \
 	--contracts-path contracts \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+	--aligned \
     --aligned.aggregator-address <ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS> \
     --bridge-owner <ADDRESS> \
     --on-chain-proposer-owner <ADDRESS> \
@@ -43,7 +41,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 ```
 
 > [!NOTE]
-> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
+> In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
 ### 3. Deposit funds to the `AlignedBatcherPaymentService` contract from the proof sender
@@ -80,7 +78,7 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
 	--proof-coordinator.addr <PROOF_COORDINATOR_ADDRESS> \
 	--aligned \
     --aligned-verifier-interval-ms <ETHREX_ALIGNED_VERIFIER_INTERVAL_MS> \
-    --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \ 
+    --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \
     --aligned-network <ETHREX_ALIGNED_NETWORK> \
     --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
     --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
@@ -123,7 +121,7 @@ git checkout tags/v0.16.1
 prefunded_accounts: '{
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": { "balance": "100000000000000ETH" },
     "0x70997970C51812dc3A010C7d01b50e0d17dc79C8": { "balance": "100000000000000ETH" },
-    
+
     ...
     "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720": { "balance": "100000000000000ETH" },
 +   "0x4417092B70a3E5f10Dc504d0947DD256B965fc62": { "balance": "100000000000000ETH" },
@@ -142,7 +140,7 @@ cd aligned_layer
 make ethereum_package_start
 ```
 
-To stop it run `make ethereum_package_rm` 
+To stop it run `make ethereum_package_rm`
 
 4. Start the batcher:
 
@@ -173,9 +171,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--contracts-path contracts \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+	--aligned \
 	--aligned.aggregator-address 0xFD471836031dc5108809D173A067e8486B9047A3 \
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
@@ -208,7 +204,7 @@ cd ethrex/crates/l2
 ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 ```
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > Set `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1.
 
 Suggestion:

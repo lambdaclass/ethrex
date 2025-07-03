@@ -27,10 +27,8 @@ use tracing::{Level, debug, error, info, trace, warn};
 mod cli;
 mod error;
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
-    "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address[])";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,address[])";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -388,45 +386,55 @@ async fn deploy_contracts(
         Default::default()
     };
 
-    let sp1_verifier_address = if opts.sp1_deploy_verifier {
-        info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
-        let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
-            &[],
-            &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
-            &opts.private_key,
-            &salt,
-            eth_client,
-        )
-        .await?;
+    // if it's a required proof type, but no address has been specify, deploy it.
+    let sp1_verifier_address = match opts.sp1_verifier_address {
+        Some(addr) if opts.sp1 => addr,
+        None if opts.sp1 => {
+            info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
+            let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
+                &[],
+                &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
+                &opts.private_key,
+                &salt,
+                eth_client,
+            )
+            .await?;
 
-        info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
-        sp1_verifier_address
-    } else {
-        opts.sp1_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "SP1Verifier address is not set and sp1_deploy_verifier is false".to_string(),
-            ))?
+            info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
+            sp1_verifier_address
+        }
+        _ => Address::zero(),
     };
 
-    // TODO: Add Risc0Verifier deployment
-    let risc0_verifier_address =
-        opts.risc0_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
-            ))?;
+    // we can't deploy the risc0 contract because of uncompatible licenses
+    let Some(risc0_verifier_address) = opts.risc0_verifier_address else {
+        return Err(DeployerError::InternalError(
+            "Risc0Verifier address is not set and risc0 is a required prover".to_string(),
+        ));
+    };
 
-    let tdx_verifier_address = if opts.tdx_deploy_verifier {
-        info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
-        let tdx_verifier_address =
-            deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
+    // if it's a required proof type, but no address has been specify, deploy it.
+    let tdx_verifier_address = match opts.tdx_verifier_address {
+        Some(addr) if opts.tdx => addr,
+        None if opts.tdx => {
+            info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
+            let tdx_verifier_address =
+                deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
 
-        info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
-        tdx_verifier_address
-    } else {
-        opts.tdx_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "TDXVerifier address is not set and tdx_deploy_verifier is false".to_string(),
-            ))?
+            info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
+            tdx_verifier_address
+        }
+        _ => Address::zero(),
+    };
+
+    // return error if no address was specified but verification with aligned is required.
+    let aligned_aggregator_address = match opts.aligned_aggregator_address {
+        Some(addr) if opts.aligned => addr,
+        None if opts.aligned => return Err(DeployerError::InternalError(
+            "Verification with Aligned Layer is required but no aggregator address was provided"
+                .to_string(),
+        )),
+        _ => Address::zero(),
     };
 
     trace!(
@@ -446,7 +454,7 @@ async fn deploy_contracts(
         risc0_verifier_address,
         tdx_verifier_address,
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
-        aligned_aggregator_address: opts.aligned_aggregator_address,
+        aligned_aggregator_address,
     })
 }
 
@@ -516,6 +524,10 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
+            Value::Bool(opts.risc0),
+            Value::Bool(opts.sp1),
+            Value::Bool(opts.tdx),
+            Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
