@@ -147,9 +147,9 @@ impl GenServer for BlockFetcher {
         mut state: Self::State,
     ) -> CastResponse<Self> {
         if let SequencerStatus::Following = state.sequencer_state.status().await {
-            if let Err(err) = state.fetch().await {
+            let _ = fetch(&mut state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
-            }
+            });
         }
         send_after(
             Duration::from_millis(state.fetch_interval_ms),
@@ -197,23 +197,6 @@ impl BlockFetcherState {
             &self.rollup_store,
         )
         .await
-    }
-
-    async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
-        match self.is_up_to_date().await? {
-            true => {
-                info!("Node is up to date");
-            }
-            false => {
-                info!("Node is not up to date. Syncing via L1");
-                while !self.is_up_to_date().await? {
-                    self.fetch_pending_batches().await?;
-
-                    self.store_safe_batches().await?;
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Fetch the logs from the L1 (commit & verify).
@@ -597,6 +580,21 @@ impl BlockFetcherState {
         }
         Ok(get_block_l1_messages(&txs, &receipts))
     }
+}
+
+async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
+    if !state.is_up_to_date().await? {
+        info!("Node is not up to date. Syncing via L1");
+        while !state.is_up_to_date().await? {
+            state.fetch_pending_batches().await?;
+
+            state.store_safe_batches().await?;
+        }
+    } else {
+        info!("Node is up to date");
+    }
+
+    Ok(())
 }
 
 // TODO: Move to calldata module (SDK)
