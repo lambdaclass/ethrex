@@ -97,7 +97,7 @@ pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 #[derive(Serialize, Deserialize, Debug)]
 pub struct L1MessageProof {
     pub batch_number: u64,
-    pub index: usize,
+    pub message_id: U256,
     pub message_hash: H256,
     pub merkle_proof: Vec<H256>,
 }
@@ -1079,12 +1079,12 @@ impl EthClient {
             .await
     }
 
-    pub async fn get_pending_deposit_logs(
+    pub async fn get_pending_privileged_transactions(
         &self,
         common_bridge_address: Address,
     ) -> Result<Vec<H256>, EthClientError> {
         let response = self
-            ._generic_call(b"getPendingDepositLogs()", common_bridge_address)
+            ._generic_call(b"getPendingTransactionHashes()", common_bridge_address)
             .await?;
         Self::from_hex_string_to_h256_array(&response)
     }

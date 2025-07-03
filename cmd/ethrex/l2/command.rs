@@ -3,13 +3,14 @@ use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_store,
+        init_network, init_store,
     },
     l2::{self, options::Options},
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
+use ethrex_blockchain::BlockchainType;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -136,7 +137,8 @@ impl Command {
                 let store = init_store(&data_dir, genesis).await;
                 let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain =
+                    init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
 
                 let signer = get_signer(&data_dir);
 
@@ -171,7 +173,7 @@ impl Command {
 
                 // Initialize metrics if enabled
                 if opts.node_opts.metrics_enabled {
-                    init_metrics(&opts.node_opts, tracker.clone());
+                    l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
                 if opts.node_opts.p2p_enabled {
@@ -439,9 +441,11 @@ impl Command {
                                 first_block: first_block_number,
                                 last_block: new_block.number,
                                 state_root: new_block.state_root,
-                                deposit_logs_hash: H256::zero(),
+                                privileged_transactions_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
+                                commit_tx: None,
+                                verify_tx: None,
                             };
 
                             // Store batch info in L2 storage

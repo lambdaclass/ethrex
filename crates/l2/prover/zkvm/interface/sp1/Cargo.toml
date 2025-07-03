@@ -35,4 +35,4 @@ rsa = { git = "https://github.com/sp1-patches/RustCrypto-RSA", tag = "patch-0.9.
 # ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "patch-16.9-sp1-4.1.0" }
 
 [features]
-l2 = ["ethrex-vm/l2", "zkvm_interface/l2", "ethrex-blockchain/l2"]
+l2 = ["zkvm_interface/l2"]

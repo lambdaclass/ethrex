@@ -21,7 +21,7 @@ pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
 pub mod l1_proof_verifier;
-mod l1_watcher;
+pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
@@ -70,6 +70,7 @@ pub async fn start_l2(
     });
     let _ = L1Committer::spawn(
         store.clone(),
+        blockchain.clone(),
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),

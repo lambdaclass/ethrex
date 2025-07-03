@@ -102,6 +102,10 @@ impl Stack {
         self.values.swap(self.offset, index);
         Ok(())
     }
+
+    pub fn clear(&mut self) {
+        self.offset = STACK_LIMIT;
+    }
 }
 
 impl Default for Stack {
@@ -186,6 +190,22 @@ pub struct CallFrameBackup {
 }
 
 impl CallFrameBackup {
+    pub fn backup_account_info(
+        &mut self,
+        address: Address,
+        account: &Account,
+    ) -> Result<(), InternalError> {
+        self.original_accounts_info
+            .entry(address)
+            .or_insert_with(|| Account {
+                info: account.info.clone(),
+                code: account.code.clone(),
+                storage: HashMap::new(),
+            });
+
+        Ok(())
+    }
+
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
@@ -215,6 +235,7 @@ impl CallFrame {
         is_create: bool,
         ret_offset: U256,
         ret_size: usize,
+        stack: Stack,
     ) -> Self {
         let invalid_jump_destinations =
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
@@ -234,6 +255,7 @@ impl CallFrame {
             is_create,
             ret_offset,
             ret_size,
+            stack,
             ..Default::default()
         }
     }

@@ -101,3 +101,16 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
         .expect("Failed to init rollup store");
     rollup_store
 }
+
+pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+    tracing::info!(
+        "Starting metrics server on {}:{}",
+        opts.metrics_addr,
+        opts.metrics_port
+    );
+    let metrics_api = ethrex_metrics::l2::api::start_prometheus_metrics_api(
+        opts.metrics_addr.clone(),
+        opts.metrics_port.clone(),
+    );
+    tracker.spawn(metrics_api);
+}
