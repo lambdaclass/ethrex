@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751493251976,
+  "lastUpdate": 1751542827059,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4318,6 +4318,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006809857142857143,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7ff4eeaf53f72e6cdc141e60ff98263eea80494a",
+          "message": "perf(levm): use a stack pool (#3386)\n\n**Motivation**\n\nFixes #3385\n\nhttps://share.firefox.dev/44uRnnn\n\nThe perfomance gain from this pr cannot be seen with the factorial\nrecursive bench, because it doesn't reuse the stack, it always goes full\ndeep and then up.\n\nWith a fibonacci recursive bench it can be seen:\n\nMain\n\n![image](https://github.com/user-attachments/assets/e2fae3b0-1839-4105-afa1-8bbde4c216ae)\n\nPR\n\n![image](https://github.com/user-attachments/assets/1a12cf4b-66cf-45ce-a9dd-8079804bfb48)\n\nNeeds https://github.com/lambdaclass/ethrex/pull/3391 to show the perf\ngains in benches",
+          "timestamp": "2025-07-03T11:06:14Z",
+          "tree_id": "9a613b17e3e3e752a434ceb4136f474db26615b4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7ff4eeaf53f72e6cdc141e60ff98263eea80494a"
+        },
+        "date": 1751542816183,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007062074074074074,
             "unit": "Mgas/s"
           }
         ]
