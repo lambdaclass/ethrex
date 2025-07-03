@@ -75,8 +75,6 @@ l2 = [
   "dep:ethrex-l2-common",
   "dep:ethrex-sdk",
   "dep:ethrex-l2-rpc",
-  "ethrex-vm/l2",
-  "ethrex-blockchain/l2",
   "ethrex-storage-rollup",
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
@@ -105,4 +103,4 @@ name = "build_block_benchmark"
 harness = false
 
 [build-dependencies]
-vergen = { version = "9.0.0", features = ["rustc"] }
+vergen-git2 = { version = "1.0.7", features = ["rustc"] }

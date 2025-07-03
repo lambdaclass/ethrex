@@ -5,7 +5,6 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::{H256, types::Transaction};
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -261,8 +260,8 @@ impl PooledTransactions {
             if tx.tx_type() as u8 != expected_type {
                 return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
-            // remove the code from the encoding (-4)
-            if tx.encode_to_vec().len() - 4 != expected_size {
+            let tx_size = tx.encode_canonical_to_vec().len();
+            if tx_size != expected_size {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
         }
@@ -277,7 +276,7 @@ impl PooledTransactions {
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
-                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                    log_peer_warn(node, &format!("Error adding transaction: {e}"));
                     continue;
                 }
             } else {
@@ -285,7 +284,7 @@ impl PooledTransactions {
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                    log_peer_warn(node, &format!("Error adding transaction: {e}"));
                     continue;
                 }
             }

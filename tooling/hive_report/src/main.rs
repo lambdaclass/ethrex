@@ -48,7 +48,7 @@ impl HiveResult {
             "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
             "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
             other => {
-                eprintln!("Warn: Unknown suite: {}. Skipping", other);
+                eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
             }
         };
@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let json_data: JsonFile = match serde_json::from_reader(reader) {
                 Ok(data) => data,
                 Err(_) => {
-                    eprintln!("Error processing file: {}", file_name);
+                    eprintln!("Error processing file: {file_name}");
                     continue;
                 }
             };
@@ -176,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // print category
         println!("*{}*", results[0].category);
         for result in results {
-            println!("\t{}", result);
+            println!("\t{result}");
         }
         println!();
     }

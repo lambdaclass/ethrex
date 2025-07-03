@@ -97,7 +97,7 @@ pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 #[derive(Serialize, Deserialize, Debug)]
 pub struct L1MessageProof {
     pub batch_number: u64,
-    pub index: usize,
+    pub message_id: U256,
     pub message_hash: H256,
     pub merkle_proof: Vec<H256>,
 }
@@ -986,14 +986,12 @@ impl EthClient {
     pub async fn build_privileged_transaction(
         &self,
         to: Address,
-        recipient: Address,
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
-            recipient,
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
@@ -1073,12 +1071,12 @@ impl EthClient {
             .await
     }
 
-    pub async fn get_pending_deposit_logs(
+    pub async fn get_pending_privileged_transactions(
         &self,
         common_bridge_address: Address,
     ) -> Result<Vec<H256>, EthClientError> {
         let response = self
-            ._generic_call(b"getPendingDepositLogs()", common_bridge_address)
+            ._generic_call(b"getPendingTransactionHashes()", common_bridge_address)
             .await?;
         Self::from_hex_string_to_h256_array(&response)
     }
@@ -1187,7 +1185,7 @@ impl EthClient {
         ))?;
 
         let bytes = hex::decode(hex)
-            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {}", e)))?;
+            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {e}")))?;
 
         let arr: [u8; 32] = bytes.try_into().map_err(|_| {
             EthClientError::Custom("Failed to convert bytes to [u8; 32]".to_owned())

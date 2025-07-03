@@ -209,7 +209,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .unwrap_or_else(|_| {
                 log_peer_debug(
                     &self.node,
-                    &format!("Could not send Disconnect message: ({:?}).", reason),
+                    &format!("Could not send Disconnect message: ({reason:?})."),
                 );
             });
     }
@@ -366,18 +366,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 Some(message) = self.receive() => {
                     match message {
                         Ok(message) => {
-                            log_peer_debug(&self.node, &format!("Received message {}", message));
+                            log_peer_debug(&self.node, &format!("Received message {message}"));
                             self.handle_message(message, sender.clone()).await?;
                         },
                         Err(e) => {
-                            log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
+                            log_peer_debug(&self.node, &format!("Received RLPX Error in msg {e}"));
                             return Err(e);
                         }
                     }
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
-                    log_peer_debug(&self.node, &format!("Sending message {}", message));
+                    log_peer_debug(&self.node, &format!("Sending message {message}"));
                     self.send(message).await?;
                 }
                 // This is not ideal, but using the receiver without
@@ -450,10 +450,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     // Possible improvement: the mempool already knows the hash but the filter function does not return it
                     self.broadcasted_txs.insert((*tx).compute_hash());
                 }
-                log_peer_debug(
-                    &self.node,
-                    &format!("Sent {} transactions to peer", tx_count),
-                );
+                log_peer_debug(&self.node, &format!("Sent {tx_count} transactions to peer"));
             }
         }
         Ok(())
@@ -519,7 +516,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
                         if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()).await {
-                            log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
+                            log_peer_warn(&self.node, &format!("Error adding transaction: {e}"));
                             continue;
                         }
                         valid_txs.push(tx.clone());
@@ -592,7 +589,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         if let Err(error) = msg.validate_requested(requested).await {
                             log_peer_warn(
                                 &self.node,
-                                &format!("disconnected from peer. Reason: {}", error),
+                                &format!("disconnected from peer. Reason: {error}"),
                             );
                             self.send_disconnect_message(Some(DisconnectReason::SubprotocolError))
                                 .await;

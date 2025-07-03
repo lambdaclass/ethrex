@@ -160,7 +160,7 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let tx_set: HashSet<_> = tx_pool.iter().map(|(hash, _)| hash).collect();
+        let tx_set: HashSet<_> = tx_pool.keys().collect();
         Ok(possible_hashes
             .iter()
             .filter(|hash| !tx_set.contains(hash))
@@ -226,8 +226,8 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
         Ok(pooled_transactions
-            .iter()
-            .map(|(_, mem_tx)| mem_tx.transaction())
+            .values()
+            .map(MempoolTransaction::transaction)
             .cloned()
             .collect())
     }
