@@ -344,9 +344,10 @@ impl Store {
                 }
             }
             let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
-            let _ = cursor_state_trie_pruning_log.seek_closest(start_key)?;
-            while cursor_state_trie_pruning_log.prev_key()?.is_some() {
+            let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
+            while keyval.is_some() {
                 cursor_state_trie_pruning_log.delete_current_key()?;
+                keyval = cursor_state_trie_pruning_log.prev_key()?;
             }
         }
 
@@ -364,9 +365,10 @@ impl Store {
                 }
             }
             let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
-            let _ = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
-            while cursor_storage_trie_pruning_log.prev_key()?.is_some() {
+            let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
+            while keyval.is_some() {
                 cursor_storage_trie_pruning_log.delete_current_key()?;
+                keyval = cursor_storage_trie_pruning_log.prev_key()?;
             }
         }
 
