@@ -138,9 +138,6 @@ impl RLPxConnectionState {
 }
 
 #[derive(Clone)]
-pub enum CallMessage {}
-
-#[derive(Clone)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
