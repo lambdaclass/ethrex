@@ -8,33 +8,33 @@ use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use keccak_hash::keccak;
 
 pub async fn get_logs(
-    last_l1_block_fetched: &mut U256,
-    on_chain_proposer_address: Address,
+    last_block_fetched: &mut U256,
+    emitter: Address,
     log_signature: &str,
-    eth_client: &EthClient,
+    client: &EthClient,
 ) -> Vec<RpcLog> {
-    let last_l1_block_number = eth_client
+    let last_block_number = client
         .get_block_number()
         .await
         .expect("Failed to get latest L1 block");
 
     let mut batch_committed_logs = Vec::new();
-    while *last_l1_block_fetched < last_l1_block_number {
-        let new_last_l1_fetched_block = min(*last_l1_block_fetched + 50, last_l1_block_number);
+    while *last_block_fetched < last_block_number {
+        let new_last_l1_fetched_block = min(*last_block_fetched + 50, last_block_number);
 
         // Fetch logs from the L1 chain for the BatchCommitted event.
-        let logs = eth_client
+        let logs = client
             .get_logs(
-                *last_l1_block_fetched + 1,
+                *last_block_fetched + 1,
                 new_last_l1_fetched_block,
-                on_chain_proposer_address,
+                emitter,
                 keccak(log_signature.as_bytes()),
             )
             .await
-            .unwrap_or_else(|_| panic!("Failed to fetch {log_signature} logs"));
+            .unwrap_or_else(|_| panic!("Failed to fetch {log_signature} logs from {emitter}"));
 
         // Update the last L1 block fetched.
-        *last_l1_block_fetched = new_last_l1_fetched_block;
+        *last_block_fetched = new_last_l1_fetched_block;
 
         batch_committed_logs.extend_from_slice(&logs);
     }

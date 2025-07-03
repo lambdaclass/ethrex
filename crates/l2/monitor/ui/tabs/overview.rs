@@ -38,6 +38,7 @@ pub fn draw(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
         Constraint::Fill(1),
         Constraint::Fill(1),
         Constraint::Fill(1),
+        Constraint::Fill(1),
         Constraint::Length(1),
     ])
     .split(area);
@@ -59,7 +60,8 @@ pub fn draw(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
     draw_blocks(frame, app, chunks[2]);
     draw_mempool(frame, app, chunks[3]);
     draw_l1_to_l2_messages(frame, app, chunks[4]);
-    draw_text(frame, chunks[5]);
+    draw_l2_to_l1_messages(frame, app, chunks[5]);
+    draw_text(frame, chunks[6]);
 }
 
 fn draw_ethrex_logo(frame: &mut Frame, area: Rect) {
@@ -262,6 +264,60 @@ fn draw_l1_to_l2_messages(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect
                 .border_style(Style::default().fg(Color::Cyan))
                 .title(Span::styled(
                     "L1 to L2 Messages",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+        );
+
+    frame.render_stateful_widget(
+        l1_to_l2_messages_table,
+        area,
+        &mut app.l1_to_l2_messages.state,
+    );
+}
+
+fn draw_l2_to_l1_messages(frame: &mut Frame, app: &mut EthrexMonitor, area: Rect) {
+    let constraints = vec![
+        Constraint::Length(9),
+        Constraint::Length(16),
+        Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+        Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+        Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+        Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+        Constraint::Length(HASH_LENGTH_IN_DIGITS),
+    ];
+
+    let rows = app.l2_to_l1_messages.items.iter().map(
+        |(kind, status, receiver_on_l1, value, token_l1, token_l2, l2_tx_hash)| {
+            Row::new(vec![
+                Span::styled(format!("{kind}"), Style::default()),
+                Span::styled(format!("{status}"), Style::default()),
+                Span::styled(format!("{receiver_on_l1:#x}"), Style::default()),
+                Span::styled(value.to_string(), Style::default()),
+                Span::styled(format!("{token_l1:#x}"), Style::default()),
+                Span::styled(format!("{token_l2:#x}"), Style::default()),
+                Span::styled(format!("{l2_tx_hash:#x}"), Style::default()),
+            ])
+        },
+    );
+
+    let l1_to_l2_messages_table = Table::new(rows, constraints)
+        .header(
+            Row::new(vec![
+                "Kind",
+                "Status",
+                "Receiver on L1",
+                "Value",
+                "Token L1",
+                "Token L2",
+                "L2 Tx Hash",
+            ])
+            .style(Style::default()),
+        )
+        .block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(Span::styled(
+                    "L2 to L1 Messages",
                     Style::default().add_modifier(Modifier::BOLD),
                 )),
         );
