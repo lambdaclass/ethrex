@@ -60,9 +60,9 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Code updates
     pub code_updates: Vec<(H256, Bytes)>,
-
-    /// Updates for the log tables - (address, old_info, new_info)
+    /// Updates for the account info log table - (address, old_info, new_info)
     pub account_info_log_updates: Vec<(AccountAddress, AccountInfo, AccountInfo)>,
+    /// Updates for the account storage log table
     pub storage_log_updates: Vec<AccountStorageLogEntry>,
 }
 
