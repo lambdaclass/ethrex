@@ -156,10 +156,10 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::Underflow)?
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?; // Same case as above
-            #[expect(clippy::as_conversions)]
+            #[expect(clippy::as_conversions, clippy::arithmetic_side_effects)]
             current_call_frame
                 .stack
-                .push(&[(op2.overflowing_shr(byte_to_push as u32).0 & U256::ONE)])?;
+                .push(&[((op2 >> (u8::BITS * (byte_to_push as u32))) & U256::from(0xFFu32))])?;
         } else {
             current_call_frame.stack.push(&[U256::ZERO])?;
         }
