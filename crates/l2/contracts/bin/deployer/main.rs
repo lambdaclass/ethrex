@@ -204,7 +204,7 @@ async fn deploy_contracts(
         Default::default()
     };
 
-    // if it's a required proof type, but no address has been specify, deploy it.
+    // if it's a required proof type, but no address has been specified, deploy it.
     let sp1_verifier_address = match opts.sp1_verifier_address {
         Some(addr) if opts.sp1 => addr,
         None if opts.sp1 => {
@@ -231,7 +231,7 @@ async fn deploy_contracts(
         ));
     };
 
-    // if it's a required proof type, but no address has been specify, deploy it.
+    // if it's a required proof type, but no address has been specified, deploy it.
     let tdx_verifier_address = match opts.tdx_verifier_address {
         Some(addr) if opts.tdx => addr,
         None if opts.tdx => {
