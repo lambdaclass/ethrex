@@ -243,10 +243,14 @@ impl BlockFetcherState {
 
             let batch_blocks = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 
-            let last_block_hash = batch_blocks.last().unwrap().header.hash();
+            let Some(last_block) = batch_blocks.last() else {
+                return Err(BlockFetcherError::InternalError(
+                    "Batch block shouldn't be empty.".into(),
+                ));
+            };
             self.pending_batches.push_back(PendingBatch {
                 number: *batch_number,
-                last_block_hash,
+                last_block_hash: last_block.header.hash(),
             });
         }
         Ok(())
