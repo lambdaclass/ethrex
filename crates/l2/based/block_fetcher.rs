@@ -365,7 +365,7 @@ impl BlockFetcherState {
                         .try_into()
                         .map_err(|_| {
                             BlockFetcherError::InternalError(
-                                "Invalid byte length for u64 conversion".to_string(),
+                                "Invalid conversion from be bytes to u64".to_string(),
                             )
                         })?,
                 );
@@ -395,7 +395,7 @@ impl BlockFetcherState {
                         .try_into()
                         .map_err(|_| {
                             BlockFetcherError::InternalError(
-                                "Invalid byte length for u64 conversion".to_string(),
+                                "Invalid conversion from be bytes to u64".to_string(),
                             )
                         })?,
                 );
