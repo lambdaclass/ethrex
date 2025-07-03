@@ -54,7 +54,6 @@ interface IOnChainProposer {
     /// @dev This method is used by the operator when a batch is ready to be
     /// verified (this is after proved).
     /// @param batchNumber is the number of the batch to be verified.
-    /// @param lastBlockHash is the hash of the last block in the batch.
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
     /// @param risc0Journal public_inputs aka journal
@@ -66,7 +65,6 @@ interface IOnChainProposer {
     /// @param tdxSignature TDX signature
     function verifyBatch(
         uint256 batchNumber,
-        bytes32 lastBlockHash,
         //risc0
         bytes memory risc0BlockProof,
         bytes calldata risc0Journal,

@@ -307,7 +307,6 @@ contract OnChainProposer is
     /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
     function verifyBatch(
         uint256 batchNumber,
-        bytes32 lastBlockHash,
         //risc0
         bytes memory risc0BlockProof,
         bytes calldata risc0Journal,
@@ -328,10 +327,6 @@ contract OnChainProposer is
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
             "OnChainProposer: cannot verify an uncommitted batch"
-        );
-        require(
-            batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
-            "OnChainProposer: LastBlockHash doesn't match expected"
         );
 
         if (R0VERIFIER != DEV_MODE) {
@@ -377,7 +372,7 @@ contract OnChainProposer is
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
 
-        verifiedBatches[lastBlockHash] = true;
+        verifiedBatches[batchCommitments[batchNumber].lastBlockHash] = true;
 
         emit BatchVerified(lastVerifiedBatch);
     }

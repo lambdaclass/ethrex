@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
-use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -34,9 +33,6 @@ use aligned_sdk::{
 // TODO: Remove this import once it's no longer required by the SDK.
 use ethers::signers::{Signer, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE_BASED: &str =
-    "verifyBatch(uint256,bytes32,bytes,bytes,bytes,bytes,bytes,bytes)";
-
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
@@ -47,9 +43,7 @@ pub struct L1ProofSenderState {
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
-    based: bool,
     sequencer_state: SequencerState,
-    store: Store,
     rollup_store: StoreRollup,
     l1_chain_id: u64,
     network: Network,
@@ -63,10 +57,8 @@ impl L1ProofSenderState {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
-        based: bool,
         sequencer_state: SequencerState,
         aligned_cfg: &AlignedConfig,
-        store: Store,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
@@ -85,9 +77,7 @@ impl L1ProofSenderState {
                 on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
-                based,
                 sequencer_state,
-                store,
                 rollup_store,
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
@@ -103,9 +93,7 @@ impl L1ProofSenderState {
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
-            based,
             sequencer_state,
-            store,
             rollup_store,
             l1_chain_id,
             network: aligned_cfg.network.clone(),
@@ -131,7 +119,6 @@ impl L1ProofSender {
     pub async fn spawn(
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
-        store: Store,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofSenderError> {
@@ -139,10 +126,8 @@ impl L1ProofSender {
             &cfg.proof_coordinator,
             &cfg.l1_committer,
             &cfg.eth,
-            cfg.based.based,
             sequencer_state,
             &cfg.aligned,
-            store,
             rollup_store,
             needed_proof_types,
         )
@@ -208,18 +193,6 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         return Ok(());
     }
 
-    let batch = state.rollup_store.get_batch(batch_to_send).await?.ok_or(
-        ProofSenderError::InternalError("Batch should already be on the Rollup store.".to_string()),
-    )?;
-
-    let last_block_hash = state
-        .store
-        .get_block_header(batch.last_block)?
-        .map(|header| header.hash())
-        .ok_or(ProofSenderError::InternalError(
-            "Failed to get last block hash from storage".to_owned(),
-        ))?;
-
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();
     for proof_type in &state.needed_proof_types {
@@ -240,7 +213,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
             send_proof_to_aligned(state, batch_to_send, aligned_proof).await?;
         } else {
-            send_proof_to_contract(state, batch_to_send, last_block_hash, proofs).await?;
+            send_proof_to_contract(state, batch_to_send, proofs).await?;
         }
         state
             .rollup_store
@@ -326,7 +299,6 @@ async fn estimate_fee(state: &L1ProofSenderState) -> Result<ethers::types::U256,
 pub async fn send_proof_to_contract(
     state: &L1ProofSenderState,
     batch_number: u64,
-    last_block_hash: H256,
     proofs: HashMap<ProverType, BatchProof>,
 ) -> Result<(), ProofSenderError> {
     info!(
@@ -334,50 +306,26 @@ pub async fn send_proof_to_contract(
         "Sending batch verification transaction to L1"
     );
 
-    let calldata = if state.based {
-        let calldata_values = [
-            &[Value::Uint(U256::from(batch_number))],
-            &[Value::FixedBytes(last_block_hash.0.to_vec().into())],
-            proofs
-                .get(&ProverType::RISC0)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::RISC0.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::SP1)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::SP1.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::TDX)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::TDX.empty_calldata())
-                .as_slice(),
-        ]
-        .concat();
-        encode_calldata(VERIFY_FUNCTION_SIGNATURE_BASED, &calldata_values)?
-    } else {
-        let calldata_values = [
-            &[Value::Uint(U256::from(batch_number))],
-            proofs
-                .get(&ProverType::RISC0)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::RISC0.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::SP1)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::SP1.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::TDX)
-                .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::TDX.empty_calldata())
-                .as_slice(),
-        ]
-        .concat();
-        encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?
-    };
+    let calldata_values = [
+        &[Value::Uint(U256::from(batch_number))],
+        proofs
+            .get(&ProverType::RISC0)
+            .map(|proof| proof.calldata())
+            .unwrap_or(ProverType::RISC0.empty_calldata())
+            .as_slice(),
+        proofs
+            .get(&ProverType::SP1)
+            .map(|proof| proof.calldata())
+            .unwrap_or(ProverType::SP1.empty_calldata())
+            .as_slice(),
+        proofs
+            .get(&ProverType::TDX)
+            .map(|proof| proof.calldata())
+            .unwrap_or(ProverType::TDX.empty_calldata())
+            .as_slice(),
+    ]
+    .concat();
+    let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
     let verify_tx_hash = send_verify_tx(
         calldata,
