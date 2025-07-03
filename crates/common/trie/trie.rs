@@ -13,6 +13,7 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasher, Hasher};
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -53,6 +54,30 @@ pub type TrieNode = (NodeHash, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     root: NodeRef,
+    invalidated_nodes: HashSet<H256, XorHash>,
+}
+
+#[derive(Default, Clone)]
+struct XorHash {
+    hash: u64,
+    n: usize,
+}
+impl Hasher for XorHash {
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for (i, b) in bytes.into_iter().enumerate() {
+            let i = (i + self.n) % 8;
+            self.hash ^= (*b as u64) << (i * 8);
+        }
+    }
+}
+impl BuildHasher for XorHash {
+    type Hasher = Self;
+    fn build_hasher(&self) -> Self::Hasher {
+        Self { hash: 0, n: 0 }
+    }
 }
 
 impl Default for Trie {
@@ -67,6 +92,7 @@ impl Trie {
         Self {
             db,
             root: NodeRef::default(),
+            invalidated_nodes: HashSet::default(),
         }
     }
 
@@ -79,6 +105,7 @@ impl Trie {
             } else {
                 Default::default()
             },
+            invalidated_nodes: HashSet::default(),
         }
     }
 
@@ -106,18 +133,25 @@ impl Trie {
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
+        let mut invalidated_nodes = Vec::with_capacity(64);
 
         self.root = if self.root.is_valid() {
+            match self.root {
+                NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
+                _ => (),
+            }
+
             // If the trie is not empty, call the root node's insertion logic.
             self.root
                 .get_node(self.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?
+                .insert(self.db.as_ref(), path, value, &mut invalidated_nodes)?
                 .into()
         } else {
             // If the trie is empty, just add a leaf.
             Node::from(LeafNode::new(path, value)).into()
         };
+        self.invalidated_nodes.extend(invalidated_nodes);
 
         Ok(())
     }
@@ -129,13 +163,24 @@ impl Trie {
             return Ok(None);
         }
 
+        let mut invalidated_nodes = Vec::with_capacity(64);
+        match self.root {
+            NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
+            _ => (),
+        }
+
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .root
             .get_node(self.db.as_ref())?
             .ok_or(TrieError::InconsistentTree)?
-            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+            .remove(
+                self.db.as_ref(),
+                Nibbles::from_bytes(&path),
+                &mut invalidated_nodes,
+            )?;
         self.root = node.map(Into::into).unwrap_or_default();
+        self.invalidated_nodes.extend(invalidated_nodes);
 
         Ok(value)
     }
@@ -163,10 +208,14 @@ impl Trie {
     /// # Returns
     ///
     /// A tuple containing the hash and the list of changes.
-    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
+    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>, Vec<H256>) {
         let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
-        (ret_hash, updates)
+        (
+            ret_hash,
+            updates,
+            self.invalidated_nodes.iter().cloned().collect(),
+        )
     }
 
     /// Compute the hash of the root node and flush any changes into the database.
@@ -462,13 +511,19 @@ impl ProofTrie {
         partial_path: Nibbles,
         external_ref: NodeHash,
     ) -> Result<(), TrieError> {
+        let mut invalidated_nodes = Vec::new();
         self.0.root = if self.0.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
             self.0
                 .root
                 .get_node(self.0.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.0.db.as_ref(), partial_path, external_ref)?
+                .insert(
+                    self.0.db.as_ref(),
+                    partial_path,
+                    external_ref,
+                    &mut invalidated_nodes,
+                )?
                 .into()
         } else {
             external_ref.into()

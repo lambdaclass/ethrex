@@ -316,30 +316,87 @@ impl Store {
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
         let tx = self.db.begin_readwrite()?;
 
-        let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
-        let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+        let stats_pre_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        tracing::info!(
+            state_trie_entries = stats_pre_state_nodes.entries(),
+            state_trie_log_entries = stats_pre_state_log.entries(),
+            storage_trie_entries = stats_pre_storage_nodes.entries(),
+            storage_trie_log_entries = stats_pre_storage_log.entries(),
+            "[PRUNING METRICS PRE]",
+        );
 
-        // get last block
-        let last_state_trie_pruning_log = cursor_state_trie_pruning_log.last()?;
-        if let Some((BlockNumHash(key_num, _), _)) = last_state_trie_pruning_log {
+        let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+        if let Some((BlockNumHash(key_num, _), _)) = cursor_state_trie_pruning_log.last()? {
             // delete nodes in back order
+            let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
             let start_key = key_num - 256; // we keep the last 256 blocks
             for nodehash in cursor_state_trie_pruning_log.walk_back(Some(start_key)) {
                 let (_, nodehash_value) = nodehash?;
                 let k_delete = NodeHash::Hashed(nodehash_value.into());
-                tx.delete::<StateTrieNodes>(k_delete, None)?;
+                if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
+                    && key == k_delete
+                {
+                    cursor_state_trie.delete_current()?;
+                }
+            }
+            let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+            let _ = cursor_state_trie_pruning_log.seek_closest(key_num)?;
+            while cursor_state_trie_pruning_log.prev_key()?.is_some() {
+                cursor_state_trie_pruning_log.delete_current_key()?;
             }
         }
 
-        let last_storage_trie_pruning_log = cursor_storage_trie_pruning_log.last()?;
-        if let Some((BlockNumHash(key_num, _), _)) = last_storage_trie_pruning_log {
+        let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+        if let Some((BlockNumHash(key_num, _), _)) = cursor_storage_trie_pruning_log.last()? {
             // delete nodes in back order
+            let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
             let start_key = key_num - 256; // we keep the last 256 blocks
             for nodehash in cursor_storage_trie_pruning_log.walk_back(Some(start_key)) {
                 let (_, nodehash_value) = nodehash?;
-                tx.delete::<StorageTriesNodes>(nodehash_value, None)?;
+                if let Some((key, _)) = cursor_storage_trie.seek_exact(nodehash_value)?
+                    && key == nodehash_value
+                {
+                    cursor_storage_trie.delete_current()?;
+                }
+            }
+            let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+            let _ = cursor_storage_trie_pruning_log.seek_closest(key_num)?;
+            while cursor_storage_trie_pruning_log.prev_key()?.is_some() {
+                cursor_storage_trie_pruning_log.delete_current_key()?;
             }
         }
+
+        let stats_post_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+
+        tracing::info!(
+            state_trie_entries = stats_post_state_nodes.entries(),
+            state_trie_log_entries = stats_post_state_log.entries(),
+            storage_trie_entries = stats_post_storage_nodes.entries(),
+            storage_trie_log_entries = stats_post_storage_log.entries(),
+            "[PRUNING METRICS POST]",
+        );
 
         tx.commit().map_err(StoreError::LibmdbxError)
     }
@@ -350,62 +407,61 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
+            // If no blocks are updated then the batchs should be empty and there's no work to do.
+            let (Some(first_block), Some(last_block)) =
+                (update_batch.blocks.first(), update_batch.blocks.last())
+            else {
+                return Ok(());
+            };
+
             let tx = db.begin_readwrite()?;
 
             // We only need to update the flat tables if the update batch contains blocks
             // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
-            if let (Some(first_block), Some(last_block)) =
-                (update_batch.blocks.first(), update_batch.blocks.last())
+            let parent_block = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
+            let final_block = (last_block.header.number, last_block.hash()).into();
+
+            let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
-                let parent_block = (
-                    first_block.header.number - 1,
-                    first_block.header.parent_hash,
-                )
-                    .into();
-                let final_block = (last_block.header.number, last_block.hash()).into();
+                account_info_log_cursor.upsert(
+                    (final_block, parent_block),
+                    AccountInfoLogEntry {
+                        address: addr.0,
+                        info: new_info,
+                        previous_info: old_info,
+                    },
+                )?;
+            }
 
-                let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
-                for (addr, old_info, new_info) in
-                    update_batch.account_info_log_updates.iter().cloned()
-                {
-                    account_info_log_cursor.upsert(
-                        (final_block, parent_block),
-                        AccountInfoLogEntry {
-                            address: addr.0,
-                            info: new_info,
-                            previous_info: old_info,
-                        },
-                    )?;
+            let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+            for entry in update_batch.storage_log_updates.iter().cloned() {
+                account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
+            }
+
+            let meta = tx
+                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+                .unwrap_or_default();
+            if meta == parent_block {
+                let mut cursor = tx.cursor::<FlatAccountInfo>()?;
+                let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+
+                for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
+                    let key = addr;
+                    let value = (new_info != AccountInfo::default())
+                        .then_some(EncodableAccountInfo(new_info));
+                    Self::replace_value_or_delete(&mut cursor, key, value)?;
                 }
-
-                let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
-                for entry in update_batch.storage_log_updates.iter().cloned() {
-                    account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
+                for entry in update_batch.storage_log_updates {
+                    let key = (entry.address.into(), entry.slot.into());
+                    let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
+                    Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
                 }
-
-                let meta = tx
-                    .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
-                    .unwrap_or_default();
-                if meta == parent_block {
-                    let mut cursor = tx.cursor::<FlatAccountInfo>()?;
-                    let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
-
-                    for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
-                        let key = addr;
-                        let value = (new_info != AccountInfo::default())
-                            .then_some(EncodableAccountInfo(new_info));
-                        Self::replace_value_or_delete(&mut cursor, key, value)?;
-                    }
-                    for entry in update_batch.storage_log_updates {
-                        let key = (entry.address.into(), entry.slot.into());
-                        let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
-                        Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
-                    }
-                    tx.upsert::<FlatTablesBlockMetadata>(
-                        FlatTablesBlockMetadataKey {},
-                        final_block,
-                    )?;
-                }
+                tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)?;
             }
 
             let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
@@ -415,13 +471,13 @@ impl StoreEngine for Store {
             // we store account info changes in the table StateWriteBatch
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                // before inserting, we insert the node into the pruning log
-                cursor_state_trie_pruning_log.upsert(
-                    final_block,
-                    StateTriePruningLogEntry::from(node_hash.finalize().0),
-                )?;
-
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
+            }
+
+            for node_hash in update_batch.invalidated_state_nodes {
+                // before inserting, we insert the node into the pruning log
+                cursor_state_trie_pruning_log
+                    .upsert(final_block, StateTriePruningLogEntry::from(node_hash.0))?;
             }
 
             // store code updates
@@ -429,14 +485,18 @@ impl StoreEngine for Store {
                 tx.upsert::<AccountCodes>(hashed_address.into(), code.into())?;
             }
 
-            for (hashed_address, nodes) in update_batch.storage_updates {
+            for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
+                let key_1: [u8; 32] = hashed_address.into();
                 for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    cursor_storage_trie_pruning_log.upsert(final_block, (key_1, key_2))?;
-
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
+                }
+                for node_hash in invalidated_nodes {
+                    // NOTE: the hash itself *should* suffice, but this way the value matches
+                    // the other table's key.
+                    let key_2 = node_hash_to_fixed_size(NodeHash::Hashed(node_hash));
+                    cursor_storage_trie_pruning_log.upsert(final_block, (key_1, key_2))?;
                 }
             }
             for block in update_batch.blocks {

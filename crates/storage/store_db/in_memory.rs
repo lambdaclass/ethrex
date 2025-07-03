@@ -196,7 +196,7 @@ impl StoreEngine for Store {
             store.account_codes.insert(hashed_address, code);
         }
 
-        for (hashed_address, nodes) in update_batch.storage_updates {
+        for (hashed_address, nodes, _) in update_batch.storage_updates {
             let mut addr_store = store
                 .storage_trie_nodes
                 .entry(hashed_address)

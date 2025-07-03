@@ -1,3 +1,4 @@
+use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
@@ -61,6 +62,7 @@ impl BranchNode {
         db: &dyn TrieDB,
         mut path: Nibbles,
         value: ValueOrHash,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<Node, TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
@@ -77,7 +79,9 @@ impl BranchNode {
                         .get_node(db)?
                         .ok_or(TrieError::InconsistentTree)?;
 
-                    *choice_ref = child_node.insert(db, path, value)?.into();
+                    *choice_ref = child_node
+                        .insert(db, path, value, invalidated_nodes)?
+                        .into();
                 }
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
@@ -88,10 +92,14 @@ impl BranchNode {
                             "attempt to override proof node with external hash".to_string(),
                         ));
                     } else {
+                        match choice_ref {
+                            NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(*hash),
+                            _ => (),
+                        }
                         *choice_ref = choice_ref
                             .get_node(db)?
                             .ok_or(TrieError::InconsistentTree)?
-                            .insert(db, path, value)?
+                            .insert(db, path, value, invalidated_nodes)?
                             .into();
                     }
                 }
@@ -112,6 +120,7 @@ impl BranchNode {
         mut self,
         db: &dyn TrieDB,
         mut path: Nibbles,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Step 1: Removal
@@ -135,11 +144,16 @@ impl BranchNode {
         // Check if the value is located in a child subtrie
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
+                match self.choices[choice_index] {
+                    NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
+                    _ => (),
+                }
                 let child_node = self.choices[choice_index]
                     .get_node(db)?
                     .ok_or(TrieError::InconsistentTree)?;
                 // Remove value from child node
-                let (child_node, old_value) = child_node.remove(db, path.clone())?;
+                let (child_node, old_value) =
+                    child_node.remove(db, path.clone(), invalidated_nodes)?;
                 if let Some(child_node) = child_node {
                     // Update child node
                     self.choices[choice_index] = child_node.into();

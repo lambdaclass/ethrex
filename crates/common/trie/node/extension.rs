@@ -1,3 +1,4 @@
+use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
 
 use crate::ValueRLP;
@@ -43,6 +44,7 @@ impl ExtensionNode {
         db: &dyn TrieDB,
         path: Nibbles,
         value: ValueOrHash,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<Node, TrieError> {
         /* Possible flow paths:
             * Prefix fully matches path
@@ -57,11 +59,16 @@ impl ExtensionNode {
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
             // Insert into child node
+            match self.child {
+                NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
+                _ => (),
+            }
             let child_node = self
                 .child
                 .get_node(db)?
                 .ok_or(TrieError::InconsistentTree)?;
-            let new_child_node = child_node.insert(db, path.offset(match_index), value)?;
+            let new_child_node =
+                child_node.insert(db, path.offset(match_index), value, invalidated_nodes)?;
             self.child = new_child_node.into();
             Ok(self.into())
         } else if match_index == 0 {
@@ -80,10 +87,11 @@ impl ExtensionNode {
                 choices[self.prefix.at(0)] = new_node;
                 BranchNode::new(choices)
             };
-            branch_node.insert(db, path, value)
+            branch_node.insert(db, path, value, invalidated_nodes)
         } else {
             let new_extension = ExtensionNode::new(self.prefix.offset(match_index), self.child);
-            let new_node = new_extension.insert(db, path.offset(match_index), value)?;
+            let new_node =
+                new_extension.insert(db, path.offset(match_index), value, invalidated_nodes)?;
             self.prefix = self.prefix.slice(0, match_index);
             self.child = new_node.into();
             Ok(self.into())
@@ -94,6 +102,7 @@ impl ExtensionNode {
         mut self,
         db: &dyn TrieDB,
         mut path: Nibbles,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Extension { prefix, child } -> Extension { prefix, child } (no removal)
@@ -105,12 +114,16 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
+            match self.child {
+                NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
+                _ => (),
+            }
             let child_node = self
                 .child
                 .get_node(db)?
                 .ok_or(TrieError::InconsistentTree)?;
             // Remove value from child subtrie
-            let (child_node, old_value) = child_node.remove(db, path)?;
+            let (child_node, old_value) = child_node.remove(db, path, invalidated_nodes)?;
             // Restructure node based on removal
             let node = match child_node {
                 // If there is no subtrie remove the node
