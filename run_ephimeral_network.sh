@@ -49,6 +49,7 @@ run_nodes() {
     p2p_base=30303
 
     genesis_path="test_data/genesis-l2.json"
+    tmux_session=$(tmux display-message -p '#S')
 
     for i in $(seq 1 $n); do
         committer_key=${keys[$((2*i))]}
@@ -59,45 +60,41 @@ run_nodes() {
         p2p_port=$((p2p_base + i))
         discovery_port=$p2p_port
         datadir="ethrex_l2_$i"
-        
-#        echo "$committer_key"
-#        echo "$proof_coord_key"
-#        echo $genesis_path
-#		echo "$datadir"
-#        echo "$proof_coord_port"
-#        echo "$http_port"
-#        echo "$sequencer_registry_address"
-#        echo "$on_chain_proposer_address"
-#        echo "$bridge_address"
-#        echo "$p2p_port"
-#        echo "$discovery_port"
-#        echo "$bootnode"
 
-        command=(cargo run --release --bin ethrex --features l2 -- l2 init \
-        --watcher.block-delay 0 \
-        --eth.rpc-url http://localhost:8545 \
-        --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
-        --committer.l1-private-key "$committer_key" \
-        --proof-coordinator.l1-private-key "$proof_coord_key" \
-        --network $genesis_path \
-        --datadir "$datadir" \
-        --proof-coordinator.addr 127.0.0.1 --proof-coordinator.port "$proof_coord_port" \
-        --http.port "$http_port" \
-        --state-updater.sequencer-registry "$sequencer_registry_address" \
-        --l1.on-chain-proposer-address "$on_chain_proposer_address" \
-        --l1.bridge-address "$bridge_address" \
-        --based \
-        --p2p.enabled --p2p.port "$p2p_port" --discovery.port "$discovery_port" --bootnodes "$bootnode")
+        cmd_str="cargo run --release --bin ethrex --features l2 -- l2 init \\
+        --watcher.block-delay 0 \\
+        --eth.rpc-url http://localhost:8545 \\
+        --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \\
+        --committer.l1-private-key \"$committer_key\" \\
+        --proof-coordinator.l1-private-key \"$proof_coord_key\" \\
+        --network $genesis_path \\
+        --datadir \"$datadir\" \\
+        --proof-coordinator.addr 127.0.0.1 --proof-coordinator.port \"$proof_coord_port\" \\
+        --http.port \"$http_port\" \\
+        --state-updater.sequencer-registry \"$sequencer_registry_address\" \\
+        --l1.on-chain-proposer-address \"$on_chain_proposer_address\" \\
+        --l1.bridge-address \"$bridge_address\" \\
+        --based \\
+        --p2p.enabled --p2p.port \"$p2p_port\" --discovery.port \"$discovery_port\" --bootnodes \"$bootnode\""
 
         echo $datadir >> $datadirs_path
         echo "http://localhost:$http_port" >> $rpcs_path
 
-        nohup "${command[@]}" > $logs_path/log$i.txt 2>&1 &
-        pid=$!
+        tmux_cmd="echo 'Starting node $i with committer key: $committer_key and proof coordinator key: $proof_coord_key'; "
+        tmux_cmd+="$cmd_str & echo \$! > \"$pid_file\"; wait %1; "
+        tmux_cmd+="echo 'Node $i completed with exit code \$?'; read"
 
-        echo "[$pid] Started node $i with committer key: $committer_key and proof coordinator key: $proof_coord_key"
-
-        echo $pid >> $pids_path
+        tmux new-window -t $tmux_session: -n "ethrex-node-$i" "$tmux_cmd"
+        
+        sleep 0.5
+        
+        if [ -f "$pid_file" ]; then
+            actual_pid=$(cat "$pid_file")
+            echo "$actual_pid" >> $pids_path
+        else
+            echo "Warning: Could not capture PID for node $i - PID file not created"
+            echo "unknown-$i" >> $pids_path
+        fi
     done
 }
 
