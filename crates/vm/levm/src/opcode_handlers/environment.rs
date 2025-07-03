@@ -134,6 +134,12 @@ impl<'a> VM<'a> {
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
+        let dest_offset: usize = dest_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let calldata_offset: usize = calldata_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -151,14 +157,10 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if calldata_offset > current_call_frame.calldata.len().into() {
+        if calldata_offset > current_call_frame.calldata.len() {
             memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
-
-        let calldata_offset: usize = calldata_offset
-            .try_into()
-            .map_err(|_err| InternalError::TypeConversion)?;
 
         for (i, byte) in current_call_frame
             .calldata
@@ -193,7 +195,12 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
-
+        let destination_offset: usize = destination_offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let code_offset: usize = code_offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -211,11 +218,7 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len().into() {
-            let code_offset: usize = code_offset
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
-
+        if code_offset < current_call_frame.bytecode.len() {
             for (i, byte) in current_call_frame
                 .bytecode
                 .iter()
@@ -267,6 +270,12 @@ impl<'a> VM<'a> {
         let call_frame = self.current_call_frame_mut()?;
         let [address, dest_offset, offset, size] = *call_frame.stack.pop()?;
         let address = word_to_address(address);
+        let dest_offset = dest_offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -293,10 +302,7 @@ impl<'a> VM<'a> {
         let bytecode = &self.db.get_account(address)?.code;
 
         let mut data = vec![0u8; size];
-        if offset < bytecode.len().into() {
-            let offset: usize = offset
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
+        if offset < bytecode.len() {
             for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
                 if let Some(data_byte) = data.get_mut(i) {
                     *data_byte = *byte;
@@ -329,6 +335,9 @@ impl<'a> VM<'a> {
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, returndata_offset, size] = *current_call_frame.stack.pop()?;
+        let dest_offset: usize = dest_offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let returndata_offset: usize = returndata_offset
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;

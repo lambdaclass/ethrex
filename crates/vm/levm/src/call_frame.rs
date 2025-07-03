@@ -172,7 +172,7 @@ pub struct CallFrame {
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
     /// Return data offset
-    pub ret_offset: U256,
+    pub ret_offset: usize,
     /// Return data size
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
@@ -229,7 +229,7 @@ impl CallFrame {
         depth: usize,
         should_transfer_value: bool,
         is_create: bool,
-        ret_offset: U256,
+        ret_offset: usize,
         ret_size: usize,
     ) -> Self {
         let invalid_jump_destinations =
