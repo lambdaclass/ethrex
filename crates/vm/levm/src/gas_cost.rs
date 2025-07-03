@@ -228,7 +228,7 @@ pub const G2_MUL_COST: u64 = 22500;
 
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
     #[expect(clippy::arithmetic_side_effects)]
-    let exponent_byte_size = ((32 - exponent.leading_zeros())
+    let exponent_byte_size = ((256 - exponent.leading_zeros())
         .checked_add(7)
         .ok_or(OutOfGas)?)
         / 8;

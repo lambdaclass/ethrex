@@ -387,7 +387,7 @@ impl KademliaTable {
 pub fn bucket_number(node_id_1: H256, node_id_2: H256) -> usize {
     let xor = node_id_1 ^ node_id_2;
     let distance = U256::from_be_bytes(xor.to_fixed_bytes());
-    (32 - distance.leading_zeros()).saturating_sub(1) as usize
+    (256 - distance.leading_zeros()).saturating_sub(1) as usize
 }
 
 #[derive(Debug, Clone)]
