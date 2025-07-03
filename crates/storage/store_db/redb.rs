@@ -514,7 +514,6 @@ impl StoreEngine for RedBStore {
 
                 // If current block is canonical, we're done
                 if canonical_hash == current_block.1 {
-                    tracing::info!("UNDO: Reached canonical chain at block {}", current_block.0);
                     break;
                 }
 
@@ -577,10 +576,7 @@ impl StoreEngine for RedBStore {
                 let Some(canonical_hash) =
                     self.get_block_hash_by_block_number(current_block_num)?
                 else {
-                    tracing::info!(
-                        "REPLAY: No canonical hash found for block {}",
-                        current_block_num
-                    );
+                    // If no canonical hash found, we've reached the end of the canonical chain
                     break;
                 };
 

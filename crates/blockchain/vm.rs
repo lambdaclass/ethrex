@@ -47,13 +47,7 @@ impl VmDatabase for StoreVmDatabase {
             .get_block_for_current_snapshot()
             .map_err(|e| EvmError::DB(e.to_string()))?;
 
-        tracing::info!(
-            "block_for_current_snapshot: {:?}",
-            block_for_current_snapshot
-        );
-
         if Some(self.block_hash) == block_for_current_snapshot {
-            tracing::info!("Using snapshot for account info");
             self.store.get_current_account_info(address)
         } else {
             // tracing::warn!(
@@ -74,7 +68,6 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))?;
 
         if Some(self.block_hash) == block_for_current_snapshot {
-            tracing::info!("Using snapshot for storage");
             self.store.get_current_storage(address, key)
         } else {
             // tracing::warn!(
