@@ -439,9 +439,9 @@ contract OnChainProposer is
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
-            merkleProofsList[i],
+            merkleProofsList,
             verificationKey,
-            publicInputsList[i]
+            publicInputsList
         );
         (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
             .staticcall(callData);
