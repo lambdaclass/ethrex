@@ -246,19 +246,6 @@ impl BlockFetcherState {
         }
         Ok(())
     }
-    //         info!("Fail here");
-    //         let batch = self
-    //             .build_batch_from_blocks(&batch_blocks, *batch_number)
-    //             .await?;
-    //         info!(
-    //             "Committed batch number {} waiting for verification.",
-    //             batch.number
-    //         );
-    //         self.latest_committed_batch = batch.number;
-    //         self.pending_verify_batches.push_back(batch);
-    //     }
-    //     Ok(())
-    // }
 
     /// Traverse the pending batches queue and stores the ones that are safe (verified).
     pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
