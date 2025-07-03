@@ -82,10 +82,15 @@ pub struct BlockFetcherState {
     last_l1_block_fetched: U256,
     fetch_block_step: U256,
     latest_committed_batch: u64,
-    pending_verify_batches: VecDeque<Batch>,
-
     pending_commit_log: BTreeMap<u64, RpcLog>,
     pending_verify_log: BTreeMap<u64, RpcLog>,
+    pending_batches: VecDeque<PendingBatch>,
+}
+
+#[derive(Clone)]
+struct PendingBatch {
+    number: u64,
+    last_block_hash: H256,
 }
 
 #[derive(Clone)]
@@ -181,9 +186,9 @@ impl BlockFetcherState {
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
             latest_committed_batch: 0,
-            pending_verify_batches: VecDeque::new(),
             pending_commit_log: BTreeMap::new(),
             pending_verify_log: BTreeMap::new(),
+            pending_batches: VecDeque::new(),
         })
     }
 
@@ -233,31 +238,40 @@ impl BlockFetcherState {
 
             let batch_blocks = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 
-            let batch = self
-                .build_batch_from_blocks(&batch_blocks, *batch_number)
-                .await?;
-            info!(
-                "Committed batch number {} waiting for verification.",
-                batch.number
-            );
-            self.latest_committed_batch = batch.number;
-            self.pending_verify_batches.push_back(batch);
+            let last_block_hash = batch_blocks.last().unwrap().header.hash();
+            self.pending_batches.push_back(PendingBatch {
+                number: *batch_number,
+                last_block_hash,
+            });
         }
         Ok(())
     }
+    //         info!("Fail here");
+    //         let batch = self
+    //             .build_batch_from_blocks(&batch_blocks, *batch_number)
+    //             .await?;
+    //         info!(
+    //             "Committed batch number {} waiting for verification.",
+    //             batch.number
+    //         );
+    //         self.latest_committed_batch = batch.number;
+    //         self.pending_verify_batches.push_back(batch);
+    //     }
+    //     Ok(())
+    // }
 
     /// Traverse the pending batches queue and stores the ones that are safe (verified).
     pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
-        while let Some(mut batch) = self.pending_verify_batches.pop_front() {
-            if self.batch_is_safe(&batch).await?
-                && self.pending_commit_log.contains_key(&batch.number)
-                && self.pending_verify_log.contains_key(&batch.number)
+        while let Some(pending_batch) = self.pending_batches.pop_front() {
+            if self.batch_is_safe(&pending_batch.last_block_hash).await?
+                && self.pending_commit_log.contains_key(&pending_batch.number)
+                && self.pending_verify_log.contains_key(&pending_batch.number)
             {
-                info!("Safe batch sealed {}.", batch.number);
-                let Some(commit_log) = self.pending_commit_log.remove(&batch.number) else {
+                info!("Safe batch sealed {}.", pending_batch.number);
+                let Some(commit_log) = self.pending_commit_log.remove(&pending_batch.number) else {
                     return Err(BlockFetcherError::InternalError("TODO".into()));
                 };
-                let Some(verify_log) = self.pending_verify_log.remove(&batch.number) else {
+                let Some(verify_log) = self.pending_verify_log.remove(&pending_batch.number) else {
                     return Err(BlockFetcherError::InternalError("TODO".into()));
                 };
 
@@ -284,11 +298,15 @@ impl BlockFetcherState {
                         block.header.number,
                     );
                 }
+
+                let mut batch = self
+                    .build_batch_from_blocks(&batch_blocks, pending_batch.number)
+                    .await?;
                 batch.commit_tx = Some(commit_log.transaction_hash);
                 batch.verify_tx = Some(verify_log.transaction_hash);
                 self.rollup_store.seal_batch(batch).await?;
             } else {
-                self.pending_verify_batches.push_front(batch);
+                self.pending_batches.push_front(pending_batch);
                 break;
             }
         }
@@ -390,12 +408,8 @@ impl BlockFetcherState {
 
     /// checks if a given batch is safe by accessing a mapping in the `OnChainProposer` contract.
     /// If it returns true for the current batch, it means that it have been verified.
-    async fn batch_is_safe(&mut self, batch: &Batch) -> Result<bool, BlockFetcherError> {
-        let Some(batch_last_block) = self.store.get_block_header(batch.last_block)? else {
-            return Err(BlockFetcherError::InternalError("TODO".to_string()));
-        };
-
-        let values = vec![Value::FixedBytes(batch_last_block.hash().0.to_vec().into())];
+    async fn batch_is_safe(&mut self, last_block_hash: &H256) -> Result<bool, BlockFetcherError> {
+        let values = vec![Value::FixedBytes(last_block_hash.0.to_vec().into())];
 
         let calldata = encode_calldata("verifiedBatches(bytes32)", &values)?;
 
