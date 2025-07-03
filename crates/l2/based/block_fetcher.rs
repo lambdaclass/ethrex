@@ -428,9 +428,11 @@ impl BlockFetcherState {
         let decoded_response = hex::decode(result.trim_start_matches("0x"))
             .map_err(|e| BlockFetcherError::InternalError(e.to_string()))?;
 
-        let Some(last_byte) = decoded_response.last() else {
-            return Err(BlockFetcherError::InternalError("decode error".to_string()));
-        };
+        let last_byte = decoded_response
+            .last()
+            .ok_or(BlockFetcherError::InternalError(
+                "Response should have at least one byte.".to_string(),
+            ))?;
 
         Ok(*last_byte > 0)
     }
