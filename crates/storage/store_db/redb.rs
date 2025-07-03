@@ -25,7 +25,8 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{
-    AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable, TableDefinition, TypeName, Value
+    AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable,
+    TableDefinition, TypeName, Value,
 };
 
 use crate::UpdateBatch;
@@ -642,9 +643,8 @@ impl StoreEngine for RedBStore {
             let write_txn = db.begin_write().map_err(Box::new)?;
             {
                 // Calculate parent and final block metadata for logs if we have blocks
-                if let (Some(first_block), Some(last_block)) = 
-                    (update_batch.blocks.first(), update_batch.blocks.last()) {
-                    
+                if let (Some(first_block), Some(last_block)) = (update_batch.blocks.first(), update_batch.blocks.last()) {
+
                     let parent_block = BlockNumHash(
                         first_block.header.number - 1,
                         first_block.header.parent_hash,
@@ -659,7 +659,7 @@ impl StoreEngine for RedBStore {
                             info: new_info,
                             previous_info: old_info,
                         };
-                        
+
                         let key: BlockNumHashRLP = final_block.into();
                         let value = (parent_block.into(), log_entry.into());
                         state_logs_table.insert(key, value)?;
@@ -1773,7 +1773,7 @@ impl StoreEngine for RedBStore {
         genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
         tracing::info!("Setting up genesis flat account storage");
-        
+
         // Prepare all key-value pairs for batch write
         let key_values: Vec<_> = genesis_accounts
             .iter()
@@ -1801,7 +1801,10 @@ impl StoreEngine for RedBStore {
         )
         .await?;
 
-        tracing::info!("Finished setting up genesis flat account storage for {} accounts", genesis_accounts.len());
+        tracing::info!(
+            "Finished setting up genesis flat account storage for {} accounts",
+            genesis_accounts.len()
+        );
         Ok(())
     }
 
@@ -1828,7 +1831,7 @@ impl StoreEngine for RedBStore {
         genesis_accounts: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
         tracing::info!("Setting up genesis flat account info");
-        
+
         // Prepare all key-value pairs for batch write (only non-removed accounts)
         let key_values: Vec<_> = genesis_accounts
             .iter()
@@ -1844,7 +1847,10 @@ impl StoreEngine for RedBStore {
             })
             .collect();
 
-        tracing::info!("Prepared {} account info entries for batch write", key_values.len());
+        tracing::info!(
+            "Prepared {} account info entries for batch write",
+            key_values.len()
+        );
 
         // Use batch write instead of individual inserts
         self.write_batch(ACCOUNT_INFO_TABLE, key_values).await?;
@@ -1859,7 +1865,10 @@ impl StoreEngine for RedBStore {
         )
         .await?;
 
-        tracing::info!("Finished setting up genesis flat account info for {} accounts", genesis_accounts.len());
+        tracing::info!(
+            "Finished setting up genesis flat account info for {} accounts",
+            genesis_accounts.len()
+        );
         Ok(())
     }
 
