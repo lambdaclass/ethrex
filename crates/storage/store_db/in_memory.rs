@@ -134,19 +134,23 @@ impl StoreEngine for Store {
             };
             store
                 .account_state_logs
-                .insert(final_block, vec![(parent_block, log)]);
+                .entry(final_block)
+                .or_default()
+                .push((parent_block, log));
         }
 
         for storage_log in update_batch.storage_log_updates.iter().cloned() {
             store
                 .account_storage_logs
-                .insert(final_block, vec![(parent_block, storage_log)]);
+                .entry(final_block)
+                .or_default()
+                .push((parent_block, storage_log));
         }
 
-        let current_spanshot = store.current_snapshot_block.unwrap_or_default();
+        let current_snapshot = store.current_snapshot_block.unwrap_or_default();
 
         // If the current snapshot is the parent block, we can update the account and storage
-        if current_spanshot == parent_block {
+        if current_snapshot == parent_block {
             for (addr, _old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
                 if new_info == AccountInfo::default() {
@@ -165,6 +169,8 @@ impl StoreEngine for Store {
                         .insert((entry.address, entry.slot), entry.new_value);
                 }
             }
+
+            store.current_snapshot_block = Some(final_block);
         }
 
         {
@@ -256,10 +262,6 @@ impl StoreEngine for Store {
                     warn!(
                         "UNDO: found account info log for {current_snapshot:?}: {parent_block:?}"
                     );
-                    // TODO: Is this needed?
-                    if current_snapshot == parent_block {
-                        break;
-                    }
 
                     // Restore previous state
                     if log.previous_info == AccountInfo::default() {
@@ -281,11 +283,6 @@ impl StoreEngine for Store {
             // Restore account storage for the block of the current snapshot
             if let Some(entries) = store.account_storage_logs.get(&current_snapshot).cloned() {
                 for (parent_block, log) in entries {
-                    // TODO: Is this needed?
-                    if current_snapshot == parent_block {
-                        break;
-                    }
-
                     // Restore previous state
                     if log.old_value.is_zero() {
                         debug!("UNDO: removing account storage for {:?}", log.address);
