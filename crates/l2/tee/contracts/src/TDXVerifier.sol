@@ -17,7 +17,7 @@ interface IOnChainProposer {
 
 contract TDXVerifier {
     IAttestation public quoteVerifier = IAttestation(address(0));
-    IOnChainProposer public onChainProposer = IOnChainProposer(address(0));
+    address public onChainProposer = address(0);
 
     address public authorizedSignature = address(0);
     bool public isDevMode = false;
@@ -30,7 +30,7 @@ contract TDXVerifier {
     /// @notice Initializes the contract
     /// @param _dcap DCAP contract.
     /// @param _isDevMode Disables quote verification
-    constructor(address _dcap, bytes _rtmr0, bytes _rtmr1, bytes _rtmr2, bytes _mrtd, bool _isDevMode) {
+    constructor(address _dcap, bytes memory _rtmr0, bytes memory _rtmr1, bytes memory _rtmr2, bytes memory _mrtd, bool _isDevMode) {
         require(_dcap != address(0), "TDXVerifier: DCAP address can't be null");
 
         quoteVerifier = IAttestation(_dcap);
@@ -44,10 +44,10 @@ contract TDXVerifier {
 
     /// @notice Initializes the OnChainProposer
     /// @param _ocp OnChainProposer contract address, used for permission checks
-    function initializeOnChainProposer(address _ocp) {
+    function initializeOnChainProposer(address _ocp) public {
         require(onChainProposer == address(0), "TDXVerifier: OnChainProposer already initialized");
         require(_ocp != address(0), "TDXVerifier: OnChainPropser address can't be null");
-        onChainProposer = IOnChainProposer(_ocp);
+        onChainProposer = _ocp;
     }
 
     /// @notice Verifies a proof with given payload and signature
@@ -70,7 +70,7 @@ contract TDXVerifier {
         bytes calldata quote
     ) external {
         require(
-            onChainProposer.authorizedSequencerAddresses(msg.sender),
+            IOnChainProposer(onChainProposer).authorizedSequencerAddresses(msg.sender),
             "TDXVerifier: only sequencer can update keys"
         );
         // TODO: only allow the owner to update the key, to avoid DoS
