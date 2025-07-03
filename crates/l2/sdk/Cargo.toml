@@ -7,6 +7,7 @@ edition.workspace = true
 ethrex-common.workspace = true
 ethrex-rpc.workspace = true
 ethrex-l2-common.workspace = true
+ethrex-sdk-contract-utils = { path = "contract_utils" }
 
 ethereum-types.workspace = true
 tokio.workspace = true
@@ -27,6 +28,10 @@ lazy_static.workspace = true
 [lib]
 name = "ethrex_l2_sdk"
 path = "src/sdk.rs"
+
+[build-dependencies]
+ethrex-sdk-contract-utils = { path = "contract_utils" }
+hex.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"
