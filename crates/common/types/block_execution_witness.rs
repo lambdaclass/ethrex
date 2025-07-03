@@ -8,12 +8,12 @@ use std::{
 use crate::{
     H160,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    utils::decode_hex,
 };
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
-use hex::FromHexError;
 use keccak_hash::H256;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -499,14 +499,6 @@ where
         seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
     }
     seq_serializer.end()
-}
-
-fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
-    let mut trimmed = hex.trim_start_matches("0x").to_string();
-    if trimmed.len() % 2 != 0 {
-        trimmed = "0".to_string() + &trimmed;
-    }
-    hex::decode(trimmed)
 }
 
 fn hash_address(address: &Address) -> Vec<u8> {
