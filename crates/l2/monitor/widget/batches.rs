@@ -1,7 +1,8 @@
 use std::cmp::min;
 
-use ethrex_common::{Address, H256};
-use ethrex_rpc::{EthClient, clients::eth::RpcBatch};
+use ethrex_common::{Address, H256, types::batch::Batch};
+use ethrex_rpc::EthClient;
+use ethrex_storage_rollup::StoreRollup;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -25,14 +26,14 @@ impl BatchesTable {
     pub async fn new(
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
-        rollup_client: &EthClient,
+        rollup_store: &StoreRollup,
     ) -> Self {
         let mut last_l1_block_fetched = 0;
         let items = Self::refresh_items(
             &mut last_l1_block_fetched,
             on_chain_proposer_address,
             eth_client,
-            rollup_client,
+            rollup_store,
         )
         .await;
         Self {
@@ -43,12 +44,12 @@ impl BatchesTable {
         }
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_store: &StoreRollup) {
         let mut new_latest_batches = Self::refresh_items(
             &mut self.last_l1_block_fetched,
             self.on_chain_proposer_address,
             eth_client,
-            rollup_client,
+            rollup_store,
         )
         .await;
 
@@ -68,13 +69,13 @@ impl BatchesTable {
         last_l2_batch_fetched: &mut u64,
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
-        rollup_client: &EthClient,
+        rollup_store: &StoreRollup,
     ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
         let new_batches = Self::get_batches(
             last_l2_batch_fetched,
             on_chain_proposer_address,
             eth_client,
-            rollup_client,
+            rollup_store,
         )
         .await;
 
@@ -85,8 +86,8 @@ impl BatchesTable {
         last_l2_batch_known: &mut u64,
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Vec<RpcBatch> {
+        rollup_store: &StoreRollup,
+    ) -> Vec<Batch> {
         let last_l2_batch_number = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
@@ -96,11 +97,14 @@ impl BatchesTable {
         while *last_l2_batch_known < last_l2_batch_number {
             let new_last_l2_fetched_batch = min(*last_l2_batch_known + 1, last_l2_batch_number);
 
-            let new_batch = rollup_client
-                .get_batch_by_number(new_last_l2_fetched_batch)
+            let new_batch = rollup_store
+                .get_batch(new_last_l2_fetched_batch)
                 .await
                 .unwrap_or_else(|err| {
                     panic!("Failed to get batch by number ({new_last_l2_fetched_batch}): {err}")
+                })
+                .unwrap_or_else(|| {
+                    panic!("Batch {new_last_l2_fetched_batch} not found in the rollup store")
                 });
 
             // Update the last L1 block fetched.
@@ -113,17 +117,17 @@ impl BatchesTable {
     }
 
     async fn process_batches(
-        new_batches: Vec<RpcBatch>,
+        new_batches: Vec<Batch>,
     ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
         let mut new_blocks_processed = new_batches
             .iter()
             .map(|batch| {
                 (
-                    batch.batch.number,
-                    batch.batch.last_block - batch.batch.first_block + 1,
-                    batch.batch.message_hashes.len(),
-                    batch.batch.commit_tx,
-                    batch.batch.verify_tx,
+                    batch.number,
+                    batch.last_block - batch.first_block + 1,
+                    batch.message_hashes.len(),
+                    batch.commit_tx,
+                    batch.verify_tx,
                 )
             })
             .collect::<Vec<_>>();

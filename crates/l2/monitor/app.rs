@@ -105,7 +105,7 @@ impl<'a> EthrexMonitor<'a> {
             batches_table: BatchesTable::new(
                 cfg.l1_committer.on_chain_proposer_address,
                 &eth_client,
-                &rollup_client,
+                &rollup_store,
             )
             .await,
             blocks_table: BlocksTable::new(&rollup_client).await,
@@ -248,7 +248,7 @@ impl<'a> EthrexMonitor<'a> {
             .await;
         self.mempool.on_tick(&self.rollup_client).await;
         self.batches_table
-            .on_tick(&self.eth_client, &self.rollup_client)
+            .on_tick(&self.eth_client, &self.rollup_store)
             .await;
         self.blocks_table.on_tick(&self.rollup_client).await;
         self.l1_to_l2_messages.on_tick(&self.eth_client).await;
