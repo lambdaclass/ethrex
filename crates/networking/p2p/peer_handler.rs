@@ -826,6 +826,15 @@ impl PeerHandler {
         )
     }
 
+    pub async fn read_total_peers(&self) -> Vec<PeerData> {
+        self.peer_table
+            .lock()
+            .await
+            .iter_peers()
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
     pub async fn remove_peer(&self, peer_id: H256) {
         debug!("Removing peer with id {:?}", peer_id);
         let mut table = self.peer_table.lock().await;
