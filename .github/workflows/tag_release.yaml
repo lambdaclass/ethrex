@@ -193,7 +193,8 @@ jobs:
         run: |
           cd crates/l2
           RUSTFLAGS='-C target-cpu=native' \
-          NVCC_PREPEND_FLAGS="--generate-code arch=compute_60,code=compute_60 \
+          NVCC_PREPEND_FLAGS="--relocatable-device-code=true \
+              --generate-code arch=compute_60,code=compute_60 \
               --generate-code arch=compute_70,code=compute_70 \
               --generate-code arch=compute_75,code=compute_75 \
               --generate-code arch=compute_80,code=compute_80 \
