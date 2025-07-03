@@ -170,12 +170,14 @@ pub fn prepare_revm_for_tx<'state>(
         ))
     };
     let block_env = RevmBlockEnv {
-        number: RevmU256::from_limbs(test.env.current_number.0),
+        number: RevmU256::from_be_bytes(test.env.current_number.to_be_bytes()),
         coinbase: RevmAddress(test.env.current_coinbase.0.into()),
-        timestamp: RevmU256::from_limbs(test.env.current_timestamp.0),
+        timestamp: RevmU256::from_be_bytes(test.env.current_timestamp.to_be_bytes()),
         gas_limit: RevmU256::from(test.env.current_gas_limit),
-        basefee: RevmU256::from_limbs(test.env.current_base_fee.unwrap_or_default().0),
-        difficulty: RevmU256::from_limbs(test.env.current_difficulty.0),
+        basefee: RevmU256::from_be_bytes(
+            test.env.current_base_fee.unwrap_or_default().to_be_bytes(),
+        ),
+        difficulty: RevmU256::from_be_bytes(test.env.current_difficulty.to_be_bytes()),
         prevrandao: test.env.current_random.map(|v| v.0.into()),
         blob_excess_gas_and_price,
     };
@@ -212,13 +214,13 @@ pub fn prepare_revm_for_tx<'state>(
                 SignedAuthorization::new_unchecked(
                     Authorization {
                         // The latest spec defined chain_id as a U256
-                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                        chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_le_bytes()),
                         address: RevmAddress(auth_t.address.0.into()),
                         nonce: auth_t.nonce,
                     },
                     auth_t.v.as_u32() as u8,
-                    RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
-                    RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+                    RevmU256::from_le_bytes(auth_t.r.to_le_bytes()),
+                    RevmU256::from_le_bytes(auth_t.s.to_le_bytes()),
                 )
             })
             .collect::<Vec<SignedAuthorization>>()
@@ -228,19 +230,19 @@ pub fn prepare_revm_for_tx<'state>(
     let tx_env = RevmTxEnv {
         caller: tx.sender.0.into(),
         gas_limit: tx.gas_limit,
-        gas_price: RevmU256::from_limbs(effective_gas_price(test, tx)?.0),
+        gas_price: RevmU256::from_be_bytes(effective_gas_price(test, tx)?.to_be_bytes()),
         transact_to: match tx.to {
             TxKind::Call(to) => RevmTxKind::Call(to.0.into()),
             TxKind::Create => RevmTxKind::Create,
         },
-        value: RevmU256::from_limbs(tx.value.0),
+        value: RevmU256::from_be_bytes(tx.value.to_be_bytes()),
         data: tx.data.to_vec().into(),
         nonce: Some(tx.nonce),
         chain_id: Some(chain_spec.chain_id),
         access_list: revm_access_list,
         gas_priority_fee: tx
             .max_priority_fee_per_gas
-            .map(|fee| RevmU256::from_limbs(fee.0)),
+            .map(|fee| RevmU256::from_be_bytes(fee.to_be_bytes())),
         blob_hashes: tx
             .blob_versioned_hashes
             .iter()
@@ -248,7 +250,7 @@ pub fn prepare_revm_for_tx<'state>(
             .collect::<Vec<B256>>(),
         max_fee_per_blob_gas: tx
             .max_fee_per_blob_gas
-            .map(|fee| RevmU256::from_limbs(fee.0)),
+            .map(|fee| RevmU256::from_be_bytes(fee.to_be_bytes())),
         authorization_list,
     };
 
@@ -415,7 +417,7 @@ pub async fn compare_levm_revm_account_updates(
             let account_storage = pre_state_value
                 .storage
                 .iter()
-                .map(|(key, value)| (H256::from_slice(&key.to_big_endian()), *value))
+                .map(|(key, value)| (H256::from_slice(&key.to_be_bytes()), *value))
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,
