@@ -1,4 +1,4 @@
-name: RPC Prover (SP1 Backend)
+name: Replay proving
 on:
   push:
     branches: ["main"]
@@ -9,7 +9,6 @@ concurrency:
 
 env:
   CI_ETHREX_WORKDIR: /usr/local/bin
-  PROVER: sp1
 
 permissions:
   # deployments permission to deploy GitHub pages website
@@ -19,30 +18,44 @@ permissions:
 
 jobs:
   test:
-    name: L1 block proving test
+    name: Prove an L1 block with ${{ matrix.backend }} backend
     runs-on: gpu
+    strategy:
+      fail-fast: true
+      matrix:
+        backend: ["sp1", "risc0"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
 
-      - name: RISC-V SP1 toolchain install
+      - name: RISC-V Risc0 toolchain install
+        if: matrix.backend == 'risc0'
+        # should be able to specify a version for `rzup install rust` (toolchain version)
+        # but it throws a "error decoding response body" in that case
         run: |
-          . "$HOME/.cargo/env"
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install rust
+      - name: RISC-V SP1 toolchain install
+        if: matrix.backend == 'sp1'
+        run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.0
 
       - name: Build
         run: |
           cd cmd/ethrex_replay
-          cargo b -r --features "sp1,gpu"
+          cargo b -r --features "${{ matrix.backend }},gpu"
 
       - name: Run
         env:
@@ -50,9 +63,9 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "dummy"
         run: |
-          cp test_data/rpc_prover/cache_3990967.json cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_690403.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-sp1-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
+          make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=690403 NETWORK=hoodi
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1

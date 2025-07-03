@@ -101,7 +101,8 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::VMInitializationFailed(_)
                 | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
                 | EFTestRunnerError::FailedToEnsurePreState(_)
-                | EFTestRunnerError::EIP7702ShouldNotBeCreateType => continue,
+                | EFTestRunnerError::EIP7702ShouldNotBeCreateType
+                | EFTestRunnerError::FailedToRevertLEVMState(_) => continue,
                 EFTestRunnerError::VMExecutionMismatch(reason) => {
                     return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
                         format!(
@@ -376,7 +377,7 @@ pub async fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let mut db = load_initial_state_levm(test).await;
-            db.cache = levm_cache;
+            db.current_accounts_state = levm_cache;
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
                 .map_err(|_| {
                     InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
@@ -467,7 +468,8 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
                 }
-                Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
+                Err(EFTestRunnerError::FailedToEnsurePreState(reason))
+                | Err(EFTestRunnerError::FailedToRevertLEVMState(reason)) => {
                     ef_test_report_fork.register_pre_state_validation_failure(reason, *vector);
                 }
                 Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {

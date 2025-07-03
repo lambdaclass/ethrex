@@ -32,8 +32,7 @@ pub trait RLPxMessage: Sized {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
 }
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Message {
     // p2p capability
     // https://github.com/ethereum/devp2p/blob/master/rlpx.md

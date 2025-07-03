@@ -77,7 +77,7 @@ mod tests {
         // TODO we should have this setup exported to some test_utils module and use from there
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let file = File::open("../../../test_data/genesis-execution-api.json")
+        let file = File::open("../../../fixtures/genesis/execution-api.json")
             .expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let genesis: Genesis =

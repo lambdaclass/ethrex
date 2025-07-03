@@ -18,6 +18,12 @@ renderers = ["html", "linkcheck"]
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
 
+# To render LaTeX math expressions
+# Note: Warnings can be safely ignored
+# https://github.com/lzanini/mdbook-katex
+[preprocessor.katex]
+after = ["links"]
+
 [output.html]
 git-repository-url = "https://github.com/lambdaclass/ethrex"
 # make sections collapsible, and start with everything collapsed

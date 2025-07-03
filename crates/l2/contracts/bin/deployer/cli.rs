@@ -96,7 +96,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH",
         required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
-        help = "Path to the file containing the private keys of the rich accounts. The default is ../../test_data/private_keys_l1.txt"
+        help = "Path to the file containing the private keys of the rich accounts. The default is ../../fixtures/keys/private_keys_l1.txt"
     )]
     pub private_keys_file_path: Option<PathBuf>,
     #[arg(
@@ -105,7 +105,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
         required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
-        help = "Path to the genesis file. The default is ../../test_data/genesis-l1-dev.json"
+        help = "Path to the genesis file. The default is ../../fixtures/genesis/l1-dev.json"
     )]
     pub genesis_l1_path: Option<PathBuf>,
     #[arg(
@@ -113,7 +113,7 @@ pub struct DeployerOptions {
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
         help_heading = "Deployer options",
-        help = "Path to the l2 genesis file. The default is ../../test_data/genesis-l2.json"
+        help = "Path to the l2 genesis file. The default is ../../fixtures/genesis/l2.json"
     )]
     pub genesis_l2_path: PathBuf,
     #[arg(
@@ -256,6 +256,15 @@ pub struct DeployerOptions {
     pub sp1_vk_path: String,
     #[arg(
         long,
+        default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the Risc0 image id / verification key. This is used for proof verification."
+    )]
+    pub risc0_vk_path: String,
+    #[arg(
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
@@ -299,7 +308,7 @@ impl Default for DeployerOptions {
             deposit_rich: false,
             private_keys_file_path: None,
             genesis_l1_path: None,
-            genesis_l2_path: "../../test_data/genesis-l2.json".into(),
+            genesis_l2_path: "../../fixtures/genesis/l2.json".into(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([
                 0x3d, 0x1e, 0x15, 0xa1, 0xa5, 0x55, 0x78, 0xf7, 0xc9, 0x20, 0x88, 0x4a, 0x99, 0x43,
@@ -344,6 +353,10 @@ impl Default for DeployerOptions {
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: format!(
                 "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            risc0_vk_path: format!(
+                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             deploy_based_contracts: false,

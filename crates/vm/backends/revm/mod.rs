@@ -58,17 +58,14 @@ impl REVM {
             &state.inner.database.get_chain_config()?,
             block_header.timestamp,
         );
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                    Self::beacon_root_contract_call(block_header, state)?;
-                }
 
-                //eip 2935: stores parent block hash in system contract
-                if spec_id >= SpecId::PRAGUE {
-                    Self::process_block_hash_history(block_header, state)?;
-                }
-            }
+        if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+            Self::beacon_root_contract_call(block_header, state)?;
+        }
+
+        //eip 2935: stores parent block hash in system contract
+        if spec_id >= SpecId::PRAGUE {
+            Self::process_block_hash_history(block_header, state)?;
         }
 
         let mut receipts = Vec::new();
@@ -93,13 +90,7 @@ impl REVM {
             Self::process_withdrawals(state, withdrawals)?;
         }
 
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                let requests = extract_all_requests(&receipts, state, block_header)?;
-            } else {
-                let requests = Default::default();
-            }
-        }
+        let requests = extract_all_requests(&receipts, state, block_header)?;
 
         Ok(BlockExecutionResult { receipts, requests })
     }
@@ -220,8 +211,7 @@ impl REVM {
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!(
-                    "Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
-                    output
+                    "Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {output:?} and with used gas: {gas_used}",
                 );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
@@ -266,8 +256,7 @@ impl REVM {
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!(
-                    "Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
-                    output
+                    "Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {output:?} and with used gas: {gas_used}",
                 );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
@@ -306,6 +295,37 @@ impl REVM {
                 continue;
             }
 
+            // Edge case: Account was destroyed and created again afterwards with CREATE2.
+            if matches!(account.status, AccountStatus::DestroyedChanged) {
+                // Push to account updates the removal of the account and then push the new state of the account.
+                // This is for clearing the account's storage when it was selfdestructed in the first place.
+                account_updates.push(AccountUpdate::removed(address));
+                // This will always be Some though, because it is DestroyedChanged
+                if let Some(new_acc_info) = account.account_info() {
+                    let new_acc_update = AccountUpdate {
+                        address,
+                        removed: false,
+                        info: Some(AccountInfo {
+                            code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
+                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                            nonce: new_acc_info.nonce,
+                        }),
+                        code: new_acc_info.code.map(|c| c.original_bytes().0),
+                        added_storage: account
+                            .storage
+                            .iter()
+                            .map(|(key, slot)| {
+                                (
+                                    H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                                    U256::from_little_endian(slot.present_value().as_le_slice()),
+                                )
+                            })
+                            .collect(),
+                    };
+                    account_updates.push(new_acc_update);
+                }
+                continue;
+            }
             // Apply account changes to DB
             let mut account_update = AccountUpdate::new(address);
             // If the account was changed then both original and current info will be present in the bundle account
@@ -640,12 +660,6 @@ pub fn extract_all_requests(
 
     if spec_id < SpecId::PRAGUE {
         return Ok(Default::default());
-    }
-
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "l2")] {
-            return Ok(Default::default());
-        }
     }
 
     let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts)
