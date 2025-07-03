@@ -57,6 +57,13 @@ impl KademliaTable {
             .find(|entry| entry.node.node_id() == node_id)
     }
 
+    pub fn set_chain_id_as_valid(&mut self, node_id: H256) {
+        let maybe_peer = self.get_by_node_id_mut(node_id);
+        if let Some(peer) = maybe_peer {
+            peer.correct_chain = true;
+        }
+    }
+
     /// Will try to insert a node into the table. If the table is full then it pushes it to the replacement list.
     /// # Returns
     /// A tuple containing:
@@ -147,6 +154,9 @@ impl KademliaTable {
         // though the bucket isn't that large and it shouldn't be an issue I guess
         for bucket in &self.buckets {
             for peer in &bucket.peers {
+                if !peer.correct_chain {
+                    continue;
+                }
                 let distance = bucket_number(node_id, peer.node.node_id());
                 if nodes.len() < MAX_NODES_PER_BUCKET {
                     nodes.push((peer.node.clone(), distance));
@@ -416,6 +426,7 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// Simple peer score: +1 for success, -1 for failure
     pub score: i32,
+    pub correct_chain: bool,
 }
 
 impl PeerData {
@@ -436,6 +447,7 @@ impl PeerData {
             is_connected: false,
             is_connection_inbound: false,
             score: 0,
+            correct_chain: false,
         }
     }
 

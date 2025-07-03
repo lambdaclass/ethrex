@@ -1,5 +1,6 @@
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
+use tracing::info;
 
 use crate::rlpx::{error::RLPxError, p2p::Capability};
 
@@ -30,18 +31,21 @@ pub async fn validate_status(
 
     //Check networkID
     if msg_data.get_network_id() != chain_config.chain_id {
+        info!("NETWORK ID DID NOT MATCH {}", msg_data.get_network_id());
         return Err(RLPxError::HandshakeError(
             "Network Id does not match".to_string(),
         ));
     }
     //Check Protocol Version
     if msg_data.get_eth_version() != eth_capability.version {
+        info!("ETH VERSION DID NOT MATCH {}", msg_data.get_eth_version());
         return Err(RLPxError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
     }
     //Check Genesis
     if msg_data.get_genesis() != genesis_hash {
+        info!("GENESIS DID NOT MATCH {}", msg_data.get_genesis());
         return Err(RLPxError::HandshakeError(
             "Genesis does not match".to_string(),
         ));
@@ -54,6 +58,7 @@ pub async fn validate_status(
         chain_config,
         genesis_header,
     ) {
+        info!("INVALID FORK ID");
         return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
     }
 

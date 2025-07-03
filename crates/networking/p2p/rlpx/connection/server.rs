@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
@@ -194,10 +194,11 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = handshake::perform(state.0).await?;
+        let (mut established_state, stream) = handshake::perform(state.clone().0).await?;
         log_peer_debug(&established_state.node, "Starting RLPx connection");
 
         if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
+            info!("INITIALIZE CONNECTION FAILED{}", &established_state.node.ip);
             connection_failed(
                 &mut established_state,
                 "Failed to initialize RLPx connection",
@@ -206,8 +207,22 @@ impl GenServer for RLPxConnection {
             .await;
             Err(RLPxError::Disconnected())
         } else {
+            // TODO: trash code
+            let state_clone = state.clone();
+            match state_clone.0 {
+                InnerState::Initiator(initiator) => {
+                    initiator
+                        .context
+                        .table
+                        .lock()
+                        .await
+                        .set_chain_id_as_valid(established_state.node.node_id());
+                    state.0 = InnerState::Established(established_state);
+                }
+                InnerState::Receiver(_) => {}
+                InnerState::Established(_) => {}
+            }
             // New state
-            state.0 = InnerState::Established(established_state);
             Ok(state)
         }
     }
@@ -274,6 +289,10 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
 {
+    info!(
+        "ACTUALLY INITIALIZING CONNECTION WITH PEER {}",
+        &state.node.ip
+    );
     post_handshake_checks(state.table.clone()).await?;
 
     exchange_hello_messages(state, &mut stream).await?;
@@ -402,7 +421,10 @@ where
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
         let msg = match receive(stream).await {
-            Some(msg) => msg?,
+            Some(msg) => {
+                info!("Init Capabilities Receive {:?}", &msg);
+                msg?
+            }
             None => return Err(RLPxError::Disconnected()),
         };
         match msg {
