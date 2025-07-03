@@ -27,8 +27,9 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::eth::{
-    BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides,
+use ethrex_rpc::{
+    clients::eth::{EthClient, WrappedTransaction, eth_sender::Overrides},
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -37,8 +38,10 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
@@ -136,7 +139,8 @@ impl L1Committer {
 }
 
 impl GenServer for L1Committer {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = CommitterState;
 
@@ -146,30 +150,21 @@ impl GenServer for L1Committer {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
         // Right now we only have the Commit message, so we ignore the message
         if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = commit_next_batch_to_l1(state)
+            let _ = commit_next_batch_to_l1(&mut state)
                 .await
                 .inspect_err(|err| error!("L1 Committer Error: {err}"));
         }
         let check_interval = random_duration(state.commit_time_ms);
-        send_after(check_interval, tx.clone(), Self::InMsg::Commit);
-        CastResponse::NoReply
+        send_after(check_interval, handle.clone(), Self::CastMsg::Commit);
+        CastResponse::NoReply(state)
     }
 }
 
@@ -635,7 +630,7 @@ async fn estimate_blob_gas(
     headroom: u64,
 ) -> Result<u64, CommitterError> {
     let latest_block = eth_client
-        .get_block_by_number(BlockByNumber::Latest)
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let blob_gas_used = latest_block.header.blob_gas_used.unwrap_or(0);
