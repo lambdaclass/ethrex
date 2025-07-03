@@ -202,7 +202,9 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
     }
 
     let Some(batch) = state.rollup_store.get_batch(batch_to_send).await? else {
-        return Err(ProofSenderError::InternalError("TODO".to_string()));
+        return Err(ProofSenderError::InternalError(
+            "Batch should already be on the Rollup store.".to_string(),
+        ));
     };
     let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
 
