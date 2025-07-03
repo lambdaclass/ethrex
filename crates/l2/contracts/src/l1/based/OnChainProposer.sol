@@ -426,7 +426,7 @@ contract OnChainProposer is
             );
 
             // The first 2 bytes are the number of privileged transactions.
-            uint16 transactioprivileged_transaction_countn_count = uint16(
+            uint16 privileged_transaction_count = uint16(
                 bytes2(
                     batchCommitments[batchNumber]
                         .processedPrivilegedTransactionsRollingHash
