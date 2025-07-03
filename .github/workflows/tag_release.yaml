@@ -193,8 +193,7 @@ jobs:
         run: |
           cd crates/l2
           RUSTFLAGS='-C target-cpu=native' \
-          NVCC_PREPEND_FLAGS="
-              --generate-code arch=compute_60,code=[sm_60,sm_61,sm_62] \
+          NVCC_PREPEND_FLAGS=" --generate-code arch=compute_60,code=[sm_60,sm_61,sm_62] \
               --generate-code arch=compute_70,code=[sm_70,sm_72] \
               --generate-code arch=compute_75,code=sm_75 \
               --generate-code arch=compute_80,code=[sm_80,sm_86,sm_87] \
