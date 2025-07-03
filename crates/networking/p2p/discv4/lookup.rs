@@ -114,10 +114,10 @@ impl Discv4LookupHandler {
         let mut seen_peers: HashSet<H512> = HashSet::default();
         let mut asked_peers = HashSet::default();
 
-        // seen_peers.insert(self.ctx.local_node.public_key);
-        // for node in &peers_to_ask {
-        //     seen_peers.insert(node.public_key);
-        // }
+        seen_peers.insert(self.ctx.local_node.public_key);
+        for node in &peers_to_ask {
+            seen_peers.insert(node.public_key);
+        }
 
         loop {
             let (nodes_found, queries) = self.lookup(target, &mut asked_peers, &peers_to_ask).await;
@@ -150,9 +150,9 @@ impl Discv4LookupHandler {
         let mut nodes = vec![];
 
         for node in nodes_to_ask {
-            // if asked_peers.contains(&node.public_key) {
-            //     continue;
-            // }
+            if asked_peers.contains(&node.public_key) {
+                continue;
+            }
             let mut locked_table = self.ctx.table.lock().await;
             if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id()) {
                 // if the peer has an ongoing find_node request, don't query
@@ -164,7 +164,7 @@ impl Discv4LookupHandler {
                     drop(locked_table);
 
                     queries += 1;
-                    // asked_peers.insert(node.public_key);
+                    asked_peers.insert(node.public_key);
                     if let Ok(mut found_nodes) = self
                         .find_node_and_wait_for_response(node, target, &mut receiver)
                         .await
