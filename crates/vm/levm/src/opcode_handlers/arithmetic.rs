@@ -155,15 +155,15 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let new_augend: U512 = U512::from_little_endian(&augend.to_le_bytes());
-        let new_addend: U512 = U512::from_little_endian(&addend.to_le_bytes());
+        let new_augend: U512 = u512_from_u256(augend);
+        let new_addend: U512 = u512_from_u256(addend);
 
         let sum = new_augend
             .checked_add(new_addend)
             .ok_or(InternalError::Overflow)?;
 
         let sum_mod = u256_from_u512(
-            sum.checked_rem(U512::from_little_endian(&modulus.to_le_bytes()))
+            sum.checked_rem(u512_from_u256(modulus))
                 .ok_or(InternalError::Overflow)?,
         )
         .map_err(|_| InternalError::Overflow)?;
@@ -260,7 +260,7 @@ impl<'a> VM<'a> {
 
 /// Checks its negative by checking leading ones is > 0
 pub fn is_negative(value: U256) -> bool {
-    value.leading_ones() > 0
+    value.leading_zeros() == 0
 }
 
 /// Negates a number in two's complement
@@ -274,5 +274,21 @@ fn abs(value: U256) -> U256 {
         negate(value)
     } else {
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::as_conversions)]
+    use ethrex_common::U256;
+
+    use crate::opcode_handlers::arithmetic::{abs, is_negative, negate};
+
+    #[test]
+    fn test_is_negative() {
+        let value: U256 = U256::new((-1i128) as u128) << 128;
+        assert!(is_negative(value));
+        assert!(!is_negative(abs(value)));
+        assert!(is_negative(negate(U256::ONE)));
     }
 }
