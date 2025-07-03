@@ -220,6 +220,9 @@ impl KademliaTable {
 
         for bucket in &self.buckets {
             for peer in &bucket.peers {
+                if !peer.correct_chain {
+                    continue;
+                }
                 if peers.len() < limit {
                     peers.push(peer.clone());
                 } else {

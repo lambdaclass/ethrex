@@ -567,7 +567,7 @@ impl Discv4Server {
 
                 peer.revalidation = None;
 
-                if peer.liveness == 0 {
+                if peer.liveness == 0 || !peer.correct_chain {
                     let new_peer = table_lock.replace_peer(node_id);
                     if let Some(new_peer) = new_peer {
                         drop(table_lock);
