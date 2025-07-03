@@ -235,7 +235,7 @@ impl DataType {
                 data.consume(32 - 20)?;
                 Value::Address(Address::from_slice(data.consume(20)?))
             }
-            DataType::Bool => Value::Bool(!data.consume_u256()? == U256::ZERO),
+            DataType::Bool => Value::Bool(data.consume_u256()? != U256::ZERO),
             DataType::FixedBytes(n) => Value::FixedBytes(
                 data.consume(32)?
                     .get(0..*n)
