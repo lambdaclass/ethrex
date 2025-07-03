@@ -241,7 +241,7 @@ async fn send_proof_to_aligned(
         let proving_system = match batch_proof.prover_type() {
             ProverType::RISC0 => ProvingSystemId::Risc0,
             ProverType::SP1 => ProvingSystemId::SP1,
-            _ => continue
+            _ => continue,
         };
 
         debug!(

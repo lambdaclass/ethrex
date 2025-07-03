@@ -1,5 +1,5 @@
 use risc0_zkvm::guest::env;
-use zkvm_interface::{io::ProgramInput, execution::execution_program};
+use zkvm_interface::{execution::execution_program, io::ProgramInput};
 
 fn main() {
     let input: ProgramInput = env::read();
