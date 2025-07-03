@@ -233,7 +233,7 @@ pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
     let mut result = value;
     let mut shifts_left = shift;
 
-    while !shifts_left == U256::ZERO {
+    while shifts_left != U256::ZERO {
         result = match result.checked_mul(U256::from(2u32)) {
             Some(num) => num,
             None => {
