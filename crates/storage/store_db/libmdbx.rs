@@ -328,13 +328,6 @@ impl Store {
         let stats_pre_storage_nodes = tx
             .table_stat::<StorageTriesNodes>()
             .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-        tracing::info!(
-            state_trie_entries = stats_pre_state_nodes.entries(),
-            state_trie_log_entries = stats_pre_state_log.entries(),
-            storage_trie_entries = stats_pre_storage_nodes.entries(),
-            storage_trie_log_entries = stats_pre_storage_log.entries(),
-            "[PRUNING METRICS PRE]",
-        );
 
         let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
         if let Some((BlockNumHash(key_num, _), _)) = cursor_state_trie_pruning_log.last()? {
@@ -391,11 +384,15 @@ impl Store {
             .map_err(|e| anyhow::anyhow!("error: {e}"))?;
 
         tracing::info!(
-            state_trie_entries = stats_post_state_nodes.entries(),
-            state_trie_log_entries = stats_post_state_log.entries(),
-            storage_trie_entries = stats_post_storage_nodes.entries(),
-            storage_trie_log_entries = stats_post_storage_log.entries(),
-            "[PRUNING METRICS POST]",
+            state_trie_entries_delta = stats_post_state_nodes.entries() as isize
+                - stats_pre_state_nodes.entries() as isize,
+            state_trie_log_entries_delta =
+                stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+            storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
+                - stats_pre_storage_log.entries() as isize,
+            "[PRUNING METRICS]",
         );
 
         tx.commit().map_err(StoreError::LibmdbxError)
