@@ -193,7 +193,12 @@ jobs:
         run: |
           cd crates/l2
           RUSTFLAGS='-C target-cpu=native' \
-          NVCC_PREPEND_FLAGS='-arch=sm_70' \
+          NVCC_PREPEND_FLAGS="
+              --generate-code arch=compute_60,code=[sm_60,sm_61,sm_62] \
+              --generate-code arch=compute_70,code=[sm_70,sm_72] \
+              --generate-code arch=compute_80,code=[sm_80,sm_86,sm_87] \
+              --generate-code arch=compute_89,code=sm_89 \
+              --generate-code arch=compute_90,code=[sm_90,sm90a]" \
           cargo build --release --features "risc0,gpu,l2" \
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
