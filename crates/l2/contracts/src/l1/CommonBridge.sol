@@ -119,21 +119,29 @@ contract CommonBridge is
     }
 
 
+    /// EIP-7702 delegated accounts have code beginning with this.
     bytes3 internal constant EIP7702_PREFIX = 0xef0100;
+    /// Code size of an EIP-7702 delegated account
+    /// = len(EIP7702_PREFIX) + len(account)
+    uint256 internal constant EIP7702_CODE_LENGTH = 23;
+
+    /// This is the constant optimism uses, we could use another.
     uint160 internal constant ADDRESS_ALIASING = uint160(0x1111000000000000000000000000000000001111);
-    function _getAddressAlias(address from) private view returns (address) {
-        // If the source is being faked, keep it as-is.
-        if (from != msg.sender) return from;
+
+    /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
+    /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
+    /// @dev We don't want this to affect users, so we need to detect if the caller is an EOA
+    function _getSenderAlias() private view returns (address) {
         // If sender is origin, the account is an EOA
-        if (from == tx.origin) return from;
+        if (msg.sender == tx.origin) return msg.sender;
         // Check for an EIP7702 delegate it account
-        if (from.code.length > 0) {
-            if (bytes3(from.code) == EIP7702_PREFIX) {
+        if (msg.sender.code.length == EIP7702_CODE_LENGTH) {
+            if (bytes3(msg.sender.code) == EIP7702_PREFIX) {
                 // And treat it as an EOA
-                return from;
+                return msg.sender;
             }
         }
-        return address(uint160(from) + ADDRESS_ALIASING);
+        return address(uint160(msg.sender) + ADDRESS_ALIASING);
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
@@ -165,7 +173,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function sendToL2(SendValues calldata sendValues) public {
-        _sendToL2(_getAddressAlias(msg.sender), sendValues);
+        _sendToL2(_getSenderAlias(), sendValues);
     }
 
     /// @inheritdoc ICommonBridge
