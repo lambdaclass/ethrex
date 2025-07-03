@@ -7,6 +7,8 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
@@ -27,7 +29,7 @@ contract CommonBridge is
     /// of the L2 transaction that requested the withdrawal.
     /// @dev The key is the hash of the L2 transaction that requested the
     /// withdrawal.
-    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    /// @dev Deprecated.
     mapping(bytes32 => bool) public claimedWithdrawals;
 
     /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
@@ -37,8 +39,8 @@ contract CommonBridge is
     /// that the logs were published on L1, and that that batch was committed.
     mapping(uint256 => bytes32) public batchWithdrawalLogsMerkleRoots;
 
-    /// @notice Array of hashed pending deposit logs.
-    bytes32[] public pendingDepositLogs;
+    /// @notice Array of hashed pending privileged transactions
+    bytes32[] public pendingTxHashes;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -46,9 +48,9 @@ contract CommonBridge is
     /// @dev Used by the L1Watcher to fetch logs starting from this block.
     uint256 public lastFetchedL1Block;
 
-    /// @notice Global deposit identifier, it is incremented each time a new deposit is made.
+    /// @notice Global privileged transaction identifier, it is incremented each time a new privileged transaction is made.
     /// @dev It is used as the nonce of the mint transaction created by the L1Watcher.
-    uint256 public depositId;
+    uint256 public transactionId;
 
     /// @notice Address of the bridge on the L2
     /// @dev It's used to validate withdrawals
@@ -63,6 +65,13 @@ contract CommonBridge is
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
+    /// there is a non-zero value in the mapping for the message id
+    /// of the L2 transaction that requested the withdrawal.
+    /// @dev The key is the message id of the L1Message of the transaction.
+    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    mapping(uint256 => bool) public claimedWithdrawalIDs;
 
     modifier onlyOnChainProposer() {
         require(
@@ -88,48 +97,59 @@ contract CommonBridge is
         ON_CHAIN_PROPOSER = onChainProposer;
 
         lastFetchedL1Block = block.number;
-        depositId = 0;
+        transactionId = 0;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingDepositLogs() public view returns (bytes32[] memory) {
-        return pendingDepositLogs;
+    function getPendingTransactionHashes()
+        public
+        view
+        returns (bytes32[] memory)
+    {
+        return pendingTxHashes;
+    }
+    
+    /// Burns at least {amount} gas
+    function _burnGas(uint256 amount) private view {
+        uint256 startingGas = gasleft();
+        while (startingGas - gasleft() < amount) {}
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
+        _burnGas(sendValues.gasLimit);
+
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
-                bytes20(sendValues.to),
-                bytes32(sendValues.value),
-                bytes32(depositId),
                 bytes20(from),
+                bytes20(sendValues.to),
+                bytes32(transactionId),
+                bytes32(sendValues.value),
                 bytes32(sendValues.gasLimit),
                 bytes32(keccak256(sendValues.data))
             )
         );
 
-        pendingDepositLogs.push(l2MintTxHash);
+        pendingTxHashes.push(l2MintTxHash);
 
-        emit L1ToL2Message(
-            sendValues.value,
-            sendValues.to,
-            depositId,
+        emit PrivilegedTxSent(
             from,
+            sendValues.to,
+            transactionId,
+            sendValues.value,
             sendValues.gasLimit,
-            sendValues.data,
-            l2MintTxHash
+            sendValues.data
         );
-        depositId += 1;
+        transactionId += 1;
     }
 
     /// @inheritdoc ICommonBridge
     function sendToL2(SendValues calldata sendValues) public {
         _sendToL2(msg.sender, sendValues);
     }
-    
+
     /// @inheritdoc ICommonBridge
     function deposit(address l2Recipient) public payable {
         _deposit(l2Recipient);
@@ -137,7 +157,10 @@ contract CommonBridge is
 
     function _deposit(address l2Recipient) private {
         deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
-        bytes memory callData = abi.encodeCall(ICommonBridgeL2.mintETH, (l2Recipient));
+        bytes memory callData = abi.encodeCall(
+            ICommonBridgeL2.mintETH,
+            (l2Recipient)
+        );
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
             gasLimit: 21000 * 5,
@@ -175,40 +198,40 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingDepositLogsVersionedHash(
+    function getPendingTransactionsVersionedHash(
         uint16 number
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendingDepositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (get)"
+            uint256(number) <= pendingTxHashes.length,
+            "CommonBridge: number is greater than the length of pendingTxHashes (get)"
         );
 
-        bytes memory logs;
+        bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            logs = bytes.concat(logs, pendingDepositLogs[i]);
+            hashes = bytes.concat(hashes, pendingTxHashes[i]);
         }
 
         return
             bytes32(bytes2(number)) |
-            bytes32(uint256(uint240(uint256(keccak256(logs)))));
+            bytes32(uint256(uint240(uint256(keccak256(hashes)))));
     }
 
     /// @inheritdoc ICommonBridge
-    function removePendingDepositLogs(
+    function removePendingTransactionHashes(
         uint16 number
     ) public onlyOnChainProposer {
         require(
-            number <= pendingDepositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (remove)"
+            number <= pendingTxHashes.length,
+            "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
         );
 
-        for (uint i = 0; i < pendingDepositLogs.length - number; i++) {
-            pendingDepositLogs[i] = pendingDepositLogs[i + number];
+        for (uint i = 0; i < pendingTxHashes.length - number; i++) {
+            pendingTxHashes[i] = pendingTxHashes[i + number];
         }
 
         for (uint _i = 0; _i < number; _i++) {
-            pendingDepositLogs.pop();
+            pendingTxHashes.pop();
         }
     }
 
@@ -243,7 +266,7 @@ contract CommonBridge is
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) public {
         _claimWithdrawal(
@@ -252,7 +275,7 @@ contract CommonBridge is
             ETH_TOKEN,
             claimedAmount,
             withdrawalBatchNumber,
-            withdrawalLogIndex,
+            withdrawalMessageId,
             withdrawalProof
         );
         (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
@@ -266,7 +289,7 @@ contract CommonBridge is
         address tokenL2,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
         _claimWithdrawal(
@@ -275,7 +298,7 @@ contract CommonBridge is
             tokenL2,
             claimedAmount,
             withdrawalBatchNumber,
-            withdrawalLogIndex,
+            withdrawalMessageId,
             withdrawalProof
         );
         require(
@@ -291,7 +314,7 @@ contract CommonBridge is
         address tokenL2,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) private {
         require(
@@ -301,9 +324,6 @@ contract CommonBridge is
         deposits[tokenL1][tokenL2] -= claimedAmount;
         bytes32 msgHash = keccak256(
             abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
-        );
-        bytes32 withdrawalId = keccak256(
-            abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex)
         );
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
@@ -315,17 +335,17 @@ contract CommonBridge is
             "CommonBridge: the batch that emitted the withdrawal logs was not verified"
         );
         require(
-            claimedWithdrawals[withdrawalId] == false,
+            claimedWithdrawalIDs[withdrawalMessageId] == false,
             "CommonBridge: the withdrawal was already claimed"
         );
-        claimedWithdrawals[withdrawalId] = true;
-        emit WithdrawalClaimed(withdrawalId);
+        claimedWithdrawalIDs[withdrawalMessageId] = true;
+        emit WithdrawalClaimed(withdrawalMessageId);
         require(
             _verifyMessageProof(
                 l2WithdrawalTxHash,
                 msgHash,
                 withdrawalBatchNumber,
-                withdrawalLogIndex,
+                withdrawalMessageId,
                 withdrawalProof
             ),
             "CommonBridge: Invalid proof"
@@ -336,27 +356,23 @@ contract CommonBridge is
         bytes32 l2WithdrawalTxHash,
         bytes32 msgHash,
         uint256 withdrawalBatchNumber,
-        uint256 withdrawalLogIndex,
+        uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
+            abi.encodePacked(
+                l2WithdrawalTxHash,
+                L2_BRIDGE_ADDRESS,
+                msgHash,
+                withdrawalMessageId
+            )
         );
-        for (uint256 i = 0; i < withdrawalProof.length; i++) {
-            if (withdrawalLogIndex % 2 == 0) {
-                withdrawalLeaf = keccak256(
-                    abi.encodePacked(withdrawalLeaf, withdrawalProof[i])
-                );
-            } else {
-                withdrawalLeaf = keccak256(
-                    abi.encodePacked(withdrawalProof[i], withdrawalLeaf)
-                );
-            }
-            withdrawalLogIndex /= 2;
-        }
         return
-            withdrawalLeaf ==
-            batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber];
+            MerkleProof.verify(
+                withdrawalProof,
+                batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
+                withdrawalLeaf
+            );
     }
 
     /// @notice Allow owner to upgrade the contract.

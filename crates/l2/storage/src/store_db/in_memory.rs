@@ -25,7 +25,7 @@ struct StoreInner {
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
     /// Map of batch number to deposit logs hash
-    deposit_logs_hashes: HashMap<u64, H256>,
+    privileged_transactions_hashes: HashMap<u64, H256>,
     /// Map of batch number to state root
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
@@ -38,6 +38,10 @@ struct StoreInner {
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
     batch_proofs: HashMap<(ProverType, u64), BatchProof>,
+    /// Map of batch number to commit transaction hash
+    commit_txs: HashMap<u64, H256>,
+    /// Map of batch number to verify transaction hash
+    verify_txs: HashMap<u64, H256>,
 }
 
 impl Store {
@@ -118,24 +122,24 @@ impl StoreEngineRollup for Store {
         Ok(block_numbers)
     }
 
-    async fn store_deposit_logs_hash_by_batch_number(
+    async fn store_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
-        deposit_logs_hash: H256,
+        privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError> {
         self.inner()?
-            .deposit_logs_hashes
-            .insert(batch_number, deposit_logs_hash);
+            .privileged_transactions_hashes
+            .insert(batch_number, privileged_transactions_hash);
         Ok(())
     }
 
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
             .inner()?
-            .deposit_logs_hashes
+            .privileged_transactions_hashes
             .get(&batch_number)
             .cloned())
     }
@@ -172,6 +176,38 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.blobs.get(&batch_number).cloned())
     }
 
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self.inner()?.commit_txs.get(&batch_number).cloned())
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.commit_txs.insert(batch_number, commit_tx);
+        Ok(())
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self.inner()?.verify_txs.get(&batch_number).cloned())
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.verify_txs.insert(batch_number, verify_tx);
+        Ok(())
+    }
+
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         Ok(self
             .inner()?
@@ -182,12 +218,12 @@ impl StoreEngineRollup for Store {
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         let mut values = self.inner()?.operations_counts;
         values[0] += transaction_inc;
-        values[1] += deposits_inc;
+        values[1] += privileged_tx_inc;
         values[2] += messages_inc;
         Ok(())
     }
@@ -266,7 +302,7 @@ impl StoreEngineRollup for Store {
             .block_numbers_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
-            .deposit_logs_hashes
+            .privileged_transactions_hashes
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);

@@ -8,8 +8,6 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
 serde_json = "1.0.117"
 thiserror = "2.0.9"
-keccak-hash.workspace = true
-kzg-rs = "0.2.6"
 
 ethrex-common = { path = "../../../../common/", default-features = false }
 ethrex-blockchain = { path = "../../../../blockchain/", default-features = false }
@@ -19,22 +17,21 @@ ethrex-storage = { path = "../../../../storage", default-features = false }
 ethrex-trie = { path = "../../../../common/trie", default-features = false }
 ethrex-l2-common = { path = "../../../common", default-features = false }
 
-# Temporarily pin version because 0.11.1 breaks compilation
-# alloy-rpc-types-engine = "=0.11.0"
-
 [build-dependencies]
-risc0-build = { version = "1.2.2", optional = true }
-sp1-build = { version = "5.0.5", optional = true }
-sp1-sdk = { version = "5.0.6", optional = true }
+risc0-build = { version = "2.1.2", optional = true }
+risc0-zkvm = { version = "2.1.0", optional = true }
+sp1-build = { version = "5.0.0", optional = true }
+sp1-sdk = { version = "5.0.0", optional = true }
 
 [package.metadata.risc0]
 methods = ["risc0"]
 
 [features]
 default = []
-risc0 = ["dep:risc0-build"]
+risc0 = ["dep:risc0-build", "dep:risc0-zkvm"]
 sp1 = ["dep:sp1-build", "dep:sp1-sdk"]
 l2 = []
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 
 [lib]
 path = "./src/lib.rs"

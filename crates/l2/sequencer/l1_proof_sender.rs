@@ -31,8 +31,7 @@ use aligned_sdk::{
 // TODO: Remove this import once it's no longer required by the SDK.
 use ethers::signers::{Signer, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
@@ -342,6 +341,11 @@ pub async fn send_proof_to_contract(
         &state.l1_private_key,
     )
     .await?;
+
+    state
+        .rollup_store
+        .store_verify_tx_by_batch(batch_number, verify_tx_hash)
+        .await?;
 
     info!(
         ?batch_number,
