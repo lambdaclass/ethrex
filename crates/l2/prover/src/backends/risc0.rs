@@ -28,7 +28,9 @@ pub enum Error {
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Error> {
-    let env = ExecutorEnv::builder().write(&JSONProgramInput(input))?.build()?;
+    let env = ExecutorEnv::builder()
+        .write(&JSONProgramInput(input))?
+        .build()?;
 
     let executor = default_executor();
 
