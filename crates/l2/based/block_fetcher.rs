@@ -65,7 +65,7 @@ pub enum BlockFetcherError {
         #[from] ethrex_l2_common::privileged_transactions::PrivilegedTransactionError,
     ),
     #[error("Spawned GenServer Error")]
-    GenServerError(spawned_concurrency::GenServerError),
+    GenServerError(GenServerError),
     #[error("Failed to encode calldata: {0}")]
     CalldataDecodeError(#[from] CalldataEncodeError),
 }
@@ -82,8 +82,8 @@ pub struct BlockFetcherState {
     last_l1_block_fetched: U256,
     fetch_block_step: U256,
     latest_safe_batch: u64,
-    pending_commit_log: BTreeMap<u64, RpcLog>,
-    pending_verify_log: BTreeMap<u64, RpcLog>,
+    pending_commit_logs: BTreeMap<u64, RpcLog>,
+    pending_verify_logs: BTreeMap<u64, RpcLog>,
     pending_batches: VecDeque<PendingBatch>,
 }
 
@@ -186,8 +186,8 @@ impl BlockFetcherState {
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
             latest_safe_batch: 0,
-            pending_commit_log: BTreeMap::new(),
-            pending_verify_log: BTreeMap::new(),
+            pending_commit_logs: BTreeMap::new(),
+            pending_verify_logs: BTreeMap::new(),
             pending_batches: VecDeque::new(),
         })
     }
@@ -224,7 +224,7 @@ impl BlockFetcherState {
     pub async fn fetch_pending_batches(&mut self) -> Result<(), BlockFetcherError> {
         self.fetch_logs().await?;
 
-        for (batch_number, batch_committed_log) in &self.pending_commit_log.clone() {
+        for (batch_number, batch_committed_log) in &self.pending_commit_logs.clone() {
             if self
                 .pending_batches
                 .iter()
@@ -258,16 +258,18 @@ impl BlockFetcherState {
     pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
         while let Some(pending_batch) = self.pending_batches.pop_front() {
             if self.batch_is_safe(&pending_batch.last_block_hash).await?
-                && self.pending_commit_log.contains_key(&pending_batch.number)
-                && self.pending_verify_log.contains_key(&pending_batch.number)
+                && self.pending_commit_logs.contains_key(&pending_batch.number)
+                && self.pending_verify_logs.contains_key(&pending_batch.number)
             {
                 info!("Safe batch sealed {}.", pending_batch.number);
-                let Some(commit_log) = self.pending_commit_log.remove(&pending_batch.number) else {
+                let Some(commit_log) = self.pending_commit_logs.remove(&pending_batch.number)
+                else {
                     return Err(BlockFetcherError::InternalError(
                         "Commit log should be in the list.".into(),
                     ));
                 };
-                let Some(verify_log) = self.pending_verify_log.remove(&pending_batch.number) else {
+                let Some(verify_log) = self.pending_verify_logs.remove(&pending_batch.number)
+                else {
                     return Err(BlockFetcherError::InternalError(
                         "Verify log should be in the list.".into(),
                     ));
@@ -376,7 +378,7 @@ impl BlockFetcherState {
                     })?);
 
                 if committed_batch_number > self.latest_safe_batch {
-                    self.pending_commit_log.insert(committed_batch_number, log);
+                    self.pending_commit_logs.insert(committed_batch_number, log);
                 }
             }
 
@@ -398,7 +400,7 @@ impl BlockFetcherState {
                     })?);
 
                 if verify_batch_number > self.latest_safe_batch {
-                    self.pending_verify_log.insert(verify_batch_number, log);
+                    self.pending_verify_logs.insert(verify_batch_number, log);
                 }
             }
         }
