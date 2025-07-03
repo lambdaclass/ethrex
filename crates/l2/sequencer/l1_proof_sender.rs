@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, H256, U256, types::BlockNumber};
+use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -205,7 +205,13 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         ProofSenderError::InternalError("Batch should already be on the Rollup store.".to_string()),
     )?;
 
-    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
+    let last_block_hash = state
+        .store
+        .get_block_header(batch.last_block)?
+        .map(|header| header.hash())
+        .ok_or(ProofSenderError::InternalError(
+            "Failed to get last block hash from storage".to_owned(),
+        ))?;
 
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();
@@ -375,16 +381,4 @@ fn resolve_fee_estimate(fee_estimate: &str) -> Result<FeeEstimationType, ProofSe
             "Unsupported fee estimation type".to_string(),
         )),
     }
-}
-
-fn get_last_block_hash(
-    store: &Store,
-    last_block_number: BlockNumber,
-) -> Result<H256, ProofSenderError> {
-    store
-        .get_block_header(last_block_number)?
-        .map(|header| header.hash())
-        .ok_or(ProofSenderError::InternalError(
-            "Failed to get last block hash from storage".to_owned(),
-        ))
 }

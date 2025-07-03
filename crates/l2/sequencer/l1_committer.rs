@@ -477,7 +477,13 @@ async fn send_commitment(
     batch: &Batch,
 ) -> Result<H256, CommitterError> {
     let messages_merkle_root = compute_merkle_root(&batch.message_hashes);
-    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
+    let last_block_hash = state
+        .store
+        .get_block_header(batch.last_block)?
+        .map(|header| header.hash())
+        .ok_or(CommitterError::InternalError(
+            "Failed to get last block hash from storage".to_owned(),
+        ))?;
 
     let mut calldata_values = vec![
         Value::Uint(U256::from(batch.number)),
@@ -596,18 +602,6 @@ async fn send_commitment(
     info!("Commitment sent: {commit_tx_hash:#x}");
 
     Ok(commit_tx_hash)
-}
-
-fn get_last_block_hash(
-    store: &Store,
-    last_block_number: BlockNumber,
-) -> Result<H256, CommitterError> {
-    store
-        .get_block_header(last_block_number)?
-        .map(|header| header.hash())
-        .ok_or(CommitterError::InternalError(
-            "Failed to get last block hash from storage".to_owned(),
-        ))
 }
 
 /// Estimates the gas price for blob transactions based on the current state of the blockchain.
