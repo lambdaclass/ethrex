@@ -14,7 +14,7 @@ use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Clone, Debug)]
 pub struct Discv4LookupHandler {
@@ -246,15 +246,21 @@ impl Discv4LookupHandler {
             // wait as much as 5 seconds for the response
             match tokio::time::timeout(Duration::from_secs(5), request_receiver.recv()).await {
                 Ok(Some(mut found_nodes)) => {
+                    info!(
+                        "Found nodes through discovery from node {}. Got: {:?}",
+                        &node.ip, &found_nodes
+                    );
                     nodes.append(&mut found_nodes);
                     if nodes.len() == MAX_NODES_PER_BUCKET {
                         return Ok(nodes);
                     };
                 }
                 Ok(None) => {
+                    info!("Discovery returned no new nodes {}", &node.ip);
                     return Ok(nodes);
                 }
                 Err(_) => {
+                    info!("Discovery timed out");
                     // timeout expired
                     return Ok(nodes);
                 }
