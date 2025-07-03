@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use ethrex_common::H256;
 use ethrex_common::types::{AccountUpdate, Receipt};
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use eyre::Context;
@@ -59,8 +60,8 @@ enum SubcommandExecute {
     },
     #[command(about = "Execute and return transaction info.", visible_alias = "tx")]
     Transaction {
-        #[arg(help = "ID of the transaction")]
-        tx_hash: String,
+        #[arg(help = "Transaction hash.")]
+        tx_hash: H256,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
         #[arg(
@@ -126,10 +127,6 @@ impl SubcommandExecute {
             } => {
                 let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(&rpc_url)?;
-
-                let tx_hash = tx_hash
-                    .parse()
-                    .wrap_err("failed to parse transaction hash")?;
 
                 // Get the block number of the transaction
                 let tx = eth_client
