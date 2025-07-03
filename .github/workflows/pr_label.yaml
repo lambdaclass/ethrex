@@ -43,6 +43,10 @@ jobs:
             labels+=("L1" "L2")
           fi
 
+          if [[ "$TITLE" =~ ^perf ]]; then
+            labels+=("performance")
+          fi
+
           # Remove duplicates
           mapfile -t unique_labels < <(printf "%s\n" "${labels[@]}" | sort -u)
           labels_csv=$(IFS=, ; echo "${unique_labels[*]}")
