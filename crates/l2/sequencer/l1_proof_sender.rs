@@ -34,8 +34,10 @@ use aligned_sdk::{
 // TODO: Remove this import once it's no longer required by the SDK.
 use ethers::signers::{Signer, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str =
+const VERIFY_FUNCTION_SIGNATURE_BASED: &str =
     "verifyBatch(uint256,bytes32,bytes,bytes,bytes,bytes,bytes,bytes)";
+
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
@@ -45,6 +47,7 @@ pub struct L1ProofSenderState {
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
+    based: bool,
     sequencer_state: SequencerState,
     store: Store,
     rollup_store: StoreRollup,
@@ -60,6 +63,7 @@ impl L1ProofSenderState {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
+        based: bool,
         sequencer_state: SequencerState,
         aligned_cfg: &AlignedConfig,
         store: Store,
@@ -81,6 +85,7 @@ impl L1ProofSenderState {
                 on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
+                based,
                 sequencer_state,
                 store,
                 rollup_store,
@@ -98,6 +103,7 @@ impl L1ProofSenderState {
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
+            based,
             sequencer_state,
             store,
             rollup_store,
@@ -133,6 +139,7 @@ impl L1ProofSender {
             &cfg.proof_coordinator,
             &cfg.l1_committer,
             &cfg.eth,
+            cfg.based.based,
             sequencer_state,
             &cfg.aligned,
             store,
@@ -327,28 +334,50 @@ pub async fn send_proof_to_contract(
         "Sending batch verification transaction to L1"
     );
 
-    let calldata_values = [
-        &[Value::Uint(U256::from(batch_number))],
-        &[Value::FixedBytes(last_block_hash.0.to_vec().into())],
-        proofs
-            .get(&ProverType::RISC0)
-            .map(|proof| proof.calldata())
-            .unwrap_or(ProverType::RISC0.empty_calldata())
-            .as_slice(),
-        proofs
-            .get(&ProverType::SP1)
-            .map(|proof| proof.calldata())
-            .unwrap_or(ProverType::SP1.empty_calldata())
-            .as_slice(),
-        proofs
-            .get(&ProverType::TDX)
-            .map(|proof| proof.calldata())
-            .unwrap_or(ProverType::TDX.empty_calldata())
-            .as_slice(),
-    ]
-    .concat();
-
-    let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
+    let calldata = if state.based {
+        let calldata_values = [
+            &[Value::Uint(U256::from(batch_number))],
+            &[Value::FixedBytes(last_block_hash.0.to_vec().into())],
+            proofs
+                .get(&ProverType::RISC0)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::RISC0.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::SP1)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::SP1.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::TDX)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::TDX.empty_calldata())
+                .as_slice(),
+        ]
+        .concat();
+        encode_calldata(VERIFY_FUNCTION_SIGNATURE_BASED, &calldata_values)?
+    } else {
+        let calldata_values = [
+            &[Value::Uint(U256::from(batch_number))],
+            proofs
+                .get(&ProverType::RISC0)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::RISC0.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::SP1)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::SP1.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::TDX)
+                .map(|proof| proof.calldata())
+                .unwrap_or(ProverType::TDX.empty_calldata())
+                .as_slice(),
+        ]
+        .concat();
+        encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?
+    };
 
     let verify_tx_hash = send_verify_tx(
         calldata,
