@@ -2,7 +2,6 @@ use clap::{Parser, Subcommand};
 use ethrex_common::H256;
 use ethrex_common::types::{AccountUpdate, Receipt};
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
-use eyre::Context;
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
