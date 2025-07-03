@@ -258,7 +258,7 @@ impl<'a> VM<'a> {
     }
 }
 
-/// Checks its negative by checking leading ones is > 0
+/// Checks its negative by checking leading zeros is 0
 pub fn is_negative(value: U256) -> bool {
     value.leading_zeros() == 0
 }

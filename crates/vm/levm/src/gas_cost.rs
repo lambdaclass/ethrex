@@ -665,13 +665,13 @@ pub fn call(
         CALL_COLD_DYNAMIC,
         CALL_WARM_DYNAMIC,
     )?;
-    let positive_value_cost = if !value_to_transfer == U256::ZERO {
+    let positive_value_cost = if value_to_transfer != U256::ZERO {
         CALL_POSITIVE_VALUE
     } else {
         0
     };
 
-    let value_to_empty_account = if address_is_empty && !value_to_transfer == U256::ZERO {
+    let value_to_empty_account = if address_is_empty && value_to_transfer != U256::ZERO {
         CALL_TO_EMPTY_ACCOUNT
     } else {
         0
@@ -710,7 +710,7 @@ pub fn callcode(
         DELEGATECALL_WARM_DYNAMIC,
     )?;
 
-    let positive_value_cost = if !value_to_transfer == U256::ZERO {
+    let positive_value_cost = if value_to_transfer != U256::ZERO {
         CALLCODE_POSITIVE_VALUE
     } else {
         0
@@ -785,7 +785,7 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Res
         .checked_mul(denominator)
         .ok_or(InternalError::Overflow)?;
 
-    while !numerator_accum == U256::ZERO {
+    while numerator_accum != U256::ZERO {
         // Safe addition to output
         output = output
             .checked_add(numerator_accum)
