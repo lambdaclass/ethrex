@@ -95,7 +95,7 @@ contract OnChainProposer is
     uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 10;
 
     /// @notice Deadline for including the next batch of privileged transactions, if any are pending
-    uint256 public txInclusionDeadline;
+    uint256 public txInclusionDeadline = 0;
 
     modifier onlySequencer() {
         require(
