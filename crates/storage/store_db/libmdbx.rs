@@ -89,14 +89,14 @@ type StateTriePruningLogEntry = [u8; 32];
 dupsort!(
     /// Trie node insertion logs for pruning.
     /// includes the block number as the search key.
-    ( StateTriePruningLog ) BlockNumHash[u64] => StateTriePruningLogEntry
+    ( StateTriePruningLog ) BlockNumHash[BlockNumber] => StateTriePruningLogEntry
 );
 
 type StorageTriesPruningLogEntry = (StorageTriesNodesSeekKey, StorageTriesNodesSuffixKey);
 dupsort!(
     /// Trie node insertion logs for pruning.
     /// includes the block number as the search key.
-    ( StorageTriesPruningLog ) BlockNumHash[u64] => StorageTriesPruningLogEntry
+    ( StorageTriesPruningLog ) BlockNumHash[BlockNumber] => StorageTriesPruningLogEntry
 );
 
 dupsort!(
