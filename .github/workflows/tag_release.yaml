@@ -193,13 +193,18 @@ jobs:
         run: |
           cd crates/l2
           RUSTFLAGS='-C target-cpu=native' \
-          NVCC_PREPEND_FLAGS=" --maxrregcount=64 \
-              --generate-code arch=compute_60,code=[sm_60,sm_61,sm_62] \
-              --generate-code arch=compute_70,code=[sm_70,sm_72] \
-              --generate-code arch=compute_75,code=sm_75 \
-              --generate-code arch=compute_80,code=[sm_80,sm_86,sm_87] \
-              --generate-code arch=compute_89,code=sm_89 \
-              --generate-code arch=compute_90,code=[sm_90,sm_90a]" \
+          NVCC_PREPEND_FLAGS="--generate-code arch=compute_60,code=compute_60 \
+              --generate-code arch=compute_61,code=compute_61 \
+              --generate-code arch=compute_62,code=compute_62 \
+              --generate-code arch=compute_70,code=compute_70 \
+              --generate-code arch=compute_72,code=compute_72 \
+              --generate-code arch=compute_75,code=compute_75 \
+              --generate-code arch=compute_80,code=compute_80 \
+              --generate-code arch=compute_86,code=compute_86 \
+              --generate-code arch=compute_87,code=compute_87 \
+              --generate-code arch=compute_89,code=compute_89 \
+              --generate-code arch=compute_90,code=compute_90" \
+              --generate-code arch=compute_90a,code=compute_90a" \
           cargo build --release --features "risc0,gpu,l2" \
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
