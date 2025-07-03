@@ -19,7 +19,6 @@ const MAX_MESSAGE_SIZE: usize = 0xFFFFFF;
 
 type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
-#[derive(Clone)]
 pub(crate) struct RLPxCodec {
     pub(crate) mac_key: H256,
     pub(crate) ingress_mac: Keccak256,

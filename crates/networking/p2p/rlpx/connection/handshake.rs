@@ -65,7 +65,7 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
-    let (context, node, mut framed, inbound) = match state {
+    let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
@@ -82,8 +82,7 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-            let mut codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
-            codec.set_p2p_protocol(&Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION))?;
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
             log_peer_debug(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec), false)
         }
@@ -101,8 +100,7 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-            let mut codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
-            codec.set_p2p_protocol(&Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION))?;
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
             let node = Node::new(
                 peer_addr.ip(),
                 peer_addr.port(),
@@ -116,7 +114,6 @@ pub(crate) async fn perform(
             return Err(RLPxError::StateError("Already established".to_string()));
         }
     };
-    let codec = framed.codec_mut().clone();
     let (sink, stream) = framed.split();
     Ok((
         Established {
@@ -136,7 +133,6 @@ pub(crate) async fn perform(
             table: context.table.clone(),
             backend_channel: None,
             inbound,
-            codec,
         },
         stream,
     ))
