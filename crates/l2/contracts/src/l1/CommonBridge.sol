@@ -40,8 +40,8 @@ contract CommonBridge is
     /// that the logs were published on L1, and that that batch was committed.
     mapping(uint256 => bytes32) public batchWithdrawalLogsMerkleRoots;
 
-    /// @notice Array of hashed pending deposit logs.
-    bytes32[] public pendingDepositLogs;
+    /// @notice Array of hashed pending privileged transactions
+    bytes32[] public pendingTxHashes;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -49,9 +49,9 @@ contract CommonBridge is
     /// @dev Used by the L1Watcher to fetch logs starting from this block.
     uint256 public lastFetchedL1Block;
 
-    /// @notice Global deposit identifier, it is incremented each time a new deposit is made.
+    /// @notice Global privileged transaction identifier, it is incremented each time a new privileged transaction is made.
     /// @dev It is used as the nonce of the mint transaction created by the L1Watcher.
-    uint256 public depositId;
+    uint256 public transactionId;
 
     /// @notice Address of the bridge on the L2
     /// @dev It's used to validate withdrawals
@@ -101,15 +101,19 @@ contract CommonBridge is
         ON_CHAIN_PROPOSER = onChainProposer;
 
         lastFetchedL1Block = block.number;
-        depositId = 0;
+        transactionId = 0;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingDepositLogs() public view returns (bytes32[] memory) {
-        return pendingDepositLogs;
+    function getPendingTransactionHashes()
+        public
+        view
+        returns (bytes32[] memory)
+    {
+        return pendingTxHashes;
     }
     
     /// Burns at least {amount} gas
@@ -123,27 +127,26 @@ contract CommonBridge is
 
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
-                bytes20(sendValues.to),
-                bytes32(sendValues.value),
-                bytes32(depositId),
                 bytes20(from),
+                bytes20(sendValues.to),
+                bytes32(transactionId),
+                bytes32(sendValues.value),
                 bytes32(sendValues.gasLimit),
                 bytes32(keccak256(sendValues.data))
             )
         );
 
-        pendingDepositLogs.push(l2MintTxHash);
+        pendingTxHashes.push(l2MintTxHash);
 
-        emit L1ToL2Message(
-            sendValues.value,
-            sendValues.to,
-            depositId,
+        emit PrivilegedTxSent(
             from,
+            sendValues.to,
+            transactionId,
+            sendValues.value,
             sendValues.gasLimit,
-            sendValues.data,
-            l2MintTxHash
+            sendValues.data
         );
-        depositId += 1;
+        transactionId += 1;
     }
 
     /// @inheritdoc ICommonBridge
@@ -199,40 +202,40 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingDepositLogsVersionedHash(
+    function getPendingTransactionsVersionedHash(
         uint16 number
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendingDepositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (get)"
+            uint256(number) <= pendingTxHashes.length,
+            "CommonBridge: number is greater than the length of pendingTxHashes (get)"
         );
 
-        bytes memory logs;
+        bytes memory hashes;
         for (uint i = 0; i < number; i++) {
-            logs = bytes.concat(logs, pendingDepositLogs[i]);
+            hashes = bytes.concat(hashes, pendingTxHashes[i]);
         }
 
         return
             bytes32(bytes2(number)) |
-            bytes32(uint256(uint240(uint256(keccak256(logs)))));
+            bytes32(uint256(uint240(uint256(keccak256(hashes)))));
     }
 
     /// @inheritdoc ICommonBridge
-    function removePendingDepositLogs(
+    function removePendingTransactionHashes(
         uint16 number
     ) public onlyOnChainProposer {
         require(
-            number <= pendingDepositLogs.length,
-            "CommonBridge: number is greater than the length of depositLogs (remove)"
+            number <= pendingTxHashes.length,
+            "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
         );
 
-        for (uint i = 0; i < pendingDepositLogs.length - number; i++) {
-            pendingDepositLogs[i] = pendingDepositLogs[i + number];
+        for (uint i = 0; i < pendingTxHashes.length - number; i++) {
+            pendingTxHashes[i] = pendingTxHashes[i + number];
         }
 
         for (uint _i = 0; _i < number; _i++) {
-            pendingDepositLogs.pop();
+            pendingTxHashes.pop();
         }
     }
 
