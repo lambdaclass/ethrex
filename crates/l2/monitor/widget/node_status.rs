@@ -1,5 +1,11 @@
 use ethrex_rpc::EthClient;
-use ratatui::widgets::TableState;
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Row, StatefulWidget, Table, TableState},
+};
 
 pub struct NodeStatusTable {
     pub state: TableState,
@@ -44,5 +50,31 @@ impl NodeStatusTable {
             ),
             ("Peers:".to_string(), follower_nodes.to_string()),
         ]
+    }
+}
+
+impl StatefulWidget for &mut NodeStatusTable {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let constraints = vec![Constraint::Percentage(50), Constraint::Percentage(50)];
+
+        let rows = self.items.iter().map(|(key, value)| {
+            Row::new(vec![
+                Span::styled(key, Style::default()),
+                Span::styled(value, Style::default()),
+            ])
+        });
+
+        let node_status_table = Table::new(rows, constraints).block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(Span::styled(
+                    "Node Status",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+        );
+
+        node_status_table.render(area, buf, state);
     }
 }

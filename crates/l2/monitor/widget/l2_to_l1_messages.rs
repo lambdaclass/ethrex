@@ -5,9 +5,18 @@ use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
 use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
 use keccak_hash::keccak;
-use ratatui::widgets::TableState;
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Row, StatefulWidget, Table, TableState},
+};
 
-use crate::monitor;
+use crate::monitor::{
+    self,
+    widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+};
 
 #[derive(Debug, Clone)]
 pub enum L2ToL1MessageStatus {
@@ -204,5 +213,62 @@ impl L2ToL1MessagesTable {
         }
 
         processed_logs
+    }
+}
+
+impl StatefulWidget for &mut L2ToL1MessagesTable {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
+    where
+        Self: Sized,
+    {
+        let constraints = vec![
+            Constraint::Length(9),
+            Constraint::Length(16),
+            Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+            Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+            Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+            Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
+        ];
+
+        let rows = self.items.iter().map(
+            |(kind, status, receiver_on_l1, value, token_l1, token_l2, l2_tx_hash)| {
+                Row::new(vec![
+                    Span::styled(format!("{kind}"), Style::default()),
+                    Span::styled(format!("{status}"), Style::default()),
+                    Span::styled(format!("{receiver_on_l1:#x}"), Style::default()),
+                    Span::styled(value.to_string(), Style::default()),
+                    Span::styled(format!("{token_l1:#x}"), Style::default()),
+                    Span::styled(format!("{token_l2:#x}"), Style::default()),
+                    Span::styled(format!("{l2_tx_hash:#x}"), Style::default()),
+                ])
+            },
+        );
+
+        let l1_to_l2_messages_table = Table::new(rows, constraints)
+            .header(
+                Row::new(vec![
+                    "Kind",
+                    "Status",
+                    "Receiver on L1",
+                    "Value",
+                    "Token L1",
+                    "Token L2",
+                    "L2 Tx Hash",
+                ])
+                .style(Style::default()),
+            )
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        "L2 to L1 Messages",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+            );
+
+        l1_to_l2_messages_table.render(area, buf, state);
     }
 }

@@ -1,7 +1,13 @@
 use ethrex_common::{Address, H256};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
-use ratatui::widgets::TableState;
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Row, StatefulWidget, Table, TableState},
+};
 
 use crate::SequencerConfig;
 
@@ -167,5 +173,29 @@ impl GlobalChainStatusTable {
                 ),
             ]
         }
+    }
+}
+
+impl StatefulWidget for &mut GlobalChainStatusTable {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let constraints = vec![Constraint::Percentage(50), Constraint::Percentage(50)];
+        let rows = self.items.iter().map(|(key, value)| {
+            Row::new(vec![
+                Span::styled(key, Style::default()),
+                Span::styled(value, Style::default()),
+            ])
+        });
+        let global_chain_status_table = Table::new(rows, constraints).block(
+            Block::bordered()
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(Span::styled(
+                    "Global Chain Status",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+        );
+
+        global_chain_status_table.render(area, buf, state);
     }
 }

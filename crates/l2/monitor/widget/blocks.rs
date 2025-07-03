@@ -6,7 +6,18 @@ use ethrex_rpc::{
     clients::eth::BlockByNumber,
     types::block::{BlockBodyWrapper, RpcBlock},
 };
-use ratatui::widgets::TableState;
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Row, StatefulWidget, Table, TableState},
+};
+
+use crate::monitor::widget::{
+    ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
+    HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
+};
 
 pub struct BlocksTable {
     pub state: TableState,
@@ -124,5 +135,55 @@ impl BlocksTable {
         );
 
         new_blocks_processed
+    }
+}
+
+impl StatefulWidget for &mut BlocksTable {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
+    where
+        Self: Sized,
+    {
+        let constraints = vec![
+            Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+            Constraint::Length(TX_NUMBER_LENGTH_IN_DIGITS),
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
+            Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+            Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
+            Constraint::Length(GAS_USED_LENGTH_IN_DIGITS),
+            Constraint::Length(BLOCK_SIZE_LENGTH_IN_DIGITS),
+        ];
+        let rows = self
+            .items
+            .iter()
+            .map(|(number, n_txs, hash, coinbase, gas, blob_bas, size)| {
+                Row::new(vec![
+                    Span::styled(number, Style::default()),
+                    Span::styled(n_txs.to_string(), Style::default()),
+                    Span::styled(hash, Style::default()),
+                    Span::styled(coinbase, Style::default()),
+                    Span::styled(gas.to_string(), Style::default()),
+                    Span::styled(blob_bas.to_string(), Style::default()),
+                    Span::styled(size.to_string(), Style::default()),
+                ])
+            });
+        let latest_blocks_table = Table::new(rows, constraints)
+            .header(
+                Row::new(vec![
+                    "Number", "#Txs", "Hash", "Coinbase", "Gas", "Blob Gas", "Size",
+                ])
+                .style(Style::default()),
+            )
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        "L2 Blocks",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+            );
+
+        latest_blocks_table.render(area, buf, state);
     }
 }

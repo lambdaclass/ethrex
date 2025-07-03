@@ -2,7 +2,15 @@ use std::cmp::min;
 
 use ethrex_common::{Address, H256};
 use ethrex_rpc::{EthClient, clients::eth::RpcBatch};
-use ratatui::widgets::TableState;
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Row, StatefulWidget, Table, TableState},
+};
+
+use crate::monitor::widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS};
 
 pub struct BatchesTable {
     pub state: TableState,
@@ -124,5 +132,59 @@ impl BatchesTable {
             .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
 
         new_blocks_processed
+    }
+}
+
+impl StatefulWidget for &mut BatchesTable {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let constraints = vec![
+            Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+            Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+            Constraint::Length(17),
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
+        ];
+        let rows = self.items.iter().map(
+            |(number, n_blocks, n_messages, commit_tx_hash, verify_tx_hash)| {
+                Row::new(vec![
+                    Span::styled(number.to_string(), Style::default()),
+                    Span::styled(n_blocks.to_string(), Style::default()),
+                    Span::styled(n_messages.to_string(), Style::default()),
+                    Span::styled(
+                        commit_tx_hash
+                            .map_or_else(|| "Uncommitted".to_string(), |hash| format!("{hash:#x}")),
+                        Style::default(),
+                    ),
+                    Span::styled(
+                        verify_tx_hash
+                            .map_or_else(|| "Unverified".to_string(), |hash| format!("{hash:#x}")),
+                        Style::default(),
+                    ),
+                ])
+            },
+        );
+        let committed_batches_table = Table::new(rows, constraints)
+            .header(
+                Row::new(vec![
+                    "Number",
+                    "# Blocks",
+                    "# L2 to L1 Messages",
+                    "Commit Tx Hash",
+                    "Verify Tx Hash",
+                ])
+                .style(Style::default()),
+            )
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        "L2 Batches",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+            );
+
+        committed_batches_table.render(area, buf, state);
     }
 }

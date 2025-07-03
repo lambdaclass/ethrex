@@ -1,5 +1,15 @@
 use ethrex_rpc::EthClient;
-use ratatui::widgets::TableState;
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Row, StatefulWidget, Table, TableState},
+};
+
+use crate::monitor::widget::{
+    ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS,
+};
 
 pub struct MempoolTable {
     pub state: TableState,
@@ -44,5 +54,39 @@ impl MempoolTable {
         });
 
         pending_txs
+    }
+}
+
+impl StatefulWidget for &mut MempoolTable {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
+    where
+        Self: Sized,
+    {
+        let constraints = vec![
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
+            Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
+            Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
+        ];
+        let rows = self.items.iter().map(|(hash, sender, nonce)| {
+            Row::new(vec![
+                Span::styled(hash, Style::default()),
+                Span::styled(sender, Style::default()),
+                Span::styled(nonce, Style::default()),
+            ])
+        });
+        let mempool_table = Table::new(rows, constraints)
+            .header(Row::new(vec!["Hash", "Sender", "Nonce"]).style(Style::default()))
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        "Mempool",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+            );
+
+        mempool_table.render(area, buf, state);
     }
 }

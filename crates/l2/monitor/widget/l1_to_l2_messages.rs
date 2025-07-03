@@ -3,9 +3,18 @@ use std::fmt::Display;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
-use ratatui::widgets::TableState;
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Row, StatefulWidget, Table, TableState},
+};
 
-use crate::{DepositData, monitor};
+use crate::{
+    DepositData,
+    monitor::{self, widget::HASH_LENGTH_IN_DIGITS},
+};
 
 pub struct L1ToL2MessagesTable {
     pub state: TableState,
@@ -149,5 +158,51 @@ impl L1ToL2MessagesTable {
         }
 
         processed_logs
+    }
+}
+
+impl StatefulWidget for &mut L1ToL2MessagesTable {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
+    where
+        Self: Sized,
+    {
+        let constraints = vec![
+            Constraint::Length(9),
+            Constraint::Length(10),
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
+            Constraint::Length(HASH_LENGTH_IN_DIGITS),
+            Constraint::Fill(1),
+        ];
+
+        let rows = self
+            .items
+            .iter()
+            .map(|(status, kind, l1_tx_hash, l2_tx_hash, amount)| {
+                Row::new(vec![
+                    Span::styled(format!("{status}"), Style::default()),
+                    Span::styled(format!("{kind}"), Style::default()),
+                    Span::styled(format!("{l1_tx_hash:#x}"), Style::default()),
+                    Span::styled(format!("{l2_tx_hash:#x}"), Style::default()),
+                    Span::styled(amount.to_string(), Style::default()),
+                ])
+            });
+
+        let l1_to_l2_messages_table = Table::new(rows, constraints)
+            .header(
+                Row::new(vec!["Status", "Kind", "L1 Tx Hash", "L2 Tx Hash", "Value"])
+                    .style(Style::default()),
+            )
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        "L1 to L2 Messages",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+            );
+
+        l1_to_l2_messages_table.render(area, buf, state);
     }
 }
