@@ -192,8 +192,6 @@ contract OnChainProposer is
             bytes32(0)
         );
 
-        verifiedBatches[bytes32(0)] = true;
-
         // Set the SequencerRegistry address
         require(
             SEQUENCER_REGISTRY == address(0),
