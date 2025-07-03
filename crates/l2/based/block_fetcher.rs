@@ -87,7 +87,7 @@ pub struct BlockFetcherState {
     pending_batches: VecDeque<PendingBatch>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct PendingBatch {
     number: u64,
     last_block_hash: H256,
@@ -218,14 +218,21 @@ impl BlockFetcherState {
         Ok(())
     }
 
-    /// Fetch the batches from the logs in the L1
-    /// After that, adds the new batch blocks into the local blockchain
-    /// And build a new batch with its assossiated batch number, which is stored
+    /// Fetch the logs from the L1 (commit & verify).
+    /// build a new batch with its batch number, which is stored
     /// in a queue to wait for validation
     pub async fn fetch_pending_batches(&mut self) -> Result<(), BlockFetcherError> {
         self.fetch_logs().await?;
 
         for (batch_number, batch_committed_log) in &self.pending_commit_log.clone() {
+            if self
+                .pending_batches
+                .iter()
+                .any(|batch| batch.number == *batch_number)
+            {
+                // check if the batch has already been added
+                continue;
+            }
             let batch_commit_tx_calldata = self
                 .eth_client
                 .get_transaction_by_hash(batch_committed_log.transaction_hash)
@@ -247,7 +254,7 @@ impl BlockFetcherState {
         Ok(())
     }
 
-    /// Traverse the pending batches queue and stores the ones that are safe (verified).
+    /// Traverse the pending batches queue and build and stores the ones that are safe (verified).
     pub async fn store_safe_batches(&mut self) -> Result<(), BlockFetcherError> {
         while let Some(pending_batch) = self.pending_batches.pop_front() {
             if self.batch_is_safe(&pending_batch.last_block_hash).await?
@@ -293,6 +300,7 @@ impl BlockFetcherState {
                 batch.verify_tx = Some(verify_log.transaction_hash);
                 self.rollup_store.seal_batch(batch).await?;
             } else {
+                // if the batch isn't verified yet, add it again to the queue
                 self.pending_batches.push_front(pending_batch);
                 break;
             }
