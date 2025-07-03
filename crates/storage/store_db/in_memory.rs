@@ -269,7 +269,6 @@ impl StoreEngine for Store {
                     warn!(
                         "UNDO: found account info log for {current_snapshot:?}: {parent_block:?}"
                     );
-
                     // Restore previous state
                     if log.previous_info == AccountInfo::default() {
                         debug!("UNDO: removing account info for {:?}", log.address);
