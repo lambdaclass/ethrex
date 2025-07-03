@@ -123,9 +123,6 @@ jobs:
           - name: Ethrex Only Check
             enclave_name: "ethrex-only-assertoor"
             ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_only.yaml"
-          - name: Ethrex Only With Different Consensus Clients Check
-            enclave_name: "ethrex-different-consensus-assertoor"
-            ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
 
     steps:
       - uses: actions/checkout@v4

@@ -3,7 +3,32 @@ participants:
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
-    count: 3
+    ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    cl_type: nimbus
+    cl_image: statusim/nimbus-eth2:multiarch-latest
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    cl_type: teku
+    cl_image: consensys/teku:latest
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    cl_type: prysm
+    cl_image: gcr.io/prysmaticlabs/prysm/beacon-chain:latest
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    cl_type: lodestar
+    cl_image: chainsafe/lodestar:next
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
+  - el_type: ethrex
+    cl_type: grandine
+    cl_image: sifrai/grandine:stable
+    validator_count: 32
+    ethereum_metrics_exporter_enabled: true
 
 network_params:
   # The address of the staking contract address on the Eth1 chain
@@ -12,16 +37,12 @@ network_params:
 
 additional_services:
   - assertoor
-#   - dora
-#   - prometheus_grafana
-# ethereum_metrics_exporter_enabled: true
-# Uncomment the previous lines to enable metrics dashboards and dora explorer, useful for local testing
+  - dora
 
 assertoor_params:
-  run_stability_check: false
-  run_block_proposal_check: false
   tests:
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
+    - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml  # Check that all el clients are synced with the corresponding cl
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/stability-check.yaml 
     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml
-    - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/all-opcodes-test.yaml
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
+    
