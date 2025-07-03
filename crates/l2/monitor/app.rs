@@ -92,8 +92,13 @@ impl<'a> EthrexMonitor<'a> {
             should_quit: false,
             tabs: TabsState::new(vec!["Overview", "Logs"]),
             tick_rate: cfg.monitor.tick_rate,
-            global_chain_status: GlobalChainStatusTable::new(&eth_client, &rollup_client, cfg)
-                .await,
+            global_chain_status: GlobalChainStatusTable::new(
+                &eth_client,
+                cfg,
+                &store,
+                &rollup_store,
+            )
+            .await,
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
             node_status: NodeStatusTable::new(&rollup_client).await,
             mempool: MempoolTable::new(&rollup_client).await,
@@ -239,7 +244,7 @@ impl<'a> EthrexMonitor<'a> {
     pub async fn on_tick(&mut self) {
         self.node_status.on_tick(&self.rollup_client).await;
         self.global_chain_status
-            .on_tick(&self.eth_client, &self.rollup_client)
+            .on_tick(&self.eth_client, &self.store, &self.rollup_store)
             .await;
         self.mempool.on_tick(&self.rollup_client).await;
         self.batches_table

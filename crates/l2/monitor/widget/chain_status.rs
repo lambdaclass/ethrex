@@ -1,6 +1,8 @@
 use ethrex_common::{Address, H256};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
+use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -21,8 +23,9 @@ pub struct GlobalChainStatusTable {
 impl GlobalChainStatusTable {
     pub async fn new(
         eth_client: &EthClient,
-        rollup_client: &EthClient,
         cfg: &SequencerConfig,
+        store: &Store,
+        rollup_store: &StoreRollup,
     ) -> Self {
         let sequencer_registry_address =
             if cfg.based.state_updater.sequencer_registry == Address::default() {
@@ -34,9 +37,10 @@ impl GlobalChainStatusTable {
             state: TableState::default(),
             items: Self::refresh_items(
                 eth_client,
-                rollup_client,
                 cfg.l1_committer.on_chain_proposer_address,
                 sequencer_registry_address,
+                store,
+                rollup_store,
             )
             .await,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
@@ -44,23 +48,31 @@ impl GlobalChainStatusTable {
         }
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+    pub async fn on_tick(
+        &mut self,
+        eth_client: &EthClient,
+        store: &Store,
+        rollup_store: &StoreRollup,
+    ) {
         self.items = Self::refresh_items(
             eth_client,
-            rollup_client,
             self.on_chain_proposer_address,
             self.sequencer_registry_address,
+            store,
+            rollup_store,
         )
         .await;
     }
 
     async fn refresh_items(
         eth_client: &EthClient,
-        rollup_client: &EthClient,
         on_chain_proposer_address: Address,
         sequencer_registry_address: Option<Address>,
+        store: &Store,
+        rollup_store: &StoreRollup,
     ) -> Vec<(String, String)> {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
         let lead_sequencer = if let Some(sequencer_registry_address) = sequencer_registry_address {
             let calldata = encode_calldata("leaderSequencer()", &[])
                 .expect("Failed to encode leadSequencer calldata");
@@ -80,44 +92,49 @@ impl GlobalChainStatusTable {
         } else {
             Address::default()
         };
+
         let last_committed_batch = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
             .expect("Failed to get last committed batch");
+
         let last_verified_batch = eth_client
             .get_last_verified_batch(on_chain_proposer_address)
             .await
             .expect("Failed to get last verified batch");
-        let last_committed_block =
-            if last_committed_batch == 0 {
-                0
-            } else {
-                rollup_client
-            .get_batch_by_number(last_committed_batch)
-            .await
-            .unwrap_or_else(|err| {
-                panic!("Failed to get last committed batch ({last_committed_batch}) data: {err}")
-            })
-            .batch
-            .last_block
-            };
+
+        let last_committed_block = if last_committed_batch == 0 {
+            0
+        } else {
+            match rollup_store
+                .get_block_numbers_by_batch(last_committed_batch)
+                .await
+                .expect("Failed to get blocks by batch")
+            {
+                Some(block_numbers) => block_numbers.last().copied().unwrap_or(0),
+                None => 0,
+            }
+        };
+
         let last_verified_block = if last_verified_batch == 0 {
             0
         } else {
-            rollup_client
-                .get_batch_by_number(last_verified_batch)
+            match rollup_store
+                .get_block_numbers_by_batch(last_verified_batch)
                 .await
-                .unwrap_or_else(|err| {
-                    panic!("Failed to get last verified batch ({last_verified_batch}) data: {err}")
-                })
-                .batch
-                .last_block
+                .expect("Failed to get blocks by batch")
+            {
+                Some(block_numbers) => block_numbers.last().copied().unwrap_or(0),
+                None => 0,
+            }
         };
-        let current_block = rollup_client
-            .get_block_number()
+
+        let current_block = store
+            .get_latest_block_number()
             .await
-            .expect("Failed to get latest L2 block")
+            .expect("Failed to get latest L1 block")
             + 1;
+
         let current_batch = if sequencer_registry_address.is_some() {
             "NaN".to_string() // TODO: Implement current batch retrieval (should be last known + 1)
         } else {
