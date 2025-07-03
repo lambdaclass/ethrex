@@ -56,6 +56,8 @@ pub enum EthClientError {
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]
     FailedToSignPayload(String),
+    #[error("Failed to get transaction pool: {0}")]
+    FailedToGetTxPool(#[from] TxPoolContentError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -262,4 +264,12 @@ pub enum GetMaxPriorityFeeError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TxPoolContentError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
 }

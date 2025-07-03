@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ethrex_common::{Address, H256};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{rpc::RpcApiContext, types::transaction::RpcTransaction, utils::RpcErr};
@@ -11,13 +11,13 @@ type MempoolContentEntry = HashMap<Address, HashMap<u64, RpcTransaction>>;
 
 /// Full content of the mempool
 /// Transactions are grouped by sender and indexed by nonce
-#[derive(Serialize)]
-struct MempoolContent {
+#[derive(Serialize, Deserialize)]
+pub struct MempoolContent {
     pending: MempoolContentEntry,
     queued: MempoolContentEntry,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct MempoolStatus {
     pending: String,
     queued: String,

@@ -1,7 +1,8 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::GetWitnessError,
+    clients::eth::errors::{GetWitnessError, TxPoolContentError},
+    mempool::MempoolContent,
     types::{
         block::RpcBlock,
         block_identifier::{BlockIdentifier, BlockTag},
@@ -1332,6 +1333,24 @@ impl EthClient {
         }
 
         self.get_fee_from_override_or_get_gas_price(None).await
+    }
+
+    pub async fn tx_pool_content(&self) -> Result<MempoolContent, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "txpool_content".to_string(),
+            params: None,
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(TxPoolContentError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(TxPoolContentError::RPCError(error_response.error.message).into())
+            }
+        }
     }
 }
 
