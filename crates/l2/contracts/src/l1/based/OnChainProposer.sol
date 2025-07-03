@@ -329,6 +329,10 @@ contract OnChainProposer is
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
             "OnChainProposer: cannot verify an uncommitted batch"
         );
+        require(
+            batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
+            "OnChainProposer: LastBlockHash doesn't match expected"
+        );
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
