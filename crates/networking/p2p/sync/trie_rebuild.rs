@@ -376,7 +376,7 @@ async fn show_storage_tries_rebuild_progress(
             false
         };
     // Show current speed only as debug data
-    debug!(
+    info!(
         "Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
         storage_rebuild_time, current_storages_in_queue,
     );
