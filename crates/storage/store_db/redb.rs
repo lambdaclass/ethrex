@@ -12,6 +12,7 @@ use crate::store_db::codec::account_info_log_entry::AccountInfoLogEntry;
 use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
 use crate::store_db::codec::block_num_hash::BlockNumHash;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
+use ethrex_common::H160;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -24,8 +25,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{
-    AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, TableDefinition,
-    TypeName, Value,
+    AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable, TableDefinition, TypeName, Value
 };
 
 use crate::UpdateBatch;
@@ -645,13 +645,88 @@ impl StoreEngine for RedBStore {
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write().map_err(Box::new)?;
             {
-                // store account updates
+                // Calculate parent and final block metadata for logs if we have blocks
+                if let (Some(first_block), Some(last_block)) = 
+                    (update_batch.blocks.first(), update_batch.blocks.last()) {
+                    
+                    let parent_block = BlockNumHash(
+                        first_block.header.number - 1,
+                        first_block.header.parent_hash,
+                    );
+                    let final_block = BlockNumHash(last_block.header.number, last_block.hash());
+
+                    // Write account info logs
+                    let mut state_logs_table = write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+                    for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned() {
+                        let log_entry = AccountInfoLogEntry {
+                            address: addr.0,
+                            info: new_info,
+                            previous_info: old_info,
+                        };
+                        
+                        let key: BlockNumHashRLP = final_block.into();
+                        let value = (parent_block.into(), log_entry.into());
+                        state_logs_table.insert(key, value)?;
+                    }
+
+                    // Write storage logs
+                    let mut storage_logs_table = write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
+                    for entry in update_batch.storage_log_updates.iter().cloned() {
+                        let key: BlockNumHashRLP = final_block.into();
+                        let value = (parent_block.into(), entry.into());
+                        storage_logs_table.insert(key, value)?;
+                    }
+
+                    // Check if we need to update flat tables
+                    let current_snapshot = {
+                        let snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+                        snapshot_table.get(())?
+                            .map(|v| v.value().to())
+                            .transpose()?
+                            .unwrap_or_default()
+                    };
+
+                    if current_snapshot == parent_block {
+                        // Update flat tables with new state
+                        let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+                        let mut account_storage_table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+
+                        // Apply account info changes to flat tables
+                        for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
+                            let address_key = <H160 as Into<AccountAddressRLP>>::into(addr.0);
+                            if new_info != AccountInfo::default() {
+                                let new_info_rlp: AccountInfoRLP = new_info.into();
+                                account_info_table.insert(address_key, new_info_rlp)?;
+                            } else {
+                                account_info_table.remove(address_key)?;
+                            }
+                        }
+
+                        // Apply storage changes to flat tables
+                        for entry in update_batch.storage_log_updates {
+                            let storage_key = (entry.address.into(), entry.slot.into());
+                            if !entry.new_value.is_zero() {
+                                let new_value_rlp: AccountStorageValueRLP = entry.new_value.into();
+                                account_storage_table.insert(storage_key, new_value_rlp)?;
+                            } else {
+                                account_storage_table.remove(storage_key)?;
+                            }
+                        }
+
+                        // Update snapshot metadata
+                        let mut snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+                        let final_block_rlp: BlockNumHashRLP = final_block.into();
+                        snapshot_table.insert((), final_block_rlp)?;
+                    }
+                }
+
+                // Store account trie updates
                 let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
                 for (node_hash, node_data) in update_batch.account_updates {
                     state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
                 }
 
-                // store code updates
+                // Store code updates
                 let mut code_store = write_txn.open_table(ACCOUNT_CODES_TABLE)?;
                 for (hashed_address, code) in update_batch.code_updates {
                     let account_code_hash = <H256 as Into<AccountCodeHashRLP>>::into(hashed_address);
@@ -659,6 +734,7 @@ impl StoreEngine for RedBStore {
                     code_store.insert(account_code_hash, account_code)?;
                 }
 
+                // Store storage trie updates
                 let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
                 for (hashed_address, nodes) in update_batch.storage_updates {
                     for (node_hash, node_data) in nodes {
@@ -669,13 +745,13 @@ impl StoreEngine for RedBStore {
                     }
                 }
 
+                // Store block data
                 let mut transaction_table = write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
                 let mut bodies = write_txn.open_table(BLOCK_BODIES_TABLE)?;
                 let mut headers = write_txn.open_table(HEADERS_TABLE)?;
                 let mut block_numbers = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
 
                 for block in update_batch.blocks {
-                    // store block
                     let number = block.header.number;
                     let hash = <H256 as Into<BlockHashRLP>>::into(block.hash());
 
@@ -698,6 +774,7 @@ impl StoreEngine for RedBStore {
                     block_numbers.insert(hash, number)?;
                 }
 
+                // Store receipts
                 let mut receipts_table = write_txn.open_table(RECEIPTS_TABLE)?;
                 for (block_hash, receipts) in update_batch.receipts {
                     for (index, receipt) in receipts.into_iter().enumerate() {
