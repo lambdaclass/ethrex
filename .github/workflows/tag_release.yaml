@@ -196,10 +196,6 @@ jobs:
           NVCC_PREPEND_FLAGS="--relocatable-device-code=true \
               --generate-code arch=compute_60,code=compute_60 \
               --generate-code arch=compute_70,code=compute_70 \
-              --generate-code arch=compute_75,code=compute_75 \
-              --generate-code arch=compute_80,code=compute_80 \
-              --generate-code arch=compute_89,code=compute_89 \
-              --generate-code arch=compute_90,code=compute_90" \
           cargo build --release --features "risc0,gpu,l2" \
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
