@@ -59,8 +59,8 @@ jobs:
           cd cmd/ethrex_replay
           whoami
           echo $PATH
-          nvcc -V
           export PATH=$PATH:/usr/local/cuda-12.8/bin
+          nvcc -V
           cargo b -r --features "${{ matrix.backend }},gpu"
 
       - name: Run
