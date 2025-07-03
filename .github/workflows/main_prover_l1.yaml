@@ -46,6 +46,13 @@ jobs:
           curl -L https://risczero.com/install | bash
           ~/.risc0/bin/rzup install cargo-risczero 2.1.0
           ~/.risc0/bin/rzup install rust
+
+          sudo apt install ubuntu-drivers-common
+          sudo ubuntu-drivers install
+          sudo apt install build-essential libssl-dev -y
+          sudo apt install cuda-toolkit -y
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
       - name: RISC-V SP1 toolchain install
         if: matrix.backend == 'sp1'
         run: |
