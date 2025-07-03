@@ -58,3 +58,30 @@ pub fn u256_from_h160(value: H160) -> ethnum::U256 {
     buffer[12..].copy_from_slice(&value);
     ethnum::U256::from_be_bytes(buffer)
 }
+
+pub fn h160_from_u256(value: ethnum::U256) -> H160 {
+    H160::from_slice(&value.to_be_bytes()[12..])
+}
+
+#[cfg(test)]
+mod tests {
+    use ethereum_types::H160;
+
+    use crate::utils::{u256_from_h160, u256_from_u512, u512_from_u256};
+
+    #[test]
+    fn test_u256_from_u512() {
+        assert_eq!(
+            u256_from_u512(u512_from_u256(ethnum::U256::MAX)).unwrap(),
+            ethnum::U256::MAX
+        );
+    }
+
+    #[test]
+    fn test_u256_from_h160() {
+        let address = H160::repeat_byte(64);
+        let value = u256_from_h160(address);
+        let address2 = H160::from_slice(&value.to_be_bytes()[12..]);
+        assert_eq!(address, address2);
+    }
+}
