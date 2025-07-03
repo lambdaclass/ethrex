@@ -334,20 +334,16 @@ impl Store {
             // delete nodes in back order
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
             let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
-            for nodehash in cursor_state_trie_pruning_log.walk_back(Some(start_key)) {
-                let (_, nodehash_value) = nodehash?;
+            let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
+            while let Some((_, nodehash_value)) = keyval {
                 let k_delete = NodeHash::Hashed(nodehash_value.into());
                 if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
                     && key == k_delete
                 {
                     cursor_state_trie.delete_current()?;
                 }
-            }
-            let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
-            let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
-            while keyval.is_some() {
-                cursor_state_trie_pruning_log.delete_current_key()?;
-                keyval = cursor_state_trie_pruning_log.prev_key()?;
+                cursor_state_trie_pruning_log.delete_current()?;
+                keyval = cursor_state_trie_pruning_log.prev()?;
             }
         }
 
@@ -356,19 +352,15 @@ impl Store {
             // delete nodes in back order
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
             let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
-            for nodehash in cursor_storage_trie_pruning_log.walk_back(Some(start_key)) {
-                let (_, nodehash_value) = nodehash?;
+            let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
+            while let Some((_, nodehash_value)) = keyval {
                 if let Some((key, _)) = cursor_storage_trie.seek_exact(nodehash_value)?
                     && key == nodehash_value
                 {
                     cursor_storage_trie.delete_current()?;
                 }
-            }
-            let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
-            let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
-            while keyval.is_some() {
-                cursor_storage_trie_pruning_log.delete_current_key()?;
-                keyval = cursor_storage_trie_pruning_log.prev_key()?;
+                cursor_storage_trie_pruning_log.delete_current()?;
+                keyval = cursor_storage_trie_pruning_log.prev()?;
             }
         }
 
