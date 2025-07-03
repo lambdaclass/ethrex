@@ -15,6 +15,7 @@ use crate::rlp::{
     TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store_db::codec::block_num_hash;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -335,14 +336,18 @@ impl Store {
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
             let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
             let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
-            while let Some((_, nodehash_value)) = keyval {
+            while let Some((block_num_hash, nodehash_value)) = keyval {
+                if start_key <= block_num_hash.0 {
+                    keyval = cursor_state_trie_pruning_log.prev()?;
+                    continue;
+                }
                 let k_delete = NodeHash::Hashed(nodehash_value.into());
                 if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
                     && key == k_delete
                 {
                     cursor_state_trie.delete_current()?;
+                    cursor_state_trie_pruning_log.delete_current()?;
                 }
-                cursor_state_trie_pruning_log.delete_current()?;
                 keyval = cursor_state_trie_pruning_log.prev()?;
             }
         }
@@ -353,13 +358,17 @@ impl Store {
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
             let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
             let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
-            while let Some((_, nodehash_value)) = keyval {
+            while let Some((block_num_hash, nodehash_value)) = keyval {
+                if start_key <= block_num_hash.0 {
+                    keyval = cursor_storage_trie_pruning_log.prev()?;
+                    continue;
+                }
                 if let Some((key, _)) = cursor_storage_trie.seek_exact(nodehash_value)?
                     && key == nodehash_value
                 {
                     cursor_storage_trie.delete_current()?;
+                    cursor_storage_trie_pruning_log.delete_current()?;
                 }
-                cursor_storage_trie_pruning_log.delete_current()?;
                 keyval = cursor_storage_trie_pruning_log.prev()?;
             }
         }
