@@ -111,7 +111,6 @@ interface ICommonBridge {
     /// @dev We do not need to check that the claimee is the same as the
     /// beneficiary of the withdrawal, because the withdrawal proof already
     /// contains the beneficiary.
-    /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
     /// @param claimedAmount the amount that will be claimed.
     /// @param withdrawalProof the merkle path to the withdrawal log.
     /// @param withdrawalLogIndex the index of the message log in the block.
@@ -119,7 +118,6 @@ interface ICommonBridge {
     /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawal(
-        bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
         uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,
@@ -127,7 +125,6 @@ interface ICommonBridge {
     ) external;
 
     /// @notice Claims an ERC20 withdrawal
-    /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
     /// @param tokenL1 Address of the token on the L1
     /// @param tokenL2 Address of the token on the L2
     /// @param claimedAmount the amount that will be claimed.
@@ -136,7 +133,6 @@ interface ICommonBridge {
     /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawalERC20(
-        bytes32 l2WithdrawalTxHash,
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
