@@ -15,11 +15,10 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use keccak_hash::keccak;
+use spawned_concurrency::messages::Unused;
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
-
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
 
 #[derive(Clone)]
 pub struct L1WatcherState {
@@ -89,17 +88,14 @@ impl L1Watcher {
             &cfg.l1_watcher,
             sequencer_state,
         )?;
-        let mut l1_watcher = L1Watcher::start(state);
-        // Perform the check and suscribe a periodic Watch.
-        l1_watcher
-            .cast(InMessage::Watch)
-            .await
-            .map_err(L1WatcherError::GenServerError)
+        L1Watcher::start(state);
+        Ok(())
     }
 }
 
 impl GenServer for L1Watcher {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = L1WatcherState;
     type Error = L1WatcherError;
@@ -108,29 +104,34 @@ impl GenServer for L1Watcher {
         Self {}
     }
 
-    async fn handle_call(
+    async fn init(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> Result<Self::State, Self::Error> {
+        // Perform the check and suscribe a periodic Watch.
+        handle
+            .clone()
+            .cast(Self::CastMsg::Watch)
+            .await
+            .map_err(Self::Error::GenServerError)?;
+        Ok(state)
     }
 
     async fn handle_cast(
         &mut self,
-        message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
         match message {
-            Self::InMsg::Watch => {
+            Self::CastMsg::Watch => {
                 if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-                    watch(state).await;
+                    watch(&mut state).await;
                 }
                 let check_interval = random_duration(state.check_interval);
-                send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-                CastResponse::NoReply
+                send_after(check_interval, handle.clone(), Self::CastMsg::Watch);
+                CastResponse::NoReply(state)
             }
         }
     }

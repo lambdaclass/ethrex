@@ -16,8 +16,10 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -104,7 +106,8 @@ impl BlockProducer {
 }
 
 impl GenServer for BlockProducer {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = BlockProducerState;
 
@@ -114,33 +117,24 @@ impl GenServer for BlockProducer {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         // Right now we only have the Produce message, so we ignore the message
         if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = produce_block(state)
+            let _ = produce_block(&state)
                 .await
                 .inspect_err(|e| error!("Block Producer Error: {e}"));
         }
         send_after(
             Duration::from_millis(state.block_time_ms),
-            tx.clone(),
-            Self::InMsg::Produce,
+            handle.clone(),
+            Self::CastMsg::Produce,
         );
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 
