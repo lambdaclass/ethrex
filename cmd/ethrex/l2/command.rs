@@ -244,13 +244,13 @@ impl Command {
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
-                let mut current_block = U256::zero();
-                while current_block < U256::from(64) {
+                let mut current_block = U256::ZERO;
+                while current_block < U256::from(64u32) {
                     current_block = eth_client.get_block_number().await?;
                     tokio::time::sleep(Duration::from_secs(12)).await;
                 }
                 current_block = current_block
-                    .checked_sub(U256::from(64))
+                    .checked_sub(U256::from(64u32))
                     .ok_or_eyre("Cannot get finalized block")?;
 
                 let event_signature = keccak("BatchCommitted(bytes32)");
@@ -314,7 +314,7 @@ impl Command {
                         println!("Saved blobs for slot {target_slot}");
                     }
 
-                    current_block += U256::one();
+                    current_block += U256::ONE;
                 }
             }
             Command::Reconstruct {
