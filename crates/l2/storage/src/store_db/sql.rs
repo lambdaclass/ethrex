@@ -439,10 +439,7 @@ impl StoreEngineRollup for SQLStore {
         ))
     }
 
-    async fn set_latest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
             .await?;
         Ok(())

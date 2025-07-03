@@ -96,7 +96,7 @@ impl L1ProofSenderState {
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
-                aligned_mode: aligned_cfg.aligned_mode,
+            aligned_mode: aligned_cfg.aligned_mode,
         })
     }
 }

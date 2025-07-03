@@ -313,10 +313,7 @@ impl StoreEngineRollup for Store {
             .map(|v| v.unwrap_or(0))
     }
 
-    async fn set_latest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
 

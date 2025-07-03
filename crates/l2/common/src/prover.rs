@@ -1,6 +1,9 @@
 use aligned_sdk::common::types::ProvingSystemId;
 use serde::{Deserialize, Serialize};
-use std::{fmt::{Debug, Display}, path::PathBuf};
+use std::{
+    fmt::{Debug, Display},
+    path::PathBuf,
+};
 
 use crate::calldata::Value;
 
@@ -73,7 +76,7 @@ impl ProverType {
                 "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
                 env!("CARGO_MANIFEST_DIR")
             ),
-            _ => return None
+            _ => return None,
         };
         std::fs::canonicalize(path).ok()
     }
@@ -95,7 +98,7 @@ impl From<ProverType> for Option<ProvingSystemId> {
         match value {
             ProverType::RISC0 => Some(ProvingSystemId::Risc0),
             ProverType::SP1 => Some(ProvingSystemId::SP1),
-            _ => None
+            _ => None,
         }
     }
 }

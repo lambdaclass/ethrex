@@ -156,7 +156,7 @@ pub struct DeployerOptions {
         long = "risc0.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
-        help_heading = "Deployer options",
+        help_heading = "Deployer options"
     )]
     pub risc0_verifier_address: Option<Address>,
     #[arg(
@@ -173,7 +173,7 @@ pub struct DeployerOptions {
         long = "sp1.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
-        help_heading = "Deployer options",
+        help_heading = "Deployer options"
     )]
     pub sp1_verifier_address: Option<Address>,
     #[arg(
@@ -190,7 +190,7 @@ pub struct DeployerOptions {
         long = "tdx.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
-        help_heading = "Deployer options",
+        help_heading = "Deployer options"
     )]
     pub tdx_verifier_address: Option<Address>,
     #[arg(
@@ -207,7 +207,7 @@ pub struct DeployerOptions {
         long = "aligned.aggregator-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
-        help_heading = "Deployer options",
+        help_heading = "Deployer options"
     )]
     pub aligned_aggregator_address: Option<Address>,
     #[arg(

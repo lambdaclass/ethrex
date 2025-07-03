@@ -184,11 +184,11 @@ impl L1ProofVerifier {
                 ProverType::SP1 => {
                     sp1_public_inputs_vec.push(Value::Bytes(public_inputs.into()));
                     sp1_merkle_paths.push(Value::Array(merkle_path));
-                },
+                }
                 ProverType::RISC0 => {
                     risc0_public_inputs_vec.push(Value::Bytes(public_inputs.into()));
                     risc0_merkle_paths.push(Value::Array(merkle_path));
-                },
+                }
                 unsupported_type => {
                     return Err(ProofVerifierError::UnsupportedProverType(
                         unsupported_type.to_string(),

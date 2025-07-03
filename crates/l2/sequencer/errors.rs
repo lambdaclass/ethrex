@@ -163,7 +163,7 @@ pub enum ProofVerifierError {
     #[error("Block Producer failed because of a rollup store error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
     #[error("Aligned does not support prover type {0}")]
-    UnsupportedProverType(String)
+    UnsupportedProverType(String),
 }
 
 #[derive(Debug, thiserror::Error)]
