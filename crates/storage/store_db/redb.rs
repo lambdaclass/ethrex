@@ -389,6 +389,94 @@ impl RedBStore {
 
         Ok(parent_block)
     }
+
+    /// Process account info logs during replay and apply new state to account_info_table
+    fn replay_account_info_logs(
+        &self,
+        state_logs_table: &redb::MultimapTable<
+            BlockNumHashRLP,
+            (BlockNumHashRLP, AccountInfoLogEntryRLP),
+        >,
+        account_info_table: &mut redb::Table<AccountAddressRLP, AccountInfoRLP>,
+        block_key: &BlockNumHashRLP,
+        expected_parent: BlockNumHash,
+    ) -> Result<bool, StoreError> {
+        let mut logs_found = false;
+
+        for log_entry in state_logs_table.get(block_key)? {
+            let value_guard = log_entry?;
+            let (parent_block_rlp, account_log_rlp) = value_guard.value();
+
+            let parent_block: BlockNumHash = parent_block_rlp.to()?;
+
+            // Only process logs that match expected parent transition
+            if parent_block != expected_parent {
+                continue;
+            }
+
+            if !logs_found {
+                tracing::debug!("REPLAY: Found account info logs for block {:?}", block_key);
+                logs_found = true;
+            }
+
+            let log: AccountInfoLogEntry = account_log_rlp.to()?;
+
+            // Apply the new state (not the previous state like in undo)
+            if log.info == AccountInfo::default() {
+                account_info_table.remove(&log.address.into())?;
+            } else {
+                account_info_table.insert(&log.address.into(), &log.info.into())?;
+            }
+        }
+
+        Ok(logs_found)
+    }
+
+    /// Process storage logs during replay and apply new state to account_storage_table
+    fn replay_storage_logs(
+        &self,
+        storage_logs_table: &redb::MultimapTable<
+            BlockNumHashRLP,
+            (BlockNumHashRLP, AccountStorageLogEntryRLP),
+        >,
+        account_storage_table: &mut redb::Table<
+            (AccountAddressRLP, AccountStorageKeyRLP),
+            AccountStorageValueRLP,
+        >,
+        block_key: &BlockNumHashRLP,
+        expected_parent: BlockNumHash,
+    ) -> Result<bool, StoreError> {
+        let mut logs_found = false;
+
+        for log_entry in storage_logs_table.get(block_key)? {
+            let value_guard = log_entry?;
+            let (parent_block_rlp, storage_log_rlp) = value_guard.value();
+
+            let parent_block: BlockNumHash = parent_block_rlp.to()?;
+
+            // Only process logs that match expected parent transition
+            if parent_block != expected_parent {
+                continue;
+            }
+
+            if !logs_found {
+                tracing::debug!("REPLAY: Found storage logs for block {:?}", block_key);
+                logs_found = true;
+            }
+
+            let log: AccountStorageLogEntry = storage_log_rlp.to()?;
+
+            // Apply the new value (not the old value like in undo)
+            let storage_key = (log.address.into(), log.slot.into());
+            if log.new_value.is_zero() {
+                account_storage_table.remove(&storage_key)?;
+            } else {
+                account_storage_table.insert(&storage_key, &log.new_value.into())?;
+            }
+        }
+
+        Ok(logs_found)
+    }
 }
 
 #[async_trait::async_trait]
@@ -398,6 +486,9 @@ impl StoreEngine for RedBStore {
         {
             // Get current snapshot metadata or return if none exists
             let Some(snapshot_metadata) = self.read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())? else {
+                tracing::info!(
+                    "UNDO: No snapshot metadata found, reached end of non-canonical chain"
+                );
                 return Ok(());
             };
             let current_snapshot: BlockNumHash = snapshot_metadata.value().to()?;
@@ -443,11 +534,11 @@ impl StoreEngine for RedBStore {
                     &block_key,
                 )?;
 
+                // Move to parent block (both logs should have same parent)
                 let Some(parent) = account_parent.or(storage_parent) else {
                     tracing::info!("UNDO: No more logs found, reached end of non-canonical chain");
                     break;
                 };
-
                 current_block = parent;
             }
 
@@ -459,8 +550,83 @@ impl StoreEngine for RedBStore {
         Ok(())
     }
 
-    async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
-        todo!();
+    async fn replay_writes_until_head(&self, head_hash: H256) -> Result<(), StoreError> {
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+        {
+            // Get current snapshot metadata or return if none exists
+            let Some(snapshot_metadata) = self.read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())? else {
+                return Ok(());
+            };
+            let current_snapshot: BlockNumHash = snapshot_metadata.value().to()?;
+
+            // Open all required tables
+            let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+            let mut account_storage_table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+            let state_logs_table = write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+            let storage_logs_table =
+                write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
+            let mut snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+
+            let mut block_num_hash = current_snapshot;
+
+            // Walk through canonical blocks from current snapshot to head
+            let mut current_block_num = current_snapshot.0 + 1;
+
+            loop {
+                // Get canonical hash for current block number
+                let Some(canonical_hash) =
+                    self.get_block_hash_by_block_number(current_block_num)?
+                else {
+                    tracing::info!(
+                        "REPLAY: No canonical hash found for block {}",
+                        current_block_num
+                    );
+                    break;
+                };
+
+                let old_block_num_hash = block_num_hash;
+                block_num_hash = BlockNumHash(current_block_num, canonical_hash);
+
+                // Create key to search for logs for this block transition
+                let block_key: BlockNumHashRLP = block_num_hash.into();
+
+                // Process account info logs for this block
+                let account_logs_found = self.replay_account_info_logs(
+                    &state_logs_table,
+                    &mut account_info_table,
+                    &block_key,
+                    old_block_num_hash,
+                )?;
+
+                // Process storage logs for this block
+                let storage_logs_found = self.replay_storage_logs(
+                    &storage_logs_table,
+                    &mut account_storage_table,
+                    &block_key,
+                    old_block_num_hash,
+                )?;
+
+                // If no logs found for this transition, continue to next block
+                if !account_logs_found && !storage_logs_found {
+                    current_block_num += 1;
+                    continue;
+                }
+
+                // Check if we've reached the target head
+                if head_hash == block_num_hash.1 {
+                    tracing::info!("REPLAY: Reached target head block {:?}", head_hash);
+                    break;
+                }
+
+                current_block_num += 1;
+            }
+
+            // Update snapshot metadata to final position
+            let final_block: BlockNumHashRLP = block_num_hash.into();
+            snapshot_table.insert((), final_block)?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
