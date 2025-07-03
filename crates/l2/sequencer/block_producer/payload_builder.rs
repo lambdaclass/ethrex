@@ -399,9 +399,7 @@ fn calculate_tx_diff_size(
     if is_privileged_tx(head_tx) {
         tx_state_diff_size += privileged_tx_log_len;
     }
-    tx_state_diff_size +=
-        get_block_l1_messages(&[Transaction::from(head_tx.clone())], &[receipt.clone()]).len()
-            * messages_log_len;
+    tx_state_diff_size += get_block_l1_messages(&[receipt.clone()]).len() * messages_log_len;
 
     Ok((tx_state_diff_size, new_accounts_diff_size))
 }
