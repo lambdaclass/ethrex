@@ -198,7 +198,7 @@ pub async fn get_privileged_transactions(
     );
 
     // Matches the event PrivilegedTxSent from ICommonBridge.sol
-    let topic = keccak(b"PrivilegedTxSent(address,address,uint256,uint256,uint256,bytes)");
+    let topic = keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
 
     let logs = state
         .eth_client
@@ -320,65 +320,67 @@ pub struct PrivilegedTransactionData {
 
 impl PrivilegedTransactionData {
     pub fn from_log(log: RpcLogInfo) -> Result<PrivilegedTransactionData, L1WatcherError> {
-        let from = log
-            .topics
-            .get(1)
-            .ok_or(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse mint value from log: log.topics[1] out of bounds".to_owned(),
-            ))?;
+        /*
+            event PrivilegedTxSent (
+                address indexed L1from, => part of topics, not data
+                address from, => 0..32
+                address to, => 32..64
+                uint256 transactionId, => 64..96
+                uint256 value, => 96..128
+                uint256 gasLimit, => 128..160
+                bytes data
+                    => offset_data => 160..192
+                    => length_data => 192..224
+                    => data => 224..
+            );
+            Any value that is not 32 bytes is padded with zeros.
+        */
 
-        let from_address = hash_to_address(*from);
+        let from = H256::from_slice(log.data.get(0..32).ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse gas_limit from log: log.data[0..32] out of bounds".to_owned(),
+            ),
+        )?);
+        let from_address = hash_to_address(from);
 
-        let to_address_hash = log
-            .topics
-            .get(2)
-            .ok_or(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse beneficiary from log: log.topics[2] out of bounds".to_owned(),
-            ))?;
-        let to_address = hash_to_address(*to_address_hash);
-
-        let transaction_id = log
-            .topics
-            .get(3)
-            .ok_or(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse beneficiary from log: log.topics[3] out of bounds".to_owned(),
-            ))?;
-
-        let transaction_id = format!("{transaction_id:#x}")
-            .parse::<U256>()
-            .map_err(|e| {
-                L1WatcherError::FailedToDeserializeLog(format!(
-                    "Failed to parse transactionId value from log: {e:#?}"
-                ))
-            })?;
-
-        // The previous values are indexed in the topic of the log. Data contains the rest.
-        // DATA = value: uint256 || gas_limit: uint256 || offset_calldata: uint256 || length_calldata: uint256 || calldata: bytes
-        // DATA = 0..32          || 32..64             || 64..96                   || 96..128                  || 128..(128+calldata_len)
-        // Any value that is not 32 bytes is padded with zeros.
-
-        let value = U256::from_big_endian(log.data.get(0..32).ok_or(
+        let to = H256::from_slice(log.data.get(32..64).ok_or(
             L1WatcherError::FailedToDeserializeLog(
                 "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
             ),
         )?);
+        let to_address = hash_to_address(to);
 
-        let gas_limit = U256::from_big_endian(log.data.get(32..64).ok_or(
+        let transaction_id = U256::from_big_endian(log.data.get(64..96).ok_or(
             L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
+                "Failed to parse gas_limit from log: log.data[64..96] out of bounds".to_owned(),
             ),
         )?);
 
-        let calldata_len = U256::from_big_endian(log.data.get(96..128).ok_or(
+        let value = U256::from_big_endian(log.data.get(96..128).ok_or(
             L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse calldata_len from log: log.data[96..128] out of bounds".to_owned(),
+                "Failed to parse gas_limit from log: log.data[96..128] out of bounds".to_owned(),
             ),
         )?);
+
+        let gas_limit = U256::from_big_endian(log.data.get(128..160).ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse gas_limit from log: log.data[128..160] out of bounds".to_owned(),
+            ),
+        )?);
+
+        // 160..192 is taken by offset_data, which we do not need
+
+        let calldata_len = U256::from_big_endian(log.data.get(192..224).ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse calldata_len from log: log.data[192..224] out of bounds".to_owned(),
+            ),
+        )?);
+
         let calldata = log
             .data
-            .get(128..128 + calldata_len.as_usize())
+            .get(224..224 + calldata_len.as_usize())
             .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse calldata from log: log.data[128..128 + calldata_len] out of bounds"
+            "Failed to parse calldata from log: log.data[224..224 + calldata_len] out of bounds"
                 .to_owned(),
         ))?;
 
