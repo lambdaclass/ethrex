@@ -205,6 +205,32 @@ impl GenServer for RLPxConnection {
                 reason,
             )
             .await;
+            match state.0 {
+                InnerState::Initiator(initiator) => {
+                    info!(
+                        "Blacklisting and removing Peer {}",
+                        established_state.node.ip
+                    );
+                    {
+                        initiator
+                            .context
+                            .table
+                            .lock()
+                            .await
+                            .blacklist_ip(established_state.node.node_id());
+                    }
+                    {
+                        initiator
+                            .context
+                            .table
+                            .lock()
+                            .await
+                            .replace_peer(established_state.node.node_id());
+                    }
+                }
+                InnerState::Receiver(_) => {}
+                InnerState::Established(_) => {}
+            }
             Err(RLPxError::Disconnected())
         } else {
             // TODO: trash code

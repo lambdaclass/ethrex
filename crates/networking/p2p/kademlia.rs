@@ -6,7 +6,7 @@ use crate::{
 use ethrex_common::{H256, U256};
 use rand::random;
 use spawned_concurrency::tasks::GenServerHandle;
-use std::sync::Arc;
+use std::{collections::HashSet, net::IpAddr, sync::Arc};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
@@ -25,6 +25,7 @@ pub struct Bucket {
 pub struct KademliaTable {
     local_node_id: H256,
     buckets: Vec<Bucket>,
+    pub blacklist: HashSet<H256>,
 }
 
 impl KademliaTable {
@@ -33,6 +34,7 @@ impl KademliaTable {
         Self {
             local_node_id,
             buckets,
+            blacklist: HashSet::default(),
         }
     }
 
@@ -51,6 +53,10 @@ impl KademliaTable {
 
     pub fn get_by_node_id_mut(&mut self, node_id: H256) -> Option<&mut PeerData> {
         let bucket = &mut self.buckets[bucket_number(node_id, self.local_node_id)];
+        if self.blacklist.contains(&node_id) {
+            return None;
+        }
+
         bucket
             .peers
             .iter_mut()
@@ -75,6 +81,14 @@ impl KademliaTable {
         if let Some(peer) = maybe_peer {
             peer.correct_chain = true;
         }
+    }
+
+    pub fn blacklist_ip(&mut self, node_id: H256) {
+        self.blacklist.insert(node_id);
+    }
+
+    pub fn is_blacklisted(&self, node: &Node) -> bool {
+        self.blacklist.contains(&node.node_id())
     }
 
     /// Will try to insert a node into the table. If the table is full then it pushes it to the replacement list.
