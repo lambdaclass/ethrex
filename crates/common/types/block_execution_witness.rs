@@ -128,16 +128,19 @@ impl ExecutionWitnessResult {
             ));
         };
 
-        let state_root = self
+        let mut first_block = self
             .headers
             .last()
-            .ok_or(ExecutionWitnessError::NoBlockHeaders)?
-            .state_root;
-        let state_trie = rebuild_trie(state_root, state.clone())?;
-
+            .ok_or(ExecutionWitnessError::NoBlockHeaders)?;
         for header in &self.headers {
             self.block_headers.insert(header.number, header.clone());
+            if header.number < first_block.number {
+                first_block = header;
+            }
         }
+
+        let state_root = first_block.state_root;
+        let state_trie = rebuild_trie(state_root, state.clone())?;
 
         // So keys can either be account addresses or storage slots
         // addresses are 20 u8 long
