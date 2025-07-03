@@ -8,12 +8,18 @@ pub(crate) mod utils;
 pub(crate) mod widget;
 
 pub use app::EthrexMonitor;
+use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 
 use crate::SequencerConfig;
 use crate::sequencer::errors::SequencerError;
 
-pub async fn start_monitor(cfg: SequencerConfig) -> Result<(), SequencerError> {
-    let app = EthrexMonitor::new(&cfg).await;
+pub async fn start_monitor(
+    store: Store,
+    rollup_store: StoreRollup,
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let app = EthrexMonitor::new(store, rollup_store, &cfg).await;
     app.start().await?;
     Ok(())
 }

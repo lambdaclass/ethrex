@@ -9,6 +9,8 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ethrex_rpc::EthClient;
+use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -69,10 +71,12 @@ pub struct EthrexMonitor<'a> {
 
     pub eth_client: EthClient,
     pub rollup_client: EthClient,
+    pub store: Store,
+    pub rollup_store: StoreRollup,
 }
 
 impl<'a> EthrexMonitor<'a> {
-    pub async fn new(cfg: &SequencerConfig) -> Self {
+    pub async fn new(store: Store, rollup_store: StoreRollup, cfg: &SequencerConfig) -> Self {
         let eth_client = EthClient::new(cfg.eth.rpc_url.first().expect("No RPC URLs provided"))
             .expect("Failed to create EthClient");
         // TODO: De-hardcode the rollup client URL
@@ -110,6 +114,8 @@ impl<'a> EthrexMonitor<'a> {
             .await,
             eth_client,
             rollup_client,
+            store,
+            rollup_store,
         }
     }
 

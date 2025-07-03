@@ -137,14 +137,18 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(&cfg, store, rollup_store, blockchain, shared_state)
+        let _ = BlockFetcher::spawn(&cfg, store.clone(), rollup_store.clone(), blockchain, shared_state)
             .await
             .inspect_err(|err| {
                 error!("Error starting Block Fetcher: {err}");
             });
     }
 
-    task_set.spawn(monitor::start_monitor(cfg.clone()));
+    task_set.spawn(monitor::start_monitor(
+        store.clone(),
+        rollup_store.clone(),
+        cfg.clone(),
+    ));
 
     while let Some(res) = task_set.join_next().await {
         match res {
