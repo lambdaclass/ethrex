@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: MIT
 // Contract for testing printing in LEVM with the debug feature enabled.
 // If used without this feature enabled, execution of contract will inevitably revert in MSTORE opcode.
 // Import this with `import "path_to_file/Print.sol"`
