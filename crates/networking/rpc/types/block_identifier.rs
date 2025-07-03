@@ -3,7 +3,7 @@ use std::{fmt::Display, str::FromStr};
 use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber};
 use ethrex_storage::{Store, error::StoreError};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::utils::RpcErr;
 
@@ -127,16 +127,31 @@ impl BlockIdentifierOrHash {
     }
 }
 
+impl From<BlockIdentifier> for Value {
+    fn from(value: BlockIdentifier) -> Self {
+        match value {
+            BlockIdentifier::Number(n) => json!(format!("{n:#x}")),
+            BlockIdentifier::Tag(tag) => match tag {
+                BlockTag::Earliest => json!("earliest"),
+                BlockTag::Finalized => json!("finalized"),
+                BlockTag::Safe => json!("safe"),
+                BlockTag::Latest => json!("latest"),
+                BlockTag::Pending => json!("pending"),
+            },
+        }
+    }
+}
+
 impl Display for BlockIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BlockIdentifier::Number(num) => num.fmt(f),
             BlockIdentifier::Tag(tag) => match tag {
-                BlockTag::Earliest => "Earliest".fmt(f),
-                BlockTag::Finalized => "Finalized".fmt(f),
-                BlockTag::Safe => "Safe".fmt(f),
-                BlockTag::Latest => "Latest".fmt(f),
-                BlockTag::Pending => "Pending".fmt(f),
+                BlockTag::Earliest => "earliest".fmt(f),
+                BlockTag::Finalized => "finalized".fmt(f),
+                BlockTag::Safe => "safe".fmt(f),
+                BlockTag::Latest => "latest".fmt(f),
+                BlockTag::Pending => "pending".fmt(f),
             },
         }
     }

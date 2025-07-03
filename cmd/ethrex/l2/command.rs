@@ -22,8 +22,7 @@ use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
-    EthClient,
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
+    EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -271,7 +270,7 @@ impl Command {
                     if !logs.is_empty() {
                         // Get parent beacon block root hash from block
                         let block = eth_client
-                            .get_block_by_number(BlockByNumber::Number(current_block.as_u64()))
+                            .get_block_by_number(BlockIdentifier::Number(current_block.as_u64()))
                             .await?;
                         let parent_beacon_hash = block
                             .header

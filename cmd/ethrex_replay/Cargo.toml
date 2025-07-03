@@ -6,14 +6,12 @@ edition = "2024"
 [dependencies]
 ethrex-common.workspace = true
 ethrex-vm.workspace = true
-ethrex-storage.workspace = true
-ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 ethrex-levm.workspace = true
+ethrex-rpc.workspace = true
 
 zkvm_interface = { path = "../../crates/l2/prover/zkvm/interface", default-features = false }
 ethrex-prover = { path = "../../crates/l2/prover", default-features = false }
-ethrex-l2 = { path = "../../crates/l2", default-features = false }
 
 serde.workspace = true
 hex.workspace = true
@@ -26,10 +24,6 @@ tracing.workspace = true
 eyre.workspace = true
 
 tokio = { version = "1.21", default-features = false, features = ["full"] }
-reqwest = { version = "0.12.9", features = [
-  "json",
-  "rustls-tls",
-], default-features = false }
 clap.workspace = true
 
 revm = { version = "19.0.0", features = [
@@ -58,5 +52,5 @@ charming = { version = "0.4.0", features = ["ssr"] }
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
 sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
-l2 = ["zkvm_interface/l2", "ethrex-l2/l2"]
+l2 = ["zkvm_interface/l2"]
 ci = []
