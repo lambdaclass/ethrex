@@ -6,9 +6,8 @@ use std::{
 
 use crate::{
     rlpx::{
-        connection::server::{Established, InnerState},
+        connection::server::{Capabilities, Established, InnerState},
         error::RLPxError,
-        p2p::{Capability, DEFAULT_P2P_PROTOCOL_VERSION},
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
@@ -65,6 +64,7 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
+    let capabilities = Arc::new(Mutex::new(Capabilities::default()));
     let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
@@ -82,7 +82,12 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            let codec = RLPxCodec::new(
+                &local_state,
+                &remote_state,
+                hashed_nonces,
+                capabilities.clone(),
+            )?;
             log_peer_debug(&node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec), false)
         }
@@ -100,7 +105,12 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            let codec = RLPxCodec::new(
+                &local_state,
+                &remote_state,
+                hashed_nonces,
+                capabilities.clone(),
+            )?;
             let node = Node::new(
                 peer_addr.ip(),
                 peer_addr.port(),
@@ -123,8 +133,6 @@ pub(crate) async fn perform(
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),
             capabilities: vec![],
-            negotiated_eth_capability: None,
-            negotiated_snap_capability: None,
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
             requested_pooled_txs: HashMap::new(),
@@ -133,6 +141,7 @@ pub(crate) async fn perform(
             table: context.table.clone(),
             backend_channel: None,
             inbound,
+            negotiated_capabilities: capabilities,
         },
         stream,
     ))

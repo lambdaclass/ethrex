@@ -1,5 +1,8 @@
+use crate::rlpx::connection::server::Capabilities;
 use crate::rlpx::p2p::Capability;
 use crate::rlpx::{error::RLPxError, message as rlpx, utils::ecdh_xchng};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use super::handshake::{LocalState, RemoteState};
 use aes::{
@@ -35,6 +38,7 @@ impl RLPxCodec {
         local_state: &LocalState,
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
+        capabilities: Arc<Mutex<Capabilities>>,
     ) -> Result<Self, RLPxError> {
         let ephemeral_key_secret = ecdh_xchng(
             &local_state.ephemeral_key,
@@ -240,6 +244,7 @@ impl Decoder for RLPxCodec {
         let (frame_data, _padding) = frame_ciphertext.split_at(frame_size);
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
+
         Ok(Some(rlpx::Message::decode(
             msg_id,
             msg_data,
