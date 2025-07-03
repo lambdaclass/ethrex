@@ -1,5 +1,3 @@
-#![expect(clippy::indexing_slicing)]
-
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
@@ -10,7 +8,7 @@ use ratatui::{
 
 use crate::monitor::EthrexMonitor;
 
-mod tabs;
+mod tab;
 
 pub fn render(frame: &mut Frame, app: &mut EthrexMonitor) {
     let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(frame.area());
@@ -33,8 +31,8 @@ pub fn render(frame: &mut Frame, app: &mut EthrexMonitor) {
     frame.render_widget(tabs, chunks[0]);
     // #[expect(clippy::single_match)]
     match app.tabs.index {
-        0 => tabs::overview::draw(frame, app, chunks[1]),
-        1 => tabs::logs::draw(frame, app, chunks[1]),
+        0 => tab::overview::draw(frame, app, chunks[1]),
+        1 => tab::logs::draw(frame, app, chunks[1]),
         _ => {}
     };
 }

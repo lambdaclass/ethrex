@@ -1,0 +1,208 @@
+use std::fmt::Display;
+
+use ethrex_common::{Address, H256, U256};
+use ethrex_l2_common::calldata::Value;
+use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
+use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
+use keccak_hash::keccak;
+use ratatui::widgets::TableState;
+
+use crate::monitor;
+
+#[derive(Debug, Clone)]
+pub enum L2ToL1MessageStatus {
+    WithdrawalInitiated,
+    WithdrawalClaimed,
+    Delivered,
+}
+
+impl Display for L2ToL1MessageStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            L2ToL1MessageStatus::WithdrawalInitiated => write!(f, "Initiated"),
+            L2ToL1MessageStatus::WithdrawalClaimed => write!(f, "Claimed"),
+            L2ToL1MessageStatus::Delivered => write!(f, "Delivered"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum L2ToL1MessageKind {
+    ETHWithdraw,
+    ERC20Withdraw,
+    Message,
+}
+
+impl Display for L2ToL1MessageKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            L2ToL1MessageKind::ETHWithdraw => write!(f, "Withdraw (ETH)"),
+            L2ToL1MessageKind::ERC20Withdraw => write!(f, "Withdraw (ERC20)"),
+            L2ToL1MessageKind::Message => write!(f, "Message"),
+        }
+    }
+}
+
+pub type L2ToL1MessageRow = (
+    L2ToL1MessageKind,
+    L2ToL1MessageStatus,
+    Address, // receiver in L1
+    U256,    // value
+    Address, // token (L2)
+    Address, // token (L1)
+    H256,    // L2 tx hash
+);
+
+pub struct L2ToL1MessagesTable {
+    pub state: TableState,
+    pub items: Vec<L2ToL1MessageRow>,
+    last_l2_block_fetched: U256,
+    common_bridge_address: Address,
+}
+
+impl L2ToL1MessagesTable {
+    pub async fn new(
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Self {
+        let mut last_l2_block_fetched = U256::zero();
+        let items = Self::refresh_items(
+            &mut last_l2_block_fetched,
+            common_bridge_address,
+            eth_client,
+            rollup_client,
+        )
+        .await;
+        Self {
+            state: TableState::default(),
+            items,
+            last_l2_block_fetched,
+            common_bridge_address,
+        }
+    }
+
+    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+        let mut new_l1_to_l2_messages = Self::refresh_items(
+            &mut self.last_l2_block_fetched,
+            self.common_bridge_address,
+            eth_client,
+            rollup_client,
+        )
+        .await;
+
+        let n_new_latest_batches = new_l1_to_l2_messages.len();
+
+        if n_new_latest_batches > 50 {
+            new_l1_to_l2_messages.truncate(50);
+            self.items.extend_from_slice(&new_l1_to_l2_messages);
+        } else {
+            self.items.truncate(50 - n_new_latest_batches);
+            self.items.extend_from_slice(&new_l1_to_l2_messages);
+            self.items.rotate_right(n_new_latest_batches);
+        }
+    }
+
+    async fn refresh_items(
+        last_l2_block_fetched: &mut U256,
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Vec<L2ToL1MessageRow> {
+        let logs = Self::get_logs(last_l2_block_fetched, rollup_client).await;
+        Self::process_logs(&logs, common_bridge_address, eth_client).await
+    }
+
+    async fn get_logs(last_l1_block_fetched: &mut U256, rollup_client: &EthClient) -> Vec<RpcLog> {
+        let mut l2_to_l1_message_logs = Vec::new();
+
+        let initiated_eth_withdrawal_logs = monitor::utils::get_logs(
+            last_l1_block_fetched,
+            COMMON_BRIDGE_L2_ADDRESS,
+            "WithdrawalInitiated(address,address,uint256)",
+            rollup_client,
+        )
+        .await;
+
+        l2_to_l1_message_logs.extend(initiated_eth_withdrawal_logs);
+
+        let initiated_erc20_withdrawal_logs = monitor::utils::get_logs(
+            last_l1_block_fetched,
+            COMMON_BRIDGE_L2_ADDRESS,
+            "ERC20WithdrawalInitiated(address,address,address,uint256)",
+            rollup_client,
+        )
+        .await;
+
+        l2_to_l1_message_logs.extend(initiated_erc20_withdrawal_logs);
+
+        l2_to_l1_message_logs
+    }
+
+    async fn process_logs(
+        logs: &[RpcLog],
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+    ) -> Vec<L2ToL1MessageRow> {
+        let mut processed_logs = Vec::new();
+
+        let eth_withdrawal_topic = keccak(b"WithdrawalInitiated(address,address,uint256)");
+        let erc20_withdrawal_topic =
+            keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
+
+        for log in logs {
+            let withdrawal_is_claimed = {
+                let calldata = encode_calldata(
+                    "claimedWithdrawals(bytes32)",
+                    &[Value::FixedBytes(
+                        log.transaction_hash.as_bytes().to_vec().into(),
+                    )],
+                )
+                .expect("Failed to encode claimedWithdrawals(bytes32) calldata");
+
+                let raw_withdrawal_is_claimed: H256 = eth_client
+                    .call(common_bridge_address, calldata.into(), Overrides::default())
+                    .await
+                    .expect("Failed to call claimedWithdrawals(bytes32)")
+                    .parse()
+                    .unwrap_or_default();
+
+                U256::from_big_endian(raw_withdrawal_is_claimed.as_fixed_bytes()) == U256::one()
+            };
+            let withdrawal_status = if withdrawal_is_claimed {
+                L2ToL1MessageStatus::WithdrawalClaimed
+            } else {
+                L2ToL1MessageStatus::WithdrawalInitiated
+            };
+            match log.log.topics[0] {
+                topic if topic == eth_withdrawal_topic => {
+                    processed_logs.push((
+                        L2ToL1MessageKind::ETHWithdraw,
+                        withdrawal_status,
+                        Address::from_slice(&log.log.topics[1].as_fixed_bytes()[12..]),
+                        U256::from_big_endian(log.log.topics[2].as_fixed_bytes()),
+                        Address::default(),
+                        Address::default(),
+                        log.transaction_hash,
+                    ));
+                }
+                topic if topic == erc20_withdrawal_topic => {
+                    processed_logs.push((
+                        L2ToL1MessageKind::ERC20Withdraw,
+                        withdrawal_status,
+                        Address::from_slice(&log.log.topics[3].as_fixed_bytes()[12..]),
+                        U256::from_big_endian(&log.log.data[log.log.data.len() - 32..]),
+                        Address::from_slice(&log.log.topics[1].as_fixed_bytes()[12..]),
+                        Address::from_slice(&log.log.topics[2].as_fixed_bytes()[12..]),
+                        log.transaction_hash,
+                    ));
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        processed_logs
+    }
+}

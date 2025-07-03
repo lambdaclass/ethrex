@@ -1,6 +1,3 @@
-#![expect(clippy::expect_used)]
-#![expect(clippy::panic)]
-
 use std::cmp::min;
 
 use ethrex_common::{Address, U256};

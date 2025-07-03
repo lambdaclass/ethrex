@@ -1,0 +1,128 @@
+use std::cmp::min;
+
+use ethrex_common::{Address, H256};
+use ethrex_rpc::{EthClient, clients::eth::RpcBatch};
+use ratatui::widgets::TableState;
+
+pub struct BatchesTable {
+    pub state: TableState,
+    // batch number | # blocks | # messages | commit tx hash | verify tx hash
+    #[expect(clippy::type_complexity)]
+    pub items: Vec<(u64, u64, usize, Option<H256>, Option<H256>)>,
+    last_l1_block_fetched: u64,
+    on_chain_proposer_address: Address,
+}
+
+impl BatchesTable {
+    pub async fn new(
+        on_chain_proposer_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Self {
+        let mut last_l1_block_fetched = 0;
+        let items = Self::refresh_items(
+            &mut last_l1_block_fetched,
+            on_chain_proposer_address,
+            eth_client,
+            rollup_client,
+        )
+        .await;
+        Self {
+            state: TableState::default(),
+            items,
+            last_l1_block_fetched,
+            on_chain_proposer_address,
+        }
+    }
+
+    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+        let mut new_latest_batches = Self::refresh_items(
+            &mut self.last_l1_block_fetched,
+            self.on_chain_proposer_address,
+            eth_client,
+            rollup_client,
+        )
+        .await;
+
+        let n_new_latest_batches = new_latest_batches.len();
+
+        if n_new_latest_batches > 50 {
+            new_latest_batches.truncate(50);
+            self.items.extend_from_slice(&new_latest_batches);
+        } else {
+            self.items.truncate(50 - n_new_latest_batches);
+            self.items.extend_from_slice(&new_latest_batches);
+            self.items.rotate_right(n_new_latest_batches);
+        }
+    }
+
+    async fn refresh_items(
+        last_l2_batch_fetched: &mut u64,
+        on_chain_proposer_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+        let new_batches = Self::get_batches(
+            last_l2_batch_fetched,
+            on_chain_proposer_address,
+            eth_client,
+            rollup_client,
+        )
+        .await;
+
+        Self::process_batches(new_batches).await
+    }
+
+    async fn get_batches(
+        last_l2_batch_known: &mut u64,
+        on_chain_proposer_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Vec<RpcBatch> {
+        let last_l2_batch_number = eth_client
+            .get_last_committed_batch(on_chain_proposer_address)
+            .await
+            .expect("Failed to get latest L2 batch");
+
+        let mut new_batches = Vec::new();
+        while *last_l2_batch_known < last_l2_batch_number {
+            let new_last_l2_fetched_batch = min(*last_l2_batch_known + 1, last_l2_batch_number);
+
+            let new_batch = rollup_client
+                .get_batch_by_number(new_last_l2_fetched_batch)
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("Failed to get batch by number ({new_last_l2_fetched_batch}): {err}")
+                });
+
+            // Update the last L1 block fetched.
+            *last_l2_batch_known = new_last_l2_fetched_batch;
+
+            new_batches.push(new_batch);
+        }
+
+        new_batches
+    }
+
+    async fn process_batches(
+        new_batches: Vec<RpcBatch>,
+    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+        let mut new_blocks_processed = new_batches
+            .iter()
+            .map(|batch| {
+                (
+                    batch.batch.number,
+                    batch.batch.last_block - batch.batch.first_block + 1,
+                    batch.batch.message_hashes.len(),
+                    batch.batch.commit_tx,
+                    batch.batch.verify_tx,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        new_blocks_processed
+            .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
+
+        new_blocks_processed
+    }
+}

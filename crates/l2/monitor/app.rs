@@ -1,25 +1,31 @@
 #![expect(clippy::expect_used)]
-#![expect(clippy::panic)]
-#![expect(clippy::indexing_slicing)]
 
-use std::cmp::min;
-use std::fmt::Display;
+use std::io;
+use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, MouseEventKind};
-use ethrex_common::{Address, H256, U256};
-use ethrex_l2_common::calldata::Value;
-use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
-use ethrex_l2_sdk::calldata::encode_calldata;
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, KeyCode, MouseEventKind},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use ethrex_rpc::EthClient;
-use ethrex_rpc::clients::Overrides;
-use ethrex_rpc::clients::eth::{BlockByNumber, RpcBatch};
-use ethrex_rpc::types::block::{BlockBodyWrapper, RpcBlock};
-use ethrex_rpc::types::receipt::RpcLog;
-use keccak_hash::keccak;
-use ratatui::widgets::TableState;
+use ratatui::{
+    Terminal,
+    backend::{Backend, CrosstermBackend},
+};
 use tui_logger::{TuiWidgetEvent, TuiWidgetState};
 
-use crate::{DepositData, SequencerConfig, monitor};
+use crate::{
+    SequencerConfig,
+    monitor::{
+        ui,
+        widget::{
+            BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable,
+            L2ToL1MessagesTable, MempoolTable, NodeStatusTable,
+        },
+    },
+    sequencer::errors::MonitorError,
+};
 
 pub struct TabsState<'a> {
     pub titles: Vec<&'a str>,
@@ -43,852 +49,11 @@ impl<'a> TabsState<'a> {
     }
 }
 
-pub struct GlobalChainStatusTable {
-    pub state: TableState,
-    pub items: Vec<(String, String)>,
-    pub on_chain_proposer_address: Address,
-    pub sequencer_registry_address: Option<Address>,
-}
-
-impl GlobalChainStatusTable {
-    pub async fn new(
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-        cfg: &SequencerConfig,
-    ) -> Self {
-        let sequencer_registry_address =
-            if cfg.based.state_updater.sequencer_registry == Address::default() {
-                None
-            } else {
-                Some(cfg.based.state_updater.sequencer_registry)
-            };
-        Self {
-            state: TableState::default(),
-            items: Self::refresh_items(
-                eth_client,
-                rollup_client,
-                cfg.l1_committer.on_chain_proposer_address,
-                sequencer_registry_address,
-            )
-            .await,
-            on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
-            sequencer_registry_address,
-        }
-    }
-
-    async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
-        self.items = Self::refresh_items(
-            eth_client,
-            rollup_client,
-            self.on_chain_proposer_address,
-            self.sequencer_registry_address,
-        )
-        .await;
-    }
-
-    async fn refresh_items(
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-        on_chain_proposer_address: Address,
-        sequencer_registry_address: Option<Address>,
-    ) -> Vec<(String, String)> {
-        let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let lead_sequencer = if let Some(sequencer_registry_address) = sequencer_registry_address {
-            let calldata = encode_calldata("leaderSequencer()", &[])
-                .expect("Failed to encode leadSequencer calldata");
-
-            let raw_lead_sequencer: H256 = eth_client
-                .call(
-                    sequencer_registry_address,
-                    calldata.into(),
-                    Overrides::default(),
-                )
-                .await
-                .expect("Failed to call leaderSequencer")
-                .parse()
-                .unwrap_or_default();
-
-            Address::from_slice(&raw_lead_sequencer.as_fixed_bytes()[12..])
-        } else {
-            Address::default()
-        };
-        let last_committed_batch = eth_client
-            .get_last_committed_batch(on_chain_proposer_address)
-            .await
-            .expect("Failed to get last committed batch");
-        let last_verified_batch = eth_client
-            .get_last_verified_batch(on_chain_proposer_address)
-            .await
-            .expect("Failed to get last verified batch");
-        let last_committed_block =
-            if last_committed_batch == 0 {
-                0
-            } else {
-                rollup_client
-            .get_batch_by_number(last_committed_batch)
-            .await
-            .unwrap_or_else(|err| {
-                panic!("Failed to get last committed batch ({last_committed_batch}) data: {err}")
-            })
-            .batch
-            .last_block
-            };
-        let last_verified_block = if last_verified_batch == 0 {
-            0
-        } else {
-            rollup_client
-                .get_batch_by_number(last_verified_batch)
-                .await
-                .unwrap_or_else(|err| {
-                    panic!("Failed to get last verified batch ({last_verified_batch}) data: {err}")
-                })
-                .batch
-                .last_block
-        };
-        let current_block = rollup_client
-            .get_block_number()
-            .await
-            .expect("Failed to get latest L2 block")
-            + 1;
-        let current_batch = if sequencer_registry_address.is_some() {
-            "NaN".to_string() // TODO: Implement current batch retrieval (should be last known + 1)
-        } else {
-            (last_committed_batch + 1).to_string()
-        };
-
-        if sequencer_registry_address.is_some() {
-            vec![
-                ("Last Update:".to_string(), last_update),
-                (
-                    "Lead Sequencer:".to_string(),
-                    format!("{lead_sequencer:#x}"),
-                ),
-                ("Current Batch:".to_string(), current_batch.to_string()),
-                ("Current Block:".to_string(), current_block.to_string()),
-                (
-                    "Last Committed Batch:".to_string(),
-                    last_committed_batch.to_string(),
-                ),
-                (
-                    "Last Committed Block:".to_string(),
-                    last_committed_block.to_string(),
-                ),
-                (
-                    "Last Verified Batch:".to_string(),
-                    last_verified_batch.to_string(),
-                ),
-                (
-                    "Last Verified Block:".to_string(),
-                    last_verified_block.to_string(),
-                ),
-            ]
-        } else {
-            vec![
-                ("Last Update:".to_string(), last_update),
-                ("Current Batch:".to_string(), current_batch.to_string()),
-                ("Current Block:".to_string(), current_block.to_string()),
-                (
-                    "Last Committed Batch:".to_string(),
-                    last_committed_batch.to_string(),
-                ),
-                (
-                    "Last Committed Block:".to_string(),
-                    last_committed_block.to_string(),
-                ),
-                (
-                    "Last Verified Batch:".to_string(),
-                    last_verified_batch.to_string(),
-                ),
-                (
-                    "Last Verified Block:".to_string(),
-                    last_verified_block.to_string(),
-                ),
-            ]
-        }
-    }
-}
-
-pub struct NodeStatusTable {
-    pub state: TableState,
-    pub items: [(String, String); 5],
-}
-
-impl NodeStatusTable {
-    pub async fn new(rollup_client: &EthClient) -> Self {
-        Self {
-            state: TableState::default(),
-            items: Self::refresh_items(rollup_client).await,
-        }
-    }
-
-    async fn on_tick(&mut self, rollup_client: &EthClient) {
-        self.items = Self::refresh_items(rollup_client).await;
-    }
-
-    async fn refresh_items(rollup_client: &EthClient) -> [(String, String); 5] {
-        let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let status = rollup_client
-            .node_status()
-            .await
-            .expect("Failed to get node status");
-        let last_known_batch = "NaN"; // TODO: Implement last known batch retrieval
-        let last_known_block = rollup_client
-            .get_block_number()
-            .await
-            .expect("Failed to get latest known L2 block");
-        let follower_nodes = "NaN"; // TODO: Implement follower nodes retrieval
-
-        [
-            ("Last Update:".to_string(), last_update),
-            ("Status:".to_string(), status.to_string()),
-            (
-                "Last Known Batch:".to_string(),
-                last_known_batch.to_string(),
-            ),
-            (
-                "Last Known Block:".to_string(),
-                last_known_block.to_string(),
-            ),
-            ("Peers:".to_string(), follower_nodes.to_string()),
-        ]
-    }
-}
-
-pub struct BatchesTable {
-    pub state: TableState,
-    // batch number | # blocks | # messages | commit tx hash | verify tx hash
-    #[expect(clippy::type_complexity)]
-    pub items: Vec<(u64, u64, usize, Option<H256>, Option<H256>)>,
-    last_l1_block_fetched: u64,
-    on_chain_proposer_address: Address,
-}
-
-impl BatchesTable {
-    pub async fn new(
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Self {
-        let mut last_l1_block_fetched = 0;
-        let items = Self::refresh_items(
-            &mut last_l1_block_fetched,
-            on_chain_proposer_address,
-            eth_client,
-            rollup_client,
-        )
-        .await;
-        Self {
-            state: TableState::default(),
-            items,
-            last_l1_block_fetched,
-            on_chain_proposer_address,
-        }
-    }
-
-    async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
-        let mut new_latest_batches = Self::refresh_items(
-            &mut self.last_l1_block_fetched,
-            self.on_chain_proposer_address,
-            eth_client,
-            rollup_client,
-        )
-        .await;
-
-        let n_new_latest_batches = new_latest_batches.len();
-
-        if n_new_latest_batches > 50 {
-            new_latest_batches.truncate(50);
-            self.items.extend_from_slice(&new_latest_batches);
-        } else {
-            self.items.truncate(50 - n_new_latest_batches);
-            self.items.extend_from_slice(&new_latest_batches);
-            self.items.rotate_right(n_new_latest_batches);
-        }
-    }
-
-    async fn refresh_items(
-        last_l2_batch_fetched: &mut u64,
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
-        let new_batches = Self::get_batches(
-            last_l2_batch_fetched,
-            on_chain_proposer_address,
-            eth_client,
-            rollup_client,
-        )
-        .await;
-
-        Self::process_batches(new_batches).await
-    }
-
-    async fn get_batches(
-        last_l2_batch_known: &mut u64,
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Vec<RpcBatch> {
-        let last_l2_batch_number = eth_client
-            .get_last_committed_batch(on_chain_proposer_address)
-            .await
-            .expect("Failed to get latest L2 batch");
-
-        let mut new_batches = Vec::new();
-        while *last_l2_batch_known < last_l2_batch_number {
-            let new_last_l2_fetched_batch = min(*last_l2_batch_known + 1, last_l2_batch_number);
-
-            let new_batch = rollup_client
-                .get_batch_by_number(new_last_l2_fetched_batch)
-                .await
-                .unwrap_or_else(|err| {
-                    panic!("Failed to get batch by number ({new_last_l2_fetched_batch}): {err}")
-                });
-
-            // Update the last L1 block fetched.
-            *last_l2_batch_known = new_last_l2_fetched_batch;
-
-            new_batches.push(new_batch);
-        }
-
-        new_batches
-    }
-
-    async fn process_batches(
-        new_batches: Vec<RpcBatch>,
-    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
-        let mut new_blocks_processed = new_batches
-            .iter()
-            .map(|batch| {
-                (
-                    batch.batch.number,
-                    batch.batch.last_block - batch.batch.first_block + 1,
-                    batch.batch.message_hashes.len(),
-                    batch.batch.commit_tx,
-                    batch.batch.verify_tx,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        new_blocks_processed
-            .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
-
-        new_blocks_processed
-    }
-}
-
-pub struct BlocksTable {
-    pub state: TableState,
-    // block number | #transactions | hash | coinbase | gas | blob gas | size
-    pub items: Vec<(String, String, String, String, String, String, String)>,
-    last_l2_block_known: U256,
-}
-
-impl BlocksTable {
-    pub async fn new(rollup_client: &EthClient) -> Self {
-        let mut last_l2_block_known = U256::zero();
-        let items = Self::refresh_items(&mut last_l2_block_known, rollup_client).await;
-        Self {
-            state: TableState::default(),
-            items,
-            last_l2_block_known,
-        }
-    }
-
-    async fn on_tick(&mut self, rollup_client: &EthClient) {
-        let mut new_blocks =
-            Self::refresh_items(&mut self.last_l2_block_known, rollup_client).await;
-
-        let n_new_blocks = new_blocks.len();
-
-        if n_new_blocks > 50 {
-            new_blocks.truncate(50);
-            self.items.extend_from_slice(&new_blocks);
-        } else {
-            self.items.truncate(50 - n_new_blocks);
-            self.items.extend_from_slice(&new_blocks);
-            self.items.rotate_right(n_new_blocks);
-        }
-    }
-
-    async fn refresh_items(
-        last_l2_block_known: &mut U256,
-        rollup_client: &EthClient,
-    ) -> Vec<(String, String, String, String, String, String, String)> {
-        let new_blocks = Self::get_blocks(last_l2_block_known, rollup_client).await;
-
-        let new_blocks_processed = Self::process_blocks(new_blocks).await;
-
-        new_blocks_processed
-            .iter()
-            .map(|(number, n_txs, hash, coinbase, gas, blob_gas, size)| {
-                (
-                    number.to_string(),
-                    n_txs.to_string(),
-                    format!("{hash:#x}"),
-                    format!("{coinbase:#x}"),
-                    gas.to_string(),
-                    blob_gas.map_or("0".to_string(), |bg| bg.to_string()),
-                    size.to_string(),
-                )
-            })
-            .collect()
-    }
-
-    async fn get_blocks(
-        last_l2_block_known: &mut U256,
-        rollup_client: &EthClient,
-    ) -> Vec<RpcBlock> {
-        let last_l2_block_number = rollup_client
-            .get_block_number()
-            .await
-            .expect("Failed to get latest L2 block");
-
-        let mut new_blocks = Vec::new();
-        while *last_l2_block_known < last_l2_block_number {
-            let new_last_l1_fetched_block = min(*last_l2_block_known + 1, last_l2_block_number);
-
-            let new_block = rollup_client
-                .get_block_by_number(BlockByNumber::Number(new_last_l1_fetched_block.as_u64()))
-                .await
-                .unwrap_or_else(|_| {
-                    panic!("Failed to get block  by number ({new_last_l1_fetched_block})")
-                });
-
-            // Update the last L1 block fetched.
-            *last_l2_block_known = new_last_l1_fetched_block;
-
-            new_blocks.push(new_block);
-        }
-
-        new_blocks
-    }
-
-    async fn process_blocks(
-        new_blocks: Vec<RpcBlock>,
-    ) -> Vec<(u64, usize, H256, Address, u64, Option<u64>, u64)> {
-        let mut new_blocks_processed = new_blocks
-            .iter()
-            .map(|block| {
-                let n_txs = match &block.body {
-                    BlockBodyWrapper::Full(full_block_body) => full_block_body.transactions.len(),
-                    BlockBodyWrapper::OnlyHashes(only_hashes_block_body) => {
-                        only_hashes_block_body.transactions.len()
-                    }
-                };
-                (
-                    block.header.number,
-                    n_txs,
-                    block.header.hash(),
-                    block.header.coinbase,
-                    block.header.gas_used,
-                    block.header.blob_gas_used,
-                    block.size,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        new_blocks_processed.sort_by(
-            |(number_a, _, _, _, _, _, _), (number_b, _, _, _, _, _, _)| number_b.cmp(number_a),
-        );
-
-        new_blocks_processed
-    }
-}
-
-pub struct MempoolTable {
-    pub state: TableState,
-    // hash | sender | nonce
-    pub items: Vec<(String, String, String)>,
-}
-
-impl MempoolTable {
-    pub async fn new(rollup_client: &EthClient) -> Self {
-        Self {
-            state: TableState::default(),
-            items: Self::refresh_items(rollup_client).await,
-        }
-    }
-
-    async fn on_tick(&mut self, rollup_client: &EthClient) {
-        self.items = Self::refresh_items(rollup_client).await;
-    }
-
-    async fn refresh_items(rollup_client: &EthClient) -> Vec<(String, String, String)> {
-        let mempool = rollup_client
-            .tx_pool_content()
-            .await
-            .expect("Failed to get mempool content");
-
-        let mut pending_txs = mempool
-            .pending
-            .iter()
-            .flat_map(|(sender, txs_sorted_by_nonce)| {
-                txs_sorted_by_nonce.iter().map(|(nonce, tx)| {
-                    (
-                        format!("{:#x}", tx.hash),
-                        format!("{:#x}", *sender),
-                        format!("{nonce}"),
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-
-        pending_txs.sort_by(|(_, sender_a, nonce_a), (_, sender_b, nonce_b)| {
-            sender_a.cmp(sender_b).then(nonce_a.cmp(nonce_b))
-        });
-
-        pending_txs
-    }
-}
-
-pub struct L1ToL2MessagesTable {
-    pub state: TableState,
-    // Status | Kind | L1 tx hash | L2 tx hash | amount
-    pub items: Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)>,
-    last_l1_block_fetched: U256,
-    common_bridge_address: Address,
-}
-
-#[derive(Debug, Clone)]
-pub enum L1ToL2MessageStatus {
-    Pending,
-    Processed,
-}
-
-impl Display for L1ToL2MessageStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            L1ToL2MessageStatus::Pending => write!(f, "Pending"),
-            L1ToL2MessageStatus::Processed => write!(f, "Processed"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum L1ToL2MessageKind {
-    Deposit,
-    Message,
-}
-
-impl From<&DepositData> for L1ToL2MessageKind {
-    fn from(data: &DepositData) -> Self {
-        if data.from == COMMON_BRIDGE_L2_ADDRESS && data.to_address == COMMON_BRIDGE_L2_ADDRESS {
-            Self::Deposit
-        } else {
-            Self::Message
-        }
-    }
-}
-
-impl Display for L1ToL2MessageKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            L1ToL2MessageKind::Deposit => write!(f, "Deposit"),
-            L1ToL2MessageKind::Message => write!(f, "Message"),
-        }
-    }
-}
-
-impl L1ToL2MessagesTable {
-    pub async fn new(common_bridge_address: Address, eth_client: &EthClient) -> Self {
-        let mut last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(common_bridge_address)
-            .await
-            .expect("Failed to get last fetched L1 block")
-            .into();
-        let items = Self::refresh_items(
-            &mut last_l1_block_fetched,
-            common_bridge_address,
-            eth_client,
-        )
-        .await;
-        Self {
-            state: TableState::default(),
-            items,
-            last_l1_block_fetched,
-            common_bridge_address,
-        }
-    }
-
-    async fn on_tick(&mut self, eth_client: &EthClient) {
-        let mut new_l1_to_l2_messages = Self::refresh_items(
-            &mut self.last_l1_block_fetched,
-            self.common_bridge_address,
-            eth_client,
-        )
-        .await;
-
-        let n_new_latest_batches = new_l1_to_l2_messages.len();
-
-        if n_new_latest_batches > 50 {
-            new_l1_to_l2_messages.truncate(50);
-            self.items.extend_from_slice(&new_l1_to_l2_messages);
-        } else {
-            self.items.truncate(50 - n_new_latest_batches);
-            self.items.extend_from_slice(&new_l1_to_l2_messages);
-            self.items.rotate_right(n_new_latest_batches);
-        }
-    }
-
-    async fn refresh_items(
-        last_l1_block_fetched: &mut U256,
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-    ) -> Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)> {
-        let logs = Self::get_logs(last_l1_block_fetched, common_bridge_address, eth_client).await;
-        Self::process_logs(&logs, common_bridge_address, eth_client).await
-    }
-
-    async fn get_logs(
-        last_l1_block_fetched: &mut U256,
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-    ) -> Vec<RpcLog> {
-        monitor::utils::get_logs(
-            last_l1_block_fetched,
-            common_bridge_address,
-            "L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)",
-            eth_client,
-        )
-        .await
-    }
-
-    async fn process_logs(
-        logs: &[RpcLog],
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-    ) -> Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)> {
-        let mut processed_logs = Vec::new();
-
-        let pending_l1_to_l2_messages = eth_client
-            .get_pending_deposit_logs(common_bridge_address)
-            .await
-            .expect("Failed to get pending L1 to L2 messages");
-
-        for log in logs {
-            let l1_to_l2_message =
-                DepositData::from_log(log.log.clone()).expect("Failed to parse L1ToL2Message log");
-
-            processed_logs.push((
-                if pending_l1_to_l2_messages.contains(&log.transaction_hash) {
-                    L1ToL2MessageStatus::Pending
-                } else {
-                    L1ToL2MessageStatus::Processed
-                },
-                L1ToL2MessageKind::from(&l1_to_l2_message),
-                log.transaction_hash,
-                l1_to_l2_message.deposit_tx_hash,
-                l1_to_l2_message.value,
-            ));
-        }
-
-        processed_logs
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum L2ToL1MessageStatus {
-    WithdrawalInitiated,
-    WithdrawalClaimed,
-    Delivered,
-}
-
-impl Display for L2ToL1MessageStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            L2ToL1MessageStatus::WithdrawalInitiated => write!(f, "Initiated"),
-            L2ToL1MessageStatus::WithdrawalClaimed => write!(f, "Claimed"),
-            L2ToL1MessageStatus::Delivered => write!(f, "Delivered"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum L2ToL1MessageKind {
-    ETHWithdraw,
-    ERC20Withdraw,
-    Message,
-}
-
-impl Display for L2ToL1MessageKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            L2ToL1MessageKind::ETHWithdraw => write!(f, "Withdraw (ETH)"),
-            L2ToL1MessageKind::ERC20Withdraw => write!(f, "Withdraw (ERC20)"),
-            L2ToL1MessageKind::Message => write!(f, "Message"),
-        }
-    }
-}
-
-pub type L2ToL1MessageRow = (
-    L2ToL1MessageKind,
-    L2ToL1MessageStatus,
-    Address, // receiver in L1
-    U256,    // value
-    Address, // token (L2)
-    Address, // token (L1)
-    H256,    // L2 tx hash
-);
-
-pub struct L2ToL1MessagesTable {
-    pub state: TableState,
-    pub items: Vec<L2ToL1MessageRow>,
-    last_l2_block_fetched: U256,
-    common_bridge_address: Address,
-}
-
-impl L2ToL1MessagesTable {
-    pub async fn new(
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Self {
-        let mut last_l2_block_fetched = U256::zero();
-        let items = Self::refresh_items(
-            &mut last_l2_block_fetched,
-            common_bridge_address,
-            eth_client,
-            rollup_client,
-        )
-        .await;
-        Self {
-            state: TableState::default(),
-            items,
-            last_l2_block_fetched,
-            common_bridge_address,
-        }
-    }
-
-    async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
-        let mut new_l1_to_l2_messages = Self::refresh_items(
-            &mut self.last_l2_block_fetched,
-            self.common_bridge_address,
-            eth_client,
-            rollup_client,
-        )
-        .await;
-
-        let n_new_latest_batches = new_l1_to_l2_messages.len();
-
-        if n_new_latest_batches > 50 {
-            new_l1_to_l2_messages.truncate(50);
-            self.items.extend_from_slice(&new_l1_to_l2_messages);
-        } else {
-            self.items.truncate(50 - n_new_latest_batches);
-            self.items.extend_from_slice(&new_l1_to_l2_messages);
-            self.items.rotate_right(n_new_latest_batches);
-        }
-    }
-
-    async fn refresh_items(
-        last_l2_block_fetched: &mut U256,
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Vec<L2ToL1MessageRow> {
-        let logs = Self::get_logs(last_l2_block_fetched, rollup_client).await;
-        Self::process_logs(&logs, common_bridge_address, eth_client).await
-    }
-
-    async fn get_logs(last_l1_block_fetched: &mut U256, rollup_client: &EthClient) -> Vec<RpcLog> {
-        let mut l2_to_l1_message_logs = Vec::new();
-
-        let initiated_eth_withdrawal_logs = monitor::utils::get_logs(
-            last_l1_block_fetched,
-            COMMON_BRIDGE_L2_ADDRESS,
-            "WithdrawalInitiated(address,address,uint256)",
-            rollup_client,
-        )
-        .await;
-
-        l2_to_l1_message_logs.extend(initiated_eth_withdrawal_logs);
-
-        let initiated_erc20_withdrawal_logs = monitor::utils::get_logs(
-            last_l1_block_fetched,
-            COMMON_BRIDGE_L2_ADDRESS,
-            "ERC20WithdrawalInitiated(address,address,address,uint256)",
-            rollup_client,
-        )
-        .await;
-
-        l2_to_l1_message_logs.extend(initiated_erc20_withdrawal_logs);
-
-        l2_to_l1_message_logs
-    }
-
-    async fn process_logs(
-        logs: &[RpcLog],
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-    ) -> Vec<L2ToL1MessageRow> {
-        let mut processed_logs = Vec::new();
-
-        let eth_withdrawal_topic = keccak(b"WithdrawalInitiated(address,address,uint256)");
-        let erc20_withdrawal_topic =
-            keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
-
-        for log in logs {
-            let withdrawal_is_claimed = {
-                let calldata = encode_calldata(
-                    "claimedWithdrawals(bytes32)",
-                    &[Value::FixedBytes(
-                        log.transaction_hash.as_bytes().to_vec().into(),
-                    )],
-                )
-                .expect("Failed to encode claimedWithdrawals(bytes32) calldata");
-
-                let raw_withdrawal_is_claimed: H256 = eth_client
-                    .call(common_bridge_address, calldata.into(), Overrides::default())
-                    .await
-                    .expect("Failed to call claimedWithdrawals(bytes32)")
-                    .parse()
-                    .unwrap_or_default();
-
-                U256::from_big_endian(raw_withdrawal_is_claimed.as_fixed_bytes()) == U256::one()
-            };
-            let withdrawal_status = if withdrawal_is_claimed {
-                L2ToL1MessageStatus::WithdrawalClaimed
-            } else {
-                L2ToL1MessageStatus::WithdrawalInitiated
-            };
-            match log.log.topics[0] {
-                topic if topic == eth_withdrawal_topic => {
-                    processed_logs.push((
-                        L2ToL1MessageKind::ETHWithdraw,
-                        withdrawal_status,
-                        Address::from_slice(&log.log.topics[1].as_fixed_bytes()[12..]),
-                        U256::from_big_endian(log.log.topics[2].as_fixed_bytes()),
-                        Address::default(),
-                        Address::default(),
-                        log.transaction_hash,
-                    ));
-                }
-                topic if topic == erc20_withdrawal_topic => {
-                    processed_logs.push((
-                        L2ToL1MessageKind::ERC20Withdraw,
-                        withdrawal_status,
-                        Address::from_slice(&log.log.topics[3].as_fixed_bytes()[12..]),
-                        U256::from_big_endian(&log.log.data[log.log.data.len() - 32..]),
-                        Address::from_slice(&log.log.topics[1].as_fixed_bytes()[12..]),
-                        Address::from_slice(&log.log.topics[2].as_fixed_bytes()[12..]),
-                        log.transaction_hash,
-                    ));
-                }
-                _ => {
-                    continue;
-                }
-            }
-        }
-
-        processed_logs
-    }
-}
-
 pub struct EthrexMonitor<'a> {
     pub title: &'a str,
     pub should_quit: bool,
     pub tabs: TabsState<'a>,
+    pub tick_rate: u64,
 
     pub logger: TuiWidgetState,
     pub node_status: NodeStatusTable,
@@ -919,6 +84,7 @@ impl<'a> EthrexMonitor<'a> {
             },
             should_quit: false,
             tabs: TabsState::new(vec!["Overview", "Logs"]),
+            tick_rate: cfg.monitor.tick_rate,
             global_chain_status: GlobalChainStatusTable::new(&eth_client, &rollup_client, cfg)
                 .await,
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
@@ -941,6 +107,60 @@ impl<'a> EthrexMonitor<'a> {
             .await,
             eth_client,
             rollup_client,
+        }
+    }
+
+    pub async fn start(mut self) -> Result<(), MonitorError> {
+        // setup terminal
+        enable_raw_mode().map_err(MonitorError::Io)?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend).map_err(MonitorError::Io)?;
+
+        let app_result = self.run(&mut terminal).await;
+
+        // restore terminal
+        disable_raw_mode().map_err(MonitorError::Io)?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )
+        .map_err(MonitorError::Io)?;
+        terminal.show_cursor().map_err(MonitorError::Io)?;
+
+        let _ = app_result.inspect_err(|err| {
+            eprintln!("Monitor error: {err}");
+        });
+
+        Ok(())
+    }
+
+    async fn run<B>(&mut self, terminal: &mut Terminal<B>) -> Result<(), MonitorError>
+    where
+        B: Backend,
+    {
+        let mut last_tick = Instant::now();
+        loop {
+            terminal.draw(|frame| ui::render(frame, self))?;
+
+            let timeout = Duration::from_millis(self.tick_rate).saturating_sub(last_tick.elapsed());
+            if !event::poll(timeout)? {
+                self.on_tick().await;
+                last_tick = Instant::now();
+                continue;
+            }
+            let event = event::read()?;
+            if let Some(key) = event.as_key_press_event() {
+                self.on_key_event(key.code);
+            }
+            if let Some(mouse) = event.as_mouse_event() {
+                self.on_mouse_event(mouse.kind);
+            }
+            if self.should_quit {
+                return Ok(());
+            }
         }
     }
 
