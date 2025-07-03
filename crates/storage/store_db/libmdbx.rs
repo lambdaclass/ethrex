@@ -15,7 +15,6 @@ use crate::rlp::{
     TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use crate::store_db::codec::block_num_hash;
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
