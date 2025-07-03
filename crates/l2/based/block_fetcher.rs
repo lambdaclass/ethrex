@@ -372,12 +372,20 @@ impl BlockFetcherState {
                         "Failed to get committed batch number from BatchCommitted log".to_string(),
                     ))?
                     .as_bytes();
-                let committed_batch_number =
-                    u64::from_be_bytes(bytes[bytes.len() - 8..].try_into().map_err(|_| {
-                        BlockFetcherError::InternalError(
+
+                let committed_batch_number = u64::from_be_bytes(
+                    bytes
+                        .get(bytes.len() - 8..)
+                        .ok_or(BlockFetcherError::InternalError(
                             "Invalid byte length for u64 conversion".to_string(),
-                        )
-                    })?);
+                        ))?
+                        .try_into()
+                        .map_err(|_| {
+                            BlockFetcherError::InternalError(
+                                "Invalid byte length for u64 conversion".to_string(),
+                            )
+                        })?,
+                );
 
                 if committed_batch_number > self.latest_safe_batch {
                     self.pending_commit_logs.insert(committed_batch_number, log);
@@ -394,12 +402,20 @@ impl BlockFetcherState {
                         "Failed to get committed batch number from BatchCommitted log".to_string(),
                     ))?
                     .as_bytes();
-                let verify_batch_number =
-                    u64::from_be_bytes(bytes[bytes.len() - 8..].try_into().map_err(|_| {
-                        BlockFetcherError::InternalError(
+
+                let verify_batch_number = u64::from_be_bytes(
+                    bytes
+                        .get(bytes.len() - 8..)
+                        .ok_or(BlockFetcherError::InternalError(
                             "Invalid byte length for u64 conversion".to_string(),
-                        )
-                    })?);
+                        ))?
+                        .try_into()
+                        .map_err(|_| {
+                            BlockFetcherError::InternalError(
+                                "Invalid byte length for u64 conversion".to_string(),
+                            )
+                        })?,
+                );
 
                 if verify_batch_number > self.latest_safe_batch {
                     self.pending_verify_logs.insert(verify_batch_number, log);
