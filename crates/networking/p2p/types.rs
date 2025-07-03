@@ -401,8 +401,8 @@ fn decode_node_record_optional_fields(
 ) -> Result<(Vec<(Bytes, Bytes)>, Decoder), RLPDecodeError> {
     let (key, decoder): (Option<Bytes>, Decoder) = decoder.decode_optional_field();
     if let Some(k) = key {
-        let (value, decoder): (Vec<u8>, Decoder) = decoder.get_encoded_item()?;
-        pairs.push((k, Bytes::from(value)));
+        let (value, decoder) = decoder.get_encoded_item()?;
+        pairs.push((k, Bytes::from(value.to_owned())));
         decode_node_record_optional_fields(pairs, decoder)
     } else {
         Ok((pairs, decoder))
