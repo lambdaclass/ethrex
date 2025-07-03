@@ -684,6 +684,9 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let mut stack = self.stack_pool.pop().unwrap_or_default();
+        stack.clear();
+
         let new_call_frame = CallFrame::new(
             deployer,
             new_address,
@@ -698,6 +701,7 @@ impl<'a> VM<'a> {
             true,
             U256::ZERO,
             0,
+            stack,
         );
         self.call_frames.push(new_call_frame);
 
@@ -752,6 +756,9 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let mut stack = self.stack_pool.pop().unwrap_or_default();
+        stack.clear();
+
         let new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -766,6 +773,7 @@ impl<'a> VM<'a> {
             false,
             ret_offset,
             ret_size,
+            stack,
         );
         self.call_frames.push(new_call_frame);
 
@@ -859,6 +867,11 @@ impl<'a> VM<'a> {
         };
 
         self.tracer.exit_context(ctx_result, false)?;
+
+        let mut stack = executed_call_frame.stack;
+        stack.clear();
+        self.stack_pool.push(stack);
+
         Ok(())
     }
 
@@ -901,6 +914,11 @@ impl<'a> VM<'a> {
         };
 
         self.tracer.exit_context(ctx_result, false)?;
+
+        let mut stack = executed_call_frame.stack;
+        stack.clear();
+        self.stack_pool.push(stack);
+
         Ok(())
     }
 
