@@ -1276,6 +1276,8 @@ impl EthClient {
         message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
     }
 
+    /// Fethches the execution witnes for a given block or range of blocks.
+    /// WARNNING: This method is only compatible with ethrex and not with other debug_executionWitness implementations.
     pub async fn get_witness(
         &self,
         from: BlockIdentifier,
