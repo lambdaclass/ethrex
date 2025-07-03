@@ -1,4 +1,4 @@
-name: Assign PR Author
+name: PR Author
 
 on:
   pull_request:
@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   assign-author:
+    name: Assign Author
     runs-on: ubuntu-latest
     steps:
       - name: Assign PR author
