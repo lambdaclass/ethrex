@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751549390194,
+  "lastUpdate": 1751556421875,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4376,6 +4376,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0070249052631578945,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c6ad97cfc44c3f020aad5903523460ea0ed77d71",
+          "message": "refactor(l1): spawned p2p (#3164)\n\nP2p connection processes are complex and error prone. Using `spawned` to\nclean it up and properly separate concurrency logic from business logic.\n\n**Description**\n\nReplaces the main_loop from `RLPxConnection` with a `spawned` process\nthat handles all the messages from and to the remote peer, as well as\nthe backend.\n\n---------\n\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>\nCo-authored-by: MrAzteca <azteca1998@users.noreply.github.com>\nCo-authored-by: Edgar <git@edgl.dev>\nCo-authored-by: LeanSerra <46695152+LeanSerra@users.noreply.github.com>",
+          "timestamp": "2025-07-03T13:14:32Z",
+          "tree_id": "c65b59388161b372d09b873e05057699ee1b2c00",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c6ad97cfc44c3f020aad5903523460ea0ed77d71"
+        },
+        "date": 1751556410275,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006809857142857143,
             "unit": "Mgas/s"
           }
         ]
