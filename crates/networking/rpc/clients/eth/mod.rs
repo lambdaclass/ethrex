@@ -1343,14 +1343,13 @@ impl EthClient {
             params: None,
         };
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(TxPoolContentError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(TxPoolContentError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 }
