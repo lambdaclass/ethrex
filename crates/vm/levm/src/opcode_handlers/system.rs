@@ -546,14 +546,10 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let (target_account_is_empty, target_account_is_cold) = {
-            let (target_account, target_account_is_cold) =
-                self.db.access_account(&mut self.substate, beneficiary)?;
-            (target_account.is_empty(), target_account_is_cold)
-        };
+        let target_account_is_cold = self.substate.accessed_addresses.insert(beneficiary);
+        let target_account_is_empty = self.db.get_account(beneficiary)?.is_empty();
 
-        let (current_account, _current_account_is_cold) =
-            self.db.access_account(&mut self.substate, to)?;
+        let current_account = self.db.get_account(to)?;
         let balance = current_account.info.balance;
 
         self.current_call_frame_mut()?
@@ -684,6 +680,9 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let mut stack = self.stack_pool.pop().unwrap_or_default();
+        stack.clear();
+
         let new_call_frame = CallFrame::new(
             deployer,
             new_address,
@@ -698,6 +697,7 @@ impl<'a> VM<'a> {
             true,
             U256::zero(),
             0,
+            stack,
         );
         self.call_frames.push(new_call_frame);
 
@@ -752,6 +752,9 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let mut stack = self.stack_pool.pop().unwrap_or_default();
+        stack.clear();
+
         let new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -766,6 +769,7 @@ impl<'a> VM<'a> {
             false,
             ret_offset,
             ret_size,
+            stack,
         );
         self.call_frames.push(new_call_frame);
 
@@ -859,6 +863,11 @@ impl<'a> VM<'a> {
         };
 
         self.tracer.exit_context(ctx_result, false)?;
+
+        let mut stack = executed_call_frame.stack;
+        stack.clear();
+        self.stack_pool.push(stack);
+
         Ok(())
     }
 
@@ -901,6 +910,11 @@ impl<'a> VM<'a> {
         };
 
         self.tracer.exit_context(ctx_result, false)?;
+
+        let mut stack = executed_call_frame.stack;
+        stack.clear();
+        self.stack_pool.push(stack);
+
         Ok(())
     }
 
@@ -915,11 +929,9 @@ impl<'a> VM<'a> {
         address: Address,
     ) -> Result<(usize, u64, bool, bool), VMError> {
         // Creation of previously empty accounts and cold addresses have higher gas cost
-        let (account_is_empty, address_was_cold) = {
-            let (account, address_was_cold) =
-                self.db.access_account(&mut self.substate, address)?;
-            (account.is_empty(), address_was_cold)
-        };
+        let address_was_cold = self.substate.accessed_addresses.insert(address);
+        let account_is_empty = self.db.get_account(address)?.is_empty();
+
         // Calculated here for memory expansion gas cost
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
