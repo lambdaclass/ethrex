@@ -9,6 +9,7 @@ use ethrex_common::types::{BlockHash, ForkId};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::Decoder;
 use ethrex_storage::Store;
+use tracing::info;
 
 #[derive(Debug, Clone)]
 pub enum StatusMessage {
@@ -48,6 +49,8 @@ impl StatusMessage {
         let total_difficulty =
             U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
         let network_id = chain_config.chain_id;
+
+        info!("SENDING NETWORK ID {}", network_id);
 
         // These blocks must always be available
         let genesis_header = storage
