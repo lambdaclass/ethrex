@@ -81,7 +81,7 @@ pub struct BlockFetcherState {
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
     fetch_block_step: U256,
-    latest_committed_batch: u64,
+    latest_safe_batch: u64,
     pending_commit_log: BTreeMap<u64, RpcLog>,
     pending_verify_log: BTreeMap<u64, RpcLog>,
     pending_batches: VecDeque<PendingBatch>,
@@ -185,7 +185,7 @@ impl BlockFetcherState {
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
-            latest_committed_batch: 0,
+            latest_safe_batch: 0,
             pending_commit_log: BTreeMap::new(),
             pending_verify_log: BTreeMap::new(),
             pending_batches: VecDeque::new(),
@@ -263,10 +263,14 @@ impl BlockFetcherState {
             {
                 info!("Safe batch sealed {}.", pending_batch.number);
                 let Some(commit_log) = self.pending_commit_log.remove(&pending_batch.number) else {
-                    return Err(BlockFetcherError::InternalError("TODO".into()));
+                    return Err(BlockFetcherError::InternalError(
+                        "Commit log should be in the list.".into(),
+                    ));
                 };
                 let Some(verify_log) = self.pending_verify_log.remove(&pending_batch.number) else {
-                    return Err(BlockFetcherError::InternalError("TODO".into()));
+                    return Err(BlockFetcherError::InternalError(
+                        "Verify log should be in the list.".into(),
+                    ));
                 };
 
                 let batch_commit_tx_calldata = self
@@ -298,6 +302,7 @@ impl BlockFetcherState {
                     .await?;
                 batch.commit_tx = Some(commit_log.transaction_hash);
                 batch.verify_tx = Some(verify_log.transaction_hash);
+                self.latest_safe_batch = batch.number;
                 self.rollup_store.seal_batch(batch).await?;
             } else {
                 // if the batch isn't verified yet, add it again to the queue
@@ -370,7 +375,7 @@ impl BlockFetcherState {
                         )
                     })?);
 
-                if committed_batch_number > self.latest_committed_batch {
+                if committed_batch_number > self.latest_safe_batch {
                     self.pending_commit_log.insert(committed_batch_number, log);
                 }
             }
@@ -392,7 +397,7 @@ impl BlockFetcherState {
                         )
                     })?);
 
-                if verify_batch_number > self.latest_committed_batch {
+                if verify_batch_number > self.latest_safe_batch {
                     self.pending_verify_log.insert(verify_batch_number, log);
                 }
             }
