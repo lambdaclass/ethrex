@@ -44,7 +44,7 @@ jobs:
           fi
 
           # Remove duplicates
-          unique_labels=($(printf "%s\n" "${labels[@]}" | sort -u))
+          mapfile -t unique_labels < <(printf "%s\n" "${labels[@]}" | sort -u)
           labels_csv=$(IFS=, ; echo "${unique_labels[*]}")
           echo "labels=$labels_csv" >> $GITHUB_OUTPUT
 
