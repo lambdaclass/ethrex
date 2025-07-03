@@ -13,7 +13,6 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasher, Hasher};
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -54,30 +53,7 @@ pub type TrieNode = (NodeHash, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     root: NodeRef,
-    invalidated_nodes: HashSet<H256, XorHash>,
-}
-
-#[derive(Default, Clone)]
-struct XorHash {
-    hash: u64,
-    n: usize,
-}
-impl Hasher for XorHash {
-    fn finish(&self) -> u64 {
-        self.hash
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for (i, b) in bytes.iter().enumerate() {
-            let i = (i + self.n) % 8;
-            self.hash ^= (*b as u64) << (i * 8);
-        }
-    }
-}
-impl BuildHasher for XorHash {
-    type Hasher = Self;
-    fn build_hasher(&self) -> Self::Hasher {
-        Self { hash: 0, n: 0 }
-    }
+    invalidated_nodes: HashSet<H256>,
 }
 
 impl Default for Trie {
