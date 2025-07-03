@@ -346,7 +346,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         }
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         Ok(self
             .read(LAST_SENT_BATCH_PROOF, 0)
             .await?
@@ -354,7 +354,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             .unwrap_or(0))
     }
 
-    async fn set_lastest_sent_batch_proof(
+    async fn set_latest_sent_batch_proof(
         &self,
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
