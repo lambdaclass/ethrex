@@ -397,6 +397,16 @@ impl Store {
             "[PRUNING METRICS]",
         );
 
+        debug_assert_eq!(
+            stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize,
+            stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+        );
+        debug_assert_eq!(
+            stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            stats_post_storage_log.entries() as isize - stats_pre_storage_log.entries() as isize,
+        );
+
         tx.commit().map_err(StoreError::LibmdbxError)
     }
 }
