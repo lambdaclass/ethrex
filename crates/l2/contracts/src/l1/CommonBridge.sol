@@ -136,8 +136,7 @@ contract CommonBridge is
         return address(uint160(from) + ADDRESS_ALIASING);
     }
 
-    function _sendToL2(address _from, SendValues memory sendValues) private {
-        address from = _getAddressAlias(_from);
+    function _sendToL2(address from, SendValues memory sendValues) private {
         _burnGas(sendValues.gasLimit);
 
         bytes32 l2MintTxHash = keccak256(
@@ -166,7 +165,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function sendToL2(SendValues calldata sendValues) public {
-        _sendToL2(msg.sender, sendValues);
+        _sendToL2(_getAddressAlias(msg.sender), sendValues);
     }
 
     /// @inheritdoc ICommonBridge
