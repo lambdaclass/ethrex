@@ -52,7 +52,7 @@ impl RLPxMessage for GetReceipts {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#receipts-0x10
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Receipts68 {
     pub id: u64,
     pub receipts: Vec<Vec<Receipt>>,
@@ -104,7 +104,7 @@ impl RLPxMessage for Receipts68 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Receipts69 {
     pub id: u64,
     pub receipts: Vec<Vec<Receipt>>,

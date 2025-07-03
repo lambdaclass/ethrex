@@ -1,11 +1,4 @@
 use crate::rlpx::p2p::Capability;
-
-use super::{
-    connection::{Aes256Ctr64BE, LocalState, RemoteState},
-    error::RLPxError,
-    message as rlpx,
-    utils::ecdh_xchng,
-};
 use crate::rlpx::{error::RLPxError, message as rlpx, utils::ecdh_xchng};
 
 use super::handshake::{LocalState, RemoteState};

@@ -19,7 +19,7 @@ pub trait StatusMessage {
     fn fork_id(&self) -> ForkId;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Status68Message {
     pub(crate) eth_version: u8,
     pub(crate) network_id: u64,
@@ -80,7 +80,7 @@ impl Status68Message {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Status69Message {
     pub(crate) eth_version: u8,
     pub(crate) network_id: u64,

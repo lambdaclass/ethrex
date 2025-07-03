@@ -8,7 +8,6 @@ use crate::{
     rlpx::{
         connection::server::{Established, InnerState},
         error::RLPxError,
-        frame::RLPxCodec,
         p2p::{Capability, DEFAULT_P2P_PROTOCOL_VERSION},
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
