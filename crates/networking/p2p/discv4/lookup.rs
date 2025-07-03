@@ -145,7 +145,7 @@ impl Discv4LookupHandler {
         nodes_to_ask: &Vec<Node>,
     ) -> (Vec<Node>, u32) {
         // send FIND_NODE as much as three times
-        let alpha = 3;
+        let alpha = 30;
         let mut queries = 0;
         let mut nodes = vec![];
 
