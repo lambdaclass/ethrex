@@ -1353,14 +1353,13 @@ impl EthClient {
             params: Some(vec![json!(format!("{batch_number:#x}")), json!(true)]),
         };
 
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
                 .map_err(GetBatchByNumberError::SerdeJSONError)
                 .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
+            RpcResponse::Error(error_response) => {
                 Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
             }
-            Err(error) => Err(error),
         }
     }
 }
