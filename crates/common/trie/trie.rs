@@ -211,11 +211,11 @@ impl Trie {
     pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>, Vec<H256>) {
         let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
-        let mut invalidated_nodes = self.invalidated_nodes.clone();
-        for (node_hash, _) in updates.iter() {
-            invalidated_nodes.remove(&node_hash.finalize());
-        }
-        (ret_hash, updates, invalidated_nodes.into_iter().collect())
+        (
+            ret_hash,
+            updates,
+            self.invalidated_nodes.iter().cloned().collect(),
+        )
     }
 
     /// Compute the hash of the root node and flush any changes into the database.
