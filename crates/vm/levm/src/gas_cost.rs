@@ -227,11 +227,13 @@ pub const BLS12_381_G2_K_DISCOUNT: [u64; 128] = [
 pub const G2_MUL_COST: u64 = 22500;
 
 pub fn exp(exponent: U256) -> Result<u64, VMError> {
-    let exponent_byte_size = (exponent.bits().checked_add(7).ok_or(OutOfGas)?) / 8;
+    #[expect(clippy::arithmetic_side_effects)]
+    let exponent_byte_size = ((32 - exponent.leading_zeros())
+        .checked_add(7)
+        .ok_or(OutOfGas)?)
+        / 8;
 
-    let exponent_byte_size: u64 = exponent_byte_size
-        .try_into()
-        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+    let exponent_byte_size: u64 = exponent_byte_size.into();
 
     let exponent_byte_size_cost = EXP_DYNAMIC_BASE
         .checked_mul(exponent_byte_size)
@@ -406,7 +408,7 @@ pub fn sstore(
     let mut base_dynamic_gas = if new_value == current_value {
         SSTORE_DEFAULT_DYNAMIC
     } else if current_value == original_value {
-        if original_value.is_zero() {
+        if original_value == U256::ZERO {
             SSTORE_STORAGE_CREATION
         } else {
             SSTORE_STORAGE_MODIFICATION
@@ -538,7 +540,7 @@ pub fn selfdestruct(
     };
 
     // If a positive balance is sent to an empty account, the dynamic gas is 25000
-    if account_is_empty && balance_to_transfer > U256::zero() {
+    if account_is_empty && balance_to_transfer > U256::ZERO {
         dynamic_cost = dynamic_cost
             .checked_add(SELFDESTRUCT_DYNAMIC)
             .ok_or(OutOfGas)?;
@@ -663,13 +665,13 @@ pub fn call(
         CALL_COLD_DYNAMIC,
         CALL_WARM_DYNAMIC,
     )?;
-    let positive_value_cost = if !value_to_transfer.is_zero() {
+    let positive_value_cost = if !value_to_transfer == U256::ZERO {
         CALL_POSITIVE_VALUE
     } else {
         0
     };
 
-    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
+    let value_to_empty_account = if address_is_empty && !value_to_transfer == U256::ZERO {
         CALL_TO_EMPTY_ACCOUNT
     } else {
         0
@@ -684,7 +686,7 @@ pub fn call(
         .ok_or(OutOfGas)?;
 
     calculate_cost_and_gas_limit_call(
-        value_to_transfer.is_zero(),
+        value_to_transfer == U256::ZERO,
         gas_from_stack,
         gas_left,
         call_gas_costs,
@@ -708,7 +710,7 @@ pub fn callcode(
         DELEGATECALL_WARM_DYNAMIC,
     )?;
 
-    let positive_value_cost = if !value_to_transfer.is_zero() {
+    let positive_value_cost = if !value_to_transfer == U256::ZERO {
         CALLCODE_POSITIVE_VALUE
     } else {
         0
@@ -720,7 +722,7 @@ pub fn callcode(
         .ok_or(OutOfGas)?;
 
     calculate_cost_and_gas_limit_call(
-        value_to_transfer.is_zero(),
+        value_to_transfer == U256::ZERO,
         gas_from_stack,
         gas_left,
         call_gas_costs,
@@ -775,15 +777,15 @@ pub fn staticcall(
 }
 
 pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
-    let mut i = U256::one();
-    let mut output: U256 = U256::zero();
+    let mut i = U256::ONE;
+    let mut output: U256 = U256::ZERO;
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
         .checked_mul(denominator)
         .ok_or(InternalError::Overflow)?;
 
-    while !numerator_accum.is_zero() {
+    while !numerator_accum == U256::ZERO {
         // Safe addition to output
         output = output
             .checked_add(numerator_accum)
@@ -796,7 +798,7 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Res
             .checked_div(denominator.checked_mul(i).ok_or(InternalError::Overflow)?)
             .ok_or(InternalError::DivisionByZero)?;
 
-        i = i.checked_add(U256::one()).ok_or(InternalError::Overflow)?;
+        i = i.checked_add(U256::ONE).ok_or(InternalError::Overflow)?;
     }
 
     output

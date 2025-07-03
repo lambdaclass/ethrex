@@ -3652,6 +3652,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethnum"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca81e6b4777c89fd810c25a4be2b1bd93ea034fbe58e6a75216a34c6b82c539b"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ethrex"
 version = "0.1.0"
 dependencies = [
@@ -3727,6 +3736,7 @@ dependencies = [
  "c-kzg",
  "crc32fast",
  "ethereum-types 0.15.1",
+ "ethnum",
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
@@ -4005,6 +4015,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
+ "ethnum",
  "hex",
  "hex-literal",
  "lazy_static",

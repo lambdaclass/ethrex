@@ -11,6 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Address;
+use ethnum::U256;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use hex::FromHexError;
@@ -220,7 +221,7 @@ impl ExecutionWitnessResult {
 
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() {
+                        if *storage_value == U256::ZERO {
                             storage_trie
                                 .remove(hashed_key)
                                 .expect("failed to remove key");

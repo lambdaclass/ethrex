@@ -34,7 +34,7 @@ fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsU
         GenesisAccount {
             code: Bytes::from(hex::decode(l2_bridge_runtime)?),
             storage: HashMap::new(),
-            balance: U256::zero(),
+            balance: U256::ZERO,
             nonce: 1,
         },
     );
@@ -46,7 +46,7 @@ fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsU
         GenesisAccount {
             code: Bytes::from(hex::decode(l1_messenger_runtime)?),
             storage: HashMap::new(),
-            balance: U256::zero(),
+            balance: U256::ZERO,
             nonce: 1,
         },
     );

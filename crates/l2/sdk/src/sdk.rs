@@ -4,7 +4,8 @@ use std::{fs::read_to_string, path::Path};
 
 use bytes::Bytes;
 use calldata::encode_calldata;
-use ethereum_types::{Address, H160, H256, U256};
+use ethereum_types::{Address, H160, H256};
+use ethrex_common::U256;
 use ethrex_common::types::GenericTransaction;
 use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::eth::L1MessageProof;
@@ -175,9 +176,7 @@ pub async fn claim_withdraw(
         "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";
 
     let calldata_values = vec![
-        Value::Uint(U256::from_big_endian(
-            l2_withdrawal_tx_hash.as_fixed_bytes(),
-        )),
+        Value::Uint(U256::from_be_bytes(l2_withdrawal_tx_hash.to_fixed_bytes())),
         Value::Uint(amount),
         Value::Uint(message_proof.batch_number.into()),
         Value::Uint(message_proof.message_id),
@@ -228,9 +227,7 @@ pub async fn claim_erc20withdraw(
         "claimWithdrawalERC20(bytes32,address,address,uint256,uint256,uint256,bytes32[])";
 
     let calldata_values = vec![
-        Value::Uint(U256::from_big_endian(
-            l2_withdrawal_tx_hash.as_fixed_bytes(),
-        )),
+        Value::Uint(U256::from_be_bytes(l2_withdrawal_tx_hash.to_fixed_bytes())),
         Value::Address(token_l1),
         Value::Address(token_l2),
         Value::Uint(amount),
@@ -240,7 +237,7 @@ pub async fn claim_erc20withdraw(
             message_proof
                 .merkle_proof
                 .iter()
-                .map(|v| Value::Uint(U256::from_big_endian(v.as_bytes())))
+                .map(|v| Value::Uint(U256::from_be_bytes(v.to_fixed_bytes())))
                 .collect(),
         ),
     ];

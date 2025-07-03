@@ -319,7 +319,7 @@ async fn filter_logs(
 
     // Filter missing batches logs
     for batch_committed_log in logs.iter().cloned() {
-        let committed_batch_number = U256::from_big_endian(
+        let committed_batch_number = U256::from_be_bytes(
             batch_committed_log
                 .log
                 .topics
@@ -327,10 +327,10 @@ async fn filter_logs(
                 .ok_or(BlockFetcherError::InternalError(
                     "Failed to get committed batch number from BatchCommitted log".to_string(),
                 ))?
-                .as_bytes(),
+                .to_fixed_bytes(),
         );
 
-        if committed_batch_number > last_batch_number_known.into() {
+        if committed_batch_number > U256::from(last_batch_number_known) {
             filtered_logs.push((batch_committed_log, committed_batch_number));
         }
     }
@@ -356,9 +356,15 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //          || 32 bytes (messages logs merkle root) 100..132
     //          || 32 bytes (processed privileged transactions rolling hash) 132..164
 
-    let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
-        BlockFetcherError::WrongBatchCalldata("Couldn't get batch length bytes".to_owned()),
-    )?)
+    let batch_length_in_blocks = U256::from_be_bytes(
+        calldata
+            .get(196..228)
+            .ok_or(BlockFetcherError::WrongBatchCalldata(
+                "Couldn't get batch length bytes".to_owned(),
+            ))?
+            .try_into()
+            .map_err(|_| BlockFetcherError::InternalError("Conversion error".to_string()))?,
+    )
     .as_usize();
 
     let base = 228;
@@ -368,21 +374,25 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     for block_i in 0..batch_length_in_blocks {
         let block_length_offset = base + block_i * 32;
 
-        let dynamic_offset = U256::from_big_endian(
+        let dynamic_offset = U256::from_be_bytes(
             calldata
                 .get(block_length_offset..block_length_offset + 32)
                 .ok_or(BlockFetcherError::WrongBatchCalldata(
                     "Couldn't get dynamic offset bytes".to_owned(),
-                ))?,
+                ))?
+                .try_into()
+                .map_err(|_| BlockFetcherError::InternalError("Conversion error".to_string()))?,
         )
         .as_usize();
 
-        let block_length_in_bytes = U256::from_big_endian(
+        let block_length_in_bytes = U256::from_be_bytes(
             calldata
                 .get(base + dynamic_offset..base + dynamic_offset + 32)
                 .ok_or(BlockFetcherError::WrongBatchCalldata(
                     "Couldn't get block length bytes".to_owned(),
-                ))?,
+                ))?
+                .try_into()
+                .map_err(|_| BlockFetcherError::InternalError("Conversion error".to_string()))?,
         )
         .as_usize();
 
@@ -588,7 +598,7 @@ async fn process_verified_logs(
     state: &mut BlockFetcherState,
 ) -> Result<(), BlockFetcherError> {
     for batch_verified_log in batch_verified_logs {
-        let batch_number = U256::from_big_endian(
+        let batch_number = U256::from_be_bytes(
             batch_verified_log
                 .log
                 .topics
@@ -596,7 +606,7 @@ async fn process_verified_logs(
                 .ok_or(BlockFetcherError::InternalError(
                     "Failed to get verified batch number from BatchVerified log".to_string(),
                 ))?
-                .as_bytes(),
+                .to_fixed_bytes(),
         );
 
         let verify_tx_hash = batch_verified_log.transaction_hash;

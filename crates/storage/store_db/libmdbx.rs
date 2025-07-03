@@ -12,7 +12,8 @@ use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
+use ethereum_types::H256;
+use ethrex_common::U256;
 use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
@@ -1079,10 +1080,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
         let iter = cursor
             .walk_key(account_hash.into(), Some(start.into()))
-            .map_while(|res| {
-                res.ok()
-                    .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
-            })
+            .map_while(|res| res.ok().map(|(k, v)| (H256(k.0), U256::from_be_bytes(v.0))))
             .take(MAX_SNAPSHOT_READS);
         Ok(iter.collect::<Vec<_>>())
     }
@@ -1358,7 +1356,7 @@ impl From<H256> for AccountStorageKeyBytes {
 
 impl From<U256> for AccountStorageValueBytes {
     fn from(value: U256) -> Self {
-        AccountStorageValueBytes(value.to_big_endian())
+        AccountStorageValueBytes(value.to_be_bytes())
     }
 }
 
@@ -1370,7 +1368,7 @@ impl From<AccountStorageKeyBytes> for H256 {
 
 impl From<AccountStorageValueBytes> for U256 {
     fn from(value: AccountStorageValueBytes) -> Self {
-        U256::from_big_endian(&value.0)
+        U256::from_be_bytes(value.0)
     }
 }
 

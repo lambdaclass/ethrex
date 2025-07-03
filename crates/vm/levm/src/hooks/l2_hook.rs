@@ -33,7 +33,7 @@ impl Hook for L2Hook {
             let value = vm.current_call_frame()?.msg_value;
             if value > sender_balance {
                 privileged_had_insufficient_balance = true;
-                vm.current_call_frame_mut()?.msg_value = U256::zero();
+                vm.current_call_frame_mut()?.msg_value = U256::ZERO;
                 vm.current_call_frame_mut()?
                     .set_code(vec![Opcode::INVALID.into()].into())?;
             } else {

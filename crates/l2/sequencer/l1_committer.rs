@@ -544,10 +544,9 @@ async fn send_commitment(
             state.arbitrary_base_blob_gas_price,
             20, // 20% of headroom
         )
-        .await?
-        .to_le_bytes();
+        .await?;
 
-        let gas_price_per_blob = U256::from_little_endian(&le_bytes);
+        let gas_price_per_blob = U256::from(le_bytes);
 
         let wrapped_tx = state
             .eth_client

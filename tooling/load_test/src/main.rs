@@ -1,6 +1,7 @@
 use clap::{Parser, ValueEnum};
-use ethereum_types::{Address, H160, H256, U256};
+use ethereum_types::{Address, H160, H256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::U256;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_l2_sdk::get_address_from_secret_key;
@@ -185,7 +186,7 @@ impl TxBuilder {
             TxBuilder::Erc20(contract_address) => {
                 let send_calldata = calldata::encode_calldata(
                     "transfer(address,uint256)",
-                    &[Value::Address(dst), Value::Uint(U256::one())],
+                    &[Value::Address(dst), Value::Uint(U256::ONE)],
                 )
                 .unwrap();
                 (None, send_calldata, *contract_address)

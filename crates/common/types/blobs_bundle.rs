@@ -208,9 +208,10 @@ pub enum BlobsBundleError {
 mod tests {
     use super::*;
     use crate::{
-        Address, Bytes, U256,
+        Address, Bytes,
         types::{blobs_bundle, transaction::EIP4844Transaction},
     };
+    use ethnum::U256;
     mod shared {
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
             let bytes = hex::decode(s).expect("Invalid hex string");
@@ -237,10 +238,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: 0u32.into(),
             gas: 15_000_000,
             to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
+            value: U256::ZERO,               // Value zero
             data: Bytes::default(),          // No data
             access_list: Default::default(), // No access list
             blob_versioned_hashes,
@@ -276,10 +277,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: 0u32.into(),
             gas: 15_000_000,
             to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
+            value: U256::ZERO,               // Value zero
             data: Bytes::default(),          // No data
             access_list: Default::default(), // No access list
             blob_versioned_hashes: vec![
@@ -327,10 +328,10 @@ mod tests {
             nonce: 3,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
+            max_fee_per_blob_gas: 0u32.into(),
             gas: 15_000_000,
             to: Address::from_low_u64_be(1), // Normal tx
-            value: U256::zero(),             // Value zero
+            value: U256::ZERO,               // Value zero
             data: Bytes::default(),          // No data
             access_list: Default::default(), // No access list
             blob_versioned_hashes: vec![

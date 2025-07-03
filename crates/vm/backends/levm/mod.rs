@@ -271,7 +271,7 @@ impl LEVM {
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?
                 .clone(); // Not a big deal cloning here because it's an EOA.
 
-            account.info.balance += increment.into();
+            account.info.balance += increment;
             db.current_accounts_state.insert(address, account);
         }
         Ok(())
@@ -482,8 +482,8 @@ pub fn generic_system_contract_levm(
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
         prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
+        base_fee_per_gas: U256::ZERO,
+        gas_price: U256::ZERO,
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
         block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
@@ -493,7 +493,7 @@ pub fn generic_system_contract_levm(
 
     let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(contract_address),
-        value: U256::zero(),
+        value: U256::ZERO,
         data: calldata,
         ..Default::default()
     });
@@ -577,13 +577,10 @@ pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
 fn adjust_disabled_base_fee(env: &mut Environment) {
-    if env.gas_price == U256::zero() {
-        env.base_fee_per_gas = U256::zero();
+    if env.gas_price == U256::ZERO {
+        env.base_fee_per_gas = U256::ZERO;
     }
-    if env
-        .tx_max_fee_per_blob_gas
-        .is_some_and(|v| v == U256::zero())
-    {
+    if env.tx_max_fee_per_blob_gas.is_some_and(|v| v == U256::ZERO) {
         env.block_excess_blob_gas = None;
     }
 }

@@ -16,9 +16,11 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
+        let mut buffer = [0u8; 32];
         let read_n_bytes = read_bytcode_slice::<N>(current_call_frame)?;
+        buffer[0..N].copy_from_slice(&read_n_bytes);
 
-        let value = u256_from_big_endian_const(read_n_bytes);
+        let value = U256::from_be_bytes(buffer);
         current_call_frame.stack.push(&[value])?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
@@ -39,7 +41,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
 
-        current_call_frame.stack.push(&[U256::zero()])?;
+        current_call_frame.stack.push(&[U256::ZERO])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

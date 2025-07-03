@@ -52,7 +52,7 @@ pub mod test_utils {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: block_num,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
@@ -103,13 +103,13 @@ pub mod test_utils {
             gas_price: nonce * BASE_PRICE_IN_WEI,
             gas: 10000,
             to: TxKind::Create,
-            value: 100.into(),
+            value: 100u32.into(),
             data: Default::default(),
-            v: U256::from(0x1b),
-            r: U256::from_big_endian(&hex!(
+            v: U256::from(0x1bu32),
+            r: U256::from_be_bytes(hex!(
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
-            s: U256::from_big_endian(&hex!(
+            s: U256::from_be_bytes(hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
         })
@@ -125,7 +125,7 @@ pub mod test_utils {
             max_priority_fee_per_gas: (nonce - 1) * BASE_PRICE_IN_WEI,
             gas_limit: 10000,
             to: TxKind::Create,
-            value: 100.into(),
+            value: 100u32.into(),
             data: Default::default(),
             access_list: vec![],
             signature_y_parity: true,

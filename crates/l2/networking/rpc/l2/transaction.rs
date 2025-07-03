@@ -169,7 +169,7 @@ impl RpcHandler for SponsoredTx {
             SendRawTransactionRequest::EIP7702(EIP7702Transaction {
                 chain_id,
                 to: self.to,
-                value: U256::zero(),
+                value: U256::ZERO,
                 data: self.data.clone(),
                 access_list: Vec::new(),
                 authorization_list: auth_list.clone(),
@@ -179,7 +179,7 @@ impl RpcHandler for SponsoredTx {
             SendRawTransactionRequest::EIP1559(EIP1559Transaction {
                 chain_id,
                 to: TxKind::Call(self.to),
-                value: U256::zero(),
+                value: U256::ZERO,
                 data: self.data.clone(),
                 access_list: Vec::new(),
                 ..Default::default()

@@ -109,7 +109,7 @@ impl<'a> VM<'a> {
             0,
             true,
             is_create,
-            U256::zero(),
+            U256::ZERO,
             0,
         );
 

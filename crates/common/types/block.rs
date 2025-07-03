@@ -3,7 +3,7 @@ use super::{
     INITIAL_BASE_FEE,
 };
 use crate::{
-    Address, H256, U256,
+    Address, H256,
     constants::{
         DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS,
     },
@@ -11,6 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
+use ethnum::U256;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -560,7 +561,7 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::ExtraDataTooLong);
     }
 
-    if !header.difficulty.is_zero() {
+    if header.difficulty != U256::ZERO {
         return Err(InvalidBlockHeaderError::DifficultyNotZero);
     }
 
@@ -773,7 +774,7 @@ mod test {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 0,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0,
@@ -817,7 +818,7 @@ mod test {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 1,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,

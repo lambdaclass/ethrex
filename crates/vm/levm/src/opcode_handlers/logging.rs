@@ -25,7 +25,7 @@ impl<'a> VM<'a> {
         let topics = current_call_frame
             .stack
             .pop::<N_TOPICS>()?
-            .map(|topic| H256(U256::to_big_endian(&topic)));
+            .map(|topic| H256(topic.to_be_bytes()));
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 

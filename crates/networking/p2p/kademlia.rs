@@ -386,8 +386,8 @@ impl KademliaTable {
 /// <https://github.com/ethereum/devp2p/blob/master/discv4.md#node-identities>
 pub fn bucket_number(node_id_1: H256, node_id_2: H256) -> usize {
     let xor = node_id_1 ^ node_id_2;
-    let distance = U256::from_big_endian(xor.as_bytes());
-    distance.bits().saturating_sub(1)
+    let distance = U256::from_be_bytes(xor.to_fixed_bytes());
+    (32 - distance.leading_zeros()).saturating_sub(1) as usize
 }
 
 #[derive(Debug, Clone)]

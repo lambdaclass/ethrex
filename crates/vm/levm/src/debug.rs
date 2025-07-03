@@ -3,7 +3,7 @@ use ethrex_common::U256;
 
 /// Special constant for debugging. 0xFEDEBEBECAFEDECEBADA
 /// It has to match with the constant set in the Solidity contract for this purpose.
-pub const MAGIC_PRINT_OFFSET: U256 = U256([0xBEBECAFEDECEBADA, 0xFEDE, 0, 0]);
+pub const MAGIC_PRINT_OFFSET: U256 = U256::from_words(0x0, 0xFEDEBEBECAFEDECEBADA);
 
 #[derive(Default)]
 pub struct DebugMode {
@@ -50,7 +50,7 @@ impl DebugMode {
 
         if self.print_mode {
             // Accumulate chunks in buffer until there are no more chunks left, then print.
-            let to_print = value.to_big_endian();
+            let to_print = value.to_be_bytes();
             self.print_buffer.extend_from_slice(&to_print);
 
             return Ok(true);

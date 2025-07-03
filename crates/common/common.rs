@@ -8,3 +8,5 @@ pub use ethrex_trie::{TrieLogger, TrieWitness};
 pub mod kzg;
 pub mod tracing;
 pub mod utils;
+
+pub use ethnum::U256;

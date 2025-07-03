@@ -1,7 +1,8 @@
 use std::cmp::min;
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256};
+use ethnum::U256;
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{Message, SecretKey, ecdsa::RecoveryId};
@@ -903,9 +904,9 @@ impl Signable for LegacyTransaction {
         r.copy_from_slice(&signature[..32]);
         s.copy_from_slice(&signature[32..]);
 
-        self.r = U256::from_big_endian(&r);
-        self.s = U256::from_big_endian(&s);
-        self.v = U256::from(recovery_id.to_i32());
+        self.r = U256::from_be_bytes(r);
+        self.s = U256::from_be_bytes(s);
+        self.v = U256::from(recovery_id.to_i32() as u32);
         Ok(())
     }
 }
@@ -986,8 +987,8 @@ fn sing_inplace(
 
     let parity = recovery_id.to_i32() != 0;
 
-    *signature_r = U256::from_big_endian(&r);
-    *signature_s = U256::from_big_endian(&s);
+    *signature_r = U256::from_be_bytes(r);
+    *signature_s = U256::from_be_bytes(s);
     *signature_y_parity = parity;
     Ok(())
 }
@@ -1297,7 +1298,7 @@ impl Transaction {
     /// For more information check out [EIP-155](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md)
     pub fn protected(&self) -> bool {
         match self {
-            Transaction::LegacyTransaction(tx) if tx.v.bits() <= 8 => {
+            Transaction::LegacyTransaction(tx) if tx.v.leading_zeros() > 24 => {
                 let v = tx.v.as_u64();
                 v != 27 && v != 28 && v != 1 && v != 0
             }
@@ -1313,7 +1314,7 @@ pub fn recover_address(
     message: &Bytes,
 ) -> Result<Address, secp256k1::Error> {
     // Create signature
-    let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
+    let signature_bytes = [signature_r.to_be_bytes(), signature_s.to_be_bytes()].concat();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes,
         RecoveryId::from_i32(signature_y_parity as i32)?, // cannot fail
@@ -1364,12 +1365,12 @@ impl PrivilegedL2Transaction {
             _ => return None,
         };
 
-        let value = self.value.to_big_endian();
+        let value = self.value.to_be_bytes();
 
         // The nonce should be a U256,
         // in solidity the transactionId is a U256.
         let u256_nonce = U256::from(self.nonce);
-        let nonce = u256_nonce.to_big_endian();
+        let nonce = u256_nonce.to_be_bytes();
 
         Some(keccak_hash::keccak(
             [
@@ -1377,7 +1378,7 @@ impl PrivilegedL2Transaction {
                 to.as_bytes(),
                 &nonce,
                 &value,
-                &U256::from(self.gas_limit).to_big_endian(),
+                &U256::from(self.gas_limit).to_be_bytes(),
                 keccak(&self.data).as_bytes(),
             ]
             .concat(),
@@ -2468,13 +2469,13 @@ mod tests {
             gas_price: 0x0a,
             gas: 0x05f5e100,
             to: TxKind::Call(hex!("1000000000000000000000000000000000000000").into()),
-            value: 0.into(),
+            value: U256::ZERO,
             data: Default::default(),
-            v: U256::from(0x1b),
-            r: U256::from_big_endian(&hex!(
+            v: U256::from(0x1bu32),
+            r: U256::from_be_bytes(hex!(
                 "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
             )),
-            s: U256::from_big_endian(&hex!(
+            s: U256::from_be_bytes(hex!(
                 "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
             )),
         };
@@ -2494,7 +2495,7 @@ mod tests {
             gas_price: 0x2dbf1f9a,
             gas_limit: 0x186A0,
             to: TxKind::Call(hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into()),
-            value: 2.into(),
+            value: 2u32.into(),
             data: Bytes::from(&b"\xdbS\x06$\x8e\x03\x13\xe7emit"[..]),
             access_list: vec![(
                 hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into(),
@@ -2504,11 +2505,11 @@ mod tests {
                 ],
             )],
             signature_y_parity: false,
-            signature_r: U256::from_dec_str(
+            signature_r: U256::from_str(
                 "75813812796588349127366022588733264074091236448495248199152066031778895768879",
             )
             .unwrap(),
-            signature_s: U256::from_dec_str(
+            signature_s: U256::from_str(
                 "25476208226281085290728123165613764315157904411823916642262684106502155457829",
             )
             .unwrap(),
@@ -2561,7 +2562,7 @@ mod tests {
                 16,
             )
             .unwrap(),
-            v: 6303851.into(),
+            v: 6303851u32.into(),
         };
         assert_eq!(tx, expected_tx);
     }
@@ -2661,7 +2662,7 @@ mod tests {
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             ),
             gas: Some(0x5208),
-            value: U256::from(1),
+            value: U256::ONE,
             input: Bytes::from(hex::decode("010203040506").unwrap()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
@@ -2714,7 +2715,7 @@ mod tests {
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             ),
             gas: Some(0x5208),
-            value: U256::from(1),
+            value: U256::ONE,
             input: Bytes::from(hex::decode("010203040506").unwrap()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
@@ -2774,9 +2775,9 @@ mod tests {
             ),
             max_priority_fee_per_gas: 1,
             max_fee_per_gas: 1,
-            max_fee_per_blob_gas: U256::from(0x03),
+            max_fee_per_blob_gas: U256::from(0x03u32),
             gas: 0x5208,
-            value: U256::from(0x01),
+            value: U256::ONE,
             // 03 in hex is 0x3033, that's why the 'input' has that number.
             data: Bytes::from_static(b"03"),
             access_list: vec![(
@@ -2787,8 +2788,8 @@ mod tests {
             )],
             blob_versioned_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
             signature_y_parity: false,
-            signature_r: U256::from(0x01),
-            signature_s: U256::from(0x02),
+            signature_r: U256::ONE,
+            signature_s: U256::from(0x02u32),
         };
 
         assert_eq!(
@@ -2806,15 +2807,15 @@ mod tests {
             max_fee_per_gas: 2000,
             gas_limit: 21000,
             to: TxKind::Call(H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap()),
-            value: U256::from(100000),
+            value: U256::from(100000u32),
             data: Bytes::from_static(b"03"),
             access_list: vec![(
                 H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B3").unwrap(),
                 vec![H256::zero()],
             )],
             signature_y_parity: true,
-            signature_r: U256::one(),
-            signature_s: U256::zero(),
+            signature_r: U256::ONE,
+            signature_s: U256::ZERO,
         };
         let tx_to_serialize = Transaction::EIP1559Transaction(eip1559.clone());
         let serialized = serde_json::to_string(&tx_to_serialize).expect("Failed to serialize");
@@ -2838,19 +2839,19 @@ mod tests {
             max_fee_per_gas: 2000,
             gas_limit: 21000,
             to: Address::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap(),
-            value: U256::from(100000),
+            value: U256::from(100000u32),
             data: Bytes::from_static(b"03"),
             access_list: vec![],
             signature_y_parity: true,
-            signature_r: U256::one(),
-            signature_s: U256::zero(),
+            signature_r: U256::ONE,
+            signature_s: U256::ZERO,
             authorization_list: vec![AuthorizationTuple {
-                chain_id: U256::from(65536999),
+                chain_id: U256::from(65536999u32),
                 address: H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B1").unwrap(),
                 nonce: 2,
-                y_parity: U256::one(),
-                r_signature: U256::from(22),
-                s_signature: U256::from(37),
+                y_parity: U256::ONE,
+                r_signature: U256::from(22u32),
+                s_signature: U256::from(37u32),
             }],
         };
         let tx_to_serialize = Transaction::EIP7702Transaction(eip7702.clone());

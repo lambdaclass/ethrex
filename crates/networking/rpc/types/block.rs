@@ -131,7 +131,7 @@ mod test {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 1,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,

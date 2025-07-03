@@ -35,7 +35,7 @@ impl<'a> VM<'a> {
             .transient_storage
             .get(&(to, key))
             .cloned()
-            .unwrap_or(U256::zero());
+            .unwrap_or(U256::ZERO);
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -105,11 +105,7 @@ impl<'a> VM<'a> {
             current_call_frame.memory.len(),
         )?)?;
 
-        memory::try_store_data(
-            &mut current_call_frame.memory,
-            offset,
-            &value.to_big_endian(),
-        )?;
+        memory::try_store_data(&mut current_call_frame.memory, offset, &value.to_be_bytes())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -132,7 +128,7 @@ impl<'a> VM<'a> {
         memory::try_store_data(
             &mut current_call_frame.memory,
             offset,
-            &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
+            &value.to_be_bytes()[WORD_SIZE - 1..WORD_SIZE],
         )?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -147,7 +143,7 @@ impl<'a> VM<'a> {
             (storage_slot_key, address)
         };
 
-        let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
+        let storage_slot_key = H256::from(storage_slot_key.to_be_bytes());
 
         let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
 
@@ -179,7 +175,7 @@ impl<'a> VM<'a> {
         }
 
         // Get current and original (pre-tx) values.
-        let key = H256::from(storage_slot_key.to_big_endian());
+        let key = H256::from(storage_slot_key.to_be_bytes());
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
         let original_value = self.get_original_storage(to, key)?;
 
@@ -192,25 +188,25 @@ impl<'a> VM<'a> {
 
         if new_storage_slot_value != current_value {
             if current_value == original_value {
-                if !original_value.is_zero() && new_storage_slot_value.is_zero() {
+                if original_value != U256::ZERO && new_storage_slot_value == U256::ZERO {
                     gas_refunds = gas_refunds
                         .checked_add(remove_slot_cost)
                         .ok_or(InternalError::Overflow)?;
                 }
             } else {
-                if original_value != U256::zero() {
-                    if current_value == U256::zero() {
+                if original_value != U256::ZERO {
+                    if current_value == U256::ZERO {
                         gas_refunds = gas_refunds
                             .checked_sub(remove_slot_cost)
                             .ok_or(InternalError::Underflow)?;
-                    } else if new_storage_slot_value.is_zero() {
+                    } else if new_storage_slot_value == U256::ZERO {
                         gas_refunds = gas_refunds
                             .checked_add(remove_slot_cost)
                             .ok_or(InternalError::Overflow)?;
                     }
                 }
                 if new_storage_slot_value == original_value {
-                    if original_value == U256::zero() {
+                    if original_value == U256::ZERO {
                         gas_refunds = gas_refunds
                             .checked_add(restore_empty_slot_cost)
                             .ok_or(InternalError::Overflow)?;
@@ -241,9 +237,10 @@ impl<'a> VM<'a> {
     pub fn op_msize(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
+        #[expect(clippy::as_conversions)]
         current_call_frame
             .stack
-            .push(&[current_call_frame.memory.len().into()])?;
+            .push(&[(current_call_frame.memory.len() as u64).into()])?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -343,7 +340,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::JUMPI)?;
 
-        let pc_increment = if !condition.is_zero() {
+        let pc_increment = if condition != U256::ZERO {
             // Move the PC but don't increment it afterwards
             Self::jump(current_call_frame, jump_address)?;
             0
@@ -365,9 +362,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PC)?;
 
+        #[expect(clippy::as_conversions)]
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.pc)])?;
+            .push(&[U256::from(current_call_frame.pc as u64)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

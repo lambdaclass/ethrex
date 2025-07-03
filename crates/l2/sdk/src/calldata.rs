@@ -129,7 +129,11 @@ impl<'a> DecodeHelper<'a> {
         Ok(data)
     }
     fn consume_u256(&mut self) -> Result<U256, CalldataDecodeError> {
-        Ok(U256::from_big_endian(self.consume(32)?))
+        Ok(U256::from_be_bytes(
+            self.consume(32)?
+                .try_into()
+                .map_err(|_| CalldataDecodeError::InternalError)?,
+        ))
     }
     fn start_reading_at(&self, offset: usize) -> Result<Self, CalldataDecodeError> {
         let data = self
@@ -231,7 +235,7 @@ impl DataType {
                 data.consume(32 - 20)?;
                 Value::Address(Address::from_slice(data.consume(20)?))
             }
-            DataType::Bool => Value::Bool(!data.consume_u256()?.is_zero()),
+            DataType::Bool => Value::Bool(!data.consume_u256()? == U256::ZERO),
             DataType::FixedBytes(n) => Value::FixedBytes(
                 data.consume(32)?
                     .get(0..*n)
@@ -328,14 +332,24 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
                 write_u256(&mut ret, U256::from(u8::from(*boolean)), current_offset)?;
             }
             Value::Bytes(bytes) => {
-                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
+                #[expect(clippy::as_conversions)]
+                write_u256(
+                    &mut ret,
+                    U256::from(current_dynamic_offset as u64),
+                    current_offset,
+                )?;
 
                 let bytes_encoding = encode_bytes(bytes);
                 ret.extend_from_slice(&bytes_encoding);
                 current_dynamic_offset += bytes_encoding.len();
             }
             Value::String(string_value) => {
-                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
+                #[expect(clippy::as_conversions)]
+                write_u256(
+                    &mut ret,
+                    U256::from(current_dynamic_offset as u64),
+                    current_offset,
+                )?;
 
                 let utf8_encoded = Bytes::copy_from_slice(string_value.as_bytes());
                 let bytes_encoding = encode_bytes(&utf8_encoded);
@@ -343,7 +357,12 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
                 current_dynamic_offset += bytes_encoding.len();
             }
             Value::Array(array_values) => {
-                write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
+                #[expect(clippy::as_conversions)]
+                write_u256(
+                    &mut ret,
+                    U256::from(current_dynamic_offset as u64),
+                    current_offset,
+                )?;
 
                 let array_encoding = encode_array(array_values)?;
                 ret.extend_from_slice(&array_encoding);
@@ -359,7 +378,12 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
                         tuple_encoding.len(),
                     )?;
                 } else {
-                    write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
+                    #[expect(clippy::as_conversions)]
+                    write_u256(
+                        &mut ret,
+                        U256::from(current_dynamic_offset as u64),
+                        current_offset,
+                    )?;
 
                     let tuple_encoding = encode_tuple(tuple_values)?;
                     ret.extend_from_slice(&tuple_encoding);
@@ -376,7 +400,12 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
                         fixed_array_encoding.len(),
                     )?;
                 } else {
-                    write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
+                    #[expect(clippy::as_conversions)]
+                    write_u256(
+                        &mut ret,
+                        U256::from(current_dynamic_offset as u64),
+                        current_offset,
+                    )?;
 
                     let tuple_encoding = encode_tuple(fixed_array_values)?;
                     ret.extend_from_slice(&tuple_encoding);
@@ -397,7 +426,7 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
 }
 
 fn write_u256(values: &mut [u8], number: U256, offset: usize) -> Result<(), CalldataEncodeError> {
-    let to_copy = number.to_big_endian();
+    let to_copy = number.to_be_bytes();
     copy_into(values, &to_copy, offset, 32)?;
 
     Ok(())
@@ -463,7 +492,8 @@ fn is_dynamic(value: &Value) -> bool {
 
 fn encode_array(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let mut ret = vec![];
-    let to_copy = U256::from(values.len()).to_big_endian();
+    #[expect(clippy::as_conversions)]
+    let to_copy = U256::from(values.len() as u64).to_be_bytes();
     ret.extend_from_slice(&to_copy);
 
     let tuple_encoding = encode_tuple(values)?;
@@ -482,7 +512,8 @@ fn encode_bytes(values: &Bytes) -> Vec<u8> {
         padded_bytes.extend_from_slice(&vec![0; padding]);
     }
 
-    let to_copy = U256::from(values.len()).to_big_endian(); // we write the length without padding
+    #[expect(clippy::as_conversions)]
+    let to_copy = U256::from(values.len() as u64).to_be_bytes(); // we write the length without padding
 
     ret.extend_from_slice(&to_copy);
     ret.extend_from_slice(&padded_bytes);
@@ -513,7 +544,7 @@ fn address_to_word(address: Address) -> U256 {
     for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
         *word_byte = *address_byte;
     }
-    U256::from_big_endian(&word)
+    U256::from_be_bytes(word)
 }
 
 #[test]
@@ -529,18 +560,18 @@ fn fixed_array_encoding_test() {
     let a = buf.freeze();
 
     let fixed_array = vec![
-        Value::Uint(U256::from(4)),
-        Value::Uint(U256::from(3)),
-        Value::Uint(U256::from(2)),
-        Value::Uint(U256::from(1)),
-        Value::Uint(U256::from(8)),
-        Value::Uint(U256::from(9)),
-        Value::Uint(U256::from(1)),
-        Value::Uint(U256::from(0)),
+        Value::Uint(U256::from(4u32)),
+        Value::Uint(U256::from(3u32)),
+        Value::Uint(U256::from(2u32)),
+        Value::Uint(U256::from(1u32)),
+        Value::Uint(U256::from(8u32)),
+        Value::Uint(U256::from(9u32)),
+        Value::Uint(U256::from(1u32)),
+        Value::Uint(U256::from(0u32)),
     ];
 
     let arguments = vec![
-        Value::Uint(U256::from(1)),
+        Value::Uint(U256::from(1u32)),
         Value::Bytes(a.clone()),
         Value::FixedBytes(bytes_calldata.to_vec().into()),
         Value::Bytes(a.clone()),
@@ -567,11 +598,11 @@ fn calldata_test() {
     let raw_function_signature = "blockWithdrawalsLogs(uint256,bytes)";
     let mut bytes_calldata = vec![];
 
-    bytes_calldata.extend_from_slice(&U256::zero().to_big_endian());
-    bytes_calldata.extend_from_slice(&U256::one().to_big_endian());
+    bytes_calldata.extend_from_slice(&U256::ZERO.to_be_bytes());
+    bytes_calldata.extend_from_slice(&U256::ONE.to_be_bytes());
 
     let arguments = vec![
-        Value::Uint(U256::from(902)),
+        Value::Uint(U256::from(902u32)),
         Value::Bytes(bytes_calldata.into()),
     ];
 
@@ -610,7 +641,7 @@ fn encode_tuple_dynamic_offset() {
     let tuple = Value::Tuple(vec![
         Value::Address(address),
         Value::Address(address),
-        Value::Uint(U256::from(21000 * 5)),
+        Value::Uint(U256::from(21000u64 * 5)),
         Value::Bytes(Bytes::from_static(b"")),
     ]);
     let values = vec![tuple];

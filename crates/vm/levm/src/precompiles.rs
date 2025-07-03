@@ -268,10 +268,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VME
         return Ok(Bytes::new());
     };
 
-    let v = u256_from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    let mut buffer = [0u8; 32];
+    buffer.copy_from_slice(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    let v = U256::from_be_bytes(buffer);
 
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
-    if !(v == U256::from(27) || v == U256::from(28)) {
+    if !(v == U256::from(27u32) || v == U256::from(28u32)) {
         return Ok(Bytes::new());
     }
 
@@ -345,25 +347,29 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    let base_size = u256_from_big_endian(
+    let mut buffer = [0u8; 32];
+    buffer.copy_from_slice(
         calldata
             .get(0..32)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
+    let base_size = U256::from_be_bytes(buffer);
 
-    let exponent_size = u256_from_big_endian(
+    buffer.copy_from_slice(
         calldata
             .get(32..64)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
+    let exponent_size = U256::from_be_bytes(buffer);
 
-    let modulus_size = u256_from_big_endian(
+    buffer.copy_from_slice(
         calldata
             .get(64..96)
             .ok_or(PrecompileError::ParsingInputError)?,
     );
+    let modulus_size = U256::from_be_bytes(buffer);
 
-    if base_size == U256::zero() && modulus_size == U256::zero() {
+    if base_size == U256::ZERO && modulus_size == U256::ZERO {
         // On Berlin or newer there is a floor cost for the modexp precompile
         increase_precompile_consumed_gas(MODEXP_STATIC_COST, gas_remaining)?;
 
@@ -530,8 +536,8 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
             .map_err(|_| PrecompileError::ParsingInputError)?;
         let sum = first_point.operate_with(&second_point).to_affine();
 
-        if u256_from_big_endian(&sum.x().to_bytes_be()) == U256::zero()
-            || u256_from_big_endian(&sum.y().to_bytes_be()) == U256::zero()
+        if sum.x().to_bytes_be().iter().all(|x| *x == 0)
+            || sum.y().to_bytes_be().iter().all(|y| *y == 0)
         {
             Ok(Bytes::from([0u8; 64].to_vec()))
         } else {
@@ -583,8 +589,8 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
         Ok(Bytes::from([0u8; 64].to_vec()))
     } else {
         let mul = point.operate_with_self(scalar).to_affine();
-        if u256_from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
-            || u256_from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
+        if mul.x().to_bytes_be().iter().all(|x| *x == 0)
+            || mul.y().to_bytes_be().iter().all(|x| *x == 0)
         {
             Ok(Bytes::from([0u8; 64].to_vec()))
         } else {
@@ -594,12 +600,10 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     }
 }
 
-const ALT_BN128_PRIME: U256 = U256([
-    0x3c208c16d87cfd47,
-    0x97816a916871ca8d,
-    0xb85045b68181585d,
-    0x30644e72e131a029,
-]);
+const ALT_BN128_PRIME: U256 = U256::from_words(
+    0x30644e72e131a029b85045b68181585d,
+    0x97816a916871ca8d3c208c16d87cfd47,
+);
 
 type FirstPointCoordinates = (
     FieldElement<MontgomeryBackendPrimeField<BN254FieldModulus, 4>>,
@@ -608,19 +612,27 @@ type FirstPointCoordinates = (
 
 /// Parses first point coordinates and makes verification of invalid infinite
 fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = input_data.get(..32).ok_or(InternalError::Slicing)?;
-    let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
+    let first_point_x: [u8; 32] = input_data
+        .get(..32)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let first_point_y: [u8; 32] = input_data
+        .get(32..64)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(first_point_x) == U256::zero())
-        ^ (u256_from_big_endian(first_point_y) == U256::zero())
+    if (U256::from_be_bytes(first_point_x) == U256::ZERO)
+        ^ (U256::from_be_bytes(first_point_y) == U256::ZERO)
     {
         return Err(PrecompileError::DefaultError.into());
     }
 
-    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
+    let first_point_y = BN254FieldElement::from_bytes_be(&first_point_y)
         .map_err(|_| PrecompileError::DefaultError)?;
-    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
+    let first_point_x = BN254FieldElement::from_bytes_be(&first_point_x)
         .map_err(|_| PrecompileError::DefaultError)?;
 
     Ok((first_point_x, first_point_y))
@@ -636,31 +648,47 @@ fn parse_second_point_coordinates(
     ),
     VMError,
 > {
-    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::Slicing)?;
-    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::Slicing)?;
+    let second_point_x_first_part = input_data
+        .get(96..128)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let second_point_x_second_part = input_data
+        .get(64..96)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
+    if (U256::from_be_bytes(second_point_x_first_part) == U256::ZERO)
+        ^ (U256::from_be_bytes(second_point_x_second_part) == U256::ZERO)
     {
         return Err(PrecompileError::DefaultError.into());
     }
 
-    let second_point_y_first_part = input_data.get(160..192).ok_or(InternalError::Slicing)?;
-    let second_point_y_second_part = input_data.get(128..160).ok_or(InternalError::Slicing)?;
+    let second_point_y_first_part = input_data
+        .get(160..192)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let second_point_y_second_part = input_data
+        .get(128..160)
+        .ok_or(InternalError::Slicing)?
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
-    if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
-        ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
+    if (U256::from_be_bytes(second_point_y_first_part) == U256::ZERO)
+        ^ (U256::from_be_bytes(second_point_y_second_part) == U256::ZERO)
     {
         return Err(PrecompileError::DefaultError.into());
     }
 
     // Check if the second point belongs to the curve (this happens if it's lower than the prime)
-    if u256_from_big_endian(second_point_x_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_x_second_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
-        || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
+    if U256::from_be_bytes(second_point_x_first_part) >= ALT_BN128_PRIME
+        || U256::from_be_bytes(second_point_x_second_part) >= ALT_BN128_PRIME
+        || U256::from_be_bytes(second_point_y_first_part) >= ALT_BN128_PRIME
+        || U256::from_be_bytes(second_point_y_second_part) >= ALT_BN128_PRIME
     {
         return Err(PrecompileError::DefaultError.into());
     }

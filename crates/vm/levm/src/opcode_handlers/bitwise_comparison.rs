@@ -2,6 +2,7 @@ use crate::{
     constants::WORD_SIZE,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
+    opcode_handlers::arithmetic::is_negative,
     vm::VM,
 };
 use ethrex_common::U256;
@@ -37,8 +38,8 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
         let [lho, rho] = *current_call_frame.stack.pop()?;
-        let lho_is_negative = lho.bit(255);
-        let rho_is_negative = rho.bit(255);
+        let lho_is_negative = is_negative(lho);
+        let rho_is_negative = is_negative(rho);
         let result = if lho_is_negative == rho_is_negative {
             // Compare magnitudes if signs are the same
             u256_from_bool(lho < rho)
@@ -56,8 +57,8 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
         let [lho, rho] = *current_call_frame.stack.pop()?;
-        let lho_is_negative = lho.bit(255);
-        let rho_is_negative = rho.bit(255);
+        let lho_is_negative = is_negative(lho);
+        let rho_is_negative = is_negative(rho);
         let result = if lho_is_negative == rho_is_negative {
             // Compare magnitudes if signs are the same
             u256_from_bool(lho > rho)
@@ -88,7 +89,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
 
         let [operand] = current_call_frame.stack.pop()?;
-        let result = u256_from_bool(operand.is_zero());
+        let result = u256_from_bool(operand == &U256::ZERO);
 
         current_call_frame.stack.push(&[result])?;
 
@@ -144,7 +145,7 @@ impl<'a> VM<'a> {
             Ok(byte_index) => byte_index,
             Err(_) => {
                 // Index is out of bounds, then push 0
-                current_call_frame.stack.push(&[U256::zero()])?;
+                current_call_frame.stack.push(&[U256::ZERO])?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
@@ -155,11 +156,12 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::Underflow)?
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?; // Same case as above
+            #[expect(clippy::as_conversions)]
             current_call_frame
                 .stack
-                .push(&[U256::from(op2.byte(byte_to_push))])?;
+                .push(&[(op2.overflowing_shr(byte_to_push as u32).0 & U256::ONE)])?;
         } else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push(&[U256::ZERO])?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -172,10 +174,10 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
         let [shift, value] = *current_call_frame.stack.pop()?;
 
-        if shift < U256::from(256) {
+        if shift < U256::from(256u32) {
             current_call_frame.stack.push(&[value << shift])?;
         } else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push(&[U256::ZERO])?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -188,10 +190,10 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
         let [shift, value] = *current_call_frame.stack.pop()?;
 
-        if shift < U256::from(256) {
+        if shift < U256::from(256u32) {
             current_call_frame.stack.push(&[value >> shift])?;
         } else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push(&[U256::ZERO])?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -205,18 +207,18 @@ impl<'a> VM<'a> {
         let [shift, value] = *current_call_frame.stack.pop()?;
 
         // In 2's complement arithmetic, the most significant bit being one means the number is negative
-        let is_negative = value.bit(255);
+        let is_negative = is_negative(value);
 
-        let res = if shift < U256::from(256) {
+        let res = if shift < U256::from(256u32) {
             if !is_negative {
                 value >> shift
             } else {
-                (value >> shift) | ((U256::MAX) << (U256::from(256) - shift))
+                (value >> shift) | ((U256::MAX) << (U256::from(256u32) - shift))
             }
         } else if is_negative {
             U256::MAX
         } else {
-            U256::zero()
+            U256::ZERO
         };
         current_call_frame.stack.push(&[res])?;
 
@@ -231,23 +233,23 @@ pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
     let mut result = value;
     let mut shifts_left = shift;
 
-    while !shifts_left.is_zero() {
-        result = match result.checked_mul(U256::from(2)) {
+    while !shifts_left == U256::ZERO {
+        result = match result.checked_mul(U256::from(2u32)) {
             Some(num) => num,
             None => {
-                let only_most_representative_bit_on = U256::from(2)
-                    .checked_pow(U256::from(255))
+                let only_most_representative_bit_on = U256::from(2u32)
+                    .checked_pow(255u32)
                     .ok_or(InternalError::Overflow)?;
                 let partial_result = result
                     .checked_sub(only_most_representative_bit_on)
                     .ok_or(InternalError::Underflow)?; //Should not happen bc checked_mul overflows
                 partial_result
-                    .checked_mul(2.into())
+                    .checked_mul(2u32.into())
                     .ok_or(InternalError::Overflow)?
             }
         };
         shifts_left = shifts_left
-            .checked_sub(U256::one())
+            .checked_sub(U256::ONE)
             .ok_or(InternalError::Underflow)?; // Should not reach negative values
     }
 
@@ -255,5 +257,5 @@ pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
 }
 
 const fn u256_from_bool(value: bool) -> U256 {
-    if value { U256::one() } else { U256::zero() }
+    if value { U256::ONE } else { U256::ZERO }
 }

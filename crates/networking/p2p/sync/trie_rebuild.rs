@@ -5,7 +5,7 @@
 //! Both processes become active once a snap sync begins and only end once they finish (with state sync also being finished as a condition) or when the node is shut down (via Ctrl+C signal)
 //! In the later case, this process will be resumed on the next sync cycle
 
-use ethrex_common::{BigEndianHash, H256, U256, U512};
+use ethrex_common::{BigEndianHash, H256, U256, U512, utils::u512_from_u256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
@@ -311,22 +311,23 @@ async fn show_trie_rebuild_progress(
     rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
 ) {
     // Count how many hashes we already inserted in the trie and how many we inserted this cycle
-    let mut accounts_processed = U256::zero();
-    let mut accounts_processed_this_cycle = U256::one();
+    let mut accounts_processed = U256::ZERO;
+    let mut accounts_processed_this_cycle = U256::ONE;
     for i in 0..STATE_TRIE_SEGMENTS {
-        accounts_processed +=
-            rebuild_status[i].current.into_uint() - (STATE_TRIE_SEGMENTS_START[i].into_uint());
+        accounts_processed += U256::from_be_bytes(rebuild_status[i].current.to_fixed_bytes())
+            - U256::from_be_bytes(STATE_TRIE_SEGMENTS_START[i].to_fixed_bytes());
         accounts_processed_this_cycle +=
-            rebuild_status[i].current.into_uint() - initial_rebuild_status[i].current.into_uint();
+            U256::from_be_bytes(rebuild_status[i].current.to_fixed_bytes())
+                - U256::from_be_bytes(initial_rebuild_status[i].current.to_fixed_bytes());
     }
     // Calculate completion rate
-    let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
-        / U512::from(U256::max_value());
+    let completion_rate = (u512_from_u256(accounts_processed + U256::ONE) * U512::from(100))
+        / u512_from_u256(U256::MAX);
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
     let remaining_accounts = U256::MAX.saturating_sub(accounts_processed);
     let time_to_finish = (U512::from(start_time.elapsed().as_secs())
-        * U512::from(remaining_accounts))
-        / (U512::from(accounts_processed_this_cycle));
+        * u512_from_u256(remaining_accounts))
+        / (u512_from_u256(accounts_processed_this_cycle));
     info!(
         "State Trie Rebuild Progress: {}%, estimated time to finish: {}",
         completion_rate,

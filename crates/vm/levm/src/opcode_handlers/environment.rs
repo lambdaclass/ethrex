@@ -5,7 +5,7 @@ use crate::{
     utils::word_to_address,
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use ethrex_common::{U256, utils::u256_from_h160};
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -18,9 +18,7 @@ impl<'a> VM<'a> {
 
         let addr = current_call_frame.to; // The recipient of the current call.
 
-        current_call_frame
-            .stack
-            .push(&[u256_from_big_endian_const(addr.to_fixed_bytes())])?;
+        current_call_frame.stack.push(&[u256_from_h160(addr)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -47,9 +45,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ORIGIN)?;
 
-        current_call_frame
-            .stack
-            .push(&[u256_from_big_endian_const(origin.to_fixed_bytes())])?;
+        current_call_frame.stack.push(&[u256_from_h160(origin)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -60,9 +56,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
 
         let caller = current_call_frame.msg_sender;
-        current_call_frame
-            .stack
-            .push(&[u256_from_big_endian_const(caller.to_fixed_bytes())])?;
+        current_call_frame.stack.push(&[u256_from_h160(caller)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -84,14 +78,15 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
+        #[expect(clippy::as_conversions)]
+        let calldata_size: U256 = (current_call_frame.calldata.len() as u64).into();
 
         let [offset] = *current_call_frame.stack.pop()?;
 
         // If the offset is larger than the actual calldata, then you
         // have no data to return.
         if offset > calldata_size {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push(&[U256::ZERO])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
         let offset: usize = offset
@@ -111,7 +106,7 @@ impl<'a> VM<'a> {
                 *data_byte = *byte;
             }
         }
-        let result = u256_from_big_endian_const(data);
+        let result = U256::from_be_bytes(data);
 
         current_call_frame.stack.push(&[result])?;
 
@@ -123,9 +118,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
+        #[expect(clippy::as_conversions)]
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.calldata.len())])?;
+            .push(&[U256::from(current_call_frame.calldata.len() as u64)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -151,7 +147,8 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if calldata_offset > current_call_frame.calldata.len().into() {
+        #[expect(clippy::as_conversions)]
+        if calldata_offset > U256::from(current_call_frame.calldata.len() as u64) {
             memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
@@ -181,9 +178,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CODESIZE)?;
 
+        #[expect(clippy::as_conversions)]
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.bytecode.len())])?;
+            .push(&[U256::from(current_call_frame.bytecode.len() as u64)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -211,7 +209,8 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len().into() {
+        #[expect(clippy::as_conversions)]
+        if code_offset < U256::from(current_call_frame.bytecode.len() as u64) {
             let code_offset: usize = code_offset
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?;
@@ -251,7 +250,8 @@ impl<'a> VM<'a> {
 
         let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
 
-        let account_code_length = account.code.len().into();
+        #[expect(clippy::as_conversions)]
+        let account_code_length = (account.code.len() as u64).into();
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -293,7 +293,8 @@ impl<'a> VM<'a> {
         let bytecode = &self.db.get_account(address)?.code;
 
         let mut data = vec![0u8; size];
-        if offset < bytecode.len().into() {
+        #[expect(clippy::as_conversions)]
+        if offset < U256::from(bytecode.len() as u64) {
             let offset: usize = offset
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?;
@@ -318,9 +319,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
+        #[expect(clippy::as_conversions)]
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.sub_return_data.len())])?;
+            .push(&[U256::from(current_call_frame.sub_return_data.len() as u64)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -398,11 +400,11 @@ impl<'a> VM<'a> {
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push(&[U256::ZERO])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let hash = u256_from_big_endian_const(account_code_hash);
+        let hash = U256::from_be_bytes(account_code_hash);
         current_call_frame.stack.push(&[hash])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })

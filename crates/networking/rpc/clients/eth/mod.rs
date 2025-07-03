@@ -483,16 +483,20 @@ impl EthClient {
                                 "Failed to hex::decode in estimate_gas".to_owned(),
                             )
                         })?;
-                        let string_length = U256::from_big_endian(
+                        let string_length = U256::from_be_bytes(
                             abi_decoded_error_data
                                 .get(36..68)
                                 .ok_or(EthClientError::Custom(
                                     "Failed to slice index abi_decoded_error_data in estimate_gas"
                                         .to_owned(),
-                                ))?,
+                                ))?
+                                .try_into()
+                                .map_err(|_| {
+                                    EthClientError::Custom("Conversion error".to_owned())
+                                })?,
                         );
 
-                        let string_len = if string_length > usize::MAX.into() {
+                        let string_len = if string_length > U256::from(usize::MAX as u64) {
                             return Err(EthClientError::Custom(
                                 "Failed to convert string_length to usize in estimate_gas"
                                     .to_owned(),
@@ -569,7 +573,7 @@ impl EthClient {
     ) -> Result<U256, EthClientError> {
         let gas_price = self.get_gas_price().await?;
 
-        Ok((gas_price * (100 + bump_percent)) / 100)
+        Ok((gas_price * U256::from(100 + bump_percent)) / 100u128)
     }
 
     pub async fn get_nonce(
@@ -1094,10 +1098,20 @@ impl EthClient {
         }
 
         // Get the offset (should be 0x20 for simple arrays)
-        let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
+        let offset = U256::from_be_bytes(
+            bytes[0..32]
+                .try_into()
+                .map_err(|_| EthClientError::Custom("Conversion error".to_owned()))?,
+        )
+        .as_usize();
 
         // Get the length of the array
-        let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
+        let length = U256::from_be_bytes(
+            bytes[offset..offset + 32]
+                .try_into()
+                .map_err(|_| EthClientError::Custom("Conversion error".to_owned()))?,
+        )
+        .as_usize();
 
         // Calculate the start of the array data
         let data_start = offset + 32;

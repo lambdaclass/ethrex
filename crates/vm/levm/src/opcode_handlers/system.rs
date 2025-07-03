@@ -60,7 +60,7 @@ impl<'a> VM<'a> {
         };
 
         // VALIDATIONS
-        if self.current_call_frame()?.is_static && !value.is_zero() {
+        if self.current_call_frame()?.is_static && value != U256::ZERO {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
@@ -406,7 +406,7 @@ impl<'a> VM<'a> {
         )?;
 
         // OPERATION
-        let value = U256::zero();
+        let value = U256::ZERO;
         let from = callframe.to; // The new sender will be the current contract.
         let to = address; // In this case address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let data = self.get_calldata(args_start_offset, args_size)?;
@@ -570,13 +570,13 @@ impl<'a> VM<'a> {
             // Selfdestruct is executed in the same transaction as the contract was created
             if self.substate.created_accounts.contains(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
-                self.get_account_mut(to)?.info.balance = U256::zero();
+                self.get_account_mut(to)?.info.balance = U256::ZERO;
 
                 self.substate.selfdestruct_set.insert(to);
             }
         } else {
             self.increase_account_balance(beneficiary, balance)?;
-            self.get_account_mut(to)?.info.balance = U256::zero();
+            self.get_account_mut(to)?.info.balance = U256::ZERO;
 
             self.substate.selfdestruct_set.insert(to);
         }
@@ -696,7 +696,7 @@ impl<'a> VM<'a> {
             new_depth,
             true,
             true,
-            U256::zero(),
+            U256::ZERO,
             0,
         );
         self.call_frames.push(new_call_frame);

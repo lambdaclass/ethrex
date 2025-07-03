@@ -63,7 +63,7 @@ impl revm::Database for DynVmDatabase {
         let code = self.code_by_hash(acc_info.code_hash.0.into())?;
 
         Ok(Some(RevmAccountInfo {
-            balance: RevmU256::from_limbs(acc_info.balance.0),
+            balance: RevmU256::from_be_bytes(acc_info.balance.to_be_bytes()),
             nonce: acc_info.nonce,
             code_hash: RevmB256::from(acc_info.code_hash.0),
             code: Some(code),
@@ -82,7 +82,7 @@ impl revm::Database for DynVmDatabase {
             CoreAddress::from(address.0.as_ref()),
             CoreH256::from(index.to_be_bytes()),
         )?
-        .map(|value| RevmU256::from_limbs(value.0))
+        .map(|value| RevmU256::from_be_bytes(value.to_be_bytes()))
         .unwrap_or_else(|| RevmU256::ZERO))
     }
 
@@ -106,7 +106,7 @@ impl revm::DatabaseRef for DynVmDatabase {
         let code = self.code_by_hash_ref(acc_info.code_hash.0.into())?;
 
         Ok(Some(RevmAccountInfo {
-            balance: RevmU256::from_limbs(acc_info.balance.0),
+            balance: RevmU256::from_be_bytes(acc_info.balance.to_be_bytes()),
             nonce: acc_info.nonce,
             code_hash: RevmB256::from(acc_info.code_hash.0),
             code: Some(code),
@@ -125,7 +125,7 @@ impl revm::DatabaseRef for DynVmDatabase {
             CoreAddress::from(address.0.as_ref()),
             CoreH256::from(index.to_be_bytes()),
         )?
-        .map(|value| RevmU256::from_limbs(value.0))
+        .map(|value| RevmU256::from_be_bytes(value.to_be_bytes()))
         .unwrap_or_else(|| RevmU256::ZERO))
     }
 

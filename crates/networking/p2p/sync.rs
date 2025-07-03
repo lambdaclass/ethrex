@@ -10,7 +10,7 @@ use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUE
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
-    BigEndianHash, H256, U256, U512,
+    H256, U256, U512,
     types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -53,14 +53,14 @@ const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 
 lazy_static::lazy_static! {
     // Size of each state trie segment
-    static ref STATE_TRIE_SEGMENT_SIZE: U256 = HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS;
+    static ref STATE_TRIE_SEGMENT_SIZE: U256 = U256::from_be_bytes(HASH_MAX.0) / (STATE_TRIE_SEGMENTS as u128);
     // Starting hash of each state trie segment
     static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * i)))
+        array::from_fn(|i| H256((*STATE_TRIE_SEGMENT_SIZE * (i as u128)).to_be_bytes()))
     };
     // Ending hash of each state trie segment
     static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256::from_uint(&(*STATE_TRIE_SEGMENT_SIZE * (i+1))))
+        array::from_fn(|i| H256((*STATE_TRIE_SEGMENT_SIZE * (i as u128 + 1)).to_be_bytes()))
     };
 }
 

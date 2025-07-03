@@ -1,10 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction, TxKind,
-    code_hash,
+use ethereum_types::{Address, H256};
+use ethrex_common::{
+    U256,
+    types::{
+        AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction, TxKind,
+        code_hash,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address};
@@ -325,7 +328,7 @@ impl AccountStateDiff {
         if let Some(new_balance) = self.new_balance {
             let r_type: u8 = AccountStateDiffType::NewBalance.into();
             r#type += r_type;
-            encoded.extend_from_slice(&new_balance.to_big_endian());
+            encoded.extend_from_slice(&new_balance.to_be_bytes());
         }
 
         if self.nonce_diff != 0 {
@@ -345,7 +348,7 @@ impl AccountStateDiff {
             encoded.extend(storage_len.to_be_bytes());
             for (key, value) in &self.storage {
                 encoded.extend_from_slice(&key.0);
-                encoded.extend_from_slice(&value.to_big_endian());
+                encoded.extend_from_slice(&value.to_be_bytes());
             }
         }
 
@@ -466,9 +469,15 @@ impl Decoder {
     }
 
     fn get_u256(&mut self) -> Result<U256, StateDiffError> {
-        let res = U256::from_big_endian(self.bytes.get(self.offset..self.offset + 32).ok_or(
-            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
-        )?);
+        let res = U256::from_be_bytes(
+            self.bytes
+                .get(self.offset..self.offset + 32)
+                .ok_or(StateDiffError::FailedToDeserializeStateDiff(
+                    "Not enough bytes".to_string(),
+                ))?
+                .try_into()
+                .map_err(|_| StateDiffError::InternalError("conversion error".to_string()))?,
+        );
         self.offset += 32;
 
         Ok(res)

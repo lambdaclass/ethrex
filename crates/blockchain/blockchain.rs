@@ -22,7 +22,7 @@ use ethrex_common::types::{
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::{Address, H256, TrieLogger, U256};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -723,7 +723,7 @@ impl Blockchain {
         // Check that the specified blob gas fee is above the minimum value
         if let Some(fee) = tx.max_fee_per_blob_gas() {
             // Blob tx fee checks
-            if fee < MIN_BASE_FEE_PER_BLOB_GAS.into() {
+            if fee < U256::from(MIN_BASE_FEE_PER_BLOB_GAS) {
                 return Err(MempoolError::TxBlobBaseFeeTooLowError);
             }
         };

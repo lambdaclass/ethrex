@@ -1,10 +1,10 @@
 use crate::{
-    constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_USIZE},
+    constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_U64, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, VMError},
 };
 use ExceptionalHalt::OutOfBounds;
 use ExceptionalHalt::OutOfGas;
-use ethrex_common::{U256, utils::u256_from_big_endian};
+use ethrex_common::U256;
 
 /// Memory of the EVM, a volatile byte array.
 pub type Memory = Vec<u8>;
@@ -32,7 +32,10 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
 }
 
 pub fn load_word(memory: &mut Memory, offset: U256) -> Result<U256, VMError> {
-    load_range(memory, offset, WORD_SIZE_IN_BYTES_USIZE).map(u256_from_big_endian)
+    let mut buffer = [0u8; WORD_SIZE_IN_BYTES_USIZE];
+    let word = load_range(memory, offset, WORD_SIZE_IN_BYTES_USIZE)?;
+    buffer.copy_from_slice(word);
+    Ok(U256::from_be_bytes(buffer))
 }
 
 pub fn load_range(memory: &mut Memory, offset: U256, size: usize) -> Result<&[u8], VMError> {
@@ -53,7 +56,7 @@ pub fn load_range(memory: &mut Memory, offset: U256, size: usize) -> Result<&[u8
 
 pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(), VMError> {
     let new_size: usize = offset
-        .checked_add(WORD_SIZE_IN_BYTES_USIZE.into())
+        .checked_add(WORD_SIZE_IN_BYTES_U64.into())
         .ok_or(OutOfBounds)?
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -61,15 +64,16 @@ pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(
     try_resize(memory, new_size)?;
     try_store(
         memory,
-        &word.to_big_endian(),
+        &word.to_be_bytes(),
         offset,
         WORD_SIZE_IN_BYTES_USIZE,
     )
 }
 
 pub fn try_store_data(memory: &mut Memory, offset: U256, data: &[u8]) -> Result<(), VMError> {
+    #[expect(clippy::as_conversions)]
     let new_size = offset
-        .checked_add(data.len().into())
+        .checked_add((data.len() as u64).into())
         .ok_or(OutOfBounds)?
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -87,8 +91,9 @@ pub fn try_store_range(
         return Ok(());
     }
 
+    #[expect(clippy::as_conversions)]
     let new_size = offset
-        .checked_add(size.into())
+        .checked_add((size as u64).into())
         .ok_or(OutOfBounds)?
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;

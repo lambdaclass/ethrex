@@ -6,9 +6,9 @@ use crate::{
     utils::{RpcRequest, RpcRequestId},
 };
 use bytes::Bytes;
-use ethrex_common::H256;
+use ethrex_common::Address;
 use ethrex_common::types::{GenericTransaction, TxKind};
-use ethrex_common::{Address, U256};
+use ethrex_common::{H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;

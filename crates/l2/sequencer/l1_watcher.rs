@@ -3,8 +3,9 @@ use crate::based::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256};
 use ethrex_blockchain::Blockchain;
+use ethrex_common::U256;
 use ethrex_common::types::PrivilegedL2Transaction;
 use ethrex_common::{H160, types::Transaction};
 use ethrex_rpc::clients::EthClientError;
@@ -45,7 +46,7 @@ impl L1WatcherState {
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         let l2_client = EthClient::new("http://localhost:1729")?;
-        let last_block_fetched = U256::zero();
+        let last_block_fetched = U256::ZERO;
         Ok(Self {
             store,
             blockchain,
@@ -155,7 +156,7 @@ async fn watch(state: &mut L1WatcherState) {
 pub async fn get_privileged_transactions(
     state: &mut L1WatcherState,
 ) -> Result<Vec<RpcLog>, L1WatcherError> {
-    if state.last_block_fetched.is_zero() {
+    if state.last_block_fetched == U256::ZERO {
         state.last_block_fetched = state
             .eth_client
             .get_last_fetched_l1_block(state.address)
@@ -356,23 +357,36 @@ impl PrivilegedTransactionData {
         // DATA = 0..32          || 32..64             || 64..96                   || 96..128                  || 128..(128+calldata_len)
         // Any value that is not 32 bytes is padded with zeros.
 
-        let value = U256::from_big_endian(log.data.get(0..32).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
-            ),
-        )?);
+        let value = U256::from_be_bytes(
+            log.data
+                .get(0..32)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
+                ))?
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("Conversion error".to_string()))?,
+        );
 
-        let gas_limit = U256::from_big_endian(log.data.get(32..64).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
-            ),
-        )?);
+        let gas_limit = U256::from_be_bytes(
+            log.data
+                .get(32..64)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse gas_limit from log: log.data[32..64] out of bounds".to_owned(),
+                ))?
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("Conversion error".to_string()))?,
+        );
 
-        let calldata_len = U256::from_big_endian(log.data.get(96..128).ok_or(
-            L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse calldata_len from log: log.data[96..128] out of bounds".to_owned(),
-            ),
-        )?);
+        let calldata_len = U256::from_be_bytes(
+            log.data
+                .get(96..128)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse calldata_len from log: log.data[96..128] out of bounds"
+                        .to_owned(),
+                ))?
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("Conversion error".to_string()))?,
+        );
         let calldata = log
             .data
             .get(128..128 + calldata_len.as_usize())

@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{BigEndianHash, H256, U256, U512, constants::EMPTY_KECCACK_HASH};
+use ethrex_common::{
+    BigEndianHash, H256, U256, U512, constants::EMPTY_KECCACK_HASH, utils::u512_from_u256,
+};
 use ethrex_storage::{STATE_TRIE_SEGMENTS, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::{
@@ -273,8 +275,8 @@ impl StateSyncProgress {
                     .into_uint()
                     .saturating_sub(STATE_TRIE_SEGMENTS_START[i].into_uint()),
             );
-            let segment_completion_rate =
-                ((segment_synced_accounts + 1) * 100) / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
+            let segment_completion_rate = ((segment_synced_accounts + 1) * 100)
+                / u512_from_u256(U256::MAX / (STATE_TRIE_SEGMENTS as u128));
             debug!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
             synced_accounts_this_cycle += data.current_keys[i]
@@ -283,11 +285,11 @@ impl StateSyncProgress {
                 .into();
         }
         // Calculate current progress percentage
-        let completion_rate: U512 = (synced_accounts * 100) / U512::from(U256::MAX);
+        let completion_rate: U512 = (synced_accounts * 100) / u512_from_u256(U256::MAX);
         // Make a simple time to finish estimation based on current progress
         // The estimation relies on account hashes being (close to) evenly distributed
         let remaining_accounts =
-            (U512::from(U256::MAX) / 100) * (U512::from(100).saturating_sub(completion_rate));
+            (u512_from_u256(U256::MAX) / 100) * (U512::from(100).saturating_sub(completion_rate));
         // Time to finish = Time since start / Accounts synced this cycle * Remaining accounts
         let time_to_finish_secs =
             U512::from(Instant::now().duration_since(data.cycle_start).as_secs())
