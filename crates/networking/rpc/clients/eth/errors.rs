@@ -52,7 +52,7 @@ pub enum EthClientError {
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]
     FailedToSignPayload(String),
-    #[error("eth_getBatchByNumber request error: {0}")]
+    #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
 }
 
