@@ -71,8 +71,8 @@ impl RLPDecode for BranchNode {
         let choices = choices
             .try_into()
             .map_err(|_| RLPDecodeError::Custom(CHOICES_LEN_ERROR_MSG.to_string()))?;
-        let (value, decoder) = decoder.decode_field("value")?;
-        Ok((Self { choices, value }, decoder.finish()?))
+        let (value, decoder) = decoder.decode_field::<T>("value")?;
+        Ok((Self { choices, value: () }, decoder.finish()?))
     }
 }
 

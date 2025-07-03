@@ -73,7 +73,7 @@ impl ExtensionNode {
             let mut choices = BranchNode::EMPTY_CHOICES;
             let branch_node = if self.prefix.at(0) == 16 {
                 match new_node.get_node(db)? {
-                    Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
+                    Some(Node::Leaf(leaf)) => BranchNode::new(choices),
                     _ => return Err(TrieError::InconsistentTree),
                 }
             } else {

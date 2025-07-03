@@ -272,18 +272,16 @@ fn process_proof_nodes(
             Node::Extension(node) => {
                 current_path.extend(&node.prefix);
                 process_child(&mut stack, current_path.clone(), node.child)?;
-                Vec::new()
+                ()
             }
-            Node::Leaf(node) => node.value,
+            Node::Leaf(node) => (),
         };
 
-        if !value.is_empty() {
-            if current_path == bounds.0 {
-                left_value = value.clone();
-            }
-            if bounds.1.as_ref().is_some_and(|x| &current_path == x) {
-                right_value = value.clone();
-            }
+        if current_path == bounds.0 {
+            left_value = Vec::new();
+        }
+        if bounds.1.as_ref().is_some_and(|x| &current_path == x) {
+            right_value = Vec::new();
         }
     }
 

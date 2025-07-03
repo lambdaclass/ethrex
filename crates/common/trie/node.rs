@@ -262,12 +262,8 @@ impl Node {
             // Branch Node
             17 => {
                 let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
-                let (value, _) = decode_bytes(&rlp_items[16])?;
-                BranchNode {
-                    choices,
-                    value: value.to_vec(),
-                }
-                .into()
+                let (_value, _) = decode_bytes(&rlp_items[16])?;
+                BranchNode { choices, value: () }.into()
             }
             n => {
                 return Err(RLPDecodeError::Custom(format!(

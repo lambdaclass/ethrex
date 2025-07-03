@@ -9,7 +9,7 @@ use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 #[derive(Debug, Clone, PartialEq)]
 pub struct BranchNode {
     pub choices: [NodeRef; 16],
-    pub value: ValueRLP,
+    pub value: (),
 }
 
 impl BranchNode {
@@ -26,16 +26,6 @@ impl BranchNode {
         }
     }
 
-    /// Creates a new branch node given its children and value
-    pub const fn new_with_value(choices: [NodeRef; 16], value: ValueRLP) -> Self {
-        Self { choices, value }
-    }
-
-    /// Updates the node's path and value
-    pub fn update(&mut self, new_value: ValueRLP) {
-        self.value = new_value;
-    }
-
     /// Retrieves a value from the subtrie originating from this node given its path
     pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
         // If path is at the end, return to its own value if present.
@@ -50,8 +40,8 @@ impl BranchNode {
                 Ok(None)
             }
         } else {
-            // Return internal value if present.
-            Ok((!self.value.is_empty()).then_some(self.value.clone()))
+            // no internal value
+            Ok(None)
         }
     }
 
@@ -96,9 +86,6 @@ impl BranchNode {
                     }
                 }
             }
-        } else if let ValueOrHash::Value(value) = value {
-            // Insert into self
-            self.update(value);
         } else {
             todo!("handle override case (error?)")
         }
@@ -152,15 +139,7 @@ impl BranchNode {
                 None
             }
         } else {
-            // Remove own value (if it has one) and return it
-            if !self.value.is_empty() {
-                let value = self.value;
-                self.value = Default::default();
-
-                (!value.is_empty()).then_some(value)
-            } else {
-                None
-            }
+            None
         };
 
         // Step 2: Restructure self
@@ -170,9 +149,9 @@ impl BranchNode {
             .enumerate()
             .filter(|(_, child)| child.is_valid())
             .collect::<Vec<_>>();
-        let new_node = match (children.len(), !self.value.is_empty()) {
+        let new_node = match (children.len(), true) {
             // If this node still has a value but no longer has children, convert it into a leaf node
-            (0, true) => LeafNode::new(Nibbles::from_hex(vec![16]), self.value).into(),
+            (0, true) => LeafNode::new(Nibbles::from_hex(vec![16]), Vec::new()).into(),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
@@ -219,7 +198,7 @@ impl BranchNode {
                 _ => encoder = encoder.encode_bytes(&[]),
             }
         }
-        encoder = encoder.encode_bytes(&self.value);
+        encoder = encoder.encode_bytes(&[]); // No internal value in branch nodes
         encoder.finish();
         buf
     }
@@ -398,7 +377,7 @@ mod test {
         };
 
         assert_eq!(new_node.choices, node.choices);
-        assert_eq!(new_node.value, value);
+        assert_eq!(new_node.value, ());
     }
 
     #[test]
