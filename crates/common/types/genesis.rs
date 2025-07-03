@@ -497,13 +497,13 @@ mod tests {
         let addr_b_storage = &genesis.alloc[&addr_b].storage;
         assert_eq!(
             addr_b_storage.get(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0x0000000000000000000000000000000000000000000000000000000000000022"
                 )
                 .unwrap()
             ),
             Some(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0xf5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
                 )
                 .unwrap()
@@ -511,13 +511,13 @@ mod tests {
         );
         assert_eq!(
             addr_b_storage.get(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0x0000000000000000000000000000000000000000000000000000000000000038"
                 )
                 .unwrap()
             ),
             Some(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0xe71f0aa83cc32edfbefa9f4d3e0174ca85182eec9f3a09f6a6c0df6377a510d7"
                 )
                 .unwrap()
