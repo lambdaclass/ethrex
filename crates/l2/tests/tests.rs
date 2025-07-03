@@ -9,7 +9,7 @@ use ethrex_l2_sdk::calldata::{self, encode_calldata};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, compile_contract, deposit_erc20,
-    get_address_from_secret_key, wait_for_transaction_receipt,
+    get_address_alias, get_address_from_secret_key, wait_for_transaction_receipt,
 };
 use ethrex_rpc::clients::eth::from_hex_string_to_u256;
 use ethrex_rpc::clients::eth::{BlockByNumber, EthClient, eth_sender::Overrides};
@@ -421,8 +421,12 @@ async fn test_aliasing(
         wait_for_l2_deposit_receipt(receipt_l1.block_info.block_number, l1_client, l2_client)
             .await
             .unwrap();
-    println!("alising {caller_l1:#x} to {:#x}", receipt_l2.tx_info.from);
-    assert_ne!(receipt_l2.tx_info.from, caller_l1);
+    println!(
+        "alising {:#x} to {:#x}",
+        get_address_alias(caller_l1),
+        receipt_l2.tx_info.from
+    );
+    assert_eq!(receipt_l2.tx_info.from, get_address_alias(caller_l1));
     Ok(())
 }
 

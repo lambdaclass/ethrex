@@ -1,3 +1,4 @@
+use std::ops::Add;
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 use std::{fs::read_to_string, path::Path};
@@ -37,6 +38,11 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
 pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
+]);
+
+pub const ADDRESS_ALIASING: Address = H160([
+    0x11, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x11, 0x11,
 ]);
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
@@ -841,4 +847,10 @@ pub fn download_contract_deps(contracts_path: &Path) -> Result<(), GitError> {
 
     trace!("Contract dependencies downloaded");
     Ok(())
+}
+
+pub fn get_address_alias(address: Address) -> Address {
+    let address = U256::from_big_endian(&address.to_fixed_bytes());
+    let alias = address.add(U256::from_big_endian(&ADDRESS_ALIASING.to_fixed_bytes()));
+    H160::from_slice(&alias.to_big_endian()[12..32])
 }
