@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, H256, U256, types::BlockNumber};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
+use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -33,7 +34,8 @@ use aligned_sdk::{
 // TODO: Remove this import once it's no longer required by the SDK.
 use ethers::signers::{Signer, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str =
+    "verifyBatch(uint256,bytes32,bytes,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
@@ -44,6 +46,7 @@ pub struct L1ProofSenderState {
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
     sequencer_state: SequencerState,
+    store: Store,
     rollup_store: StoreRollup,
     l1_chain_id: u64,
     network: Network,
@@ -52,12 +55,14 @@ pub struct L1ProofSenderState {
 }
 
 impl L1ProofSenderState {
+    #[allow(clippy::too_many_arguments)]
     async fn new(
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
         sequencer_state: SequencerState,
         aligned_cfg: &AlignedConfig,
+        store: Store,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
@@ -77,6 +82,7 @@ impl L1ProofSenderState {
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
                 sequencer_state,
+                store,
                 rollup_store,
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
@@ -93,6 +99,7 @@ impl L1ProofSenderState {
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             sequencer_state,
+            store,
             rollup_store,
             l1_chain_id,
             network: aligned_cfg.network.clone(),
@@ -118,6 +125,7 @@ impl L1ProofSender {
     pub async fn spawn(
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        store: Store,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofSenderError> {
@@ -127,6 +135,7 @@ impl L1ProofSender {
             &cfg.eth,
             sequencer_state,
             &cfg.aligned,
+            store,
             rollup_store,
             needed_proof_types,
         )
@@ -192,6 +201,11 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         return Ok(());
     }
 
+    let Some(batch) = state.rollup_store.get_batch(batch_to_send).await? else {
+        return Err(ProofSenderError::InternalError("TODO".to_string()));
+    };
+    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
+
     let mut proofs = HashMap::new();
     let mut missing_proof_types = Vec::new();
     for proof_type in &state.needed_proof_types {
@@ -212,7 +226,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
             send_proof_to_aligned(state, batch_to_send, aligned_proof).await?;
         } else {
-            send_proof_to_contract(state, batch_to_send, proofs).await?;
+            send_proof_to_contract(state, batch_to_send, last_block_hash, proofs).await?;
         }
         state
             .rollup_store
@@ -298,6 +312,7 @@ async fn estimate_fee(state: &L1ProofSenderState) -> Result<ethers::types::U256,
 pub async fn send_proof_to_contract(
     state: &L1ProofSenderState,
     batch_number: u64,
+    last_block_hash: H256,
     proofs: HashMap<ProverType, BatchProof>,
 ) -> Result<(), ProofSenderError> {
     info!(
@@ -307,6 +322,7 @@ pub async fn send_proof_to_contract(
 
     let calldata_values = [
         &[Value::Uint(U256::from(batch_number))],
+        &[Value::FixedBytes(last_block_hash.0.to_vec().into())],
         proofs
             .get(&ProverType::RISC0)
             .map(|proof| proof.calldata())
@@ -358,4 +374,16 @@ fn resolve_fee_estimate(fee_estimate: &str) -> Result<FeeEstimationType, ProofSe
             "Unsupported fee estimation type".to_string(),
         )),
     }
+}
+
+fn get_last_block_hash(
+    store: &Store,
+    last_block_number: BlockNumber,
+) -> Result<H256, ProofSenderError> {
+    store
+        .get_block_header(last_block_number)?
+        .map(|header| header.hash())
+        .ok_or(ProofSenderError::InternalError(
+            "Failed to get last block hash from storage".to_owned(),
+        ))
 }
