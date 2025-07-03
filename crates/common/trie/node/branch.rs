@@ -92,9 +92,8 @@ impl BranchNode {
                             "attempt to override proof node with external hash".to_string(),
                         ));
                     } else {
-                        match choice_ref {
-                            NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(*hash),
-                            _ => (),
+                        if let NodeRef::Hash(NodeHash::Hashed(hash)) = choice_ref {
+                            invalidated_nodes.push(*hash)
                         }
                         *choice_ref = choice_ref
                             .get_node(db)?
@@ -144,9 +143,8 @@ impl BranchNode {
         // Check if the value is located in a child subtrie
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
-                match self.choices[choice_index] {
-                    NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
-                    _ => (),
+                if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.choices[choice_index] {
+                    invalidated_nodes.push(hash)
                 }
                 let child_node = self.choices[choice_index]
                     .get_node(db)?

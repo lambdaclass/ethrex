@@ -67,7 +67,7 @@ impl Hasher for XorHash {
         self.hash
     }
     fn write(&mut self, bytes: &[u8]) {
-        for (i, b) in bytes.into_iter().enumerate() {
+        for (i, b) in bytes.iter().enumerate() {
             let i = (i + self.n) % 8;
             self.hash ^= (*b as u64) << (i * 8);
         }
@@ -136,9 +136,8 @@ impl Trie {
         let mut invalidated_nodes = Vec::with_capacity(64);
 
         self.root = if self.root.is_valid() {
-            match self.root {
-                NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
-                _ => (),
+            if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
+                invalidated_nodes.push(hash)
             }
 
             // If the trie is not empty, call the root node's insertion logic.
@@ -164,9 +163,8 @@ impl Trie {
         }
 
         let mut invalidated_nodes = Vec::with_capacity(64);
-        match self.root {
-            NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
-            _ => (),
+        if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
+            invalidated_nodes.push(hash)
         }
 
         // If the trie is not empty, call the root node's removal logic.

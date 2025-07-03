@@ -59,9 +59,8 @@ impl ExtensionNode {
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
             // Insert into child node
-            match self.child {
-                NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
-                _ => (),
+            if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.child {
+                invalidated_nodes.push(hash)
             }
             let child_node = self
                 .child
@@ -114,9 +113,8 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            match self.child {
-                NodeRef::Hash(NodeHash::Hashed(hash)) => invalidated_nodes.push(hash),
-                _ => (),
+            if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.child {
+                invalidated_nodes.push(hash)
             }
             let child_node = self
                 .child
