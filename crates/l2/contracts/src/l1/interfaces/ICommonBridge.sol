@@ -6,26 +6,21 @@ pragma solidity =0.8.29;
 /// @notice A CommonBridge contract is a contract that allows L1<->L2 communication
 /// from L1. It both sends messages from L1 to L2 and receives messages from L2.
 interface ICommonBridge {
-    /// @notice A deposit to L2 has initiated.
-    /// @dev Event emitted when a deposit is initiated.
-    /// @param amount the amount of tokens being deposited.
-    /// @param to the address that will be called in the L2.
-    /// @param depositId Id used to differentiate deposits with same amount and recipient.
-    /// @param from the address that initiated the deposit.
+    /// @notice A privileged transaction to L2 has initiated.
+    /// @dev Event emitted when a privileged transaction is initiated.
+    /// @param from the address that initiated the transaction.
+    /// @param to the recipient on L2
+    /// @param transactionId Id used to make transactions unique
+    /// @param value the value of the transaction
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
-    /// @param l2MintTxHash the hash of the transaction that will finalize the
-    /// deposit in L2. Could be used to track the status of the deposit finalization
-    /// on L2. You can use this hash to retrive the tx data.
-    /// It is the result of keccak(abi.encode(transaction)).
-    event L1ToL2Message(
-        uint256 indexed amount,
+    event PrivilegedTxSent (
+        address indexed from,
         address indexed to,
-        uint256 indexed depositId,
-        address from,
+        uint256 indexed transactionId,
+        uint256 value,
         uint256 gasLimit,
-        bytes data,
-        bytes32 l2MintTxHash
+        bytes data
     );
 
     /// @notice L2 withdrawals have been published on L1.
@@ -49,10 +44,10 @@ interface ICommonBridge {
         bytes data;
     }
 
-    /// @notice Method to retrieve all the pending deposit logs hashes.
-    /// @dev This method is used by the L2 L1_Watcher to get the pending deposit
-    /// logs to be processed.
-    function getPendingDepositLogs() external view returns (bytes32[] memory);
+    /// @notice Method to retrieve all the pending transaction hashes.
+    /// @dev This method is used by the L2 L1_Watcher to get the pending
+    /// privileged transactions to be processed.
+    function getPendingTransactionHashes() external view returns (bytes32[] memory);
 
     /// @notice Method that sends a transaction to L2.
     /// @dev The deposit process starts here by emitting a L1ToL2Message
@@ -69,19 +64,19 @@ interface ICommonBridge {
     function deposit(address l2Recipient) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number`
-    /// pending deposit logs.
-    /// @param number of pending deposit logs to retrieve the versioned hash.
-    function getPendingDepositLogsVersionedHash(
+    /// pending privileged transactions.
+    /// @param number of pending privileged transaction to retrieve the versioned hash.
+    function getPendingTransactionsVersionedHash(
         uint16 number
     ) external view returns (bytes32);
 
-    /// @notice Remove pending deposit from the pendingDepositLogs queue.
+    /// @notice Remove pending transaction hashes from the queue.
     /// @dev This method is used by the L2 OnChainOperator to remove the pending
-    /// deposit logs from the queue after the deposit is verified.
-    /// @param number of pending deposit logs to remove.
-    /// As deposits are processed in order, we don't need to specify
-    /// the pending deposit logs to remove, only the number of them.
-    function removePendingDepositLogs(uint16 number) external;
+    /// privileged transactions from the queue after the transaction is included.
+    /// @param number of pending transaction hashes to remove.
+    /// As transactions are processed in order, we don't need to specify
+    /// the transaction hashes to remove, only the number of them.
+    function removePendingTransactionHashes(uint16 number) external;
 
     /// @notice Method to retrieve the merkle root of the withdrawal logs of a
     /// given block.

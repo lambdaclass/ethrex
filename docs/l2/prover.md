@@ -140,7 +140,36 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 
 - `Finally`, to start the `proposer`/`l2 node`, run:
   - `make rm-db-l2 && make down`
-  - `make deploy-l1 && make init-l2`
+  - `make deploy-l1 && make init-l2` (if running a risc0 prover, see the next step before invoking the L1 contract deployer)
+
+- If running with a local L1 (for development), you will need to manually deploy the risc0 contracts by following the instructions [here](https://github.com/risc0/risc0-ethereum/tree/main/contracts/script).
+- For a local L1 running with ethrex, we do the following:
+   1. clone the risc0-ethereum repo
+   1. edit the `risc0-ethereum/contracts/deployment.toml` file by adding
+      ```toml
+      [chains.ethrex]
+      name = "Ethrex local devnet"
+      id = 9
+      ```
+   1. export env. variables (we are using an ethrex's rich L1 account)
+      ```bash
+      export VERIFIER_ESTOP_OWNER="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+      export DEPLOYER_PRIVATE_KEY="0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+      export DEPLOYER_ADDRESS="0x4417092b70a3e5f10dc504d0947dd256b965fc62"
+      export CHAIN_KEY="ethrex"
+      export RPC_URL="http://localhost:8545"
+
+      export ETHERSCAN_URL="dummy"
+      export ETHERSCAN_API_KEY="dummy"
+      ```
+      the last two variables need to be defined with some value even if not used, else the deployment script fails.
+   1. cd into `risc0-ethereum/`
+   1. run the deployment script
+      ```bash
+      bash contracts/script/manage DeployEstopGroth16Verifier --broadcast
+      ```
+   1. if the deployment was successful you should see the contract address in the output of the command, you will need to pass this as an argument to the L2 contract deployer, or via the `ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>` env. variable.
+   if you get an error like `risc0-ethereum/contracts/../lib/forge-std/src/Script.sol": No such file or directory (os error 2)`, try to update the git submodules (foundry dependencies) with `git submodule update --init --recursive`.
 
 ## Configuration
 
