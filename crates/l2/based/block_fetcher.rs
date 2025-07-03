@@ -258,6 +258,70 @@ pub async fn fetch_pending_batches(state: &mut BlockFetcherState) -> Result<(), 
     Ok(())
 }
 
+// TODO: Move to calldata module (SDK)
+fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetcherError> {
+    // function commitBatch(
+    //     uint256 batchNumber,
+    //     bytes32 newStateRoot,
+    //     bytes32 stateDiffKZGVersionedHash,
+    //     bytes32 messagesLogsMerkleRoot,
+    //     bytes32 processedPrivilegedTransactionsRollingHash,
+    //     bytes[] calldata _rlpEncodedBlocks
+    // ) external;
+
+    // data =   4 bytes (function selector) 0..4
+    //          || 8 bytes (batch number)   4..36
+    //          || 32 bytes (new state root) 36..68
+    //          || 32 bytes (state diff KZG versioned hash) 68..100
+    //          || 32 bytes (messages logs merkle root) 100..132
+    //          || 32 bytes (processed privileged transactions rolling hash) 132..164
+
+    let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
+        BlockFetcherError::WrongBatchCalldata("Couldn't get batch length bytes".to_owned()),
+    )?)
+    .as_usize();
+
+    let base = 228;
+
+    let mut batch = Vec::new();
+
+    for block_i in 0..batch_length_in_blocks {
+        let block_length_offset = base + block_i * 32;
+
+        let dynamic_offset = U256::from_big_endian(
+            calldata
+                .get(block_length_offset..block_length_offset + 32)
+                .ok_or(BlockFetcherError::WrongBatchCalldata(
+                    "Couldn't get dynamic offset bytes".to_owned(),
+                ))?,
+        )
+        .as_usize();
+
+        let block_length_in_bytes = U256::from_big_endian(
+            calldata
+                .get(base + dynamic_offset..base + dynamic_offset + 32)
+                .ok_or(BlockFetcherError::WrongBatchCalldata(
+                    "Couldn't get block length bytes".to_owned(),
+                ))?,
+        )
+        .as_usize();
+
+        let block_offset = base + dynamic_offset + 32;
+
+        let block = Block::decode(
+            calldata
+                .get(block_offset..block_offset + block_length_in_bytes)
+                .ok_or(BlockFetcherError::WrongBatchCalldata(
+                    "Couldn't get block bytes".to_owned(),
+                ))?,
+        )?;
+
+        batch.push(block);
+    }
+
+    Ok(batch)
+}
+
 /// Traverse the pending batches queue and build and stores the ones that are safe (verified).
 pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     while let Some(pending_batch) = state.pending_batches.pop_front() {
@@ -604,68 +668,4 @@ async fn extract_block_messages(
         receipts.push(receipt);
     }
     Ok(get_block_l1_messages(&txs, &receipts))
-}
-
-// TODO: Move to calldata module (SDK)
-fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetcherError> {
-    // function commitBatch(
-    //     uint256 batchNumber,
-    //     bytes32 newStateRoot,
-    //     bytes32 stateDiffKZGVersionedHash,
-    //     bytes32 messagesLogsMerkleRoot,
-    //     bytes32 processedPrivilegedTransactionsRollingHash,
-    //     bytes[] calldata _rlpEncodedBlocks
-    // ) external;
-
-    // data =   4 bytes (function selector) 0..4
-    //          || 8 bytes (batch number)   4..36
-    //          || 32 bytes (new state root) 36..68
-    //          || 32 bytes (state diff KZG versioned hash) 68..100
-    //          || 32 bytes (messages logs merkle root) 100..132
-    //          || 32 bytes (processed privileged transactions rolling hash) 132..164
-
-    let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
-        BlockFetcherError::WrongBatchCalldata("Couldn't get batch length bytes".to_owned()),
-    )?)
-    .as_usize();
-
-    let base = 228;
-
-    let mut batch = Vec::new();
-
-    for block_i in 0..batch_length_in_blocks {
-        let block_length_offset = base + block_i * 32;
-
-        let dynamic_offset = U256::from_big_endian(
-            calldata
-                .get(block_length_offset..block_length_offset + 32)
-                .ok_or(BlockFetcherError::WrongBatchCalldata(
-                    "Couldn't get dynamic offset bytes".to_owned(),
-                ))?,
-        )
-        .as_usize();
-
-        let block_length_in_bytes = U256::from_big_endian(
-            calldata
-                .get(base + dynamic_offset..base + dynamic_offset + 32)
-                .ok_or(BlockFetcherError::WrongBatchCalldata(
-                    "Couldn't get block length bytes".to_owned(),
-                ))?,
-        )
-        .as_usize();
-
-        let block_offset = base + dynamic_offset + 32;
-
-        let block = Block::decode(
-            calldata
-                .get(block_offset..block_offset + block_length_in_bytes)
-                .ok_or(BlockFetcherError::WrongBatchCalldata(
-                    "Couldn't get block bytes".to_owned(),
-                ))?,
-        )?;
-
-        batch.push(block);
-    }
-
-    Ok(batch)
 }
