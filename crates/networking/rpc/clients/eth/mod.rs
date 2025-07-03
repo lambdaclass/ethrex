@@ -24,6 +24,7 @@ use ethrex_common::{
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
         block_execution_witness::ExecutionWitnessResult,
     },
+    utils::decode_hex,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use keccak_hash::keccak;
@@ -654,7 +655,7 @@ impl EthClient {
             params: Some(vec![block.into()]),
         };
 
-        let encoded_block = match self.send_request(request).await? {
+        let encoded_block: Result<String, _> = match self.send_request(request).await? {
             RpcResponse::Success(result) => {
                 serde_json::from_value(result.result).map_err(GetRawBlockError::SerdeJSONError)
             }
@@ -662,7 +663,10 @@ impl EthClient {
                 Err(GetRawBlockError::RPCError(error_response.error.message))
             }
         };
-        let encoded_block = decode_hex(encoded_block?)?;
+
+        let encoded_block = decode_hex(&encoded_block?)
+            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))?;
+
         let block = Block::decode_unfinished(&encoded_block)
             .map_err(|e| GetRawBlockError::RLPDecodeError(e.to_string()))?;
         Ok(block.0)
@@ -1367,14 +1371,6 @@ pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, Et
         })?;
 
     Ok(Address::from(address_bytes))
-}
-
-fn decode_hex(hex: String) -> Result<Vec<u8>, EthClientError> {
-    let mut trimmed = hex.trim_start_matches("0x").to_string();
-    if trimmed.len() % 2 != 0 {
-        trimmed = "0".to_string() + &trimmed;
-    }
-    hex::decode(trimmed).map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
