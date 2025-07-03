@@ -246,10 +246,10 @@ impl Discv4LookupHandler {
             // wait as much as 5 seconds for the response
             match tokio::time::timeout(Duration::from_secs(5), request_receiver.recv()).await {
                 Ok(Some(mut found_nodes)) => {
-                    info!(
-                        "Found nodes through discovery from node {}. Got: {:?}",
-                        &node.ip, &found_nodes
-                    );
+                    // info!(
+                    //     "Found nodes through discovery from node {}. Got: {:?}",
+                    //     &node.ip, &found_nodes
+                    // );
                     nodes.append(&mut found_nodes);
                     if nodes.len() == MAX_NODES_PER_BUCKET {
                         return Ok(nodes);
