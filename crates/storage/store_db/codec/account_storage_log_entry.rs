@@ -10,6 +10,7 @@ use ethrex_rlp::{
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
+#[cfg(feature = "libmdbx")]
 const SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY: usize = 116;
 
 #[derive(Debug, Default, Clone)]

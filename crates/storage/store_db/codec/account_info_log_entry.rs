@@ -12,6 +12,7 @@ pub struct AccountInfoLogEntry {
     pub previous_info: AccountInfo,
 }
 
+#[cfg(feature = "libmdbx")]
 const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = 164;
 
 #[cfg(feature = "libmdbx")]

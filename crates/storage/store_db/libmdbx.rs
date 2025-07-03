@@ -423,7 +423,7 @@ impl StoreEngine for Store {
     /// This is used to restore the flat tables from the write logs after a reorg.
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         let tx = self.db.begin_readwrite()?;
-        let Some(old_snapshot_meta) =
+        let Some(old_snapshot_data) =
             tx.get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
         else {
             return Ok(()); // No snapshot to revert
@@ -435,14 +435,14 @@ impl StoreEngine for Store {
         let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
         let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
 
-        let mut block_num = old_snapshot_meta.0;
+        let mut block_num = old_snapshot_data.0;
         let mut canonical_hash = canonical_cursor
             .seek_exact(block_num)?
             .map(|(_, hash)| hash.to())
             .transpose()?
             .unwrap_or_default();
-        let mut snapshot_hash = old_snapshot_meta.1;
-        let mut key = old_snapshot_meta;
+        let mut snapshot_hash = old_snapshot_data.1;
+        let mut key = old_snapshot_data;
 
         while canonical_hash != snapshot_hash {
             tracing::warn!("UNDO: searching for {key:?}");
@@ -451,12 +451,13 @@ impl StoreEngine for Store {
 
             // Loop over account info logs and restore the previous state
             while let Some(((final_block, parent_block), log_entry)) = found_state_log {
-                tracing::warn!(
-                    "UNDO: found state log for {key:?}: {final_block:?}/{parent_block:?}"
-                );
                 if final_block != key {
                     break;
                 }
+
+                tracing::warn!(
+                    "UNDO: found state log for {key:?}: {final_block:?}/{parent_block:?}"
+                );
 
                 let info = (log_entry.previous_info != AccountInfo::default())
                     .then_some(EncodableAccountInfo(log_entry.previous_info));
