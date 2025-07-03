@@ -329,7 +329,7 @@ where
 
     spawn_listener(handle.clone(), &state.node, stream);
 
-    let eth_capability = &state.negotiated_capabilities.lock().await.eth;
+    let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
     spawn_broadcast_listener(handle.clone(), state, eth_capability);
 
     Ok(())
@@ -373,7 +373,7 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
 }
 
 async fn send_block_range_update(state: &mut Established) -> Result<(), RLPxError> {
-    let eth_capability = &state.negotiated_capabilities.lock().await.eth;
+    let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
     // BlockRangeUpdate was introduced in eth/69
     if let Some(eth) = eth_capability {
         if eth.version >= 69 {
@@ -401,8 +401,9 @@ async fn init_capabilities<S>(state: &mut Established, stream: &mut S) -> Result
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
+    let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
     // Sending eth Status if peer supports it
-    if let Some(eth) = &state.negotiated_capabilities.lock().await.eth {
+    if let Some(eth) = eth_capability {
         let status = match eth.version {
             68 => Message::Status68(Status68Message::new(&state.storage, &eth).await?),
             69 => Message::Status69(Status69Message::new(&state.storage, &eth).await?),
@@ -575,7 +576,7 @@ where
                 return Err(RLPxError::NoMatchingCapabilities());
             }
             debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
-            let mut capabilities = state.negotiated_capabilities.lock().await;
+            let mut capabilities = { state.negotiated_capabilities.lock().await };
             capabilities.eth = Some(Capability::eth(negotiated_eth_version));
 
             if negotiated_snap_version != 0 {
@@ -672,7 +673,7 @@ fn spawn_broadcast_listener(
 }
 
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
-    let peer_supports_eth = state.negotiated_capabilities.lock().await.eth.is_some();
+    let peer_supports_eth = { state.negotiated_capabilities.lock().await.eth.is_some() };
     match message {
         Message::Disconnect(msg_data) => {
             log_peer_debug(
@@ -690,12 +691,14 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             // We ignore received Pong messages
         }
         Message::Status68(msg_data) => {
-            if let Some(eth) = &state.negotiated_capabilities.lock().await.eth {
+            let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
+            if let Some(eth) = eth_capability {
                 backend::validate_status(Box::new(msg_data), &state.storage, eth).await?
             };
         }
         Message::Status69(msg_data) => {
-            if let Some(eth) = &state.negotiated_capabilities.lock().await.eth {
+            let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
+            if let Some(eth) = eth_capability {
                 backend::validate_status(Box::new(msg_data), &state.storage, eth).await?
             };
         }
@@ -733,7 +736,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::BlockBodies(response)).await?;
         }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-            if let Some(eth) = &state.negotiated_capabilities.lock().await.eth {
+            let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
+            if let Some(eth) = eth_capability {
                 let mut receipts = Vec::new();
                 for hash in block_hashes.iter() {
                     receipts.push(state.storage.get_receipts_for_block(hash)?);
