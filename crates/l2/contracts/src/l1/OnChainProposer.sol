@@ -89,13 +89,14 @@ contract OnChainProposer is
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice Maximum time the sequencer can take without sending privileged transactions
+    /// @notice Specified in seconds.
     uint256 public constant PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = 300;
     /// @notice Minimum of privileged transactions that must be included to reset the deadline
     /// @dev If there aren't that many pending, pendingTxHashes.length is used
     uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 10;
 
     /// @notice Deadline for including the next batch of privileged transactions, if any are pending
-    uint256 public txInclusionDeadline = 0;
+    uint256 public txInclusionDeadline = block.timestamp;
 
     modifier onlySequencer() {
         require(
