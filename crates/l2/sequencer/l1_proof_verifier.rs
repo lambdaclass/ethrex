@@ -28,7 +28,8 @@ use super::{
     utils::{send_verify_tx, sleep_random},
 };
 
-const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchesAligned(uint256,bytes[],bytes32[][])";
+const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
+    "verifyBatchesAligned(uint256,bytes[],bytes32[][],bytes[],bytes32[][])";
 
 pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
@@ -169,22 +170,39 @@ impl L1ProofVerifier {
             }
         };
 
-        let mut public_inputs_vec = Vec::new();
-        let mut merkle_paths = Vec::new();
+        let mut sp1_public_inputs_vec = Vec::new();
+        let mut sp1_merkle_paths = Vec::new();
+        let mut risc0_public_inputs_vec = Vec::new();
+        let mut risc0_merkle_paths = Vec::new();
 
-        for (public_inputs, merkle_path) in aggregated_proofs {
+        for (prover_type, public_inputs, merkle_path) in aggregated_proofs {
             let merkle_path = merkle_path
                 .iter()
                 .map(|x| Value::FixedBytes(bytes::Bytes::from_owner(*x)))
                 .collect();
-            public_inputs_vec.push(Value::Bytes(public_inputs.into()));
-            merkle_paths.push(Value::Array(merkle_path));
+            match prover_type {
+                ProverType::SP1 => {
+                    sp1_public_inputs_vec.push(Value::Bytes(public_inputs.into()));
+                    sp1_merkle_paths.push(Value::Array(merkle_path));
+                },
+                ProverType::RISC0 => {
+                    risc0_public_inputs_vec.push(Value::Bytes(public_inputs.into()));
+                    risc0_merkle_paths.push(Value::Array(merkle_path));
+                },
+                unsupported_type => {
+                    return Err(ProofVerifierError::UnsupportedProverType(
+                        unsupported_type.to_string(),
+                    ));
+                }
+            }
         }
 
         let calldata_values = [
             Value::Uint(U256::from(first_batch_number)),
-            Value::Array(public_inputs_vec),
-            Value::Array(merkle_paths),
+            Value::Array(sp1_public_inputs_vec),
+            Value::Array(sp1_merkle_paths),
+            Value::Array(risc0_public_inputs_vec),
+            Value::Array(risc0_merkle_paths),
         ];
 
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
@@ -229,27 +247,30 @@ impl L1ProofVerifier {
     }
 
     /// Receives an array of proofs.
-    /// Returns only those proofs that were aggregated by Aligned.
+    /// Returns merkle proofs for only those zk proofs that were aggregated by Aligned.
     async fn get_aggregated_proofs(
         &self,
         proofs: Vec<(u64, BatchProof)>,
-    ) -> Result<Vec<(Vec<u8>, Vec<[u8; 32]>)>, ProofVerifierError> {
+    ) -> Result<Vec<(ProverType, Vec<u8>, Vec<[u8; 32]>)>, ProofVerifierError> {
         let mut aggregated_proofs = Vec::new();
         for (batch_number, proof) in proofs {
             let public_inputs = proof.public_values();
-            let vk = match proof.prover_type() {
-                ProverType::RISC0 => self.risc0_vk,
-                ProverType::SP1 => self.sp1_vk,
+            let prover_type = proof.prover_type();
+
+            let verification_data = match prover_type {
+                ProverType::RISC0 => AggregationModeVerificationData::Risc0 {
+                    image_id: self.risc0_vk,
+                    public_inputs: public_inputs.clone(),
+                },
+                ProverType::SP1 => AggregationModeVerificationData::SP1 {
+                    vk: self.sp1_vk,
+                    public_inputs: public_inputs.clone(),
+                },
                 unsupported_type => {
                     return Err(ProofVerifierError::UnsupportedProverType(
                         unsupported_type.to_string(),
                     ));
                 }
-            };
-
-            let verification_data = AggregationModeVerificationData::SP1 {
-                vk,
-                public_inputs: public_inputs.clone(),
             };
             let commitment = H256(verification_data.commitment());
 
@@ -262,7 +283,7 @@ impl L1ProofVerifier {
                     merkle_root = %format_args!("{merkle_root:#x}"),
                     "Proof aggregated by Aligned"
                 );
-                aggregated_proofs.push((public_inputs, merkle_path));
+                aggregated_proofs.push((prover_type, public_inputs, merkle_path));
             }
         }
         Ok(aggregated_proofs)

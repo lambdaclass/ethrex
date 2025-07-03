@@ -252,7 +252,10 @@ contract OnChainProposer is
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external override onlySequencer whenNotPaused {
-        require(!ALIGNED, "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead.");
+        require(
+            !ALIGNED,
+            "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
+        );
 
         require(
             batchNumber == lastVerifiedBatch + 1,
@@ -286,7 +289,10 @@ contract OnChainProposer is
         if (REQUIRE_TDX_PROOF) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(tdxPublicValues, tdxSignature);
+            ITDXVerifier(TDX_VERIFIER_ADDRESS).verify(
+                tdxPublicValues,
+                tdxSignature
+            );
         }
 
         lastVerifiedBatch = batchNumber;
@@ -312,10 +318,15 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata alignedPublicInputsList,
-        bytes32[][] calldata alignedMerkleProofsList
+        bytes[] calldata sp1PublicInputsList,
+        bytes32[][] calldata sp1MerkleProofsList,
+        bytes[] calldata risc0PublicInputsList,
+        bytes32[][] calldata risc0MerkleProofsList
     ) external override onlySequencer whenNotPaused {
-        require(ALIGNED, "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead.");
+        require(
+            ALIGNED,
+            "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
+        );
 
         require(
             alignedPublicInputsList.length == alignedMerkleProofsList.length,
@@ -337,23 +348,21 @@ contract OnChainProposer is
             // Verify public data for the batch
             _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
 
-            bytes memory callData = abi.encodeWithSignature(
-                "verifyProofInclusion(bytes32[],bytes32,bytes)",
-                alignedMerkleProofsList[i],
-                SP1_VERIFICATION_KEY,
-                alignedPublicInputsList[i]
-            );
-            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-                .staticcall(callData);
-            require(
-                callResult,
-                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-            );
-            bool proofVerified = abi.decode(response, (bool));
-            require(
-                proofVerified,
-                "OnChainProposer: Aligned proof verification failed"
-            );
+            // Verify inclusion in aggregated Aligned proof
+            if (REQUIRE_SP1_PROOF) {
+                _verifyProofInclusionAligned(
+                    sp1MerkleProofsList[i],
+                    SP1_VERIFICATION_KEY,
+                    sp1PublicInputsList[i]
+                );
+            }
+            if (REQUIRE_RISC0_PROOF) {
+                _verifyProofInclusionAligned(
+                    risc0MerkleProofsList[i],
+                    RISC0_VERIFICATION_KEY,
+                    risc0PublicInputsList[i]
+                );
+            }
 
             // The first 2 bytes are the number of transactions.
             uint16 privileged_transaction_count = uint16(
@@ -420,6 +429,30 @@ contract OnChainProposer is
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
+        );
+    }
+
+    function _verifyProofInclusionAligned(
+        bytes32[] calldata merkleProofsList,
+        bytes verificationKey,
+        bytes calldata publicInputsList
+    ) internal view {
+        bytes memory callData = abi.encodeWithSignature(
+            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            merkleProofsList[i],
+            verificationKey,
+            publicInputsList[i]
+        );
+        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+            .staticcall(callData);
+        require(
+            callResult,
+            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+        );
+        bool proofVerified = abi.decode(response, (bool));
+        require(
+            proofVerified,
+            "OnChainProposer: Aligned proof verification failed"
         );
     }
 
