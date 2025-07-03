@@ -201,7 +201,7 @@ pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>,
             state.last_block_fetched + 1,
             new_last_block,
             state.address,
-            topic,
+            vec![topic],
         )
         .await
         .inspect_err(|error| {
