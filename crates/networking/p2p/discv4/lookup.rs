@@ -150,9 +150,9 @@ impl Discv4LookupHandler {
         let mut nodes = vec![];
 
         for node in nodes_to_ask {
-            if asked_peers.contains(&node.public_key) {
-                continue;
-            }
+            // if asked_peers.contains(&node.public_key) {
+            //     continue;
+            // }
             let mut locked_table = self.ctx.table.lock().await;
             if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id()) {
                 // if the peer has an ongoing find_node request, don't query
