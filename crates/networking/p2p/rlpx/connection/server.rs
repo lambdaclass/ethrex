@@ -422,7 +422,7 @@ where
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
         let msg = match receive(stream).await {
             Some(msg) => {
-                info!("Init Capabilities Receive {:?}", &msg);
+                info!("Init Capabilities Receive {:?}\n{}", &msg, &state.node.ip);
                 msg?
             }
             None => return Err(RLPxError::Disconnected()),
