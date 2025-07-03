@@ -418,9 +418,6 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    /// Rewinds (a.k.a undo) writes from the write logs until a canonical block is reached.
-    ///
-    /// This is used to restore the flat tables from the write logs after a reorg.
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         let tx = self.db.begin_readwrite()?;
         let Some(old_snapshot_data) =
@@ -509,16 +506,6 @@ impl StoreEngine for Store {
         tx.commit().map_err(|err| err.into())
     }
 
-    /// Replays writes from the write logs until the head block is reached.
-    ///
-    /// This is used to restore the flat tables from the write logs after a reorg.
-    /// Assumes that the current flat representation corresponds to a block in the canonical chain.
-    /// *NOTE:* this function is meant to be called after calling `undo_writes_until_canonical` to
-    /// restore the flat tables to stay in sync with the canonical chain after a reorg.
-    ///
-    /// # Arguments
-    ///
-    ///  * `head_hash` - The block hash of the head block to replay writes until.
     async fn replay_writes_until_head(&self, head_hash: H256) -> Result<(), StoreError> {
         let tx = self.db.begin_readwrite()?;
         let current_snapshot_meta = tx

@@ -18,8 +18,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
+    /// Reverts the changes in the state using write logs until reaching a canonical block.
+    /// Used to restore state after a reorg by walking backwards through logs.
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError>;
 
+    /// Replays writes from the write logs until the head block is reached.
+    /// This is used to restore the flat tables from the write logs after a reorg.
+    /// Assumes that the current flat representation corresponds to a block in the canonical chain.
+    /// Must be called after [`undo_writes_until_canonical`](StoreEngine::undo_writes_until_canonical)
+    /// to complete reorg recovery.
     async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
@@ -312,6 +319,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
+    /// Sets up the flat tables of account storage for the genesis block
     async fn setup_genesis_flat_account_storage(
         &self,
         genesis_block_number: u64,
@@ -319,6 +327,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError>;
 
+    /// Sets up the flat tables of account info for the genesis block
     async fn setup_genesis_flat_account_info(
         &self,
         genesis_block_number: u64,
@@ -326,10 +335,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         genesis_accounts: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError>;
 
+    /// Gets the block hash for the current snapshot
     fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError>;
 
+    /// Gets the account storage for an account
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError>;
 
+    /// Gets the account info for an account
     fn get_current_account_info(&self, address: Address)
     -> Result<Option<AccountInfo>, StoreError>;
 
