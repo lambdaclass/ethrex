@@ -35,7 +35,7 @@ use tracing::{debug, error, info};
 use crate::{
     SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::{l1_committer::generate_blobs_bundle, utils::node_is_up_to_date},
+    sequencer::l1_committer::generate_blobs_bundle,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -192,21 +192,13 @@ impl GenServer for BlockFetcher {
 }
 
 async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
-    if !node_is_up_to_date::<BlockFetcherError>(
-        &state.eth_client,
-        state.on_chain_proposer_address,
-        &state.rollup_store,
-    )
-    .await?
-    {
+    let last_safe_batch_number = state
+        .eth_client
+        .get_last_verified_batch(state.on_chain_proposer_address)
+        .await?;
+    if state.latest_safe_batch < last_safe_batch_number {
         info!("Node is not up to date. Syncing via L1");
-        while !node_is_up_to_date::<BlockFetcherError>(
-            &state.eth_client,
-            state.on_chain_proposer_address,
-            &state.rollup_store,
-        )
-        .await?
-        {
+        while state.latest_safe_batch < last_safe_batch_number {
             fetch_pending_batches(state).await?;
 
             store_safe_batches(state).await?;
