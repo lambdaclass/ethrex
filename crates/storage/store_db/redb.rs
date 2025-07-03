@@ -642,7 +642,8 @@ impl StoreEngine for RedBStore {
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write().map_err(Box::new)?;
             {
-                // Calculate parent and final block metadata for logs if we have blocks
+                // We only need to update the flat tables if the update batch contains blocks
+                // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
                 if let (Some(first_block), Some(last_block)) = (update_batch.blocks.first(), update_batch.blocks.last()) {
 
                     let parent_block = BlockNumHash(
