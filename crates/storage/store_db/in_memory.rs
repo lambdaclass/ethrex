@@ -114,56 +114,69 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
-        let (Some(first_block), Some(last_block)) =
+        // We only need to update the flat tables if the update batch contains blocks
+        // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
+        if let (Some(first_block), Some(last_block)) =
             (update_batch.blocks.first(), update_batch.blocks.last())
-        else {
-            return Ok(());
-        };
-        let parent_block = (
-            first_block.header.number - 1,
-            first_block.header.parent_hash,
-        )
-            .into();
+        {
+            info!(
+                "Applying snapshot updates for blocks {:?} to {:?}",
+                first_block, last_block
+            );
+            let parent_block = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
 
-        let final_block = (last_block.header.number, last_block.hash()).into();
-        for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned() {
-            let log = AccountInfoLogEntry {
-                address: addr.0,
-                info: new_info,
-                previous_info: old_info,
-            };
-            store
-                .account_state_logs
-                .insert(final_block, vec![(parent_block, log)]);
-        }
-
-        for storage_log in update_batch.storage_log_updates.iter().cloned() {
-            store
-                .account_storage_logs
-                .insert(final_block, vec![(parent_block, storage_log)]);
-        }
-
-        let current_spanshot = store.current_snapshot_block.unwrap_or_default();
-
-        // If the current snapshot is the parent block, we can update the account and storage
-        if current_spanshot == parent_block {
-            for (addr, _old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
+            let final_block = (last_block.header.number, last_block.hash()).into();
+            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
-                if new_info == AccountInfo::default() {
-                    store.account_info.remove(&addr.0);
-                } else {
-                    store.account_info.insert(addr.0, new_info);
-                }
+                let log = AccountInfoLogEntry {
+                    address: addr.0,
+                    info: new_info,
+                    previous_info: old_info,
+                };
+                store
+                    .account_state_logs
+                    .entry(final_block)
+                    .or_default()
+                    .push((parent_block, log));
             }
 
-            for entry in update_batch.storage_log_updates.iter().cloned() {
-                if entry.new_value.is_zero() {
-                    store.account_storage.remove(&(entry.address, entry.slot));
-                } else {
-                    store
-                        .account_storage
-                        .insert((entry.address, entry.slot), entry.new_value);
+            for storage_log in update_batch.storage_log_updates.iter().cloned() {
+                store
+                    .account_storage_logs
+                    .entry(final_block)
+                    .or_default()
+                    .push((parent_block, storage_log));
+            }
+
+            let current_snapshot = store.current_snapshot_block.unwrap_or_default();
+
+            // If the current snapshot is the parent block, we can update the account and storage
+            if current_snapshot == parent_block {
+                for (addr, _old_info, new_info) in
+                    update_batch.account_info_log_updates.iter().cloned()
+                {
+                    if new_info == AccountInfo::default() {
+                        store.account_info.remove(&addr.0);
+                    } else {
+                        store.account_info.insert(addr.0, new_info);
+                    }
                 }
+
+                for entry in update_batch.storage_log_updates.iter().cloned() {
+                    if entry.new_value.is_zero() {
+                        store.account_storage.remove(&(entry.address, entry.slot));
+                    } else {
+                        store
+                            .account_storage
+                            .insert((entry.address, entry.slot), entry.new_value);
+                    }
+                }
+
+                store.current_snapshot_block = Some(final_block);
             }
         }
 
@@ -256,10 +269,6 @@ impl StoreEngine for Store {
                     warn!(
                         "UNDO: found account info log for {current_snapshot:?}: {parent_block:?}"
                     );
-                    // TODO: Is this needed?
-                    if current_snapshot == parent_block {
-                        break;
-                    }
 
                     // Restore previous state
                     if log.previous_info == AccountInfo::default() {
@@ -281,11 +290,6 @@ impl StoreEngine for Store {
             // Restore account storage for the block of the current snapshot
             if let Some(entries) = store.account_storage_logs.get(&current_snapshot).cloned() {
                 for (parent_block, log) in entries {
-                    // TODO: Is this needed?
-                    if current_snapshot == parent_block {
-                        break;
-                    }
-
                     // Restore previous state
                     if log.old_value.is_zero() {
                         debug!("UNDO: removing account storage for {:?}", log.address);

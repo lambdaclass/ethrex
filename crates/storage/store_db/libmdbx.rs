@@ -352,55 +352,60 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite()?;
 
-            let (Some(first_block), Some(last_block)) =
+            // We only need to update the flat tables if the update batch contains blocks
+            // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
+            if let (Some(first_block), Some(last_block)) =
                 (update_batch.blocks.first(), update_batch.blocks.last())
-            else {
-                return Ok(());
-            };
-            let parent_block = (
-                first_block.header.number - 1,
-                first_block.header.parent_hash,
-            )
-                .into();
-            let final_block = (last_block.header.number, last_block.hash()).into();
-
-            let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
-            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
-                account_info_log_cursor.upsert(
-                    (final_block, parent_block),
-                    AccountInfoLogEntry {
-                        address: addr.0,
-                        info: new_info,
-                        previous_info: old_info,
-                    },
-                )?;
-            }
+                let parent_block = (
+                    first_block.header.number - 1,
+                    first_block.header.parent_hash,
+                )
+                    .into();
+                let final_block = (last_block.header.number, last_block.hash()).into();
 
-            let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
-            for entry in update_batch.storage_log_updates.iter().cloned() {
-                account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
-            }
-
-            let meta = tx
-                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
-                .unwrap_or_default();
-            if meta == parent_block {
-                let mut cursor = tx.cursor::<FlatAccountInfo>()?;
-                let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
-
-                for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
-                    let key = addr;
-                    let value = (new_info != AccountInfo::default())
-                        .then_some(EncodableAccountInfo(new_info));
-                    Self::replace_value_or_delete(&mut cursor, key, value)?;
+                let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+                for (addr, old_info, new_info) in
+                    update_batch.account_info_log_updates.iter().cloned()
+                {
+                    account_info_log_cursor.upsert(
+                        (final_block, parent_block),
+                        AccountInfoLogEntry {
+                            address: addr.0,
+                            info: new_info,
+                            previous_info: old_info,
+                        },
+                    )?;
                 }
-                for entry in update_batch.storage_log_updates {
-                    let key = (entry.address.into(), entry.slot.into());
-                    let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
-                    Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
+
+                let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+                for entry in update_batch.storage_log_updates.iter().cloned() {
+                    account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
                 }
-                tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)?;
+
+                let meta = tx
+                    .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+                    .unwrap_or_default();
+                if meta == parent_block {
+                    let mut cursor = tx.cursor::<FlatAccountInfo>()?;
+                    let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+
+                    for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
+                        let key = addr;
+                        let value = (new_info != AccountInfo::default())
+                            .then_some(EncodableAccountInfo(new_info));
+                        Self::replace_value_or_delete(&mut cursor, key, value)?;
+                    }
+                    for entry in update_batch.storage_log_updates {
+                        let key = (entry.address.into(), entry.slot.into());
+                        let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
+                        Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
+                    }
+                    tx.upsert::<FlatTablesBlockMetadata>(
+                        FlatTablesBlockMetadataKey {},
+                        final_block,
+                    )?;
+                }
             }
 
             let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
