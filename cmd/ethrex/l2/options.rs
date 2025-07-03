@@ -561,6 +561,6 @@ pub struct BlockFetcherOptions {
 #[derive(Parser, Default)]
 pub struct MonitorOptions {
     /// time in ms between two ticks.
-    #[arg(short, long, default_value_t = 250)]
+    #[arg(short, long, default_value_t = 1000)]
     tick_rate: u64,
 }
