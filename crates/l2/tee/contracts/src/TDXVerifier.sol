@@ -22,22 +22,32 @@ contract TDXVerifier {
     address public authorizedSignature = address(0);
     bool public isDevMode = false;
 
-    bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';
-    bytes public RTMR1 = hex'53827a034d1e4c7f13fd2a12aee4497e7097f15a04794553e12fe73e2ffb8bd57585e771951115a13ec4d7e6bc193038';
-    bytes public RTMR2 = hex'2ca1a728ff13c36195ad95e8f725bf00d7f9c5d6ed730fb8f50cccad692ab81aefc83d594819375649be934022573528';
-    bytes public MRTD = hex'91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7';
+    bytes public RTMR0;
+    bytes public RTMR1;
+    bytes public RTMR2;
+    bytes public MRTD;
 
     /// @notice Initializes the contract
     /// @param _dcap DCAP contract.
-    /// @param _ocp OnChainProposer contract, used for permission checks
     /// @param _isDevMode Disables quote verification
-    constructor(address _dcap, address _ocp, bool _isDevMode) {
+    constructor(address _dcap, bytes _rtmr0, bytes _rtmr1, bytes _rtmr2, bytes _mrtd, bool _isDevMode) {
         require(_dcap != address(0), "TDXVerifier: DCAP address can't be null");
-        require(_ocp != address(0), "TDXVerifier: OnChainPropser address can't be null");
 
         quoteVerifier = IAttestation(_dcap);
-        onChainProposer = IOnChainProposer(_ocp);
         isDevMode = _isDevMode;
+
+        RTMR0 = _rtmr0;
+        RTMR1 = _rtmr1;
+        RTMR2 = _rtmr2;
+        MRTD = _mrtd;
+    }
+
+    /// @notice Initializes the OnChainProposer
+    /// @param _ocp OnChainProposer contract address, used for permission checks
+    function initializeOnChainProposer(address _ocp) {
+        require(onChainProposer == address(0), "TDXVerifier: OnChainProposer already initialized");
+        require(_ocp != address(0), "TDXVerifier: OnChainPropser address can't be null");
+        onChainProposer = IOnChainProposer(_ocp);
     }
 
     /// @notice Verifies a proof with given payload and signature
