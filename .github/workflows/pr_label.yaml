@@ -1,4 +1,4 @@
-name: Label PR Based on Title
+name: PR Label
 
 on:
   pull_request:
@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   label-pr:
+    name: Set Label
     runs-on: ubuntu-latest
     steps:
       - name: Check if PR already has labels
