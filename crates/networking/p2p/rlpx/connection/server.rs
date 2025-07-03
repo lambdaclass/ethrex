@@ -97,6 +97,7 @@ pub struct Established {
     pub(crate) broadcasted_txs: HashSet<H256>,
     pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     pub(crate) client_version: String,
+    pub(crate) codec: RLPxCodec,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
     //// since internally it's an Arc.
@@ -568,6 +569,13 @@ where
             }
             debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
+            state
+                .codec
+                .set_eth_protocol(&Capability::eth(negotiated_eth_version))?;
+            state
+                .codec
+                .set_snap_protocol(&Capability::snap(negotiated_snap_version))?;
+
             if negotiated_snap_version != 0 {
                 debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
                 state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
