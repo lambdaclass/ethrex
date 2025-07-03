@@ -26,7 +26,7 @@ use crate::{
     sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{
-    common::types::{FeeEstimationType, Network, VerificationData},
+    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
@@ -238,8 +238,10 @@ async fn send_proof_to_aligned(
     let wallet = wallet.with_chain_id(state.l1_chain_id);
 
     for batch_proof in batch_proofs {
-        let Some(proving_system) = batch_proof.prover_type().into() else {
-            continue;
+        let proving_system = match batch_proof.prover_type() {
+            ProverType::RISC0 => ProvingSystemId::Risc0,
+            ProverType::SP1 => ProvingSystemId::SP1,
+            _ => continue
         };
 
         debug!(

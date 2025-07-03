@@ -1,4 +1,3 @@
-use aligned_sdk::common::types::ProvingSystemId;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
@@ -89,16 +88,6 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::TDX => write!(f, "TDX"),
-        }
-    }
-}
-
-impl From<ProverType> for Option<ProvingSystemId> {
-    fn from(value: ProverType) -> Self {
-        match value {
-            ProverType::RISC0 => Some(ProvingSystemId::Risc0),
-            ProverType::SP1 => Some(ProvingSystemId::SP1),
-            _ => None,
         }
     }
 }
