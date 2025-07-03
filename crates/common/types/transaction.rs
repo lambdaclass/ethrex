@@ -1298,7 +1298,7 @@ impl Transaction {
     /// For more information check out [EIP-155](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md)
     pub fn protected(&self) -> bool {
         match self {
-            Transaction::LegacyTransaction(tx) if (tx.v.leading_zeros() / 8) > 24 => {
+            Transaction::LegacyTransaction(tx) if (256 - tx.v.leading_zeros()) <= 8 => {
                 let v = tx.v.as_u64();
                 v != 27 && v != 28 && v != 1 && v != 0
             }
