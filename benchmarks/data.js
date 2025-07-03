@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751542827059,
+  "lastUpdate": 1751549390194,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4347,6 +4347,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007062074074074074,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ef3422302e9d726c275257580a81af67aa38e9f4",
+          "message": "ci(l2): fix prover workflow (#3445)\n\n**Motivation**\n\nThe Integration Test Prover Sp1 workflow was broken due to several\nissues:\n- It was using outdated `contract_deployer` and `ethrex_l2` images.\n- There were permission issues on the `_work` directory.\n- `solc` was not installed.\n\nHere is a successful run of the workflow:\nhttps://github.com/lambdaclass/ethrex/actions/runs/16037084316/job/45251233852?pr=3445\n\nCloses: None",
+          "timestamp": "2025-07-03T13:06:45Z",
+          "tree_id": "80bf236de9f084bbabdc96c8a3809662ebb0ca77",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ef3422302e9d726c275257580a81af67aa38e9f4"
+        },
+        "date": 1751549389715,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0070249052631578945,
             "unit": "Mgas/s"
           }
         ]
