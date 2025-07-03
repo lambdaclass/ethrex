@@ -333,7 +333,7 @@ impl Store {
         if let Some((BlockNumHash(key_num, _), _)) = cursor_state_trie_pruning_log.last()? {
             // delete nodes in back order
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
-            let start_key = key_num - 256; // we keep the last 256 blocks
+            let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
             for nodehash in cursor_state_trie_pruning_log.walk_back(Some(start_key)) {
                 let (_, nodehash_value) = nodehash?;
                 let k_delete = NodeHash::Hashed(nodehash_value.into());
@@ -355,7 +355,7 @@ impl Store {
         if let Some((BlockNumHash(key_num, _), _)) = cursor_storage_trie_pruning_log.last()? {
             // delete nodes in back order
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
-            let start_key = key_num - 256; // we keep the last 256 blocks
+            let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
             for nodehash in cursor_storage_trie_pruning_log.walk_back(Some(start_key)) {
                 let (_, nodehash_value) = nodehash?;
                 if let Some((key, _)) = cursor_storage_trie.seek_exact(nodehash_value)?
