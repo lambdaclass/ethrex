@@ -69,7 +69,7 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
         return Vec::new();
     };
     let addresses: Vec<Address> = read_to_string(path)
-        .unwrap_or_else(|_| panic!("Failed to load file {}", path))
+        .unwrap_or_else(|_| panic!("Failed to load file {path}"))
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.to_string().parse::<Address>())
@@ -100,4 +100,17 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
         .await
         .expect("Failed to init rollup store");
     rollup_store
+}
+
+pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
+    tracing::info!(
+        "Starting metrics server on {}:{}",
+        opts.metrics_addr,
+        opts.metrics_port
+    );
+    let metrics_api = ethrex_metrics::l2::api::start_prometheus_metrics_api(
+        opts.metrics_addr.clone(),
+        opts.metrics_port.clone(),
+    );
+    tracker.spawn(metrics_api);
 }

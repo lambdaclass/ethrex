@@ -5,6 +5,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
 use redb::{AccessGuard, Database, Key, ReadableTable, TableDefinition, Value, WriteTransaction};
 
@@ -29,13 +30,20 @@ const BLOB_BUNDLES: TableDefinition<u64, Rlp<Vec<Blob>>> = TableDefinition::new(
 
 const STATE_ROOTS: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("StateRoots");
 
-const DEPOSIT_LOGS_HASHES: TableDefinition<u64, Rlp<H256>> =
-    TableDefinition::new("DepositLogsHashes");
+const PRIVILEGED_TRANSACTIONS_HASHES: TableDefinition<u64, Rlp<H256>> =
+    TableDefinition::new("PrivilegedTransactionHashes");
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
 
 const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
     TableDefinition::new("AccountUpdatesByBlockNumber");
+
+const BATCH_PROOF_BY_BATCH_AND_TYPE: TableDefinition<(u64, u32), Vec<u8>> =
+    TableDefinition::new("BatchProofByBatchAndType");
+
+const COMMIT_TX_BY_BATCH: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("CommitTxByBatch");
+
+const VERIFY_TX_BY_BATCH: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("VerifyTxByBatch");
 
 #[derive(Debug)]
 pub struct RedBStoreRollup {
@@ -112,10 +120,13 @@ pub fn init_db() -> Result<Database, RollupStoreError> {
     table_creation_txn.open_table(OPERATIONS_COUNTS)?;
     table_creation_txn.open_table(BLOB_BUNDLES)?;
     table_creation_txn.open_table(STATE_ROOTS)?;
-    table_creation_txn.open_table(DEPOSIT_LOGS_HASHES)?;
+    table_creation_txn.open_table(PRIVILEGED_TRANSACTIONS_HASHES)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
+    table_creation_txn.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
+    table_creation_txn.open_table(COMMIT_TX_BY_BATCH)?;
+    table_creation_txn.open_table(VERIFY_TX_BY_BATCH)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -196,21 +207,25 @@ impl StoreEngineRollup for RedBStoreRollup {
         Ok(exists)
     }
 
-    async fn store_deposit_logs_hash_by_batch_number(
+    async fn store_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
-        deposit_logs_hash: H256,
+        privileged_transactions_hash: H256,
     ) -> Result<(), RollupStoreError> {
-        self.write(DEPOSIT_LOGS_HASHES, batch_number, deposit_logs_hash.into())
-            .await
+        self.write(
+            PRIVILEGED_TRANSACTIONS_HASHES,
+            batch_number,
+            privileged_transactions_hash.into(),
+        )
+        .await
     }
 
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
-            .read(DEPOSIT_LOGS_HASHES, batch_number)
+            .read(PRIVILEGED_TRANSACTIONS_HASHES, batch_number)
             .await?
             .map(|rlp| rlp.value().to()))
     }
@@ -253,18 +268,56 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|rlp| rlp.value().to()))
     }
 
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read(COMMIT_TX_BY_BATCH, batch_number)
+            .await?
+            .map(|rlp| rlp.value().to()))
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write(COMMIT_TX_BY_BATCH, batch_number, commit_tx.into())
+            .await
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read(VERIFY_TX_BY_BATCH, batch_number)
+            .await?
+            .map(|rlp| rlp.value().to()))
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write(VERIFY_TX_BY_BATCH, batch_number, verify_tx.into())
+            .await
+    }
+
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
-        let (transaction_count, messages_count, deposits_count) = {
+        let (transaction_count, messages_count, privileged_tx_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
                 current_operations[1] + messages_inc,
-                current_operations[2] + deposits_inc,
+                current_operations[2] + privileged_tx_inc,
             )
         };
 
@@ -272,7 +325,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             OPERATIONS_COUNTS,
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, privileged_tx_count].encode_to_vec(),
             ),
         )
         .await
@@ -328,6 +381,35 @@ impl StoreEngineRollup for RedBStoreRollup {
         self.write(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number, serialized)
             .await
     }
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&proof)?;
+        self.write(
+            BATCH_PROOF_BY_BATCH_AND_TYPE,
+            (batch_number, proof_type.into()),
+            serialized,
+        )
+        .await
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
+        self.read(
+            BATCH_PROOF_BY_BATCH_AND_TYPE,
+            (batch_number, proof_type.into()),
+        )
+        .await?
+        .map(|s| bincode::deserialize(&s.value()))
+        .transpose()
+        .map_err(RollupStoreError::from)
+    }
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
@@ -338,7 +420,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         delete_starting_at(&txn, BATCHES_BY_BLOCK_NUMBER_TABLE, last_kept_block + 1)?;
         delete_starting_at(&txn, MESSAGES_BY_BATCH, batch_number + 1)?;
         delete_starting_at(&txn, BLOCK_NUMBERS_BY_BATCH, batch_number + 1)?;
-        delete_starting_at(&txn, DEPOSIT_LOGS_HASHES, batch_number + 1)?;
+        delete_starting_at(&txn, PRIVILEGED_TRANSACTIONS_HASHES, batch_number + 1)?;
         delete_starting_at(&txn, STATE_ROOTS, batch_number + 1)?;
         delete_starting_at(&txn, BLOB_BUNDLES, batch_number + 1)?;
         txn.commit()?;

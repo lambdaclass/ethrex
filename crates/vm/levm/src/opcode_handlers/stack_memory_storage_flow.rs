@@ -92,7 +92,7 @@ impl<'a> VM<'a> {
         let [offset, value] = *self.current_call_frame_mut()?.stack.pop()?;
 
         // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
-        if self.debug_mode.handle_debug(offset, value)? {
+        if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 

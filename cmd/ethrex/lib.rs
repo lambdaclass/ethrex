@@ -1,9 +1,9 @@
 pub mod cli;
 pub mod initializers;
-pub mod utils;
 
 #[cfg(feature = "l2")]
 pub mod l2;
+pub mod utils;
 
 mod decode;
 pub mod networks;
