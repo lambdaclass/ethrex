@@ -74,7 +74,7 @@ impl Discv4Server {
     /// - Loads bootnodes to establish initial peer connections.
     /// - Starts the lookup handler via [`Discv4LookupHandler`] to periodically search for new peers.
     pub async fn start(&self, bootnodes: Vec<Node>) -> Result<(), DiscoveryError> {
-        let lookup_handler = Discv4LookupHandler::new(self.ctx.clone(), self.udp_socket.clone());
+        let lookup_handler = self.new_lookup_handler();
 
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
@@ -88,6 +88,10 @@ impl Discv4Server {
         lookup_handler.start(self.lookup_interval_minutes, 10);
 
         Ok(())
+    }
+
+    fn new_lookup_handler(&self) -> Discv4LookupHandler {
+        Discv4LookupHandler::new(self.ctx.clone(), self.udp_socket.clone())
     }
 
     async fn load_bootnodes(&self, bootnodes: Vec<Node>) {

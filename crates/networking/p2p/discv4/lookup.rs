@@ -99,41 +99,70 @@ impl Discv4LookupHandler {
     async fn recursive_lookup(&self, target: H512) {
         // lookups start with the closest nodes to the target from our table
         let target_node_id = node_id(&target);
-        let mut peers_to_ask: Vec<Node> = self
-            .ctx
-            .table
-            .lock()
-            .await
-            .get_closest_nodes(target_node_id);
+
+        let mut peers_to_ask = vec![];
         // stores the peers in peers_to_ask + the peers that were in peers_to_ask but were replaced by closer targets
-        let mut seen_peers: HashSet<H512> = HashSet::default();
+        let mut seen_peers = HashSet::default();
         let mut asked_peers = HashSet::default();
 
-        seen_peers.insert(self.ctx.local_node.public_key);
-        for node in &peers_to_ask {
-            seen_peers.insert(node.public_key);
-        }
-
         loop {
-            let (nodes_found, queries) = self.lookup(target, &mut asked_peers, &peers_to_ask).await;
-
-            for node in nodes_found {
-                if !seen_peers.contains(&node.public_key) {
-                    seen_peers.insert(node.public_key);
-                    self.peers_to_ask_push(&mut peers_to_ask, target_node_id, node);
-                }
-            }
-
+            let (_, should_continue) = self
+                .recursive_lookup_step(
+                    target,
+                    target_node_id,
+                    &mut peers_to_ask,
+                    &mut seen_peers,
+                    &mut asked_peers,
+                )
+                .await;
             // the lookup finishes when there are no more queries to do
             // that happens when we have asked all the peers
-            if queries == 0 {
+            if !should_continue {
                 break;
             }
         }
     }
 
+    /// Performs a single step of the recursive lookup.
+    /// Returns `true` if we found new peers, `false` otherwise.
+    async fn recursive_lookup_step(
+        &self,
+        target: H512,
+        target_node_id: H256,
+        peers_to_ask: &mut Vec<Node>,
+        seen_peers: &mut HashSet<H512>,
+        asked_peers: &mut HashSet<H512>,
+    ) -> (Vec<Node>, bool) {
+        if peers_to_ask.is_empty() {
+            let initial_peers = self
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_closest_nodes(target_node_id);
+
+            peers_to_ask.extend(initial_peers.clone());
+
+            seen_peers.insert(self.ctx.local_node.public_key);
+            for node in peers_to_ask {
+                seen_peers.insert(node.public_key);
+            }
+            return (initial_peers, true);
+        }
+        let (nodes_found, queries) = self.lookup(target, asked_peers, &peers_to_ask).await;
+
+        for node in &nodes_found {
+            if !seen_peers.contains(&node.public_key) {
+                seen_peers.insert(node.public_key);
+                self.peers_to_ask_push(peers_to_ask, target_node_id, node.clone());
+            }
+        }
+
+        return (nodes_found, queries > 0);
+    }
+
     /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
-    async fn lookup(
+    pub async fn lookup(
         &self,
         target: H512,
         asked_peers: &mut HashSet<H512>,
