@@ -14,11 +14,11 @@ ethrex-p2p.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
-ethrex-storage-rollup = { workspace = true, optional = true }
-ethrex-l2 = { workspace = true, optional = true }
-ethrex-l2-common = { workspace = true, optional = true }
-ethrex-sdk = { workspace = true, optional = true }
-ethrex-l2-rpc = { workspace = true, optional = true }
+ethrex-storage-rollup.workspace = true
+ethrex-l2.workspace = true
+ethrex-l2-common.workspace = true
+ethrex-sdk.workspace = true
+ethrex-l2-rpc.workspace = true
 
 bytes.workspace = true
 hex.workspace = true
@@ -66,17 +66,10 @@ c-kzg = [
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
-libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup?/libmdbx"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
+libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
-l2 = [
-  "dep:ethrex-l2",
-  "dep:ethrex-l2-common",
-  "dep:ethrex-sdk",
-  "dep:ethrex-l2-rpc",
-  "ethrex-storage-rollup",
-]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
