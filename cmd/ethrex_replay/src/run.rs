@@ -1,4 +1,4 @@
-use crate::cache::{Cache, L2Fields};
+use crate::cache::Cache;
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
@@ -73,21 +73,29 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
                     blocks,
                     witness: db,
                     l2_fields: None,
-                } = cache;
+                } = cache else {
+                    return Err(eyre::Error::msg("Unexpected l2 fields in cache"));
+                };
 
                 ProgramInput {
                     blocks,
                     db,
                     elasticity_multiplier: ELASTICITY_MULTIPLIER,
+                    // The L2 specific fields (blob_commitment, blob_proof)
+                    // will be filled by Default::default() if the 'l2' feature of
+                    // 'zkvm_interface' is active (due to workspace compilation).
+                    // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
+                    // these fields won't exist in ProgramInput, and ..Default::default()
+                    // will correctly not try to fill them.
+                    // A better solution would involve rethinking the `l2` feature or the
+                    // inclusion of this crate in the workspace.
+                    ..Default::default()
                 }
             } else {
                 let Cache {
                     blocks,
                     witness: db,
-                    l2_fields: Some(L2Fields {
-                        blob_commitment,
-                        blob_proof,
-                    }),
+                    l2_fields: Some(l2_fields),
                 } = cache else {
                     return Err(eyre::Error::msg("missing L2 fields in cache"));
                 };
@@ -96,8 +104,8 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
                     blocks,
                     db,
                     elasticity_multiplier: ELASTICITY_MULTIPLIER,
-                    blob_commitment,
-                    blob_proof,
+                    blob_commitment: l2_fields.blob_commitment,
+                    blob_proof: l2_fields.blob_proof,
                 }
             }
         }
