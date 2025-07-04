@@ -190,7 +190,7 @@ async fn rebuild_state_trie_segment(
         }
         if snapshot_reads_since_last_commit > MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
-            state_trie.hash_async().await?;
+            state_trie.commit_async().await?;
         }
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
@@ -205,7 +205,7 @@ async fn rebuild_state_trie_segment(
             break;
         }
     }
-    root = state_trie.hash()?;
+    root = state_trie.hash_async().await?;
     Ok((root, start))
 }
 
