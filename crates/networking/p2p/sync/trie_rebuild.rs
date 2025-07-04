@@ -15,7 +15,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::sync::seconds_to_readable;
 
@@ -362,7 +362,7 @@ async fn rebuild_storage_tries(
             snapshot_reads_since_last_commit = 0;
         }
     }
-    store.apply_storage_trie_changes(nodes).await?;
+    store.commit_storage_nodes(nodes).await?;
     Ok(())
 }
 

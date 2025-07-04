@@ -87,11 +87,20 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_storage_trie_changes(
+    async fn commit_storage_nodes(
         &self,
-        _changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+        nodes: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
     ) -> Result<(), StoreError> {
-        todo!();
+        let mut db = self.inner()?;
+        for (account_hash, nodes) in nodes {
+            db.storage_trie_nodes
+                .entry(account_hash)
+                .or_default()
+                .lock()
+                .map_err(|_| StoreError::LockError)?
+                .extend(nodes.into_iter());
+        }
+        Ok(())
     }
 
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {

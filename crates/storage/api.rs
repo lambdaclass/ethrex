@@ -18,9 +18,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
-    async fn apply_storage_trie_changes(
+    /// Receives a mapping from account hash to a list of node hashes and nodes
+    /// Inserts the corresponding nodes on each storage trie given by its account hash
+    async fn commit_storage_nodes(
         &self,
-        changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+        nodes: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
     ) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.

@@ -305,7 +305,7 @@ impl RedBStore {
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
-    async fn apply_storage_trie_changes(
+    async fn commit_storage_nodes(
         &self,
         _changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
     ) -> Result<(), StoreError> {

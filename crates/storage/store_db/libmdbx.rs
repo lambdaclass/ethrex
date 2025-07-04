@@ -33,8 +33,6 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::time::Instant;
-use tracing::info;
 
 pub struct Store {
     db: Arc<Database>,
@@ -1123,14 +1121,14 @@ impl StoreEngine for Store {
             .await
     }
 
-    async fn apply_storage_trie_changes(
+    async fn commit_storage_nodes(
         &self,
-        changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+        nodes: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-            for (acc_hash, nodes) in changeset {
+            for (acc_hash, nodes) in nodes {
                 for (hash, node) in nodes {
                     txn.upsert::<StorageTriesNodes>(
                         (acc_hash.0, node_hash_to_fixed_size(hash)),
