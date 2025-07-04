@@ -18,7 +18,7 @@ fn block_import() {
 
     let blockchain_type = BlockchainType::default(); // TODO: Should we support L2?
 
-    let network = Network::from("../../test_data/genesis-perf-ci.json");
+    let network = Network::from("../../fixtures/genesis/perf-ci.json");
     let genesis = network
         .get_genesis()
         .expect("Failed to generate genesis from file");
