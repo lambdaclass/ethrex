@@ -83,14 +83,14 @@ contract OnChainProposer is
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice True if a Risc0 proof is required for batch verification.
-    bool REQUIRE_RISC0_PROOF;
+    bool public REQUIRE_RISC0_PROOF;
     /// @notice True if a SP1 proof is required for batch verification.
-    bool REQUIRE_SP1_PROOF;
+    bool public REQUIRE_SP1_PROOF;
     /// @notice True if a TDX proof is required for batch verification.
-    bool REQUIRE_TDX_PROOF;
+    bool public REQUIRE_TDX_PROOF;
 
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
-    bool ALIGNED;
+    bool public ALIGNED;
 
     modifier onlySequencer() {
         require(
