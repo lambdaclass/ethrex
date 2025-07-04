@@ -285,9 +285,11 @@ impl<'a> VM<'a> {
             Err(_) if size == 0 => 0,
             Err(_) => return Err(ExceptionalHalt::OutOfGas.into()),
         };
-        let src_offset: usize = src_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let src_offset: usize = match src_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::OutOfGas.into()),
+        };
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
 
