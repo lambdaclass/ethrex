@@ -3,6 +3,7 @@ use std::fmt::Display;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
+use keccak_hash::keccak;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -12,8 +13,8 @@ use ratatui::{
 };
 
 use crate::{
-    DepositData,
     monitor::{self, widget::HASH_LENGTH_IN_DIGITS},
+    sequencer::l1_watcher::PrivilegedTransactionData,
 };
 
 pub struct L1ToL2MessagesTable {
@@ -45,8 +46,8 @@ pub enum L1ToL2MessageKind {
     Message,
 }
 
-impl From<&DepositData> for L1ToL2MessageKind {
-    fn from(data: &DepositData) -> Self {
+impl From<&PrivilegedTransactionData> for L1ToL2MessageKind {
+    fn from(data: &PrivilegedTransactionData) -> Self {
         if data.from == COMMON_BRIDGE_L2_ADDRESS && data.to_address == COMMON_BRIDGE_L2_ADDRESS {
             Self::Deposit
         } else {
@@ -136,13 +137,25 @@ impl L1ToL2MessagesTable {
         let mut processed_logs = Vec::new();
 
         let pending_l1_to_l2_messages = eth_client
-            .get_pending_deposit_logs(common_bridge_address)
+            .get_pending_privileged_transactions(common_bridge_address)
             .await
             .expect("Failed to get pending L1 to L2 messages");
 
         for log in logs {
-            let l1_to_l2_message =
-                DepositData::from_log(log.log.clone()).expect("Failed to parse L1ToL2Message log");
+            let l1_to_l2_message = PrivilegedTransactionData::from_log(log.log.clone())
+                .expect("Failed to parse L1ToL2Message log");
+
+            let l1_to_l2_message_hash = keccak(
+                &[
+                    l1_to_l2_message.from.as_bytes(),
+                    l1_to_l2_message.to_address.as_bytes(),
+                    &l1_to_l2_message.transaction_id.to_big_endian(),
+                    &l1_to_l2_message.value.to_big_endian(),
+                    &l1_to_l2_message.gas_limit.to_big_endian(),
+                    keccak(&l1_to_l2_message.calldata).as_bytes(),
+                ]
+                .concat(),
+            );
 
             processed_logs.push((
                 if pending_l1_to_l2_messages.contains(&log.transaction_hash) {
@@ -152,7 +165,7 @@ impl L1ToL2MessagesTable {
                 },
                 L1ToL2MessageKind::from(&l1_to_l2_message),
                 log.transaction_hash,
-                l1_to_l2_message.deposit_tx_hash,
+                l1_to_l2_message_hash,
                 l1_to_l2_message.value,
             ));
         }
