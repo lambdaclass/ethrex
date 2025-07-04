@@ -1,11 +1,8 @@
 name: Block Import Benchmark
 
 on:
-  workflow_call:
-  pull-request:
-    branches: [**]
-  push:
-    branches: [main]
+  pull_request:
+    branches: ["**"]
 
 permissions:
   # deployments permission to deploy GitHub pages website
