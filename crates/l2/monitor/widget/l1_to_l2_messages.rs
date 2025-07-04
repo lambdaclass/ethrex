@@ -3,6 +3,7 @@ use std::fmt::Display;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
+use ethrex_storage::Store;
 use keccak_hash::keccak;
 use ratatui::{
     buffer::Buffer,
@@ -41,14 +42,9 @@ impl L1ToL2MessageStatus {
         l2_tx_hash: H256,
         common_bridge_address: Address,
         eth_client: &EthClient,
-        rollup_client: &EthClient,
+        store: &Store,
     ) -> Self {
-        if rollup_client
-            .get_transaction_receipt(l2_tx_hash)
-            .await
-            .expect("Failed retrieving privilege tx receipt")
-            .is_some()
-        {
+        if let Ok(Some(_tx)) = store.get_transaction_by_hash(l2_tx_hash).await {
             Self::ProcessedOnL2
         } else if eth_client
             .get_pending_privileged_transactions(common_bridge_address)
@@ -104,7 +100,7 @@ impl L1ToL2MessagesTable {
     pub async fn new(
         common_bridge_address: Address,
         eth_client: &EthClient,
-        rollup_client: &EthClient,
+        store: &Store,
     ) -> Self {
         let mut last_l1_block_fetched = eth_client
             .get_last_fetched_l1_block(common_bridge_address)
@@ -115,7 +111,7 @@ impl L1ToL2MessagesTable {
             &mut last_l1_block_fetched,
             common_bridge_address,
             eth_client,
-            rollup_client,
+            store,
         )
         .await;
         Self {
@@ -126,30 +122,30 @@ impl L1ToL2MessagesTable {
         }
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+    pub async fn on_tick(&mut self, eth_client: &EthClient, store: &Store) {
         let mut new_l1_to_l2_messages = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.common_bridge_address,
             eth_client,
-            rollup_client,
+            store,
         )
         .await;
         new_l1_to_l2_messages.truncate(50);
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(eth_client, rollup_client).await;
+        self.refresh_items(eth_client, store).await;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
     }
 
-    async fn refresh_items(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+    async fn refresh_items(&mut self, eth_client: &EthClient, store: &Store) {
         for (_kind, status, _l1_tx_hash, l2_tx_hash, ..) in self.items.iter_mut() {
             *status = L1ToL2MessageStatus::for_tx(
                 *l2_tx_hash,
                 self.common_bridge_address,
                 eth_client,
-                rollup_client,
+                store,
             )
             .await;
         }
@@ -159,10 +155,10 @@ impl L1ToL2MessagesTable {
         last_l1_block_fetched: &mut U256,
         common_bridge_address: Address,
         eth_client: &EthClient,
-        rollup_client: &EthClient,
+        store: &Store,
     ) -> Vec<L1ToL2MessagesRow> {
         let logs = Self::get_logs(last_l1_block_fetched, common_bridge_address, eth_client).await;
-        Self::process_logs(&logs, common_bridge_address, eth_client, rollup_client).await
+        Self::process_logs(&logs, common_bridge_address, eth_client, store).await
     }
 
     async fn get_logs(
@@ -183,7 +179,7 @@ impl L1ToL2MessagesTable {
         logs: &[RpcLog],
         common_bridge_address: Address,
         eth_client: &EthClient,
-        rollup_client: &EthClient,
+        store: &Store,
     ) -> Vec<L1ToL2MessagesRow> {
         let mut processed_logs = Vec::new();
 
@@ -209,7 +205,7 @@ impl L1ToL2MessagesTable {
                     l1_to_l2_message_hash,
                     common_bridge_address,
                     eth_client,
-                    rollup_client,
+                    store,
                 )
                 .await,
                 log.transaction_hash,
