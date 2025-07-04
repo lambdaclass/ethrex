@@ -831,8 +831,7 @@ impl PeerHandler {
             .lock()
             .await
             .iter_peers()
-            .collect::<Vec<_>>()
-            .len()
+            .count()
     }
 
     pub async fn remove_peer(&self, peer_id: H256) {
