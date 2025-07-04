@@ -13,10 +13,12 @@ pub async fn exec(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         witness: db,
+        chain_config,
     } = cache;
     let input = ProgramInput {
         blocks,
         db,
+        chain_config,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         // The L2 specific fields (state_diff, blob_commitment, blob_proof)
         // will be filled by Default::default() if the 'l2' feature of
@@ -36,11 +38,13 @@ pub async fn prove(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         witness: db,
+        chain_config,
     } = cache;
     ethrex_prover_lib::prove(
         ProgramInput {
             blocks,
             db,
+            chain_config,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             // The L2 specific fields (blob_commitment, blob_proof)
             // will be filled by Default::default() if the 'l2' feature of
@@ -69,7 +73,7 @@ pub async fn run_tx(
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
     let mut prover_db = cache.witness;
-    prover_db.rebuild_tries()?;
+    prover_db.rebuild_tries(cache.chain_config, &block.header)?;
 
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 

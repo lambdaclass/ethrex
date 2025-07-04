@@ -10,7 +10,7 @@ use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::{
     Address,
-    types::{Block, blobs_bundle},
+    types::{Block, blobs_bundle, ChainConfig},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rpc::clients::eth::EthClient;
@@ -34,6 +34,7 @@ use tracing::{debug, error, info, warn};
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub db: ExecutionWitnessResult,
+    pub chain_config: ChainConfig,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
@@ -154,6 +155,7 @@ pub struct ProofCoordinatorState {
     port: u16,
     store: Store,
     eth_client: EthClient,
+    chain_config: ChainConfig,
     on_chain_proposer_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
@@ -196,11 +198,14 @@ impl ProofCoordinatorState {
             ))?
             .to_string();
 
+        let chain_config = store.get_chain_config()?;
+
         Ok(Self {
             listen_ip: config.listen_ip,
             port: config.listen_port,
             store,
             eth_client,
+            chain_config,
             on_chain_proposer_address,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
@@ -579,6 +584,7 @@ async fn create_prover_input(
     Ok(ProverInputData {
         db: witness,
         blocks,
+        chain_config: state.chain_config,
         elasticity_multiplier: state.elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,

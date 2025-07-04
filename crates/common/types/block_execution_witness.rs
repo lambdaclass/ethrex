@@ -9,7 +9,7 @@ use crate::{
     H160,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
-use bytes::Bytes;
+use bytes::{buf::Chain, Bytes};
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
@@ -120,7 +120,9 @@ pub fn rebuild_storage_trie(address: &Vec<u8>, trie: &Trie, state: Vec<Vec<u8>>)
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(&mut self) -> Result<(), ExecutionWitnessError> {
+    pub fn rebuild_tries(&mut self, chain_config: ChainConfig, parent_block: &BlockHeader) -> Result<(), ExecutionWitnessError> {
+        self.chain_config = chain_config;
+        
         let Some(state) = self.state.as_ref() else {
             return Err(ExecutionWitnessError::RebuildTrie(
                 "Tried to rebuild tries with empty nodes, rebuilding the trie can only be done once"
@@ -128,32 +130,15 @@ impl ExecutionWitnessResult {
             ));
         };
 
-        let mut first_block = self
-            .headers
-            .last()
-            .ok_or(ExecutionWitnessError::NoBlockHeaders)?;
         for header in &self.headers {
             self.block_headers.insert(header.number, header.clone());
-            if header.number < first_block.number {
-                first_block = header;
-            }
         }
 
-        let state_root = first_block.state_root;
-        let state_trie = rebuild_trie(state_root, state.clone())?;
+        let state_trie = rebuild_trie(parent_block.state_root, state.clone())?;
 
-        // So keys can either be account addresses or storage slots
-        // addresses are 20 u8 long
+        // Keys can either be account addresses or storage slots. They have different sizes,
+        // so we filter them by size. Addresses are 20 u8 long
         let addresses: Vec<&Vec<u8>> = self.keys.iter().filter(|k| k.len() == 20).collect();
-
-        // Storage slots are 32 u8 long
-        // TODO consider removing this
-        let _: Vec<H256> = self
-            .keys
-            .iter()
-            .filter(|k: &&Vec<u8>| k.len() == 32)
-            .map(|k| H256::from_slice(k))
-            .collect();
 
         let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
             addresses

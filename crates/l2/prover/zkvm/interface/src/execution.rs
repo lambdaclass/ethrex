@@ -10,7 +10,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{
     H256,
-    types::{Block, BlockHeader},
+    types::{Block, BlockHeader, ChainConfig},
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
@@ -96,6 +96,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
     let ProgramInput {
         blocks,
         mut db,
+        chain_config,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,
@@ -107,18 +108,19 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         return stateless_validation_l2(
             &blocks,
             &mut db,
+            chain_config,
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
         );
     }
-    stateless_validation_l1(&blocks, &mut db, elasticity_multiplier)
+    stateless_validation_l1(&blocks, &mut db,  chain_config, elasticity_multiplier)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
     db: &mut ExecutionWitnessResult,
-
+    chain_config: ChainConfig,
     elasticity_multiplier: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
@@ -126,7 +128,7 @@ pub fn stateless_validation_l1(
         final_state_hash,
         last_block_hash,
         ..
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, chain_config, elasticity_multiplier)?;
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -144,6 +146,7 @@ pub fn stateless_validation_l1(
 pub fn stateless_validation_l2(
     blocks: &[Block],
     db: &mut ExecutionWitnessResult,
+    chain_config: ChainConfig,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
@@ -157,7 +160,7 @@ pub fn stateless_validation_l2(
         account_updates,
         last_block_header,
         last_block_hash,
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, chain_config, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -170,10 +173,12 @@ pub fn stateless_validation_l2(
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
+    let first_header = &blocks.first().ok_or(StatelessExecutionError::EmptyBatchError)?.header;
+
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
         initial_db
-            .rebuild_tries()
+            .rebuild_tries(chain_config, first_header)
             .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
         let state_diff = prepare_state_diff(
             last_block_header,
@@ -209,9 +214,13 @@ struct StatelessResult {
 fn execute_stateless(
     blocks: &[Block],
     db: &mut ExecutionWitnessResult,
+    chain_config: ChainConfig,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_tries()
+    
+    db.rebuild_tries(
+        chain_config
+        , &blocks.first().ok_or(StatelessExecutionError::InvalidInitialStateTrie)?.header)
         .map_err(StatelessExecutionError::ExecutionWitness)?;
 
     // Validate block hashes, except parent block hash (latest block hash)

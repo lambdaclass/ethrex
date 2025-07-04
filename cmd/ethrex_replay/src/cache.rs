@@ -3,7 +3,7 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult, ChainConfig};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: ExecutionWitnessResult,
+    pub chain_config: ChainConfig,
 }
 
 pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
