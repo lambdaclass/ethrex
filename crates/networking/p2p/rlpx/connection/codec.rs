@@ -240,7 +240,8 @@ impl Decoder for RLPxCodec {
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
 
-        // TODO: remove unwrap
+        // NOTE: this crashes since it is not possible to create a runtime within an async context.
+        // Find the right way to lock the capabilities mutex
         let rt = tokio::runtime::Runtime::new().unwrap();
         let capabilities = rt.block_on(async { self.capabilities.lock().await });
         Ok(Some(rlpx::Message::decode(
@@ -279,7 +280,8 @@ impl Encoder<rlpx::Message> for RLPxCodec {
     fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
 
-        // TODO: remove unwrap
+        // NOTE: this crashes since it is not possible to create a runtime within an async context.
+        // Find the right way to lock the capabilities mutex
         let rt = tokio::runtime::Runtime::new().unwrap();
         let capabilities = rt.block_on(async { self.capabilities.lock().await });
         message.encode(

@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
