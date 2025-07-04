@@ -91,7 +91,7 @@ pub async fn get_needed_proof_types(
                 .last()
                 .ok_or(EthClientError::InternalError("empty response".to_string()))?
                 == '1';
-            if !required_proof_type {
+            if required_proof_type {
                 info!("{prover_type} proof needed");
                 needed_proof_types.push(prover_type);
             }
