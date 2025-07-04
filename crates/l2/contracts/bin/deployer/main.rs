@@ -19,7 +19,8 @@ use ethrex_l2_sdk::{
 };
 use ethrex_rpc::{
     EthClient,
-    clients::{Overrides, eth::BlockByNumber},
+    clients::Overrides,
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
 use tracing::{Level, debug, error, info, trace, warn};
@@ -543,7 +544,7 @@ async fn make_deposits(
         };
 
         let get_balance = eth_client
-            .get_balance(address, BlockByNumber::Latest)
+            .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
