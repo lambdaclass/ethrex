@@ -20,12 +20,13 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -36,8 +37,14 @@ use tracing_subscriber::{
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
-        .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy();
+        .with_default_directive(
+            // Filters all spawned logs
+            // TODO: revert #3467 when error logs are no longer emitted
+            Directive::from_str("spawned_concurrency::tasks::gen_server=off")
+                .expect("this can't fail"),
+        )
+        .from_env_lossy()
+        .add_directive(Directive::from(opts.log_level));
 
     let fmt_layer = fmt::layer().with_filter(log_filter);
     if opts.profiling_enabled {

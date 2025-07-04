@@ -1,9 +1,9 @@
 #[cfg(feature = "api")]
 pub mod api;
-#[cfg(any(feature = "api", feature = "l2", feature = "metrics"))]
+#[cfg(feature = "api")]
+pub mod l2;
+#[cfg(any(feature = "api", feature = "metrics"))]
 pub mod metrics_blocks;
-#[cfg(any(feature = "api", feature = "l2"))]
-pub mod metrics_l2;
 #[cfg(feature = "api")]
 pub mod metrics_profiling;
 #[cfg(any(feature = "api", feature = "transactions"))]
