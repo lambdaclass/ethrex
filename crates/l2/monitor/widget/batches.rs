@@ -1,5 +1,3 @@
-use std::cmp::min;
-
 use ethrex_common::{Address, H256, types::batch::Batch};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -29,7 +27,7 @@ impl BatchesTable {
         rollup_store: &StoreRollup,
     ) -> Self {
         let mut last_l1_block_fetched = 0;
-        let items = Self::refresh_items(
+        let items = Self::fetch_new_items(
             &mut last_l1_block_fetched,
             on_chain_proposer_address,
             eth_client,
@@ -45,7 +43,7 @@ impl BatchesTable {
     }
 
     pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_store: &StoreRollup) {
-        let mut new_latest_batches = Self::refresh_items(
+        let mut new_latest_batches = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.on_chain_proposer_address,
             eth_client,
@@ -57,58 +55,55 @@ impl BatchesTable {
 
         if n_new_latest_batches > 50 {
             new_latest_batches.truncate(50);
+            self.items.truncate(0);
             self.items.extend_from_slice(&new_latest_batches);
         } else {
             self.items.truncate(50 - n_new_latest_batches);
+            self.refresh_items(rollup_store).await;
             self.items.extend_from_slice(&new_latest_batches);
             self.items.rotate_right(n_new_latest_batches);
         }
     }
 
-    async fn refresh_items(
+    async fn refresh_items(&mut self, rollup_store: &StoreRollup) {
+        let mut from = self.items.last().expect("No items in the table").0 - 1;
+
+        let refreshed_batches =
+            Self::get_batches(&mut from, self.items.first().expect("").0, rollup_store).await;
+
+        let refreshed_items = Self::process_batches(refreshed_batches).await;
+
+        self.items = refreshed_items;
+    }
+
+    async fn fetch_new_items(
         last_l2_batch_fetched: &mut u64,
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
     ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
-        let new_batches = Self::get_batches(
-            last_l2_batch_fetched,
-            on_chain_proposer_address,
-            eth_client,
-            rollup_store,
-        )
-        .await;
-
-        Self::process_batches(new_batches).await
-    }
-
-    async fn get_batches(
-        last_l2_batch_known: &mut u64,
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-        rollup_store: &StoreRollup,
-    ) -> Vec<Batch> {
         let last_l2_batch_number = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
             .expect("Failed to get latest L2 batch");
 
+        let new_batches =
+            Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await;
+
+        Self::process_batches(new_batches).await
+    }
+
+    async fn get_batches(from: &mut u64, to: u64, rollup_store: &StoreRollup) -> Vec<Batch> {
         let mut new_batches = Vec::new();
-        while *last_l2_batch_known < last_l2_batch_number {
-            let new_last_l2_fetched_batch = min(*last_l2_batch_known + 1, last_l2_batch_number);
+
+        while *from < to {
+            *from += 1;
 
             let new_batch = rollup_store
-                .get_batch(new_last_l2_fetched_batch)
+                .get_batch(*from)
                 .await
-                .unwrap_or_else(|err| {
-                    panic!("Failed to get batch by number ({new_last_l2_fetched_batch}): {err}")
-                })
-                .unwrap_or_else(|| {
-                    panic!("Batch {new_last_l2_fetched_batch} not found in the rollup store")
-                });
-
-            // Update the last L1 block fetched.
-            *last_l2_batch_known = new_last_l2_fetched_batch;
+                .unwrap_or_else(|err| panic!("Failed to get batch by number ({from}): {err}"))
+                .unwrap_or_else(|| panic!("Batch {from} not found in the rollup store"));
 
             new_batches.push(new_batch);
         }
