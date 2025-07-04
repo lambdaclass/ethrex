@@ -74,12 +74,12 @@ impl Store {
             blobs_bundle: BlobsBundle::empty(),
         })
         .await?;
-        // Sets the lastest sent batch proof to 0
+        // Sets the latest sent batch proof to 0
         self.set_lastest_sent_batch_proof(0).await
     }
 
     /// Stores the block numbers by a given batch_number
-    pub async fn store_block_numbers_by_batch(
+    async fn store_block_numbers_by_batch(
         &self,
         batch_number: u64,
         block_numbers: Vec<BlockNumber>,
@@ -103,7 +103,8 @@ impl Store {
     ) -> Result<Option<u64>, StoreError> {
         self.engine.get_batch_number_by_block(block_number).await
     }
-    pub async fn store_batch_number_by_block(
+
+    async fn store_batch_number_by_block(
         &self,
         block_number: BlockNumber,
         batch_number: u64,
@@ -122,7 +123,7 @@ impl Store {
             .await
     }
 
-    pub async fn store_withdrawal_hashes_by_batch(
+    async fn store_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawal_hashes: Vec<H256>,
@@ -141,7 +142,7 @@ impl Store {
             .await
     }
 
-    pub async fn store_deposit_logs_hash_by_batch(
+    async fn store_deposit_logs_hash_by_batch(
         &self,
         batch_number: u64,
         deposit_logs_hash: H256,
@@ -160,7 +161,7 @@ impl Store {
             .await
     }
 
-    pub async fn store_state_root_by_batch(
+    async fn store_state_root_by_batch(
         &self,
         batch_number: u64,
         state_root: H256,
