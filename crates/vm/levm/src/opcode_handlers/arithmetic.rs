@@ -6,7 +6,7 @@ use crate::{
 };
 use ethrex_common::{
     U256, U512,
-    utils::{u256_from_u512, u512_from_u256},
+    utils::{u256_from_u512, u256_overflowing_pow, u512_from_u256},
 };
 
 // Arithmetic Operations (11)
@@ -209,11 +209,9 @@ impl<'a> VM<'a> {
 
         let gas_cost = gas_cost::exp(exponent)?;
 
-        let exponent: u32 = exponent.try_into().map_err(|_| InternalError::Overflow)?;
-
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
-        let power = base.overflowing_pow(exponent).0;
+        let power = u256_overflowing_pow(base, exponent).0;
         current_call_frame.stack.push(&[power])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })

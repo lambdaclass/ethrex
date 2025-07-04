@@ -69,6 +69,37 @@ pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
     hex::decode(trimmed)
 }
 
+pub fn u256_overflowing_pow(mut base: ethnum::U256, mut exp: ethnum::U256) -> (ethnum::U256, bool) {
+    use ethnum::U256;
+    let mut acc = U256::ONE;
+    let mut overflown = false;
+    // Scratch space for storing results of overflowing_mul.
+    let mut r;
+
+    while exp > 1 {
+        if (exp & 1) == 1 {
+            r = acc.overflowing_mul(base);
+            acc = r.0;
+            overflown |= r.1;
+        }
+        exp /= 2;
+        r = base.overflowing_mul(base);
+        base = r.0;
+        overflown |= r.1;
+    }
+
+    // Deal with the final bit of the exponent separately, since
+    // squaring the base afterwards is not necessary and may cause a
+    // needless overflow.
+    if exp == 1 {
+        r = acc.overflowing_mul(base);
+        acc = r.0;
+        overflown |= r.1;
+    }
+
+    (acc, overflown)
+}
+
 #[cfg(test)]
 mod tests {
     use ethereum_types::H160;
