@@ -63,10 +63,6 @@ vergen-git2 = { version = "1.0.7" }
 [lib]
 path = "./l2.rs"
 
-[[bin]]
-name = "ethrex-l2-based-monitor"
-path = "./based/bin/monitor/main.rs"
-
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

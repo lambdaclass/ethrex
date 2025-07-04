@@ -228,8 +228,8 @@ impl StatefulWidget for &mut L2ToL1MessagesTable {
         Self: Sized,
     {
         let constraints = vec![
-            Constraint::Length(9),
             Constraint::Length(16),
+            Constraint::Length(9),
             Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
             Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
             Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
