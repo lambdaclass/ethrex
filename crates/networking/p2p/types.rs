@@ -267,8 +267,12 @@ impl NodeRecord {
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 "eth" => {
-                    // the first byte is ignored as an array within an array is received
-                    decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
+                    let Ok(decoder) = Decoder::new(&value) else {
+                        continue;
+                    };
+                    let (fork_id, decoder) = decoder.decode_optional_field();
+                    decoder.finish_unchecked();
+                    decoded_pairs.eth = fork_id;
                 }
                 _ => {}
             }
