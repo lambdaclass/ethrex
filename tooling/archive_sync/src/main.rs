@@ -28,7 +28,9 @@ use tokio::task::JoinSet;
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
+/// Max account dumps to ask for in a single request. The current value matches geth's maximum output.
 const MAX_ACCOUNTS: usize = 256;
+/// Amount of blocks before the target block to request hashes for. These may be needed to execute the next block after the target block.
 const BLOCK_HASH_LOOKUP_DEPH: u64 = 128;
 
 #[derive(Deserialize, Debug)]
