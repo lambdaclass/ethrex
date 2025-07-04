@@ -6,11 +6,11 @@ use ethrex_common::{
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
-use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
-use crate::fetcher::{get_batchdata, get_blockdata, get_rangedata};
+use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, fetcher::get_batchdata};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
