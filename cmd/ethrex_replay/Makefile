@@ -28,3 +28,5 @@ prove-risc0:
 	cargo r -r --no-default-features --features risc0 -- prove block ${REPLAY_ARGS}
 prove-risc0-gpu:
 	cargo r -r --no-default-features --features "risc0,gpu" -- prove block ${REPLAY_ARGS}
+prove-risc0-gpu-ci:
+	cargo r -r --no-default-features --features "risc0,gpu,ci" -- prove block ${REPLAY_ARGS}
