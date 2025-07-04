@@ -53,5 +53,5 @@ charming = { version = "0.4.0", features = ["ssr"] }
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
 sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
-l2 = ["zkvm_interface/l2"]
+l2 = ["zkvm_interface/l2", "ethrex-prover/l2"]
 ci = []
