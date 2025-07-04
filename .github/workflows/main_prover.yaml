@@ -82,6 +82,7 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
+          ETHREX_COMMITTER_COMMIT_TIME=180000 \
           docker compose -f docker-compose-l2.yaml up --build ethrex_l2 --detach
 
       - name: Run test
