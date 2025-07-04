@@ -57,7 +57,7 @@ pub(crate) async fn heal_state_trie(
             let speed = healing_start
                 .elapsed()
                 .as_millis()
-                .checked_div((total_healed/100) as u128)
+                .checked_div((total_healed / 100) as u128)
                 .unwrap_or(9999);
             info!(
                 "State Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
@@ -156,15 +156,17 @@ async fn heal_state_batch(
                 }
             }
             // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .into_iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+            trie.db()
+                .put_batch_async(
+                    nodes
+                        .into_iter()
+                        .filter_map(|node| match node.compute_hash() {
+                            hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                            NodeHash::Inline(_) => None,
+                        })
+                        .collect(),
+                )
+                .await?;
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {
