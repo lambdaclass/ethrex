@@ -402,7 +402,7 @@ impl StoreEngineRollup for SQLStore {
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.execute(
-            "UPDATE operation_count SET transactions = transactions + ?1, privileged_transactions = privileged_transactions + ?2, messages = messages + ?3", 
+            "UPDATE operation_count SET transactions = transactions + ?1, privileged_transactions = privileged_transactions + ?2, messages = messages + ?3",
             (transaction_inc, privileged_transactions_inc, messages_inc)).await?;
         Ok(())
     }
@@ -429,22 +429,22 @@ impl StoreEngineRollup for SQLStore {
         Ok(row.next().await?.is_some())
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
+    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         let mut rows = self.query("SELECT * from latest_sent", ()).await?;
         if let Some(row) = rows.next().await? {
             return read_from_row_int(&row, 1);
         }
         Err(RollupStoreError::Custom(
-            "missing operation_count row".to_string(),
+            "missing latest_sent row".to_string(),
         ))
     }
 
-    async fn set_lastest_sent_batch_proof(
-        &self,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
-            .await?;
+    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.execute(
+            "UPDATE latest_sent SET batch = ?1 WHERE _id = 0",
+            [batch_number],
+        )
+        .await?;
         Ok(())
     }
 

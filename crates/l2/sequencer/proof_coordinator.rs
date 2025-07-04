@@ -1,6 +1,5 @@
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-use crate::sequencer::utils::get_latest_sent_batch;
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
@@ -161,7 +160,6 @@ pub struct ProofCoordinatorState {
     l1_private_key: SecretKey,
     blockchain: Arc<Blockchain>,
     validium: bool,
-    needed_proof_types: Vec<ProverType>,
     commit_hash: String,
 }
 
@@ -175,7 +173,6 @@ impl ProofCoordinatorState {
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
-        needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -208,7 +205,6 @@ impl ProofCoordinatorState {
             l1_private_key: config.l1_private_key,
             blockchain,
             validium: config.validium,
-            needed_proof_types,
             commit_hash: get_commit_hash(),
         })
     }
@@ -232,7 +228,6 @@ impl ProofCoordinator {
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
         blockchain: Arc<Blockchain>,
-        needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
         let state = ProofCoordinatorState::new(
             &cfg.proof_coordinator,
@@ -242,7 +237,6 @@ impl ProofCoordinator {
             store,
             rollup_store,
             blockchain,
-            needed_proof_types,
         )
         .await?;
         let listener =
@@ -422,6 +416,7 @@ async fn handle_request(
     commit_hash: String,
 ) -> Result<(), ProofCoordinatorError> {
     info!("BatchRequest received");
+    let batch_to_prove = 1 + state.rollup_store.get_latest_sent_batch_proof().await?;
 
     if commit_hash != state.commit_hash {
         error!(
@@ -435,26 +430,17 @@ async fn handle_request(
         return Ok(());
     }
 
-    let batch_to_verify = 1 + get_latest_sent_batch(
-        state.needed_proof_types.clone(),
-        &state.rollup_store,
-        &state.eth_client,
-        state.on_chain_proposer_address,
-    )
-    .await
-    .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
-
-    let response = if !state.rollup_store.contains_batch(&batch_to_verify).await? {
+    let response = if !state.rollup_store.contains_batch(&batch_to_prove).await? {
         debug!("Sending empty BatchResponse");
         ProofData::empty_batch_response()
     } else {
-        let input = create_prover_input(state, batch_to_verify).await?;
-        debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-        ProofData::batch_response(batch_to_verify, input)
+        let input = create_prover_input(state, batch_to_prove).await?;
+        debug!("Sending BatchResponse for block_number: {batch_to_prove}");
+        ProofData::batch_response(batch_to_prove, input)
     };
 
     send_response(stream, &response).await?;
-    info!("BatchResponse sent for batch number: {batch_to_verify}");
+    info!("BatchResponse sent for batch number: {batch_to_prove}");
 
     Ok(())
 }

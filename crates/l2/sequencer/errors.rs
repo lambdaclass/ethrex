@@ -1,6 +1,7 @@
 use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
+use aligned_sdk::common::errors::SubmitError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
@@ -135,8 +136,16 @@ pub enum ProofSenderError {
     AlignedFeeEstimateError(String),
     #[error("Proof Sender failed to get nonce from batcher: {0}")]
     AlignedGetNonceError(String),
-    #[error("Proof Sender failed to submit proof: {0}")]
-    AlignedSubmitProofError(String),
+    #[error("Proof Sender failed to submit proof(s): {0}")]
+    AlignedSubmitProofError(Box<SubmitError>),
+    #[error("Wrong batch proof format; should be compressed but found groth16 instead")]
+    AlignedWrongProofFormat,
+}
+
+impl From<SubmitError> for ProofSenderError {
+    fn from(value: SubmitError) -> Self {
+        ProofSenderError::AlignedSubmitProofError(value.into())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +162,8 @@ pub enum ProofVerifierError {
     StoreError(#[from] StoreError),
     #[error("Block Producer failed because of a rollup store error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
+    #[error("Aligned does not support prover type {0}")]
+    UnsupportedProverType(String),
 }
 
 #[derive(Debug, thiserror::Error)]

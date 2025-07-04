@@ -89,5 +89,5 @@ pub struct AlignedConfig {
     pub beacon_urls: Vec<Url>,
     pub network: Network,
     pub fee_estimate: String,
-    pub aligned_sp1_elf_path: String,
+    pub sp1_elf_path: String,
 }

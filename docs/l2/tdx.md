@@ -58,7 +58,7 @@ Exports an image that uses [UKI](https://uapi-group.org/specifications/specs/uni
 
 ## Running
 
-You can enable the prover by setting `ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true` and running the sequencer in production mode (`ETHREX_PROOF_COORDINATOR_DEV_MODE=false`).
+You can enable the prover by setting `ETHREX_DEPLOYER_TDX=true` and running the sequencer in production mode (`ETHREX_PROOF_COORDINATOR_DEV_MODE=false`).
 
 For development purposes, you can use the flag `ETHREX_TDX_DEV_MODE=true` to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.
 
@@ -66,7 +66,7 @@ Ensure the proof coordinator is reachable at 172.17.0.1. You can bring up the ne
 
 ```sh
 // cd crates/l2
-make init ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0
+make init ETHREX_DEPLOYER_TDX=true ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0
 ```
 
 And in another terminal, running the VM:

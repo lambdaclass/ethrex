@@ -123,12 +123,14 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
       ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
       // Set to true to randomize the salt.
       ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
-      // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-      ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
-      // Check the if the contract is present on your preferred network.
-      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
-      // It can be deployed. Check the if the contract is present on your preferred network.
+      // Set to true if you want SP1 proofs to be required
+      ETHREX_DEPLOYER_SP1=true
+      // Check the if the verification contract is present on your preferred network. Don't define this if you want it to be deployed automatically.
       ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+      // Set to true if you want proofs to be required
+      ETHREX_DEPLOYER_RISC0=true
+      // Check the if the contract is present on your preferred network. You shall deploy it manually if not.
+      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
       // Set to any L1 endpoint.
       ETHREX_ETH_RPC_URL=<url>
       ```
