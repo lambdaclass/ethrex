@@ -58,11 +58,7 @@ prove-batch-sp1:
 	SP1_PROVER=cpu cargo r -r --features "sp1,l2" -- prove batch ${REPLAY_BATCH_ARGS}
 prove-batch-sp1-gpu:
 	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,l2" -- prove batch ${REPLAY_BATCH_ARGS}
-prove-batch-sp1-gpu-ci:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,ci,l2" -- prove batch ${REPLAY_BATCH_ARGS}
 prove-batch-risc0:
 	cargo r -r --no-default-features --features "risc0,l2" -- prove batch ${REPLAY_BATCH_ARGS}
 prove-batch-risc0-gpu:
 	cargo r -r --no-default-features --features "risc0,gpu,l2" -- prove batch ${REPLAY_BATCH_ARGS}
-prove-batch-risc0-gpu-ci:
-	cargo r -r --no-default-features --features "risc0,gpu,ci,l2" -- prove batch ${REPLAY_BATCH_ARGS}
