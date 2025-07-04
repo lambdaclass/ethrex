@@ -41,14 +41,14 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
-    /// @param processedDepositLogsRollingHash the rolling hash of the processed
-    /// deposits logs of the batch to be committed.
+    /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
+    /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash,
+        bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external;
 
@@ -58,7 +58,6 @@ interface IOnChainProposer {
     /// @param batchNumber is the number of the batch to be verified.
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
-    /// @param risc0ImageId Digest of the zkVM imageid.
     /// @param risc0Journal public_inputs aka journal
     /// ----------------------------------------------------------------------
     /// @param sp1PublicValues Values used to perform the execution
@@ -70,7 +69,6 @@ interface IOnChainProposer {
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,

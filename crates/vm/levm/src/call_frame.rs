@@ -102,6 +102,10 @@ impl Stack {
         self.values.swap(self.offset, index);
         Ok(())
     }
+
+    pub fn clear(&mut self) {
+        self.offset = STACK_LIMIT;
+    }
 }
 
 impl Default for Stack {
@@ -231,6 +235,7 @@ impl CallFrame {
         is_create: bool,
         ret_offset: usize,
         ret_size: usize,
+        stack: Stack,
     ) -> Self {
         let invalid_jump_destinations =
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
@@ -250,6 +255,7 @@ impl CallFrame {
             is_create,
             ret_offset,
             ret_size,
+            stack,
             ..Default::default()
         }
     }
