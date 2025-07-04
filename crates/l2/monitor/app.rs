@@ -100,7 +100,7 @@ impl<'a> EthrexMonitor<'a> {
             )
             .await,
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(&rollup_client).await,
+            node_status: NodeStatusTable::new(&rollup_client, &store).await,
             mempool: MempoolTable::new(&rollup_client).await,
             batches_table: BatchesTable::new(
                 cfg.l1_committer.on_chain_proposer_address,
@@ -246,7 +246,9 @@ impl<'a> EthrexMonitor<'a> {
     }
 
     pub async fn on_tick(&mut self) {
-        self.node_status.on_tick(&self.rollup_client).await;
+        self.node_status
+            .on_tick(&self.rollup_client, &self.store)
+            .await;
         self.global_chain_status
             .on_tick(&self.eth_client, &self.store, &self.rollup_store)
             .await;

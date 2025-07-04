@@ -1,4 +1,5 @@
 use ethrex_rpc::EthClient;
+use ethrex_storage::Store;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -13,26 +14,26 @@ pub struct NodeStatusTable {
 }
 
 impl NodeStatusTable {
-    pub async fn new(rollup_client: &EthClient) -> Self {
+    pub async fn new(rollup_client: &EthClient, store: &Store) -> Self {
         Self {
             state: TableState::default(),
-            items: Self::refresh_items(rollup_client).await,
+            items: Self::refresh_items(rollup_client, store).await,
         }
     }
 
-    pub async fn on_tick(&mut self, rollup_client: &EthClient) {
-        self.items = Self::refresh_items(rollup_client).await;
+    pub async fn on_tick(&mut self, rollup_client: &EthClient, store: &Store) {
+        self.items = Self::refresh_items(rollup_client, store).await;
     }
 
-    async fn refresh_items(rollup_client: &EthClient) -> [(String, String); 5] {
+    async fn refresh_items(rollup_client: &EthClient, store: &Store) -> [(String, String); 5] {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let status = rollup_client
             .node_status()
             .await
             .expect("Failed to get node status");
         let last_known_batch = "NaN"; // TODO: Implement last known batch retrieval
-        let last_known_block = rollup_client
-            .get_block_number()
+        let last_known_block = store
+            .get_latest_block_number()
             .await
             .expect("Failed to get latest known L2 block");
         let follower_nodes = "NaN"; // TODO: Implement follower nodes retrieval
