@@ -98,18 +98,6 @@ async fn main() -> eyre::Result<()> {
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    init_rpc_api(
-        &opts,
-        peer_table.clone(),
-        local_p2p_node.clone(),
-        local_node_record.lock().await.clone(),
-        store.clone(),
-        blockchain.clone(),
-        cancel_token.clone(),
-        tracker.clone(),
-    )
-    .await;
-
     if opts.metrics_enabled {
         init_metrics(&opts, tracker.clone());
     }
@@ -127,7 +115,7 @@ async fn main() -> eyre::Result<()> {
                     &opts,
                     &network,
                     &data_dir,
-                    local_p2p_node,
+                    local_p2p_node.clone(),
                     local_node_record.clone(),
                     signer,
                     peer_table.clone(),
@@ -141,6 +129,18 @@ async fn main() -> eyre::Result<()> {
             }
         }
     }
+
+    init_rpc_api(
+        &opts,
+        peer_table.clone(),
+        local_p2p_node,
+        local_node_record.lock().await.clone(),
+        store.clone(),
+        blockchain.clone(),
+        cancel_token.clone(),
+        tracker.clone(),
+    )
+    .await;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
