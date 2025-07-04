@@ -31,7 +31,7 @@ use tracing_subscriber::FmtSubscriber;
 /// Max account dumps to ask for in a single request. The current value matches geth's maximum output.
 const MAX_ACCOUNTS: usize = 256;
 /// Amount of blocks before the target block to request hashes for. These may be needed to execute the next block after the target block.
-const BLOCK_HASH_LOOKUP_DEPH: u64 = 128;
+const BLOCK_HASH_LOOKUP_DEPTH: u64 = 128;
 
 #[derive(Deserialize, Debug)]
 struct Dump {
@@ -260,14 +260,14 @@ fn mseconds_to_readable(mut mseconds: u128) -> String {
     res
 }
 
-/// Fetch the block hashes for the `BLOCK_HASH_LOOKUP_DEPH` blocks before the current one
+/// Fetch the block hashes for the `BLOCK_HASH_LOOKUP_DEPTH` blocks before the current one
 /// This is necessary in order to propperly execute the following blocks
 async fn fetch_block_hashes(
     current_block_number: BlockNumber,
     stream: &mut UnixStream,
     store: Store,
 ) -> eyre::Result<()> {
-    for offset in 1..BLOCK_HASH_LOOKUP_DEPH {
+    for offset in 1..BLOCK_HASH_LOOKUP_DEPTH {
         let Some(block_number) = current_block_number.checked_sub(offset) else {
             break;
         };
