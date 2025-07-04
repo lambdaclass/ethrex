@@ -52,6 +52,8 @@ const MAX_CHANNEL_MESSAGES: usize = 500;
 const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
+/// The max number of nodes to fetch in a single request
+const BATCH_SYNC_CHUNK_SIZE: u64 = 64;
 
 lazy_static::lazy_static! {
     // Size of each state trie segment
@@ -224,7 +226,6 @@ impl Syncer {
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
             else {
-                warn!("1 search head: {search_head:?}, sync head: {sync_head:?}");
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
             };
@@ -246,8 +247,7 @@ impl Syncer {
                 && first_block_header.hash() == search_head
                 && search_head != sync_head
             {
-                // There is no path to the sync head this goes back until it find a common ancerstor
-                warn!("2 search head: {search_head:?}, sync head: {sync_head:?}");
+                // There is no path to the sync head this goes back until it find a common ancestor
                 warn!("Sync failed to find target block header, going back to the previous parent");
                 search_head = first_block_header.parent_hash;
                 continue;
@@ -335,17 +335,23 @@ impl Syncer {
                 break;
             };
         }
+        // Now we sync to the new batch head
         #[cfg(feature = "l2")]
         {
+            info!(
+                "Syncing batches from {} to {}",
+                current_batch_number, new_batch_head
+            );
             let mut current = current_batch_number;
             while current < new_batch_head {
-                let step = new_batch_head.min(current + 128);
-                let Some(batches) = self.peers.request_batch(current, step).await else {
+                let step = current + BATCH_SYNC_CHUNK_SIZE;
+                let target = step.min(new_batch_head);
+
+                let Some(batches) = self.peers.request_batch(current, target).await else {
                     warn!("Sync failed to request batch seal, aborting");
                     return Ok(());
                 };
                 for batch in batches {
-                    // Store the batch number in the rollup store
                     let batch_number = batch.number;
                     // TODO: Maybe unnecessary, but we check if the batch is already sealed
                     if !rollup_store.contains_batch(&batch_number).await? {
@@ -353,7 +359,7 @@ impl Syncer {
                         info!("Sealed batch number {batch_number}");
                     }
                 }
-                current = step;
+                current = target;
             }
         }
         match sync_mode {
