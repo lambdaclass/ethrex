@@ -316,7 +316,7 @@ impl REVM {
                             .iter()
                             .map(|(key, slot)| {
                                 (
-                                    H256(U256::from_le_bytes(key.to_be_bytes()).to_be_bytes()),
+                                    H256(U256::from_le_bytes(key.to_le_bytes()).to_be_bytes()),
                                     U256::from_le_bytes(slot.present_value().to_le_bytes()),
                                 )
                             })
