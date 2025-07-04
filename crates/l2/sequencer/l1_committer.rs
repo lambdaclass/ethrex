@@ -27,8 +27,9 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::eth::{
-    BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides,
+use ethrex_rpc::{
+    clients::eth::{EthClient, WrappedTransaction, eth_sender::Overrides},
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -336,7 +337,7 @@ async fn prepare_batch_from_block(
                 .unwrap_or(0)
         );
         // Get block messages and privileged transactions
-        let messages = get_block_l1_messages(&txs, &receipts);
+        let messages = get_block_l1_messages(&receipts);
         let privileged_transactions = get_block_privileged_transactions(&txs);
 
         // Get block account updates.
@@ -629,7 +630,7 @@ async fn estimate_blob_gas(
     headroom: u64,
 ) -> Result<u64, CommitterError> {
     let latest_block = eth_client
-        .get_block_by_number(BlockByNumber::Latest)
+        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let blob_gas_used = latest_block.header.blob_gas_used.unwrap_or(0);
