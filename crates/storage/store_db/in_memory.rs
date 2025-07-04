@@ -240,8 +240,8 @@ impl StoreEngine for Store {
             return Ok(());
         };
 
-        let mut block_num = current_snapshot.0;
-        let mut snapshot_hash = current_snapshot.1;
+        let mut block_num = current_snapshot.block_number;
+        let mut snapshot_hash = current_snapshot.block_hash;
 
         let mut canonical_hash = store
             .canonical_hashes
@@ -264,7 +264,10 @@ impl StoreEngine for Store {
 
                     // We update this here to ensure it's the previous block according
                     // to the logs found.
-                    BlockNumHash(block_num, snapshot_hash) = parent_block;
+                    BlockNumHash {
+                        block_number: block_num,
+                        block_hash: snapshot_hash,
+                    } = parent_block;
                 }
             };
 
@@ -282,7 +285,10 @@ impl StoreEngine for Store {
 
                     // We update this here to ensure it's the previous block according
                     // to the logs found.
-                    BlockNumHash(block_num, snapshot_hash) = parent_block;
+                    BlockNumHash {
+                        block_number: block_num,
+                        block_hash: snapshot_hash,
+                    } = parent_block;
                 }
             };
 
@@ -298,7 +304,10 @@ impl StoreEngine for Store {
                 .unwrap_or_default();
 
             // Update the current snapshot with the parent block
-            current_snapshot = BlockNumHash(block_num, snapshot_hash);
+            current_snapshot = BlockNumHash {
+                block_number: block_num,
+                block_hash: snapshot_hash,
+            };
         }
 
         store.current_snapshot_block = Some(current_snapshot);
@@ -314,7 +323,7 @@ impl StoreEngine for Store {
         };
 
         // Asuming that we are in the bifurcation point, we start from the next block
-        let start_block = current_snapshot.0 + 1;
+        let start_block = current_snapshot.block_number + 1;
 
         for target_block_num in start_block.. {
             // Get the canonical hash for this block number
@@ -323,7 +332,10 @@ impl StoreEngine for Store {
                 break; // No more canonical blocks
             };
 
-            let target_block = BlockNumHash(target_block_num, canonical_hash);
+            let target_block = BlockNumHash {
+                block_number: target_block_num,
+                block_hash: canonical_hash,
+            };
 
             // Apply account state logs for this block
             if let Some(entries) = store.account_state_logs.get(&target_block).cloned() {
@@ -392,7 +404,10 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
-        store.current_snapshot_block = Some(BlockNumHash(genesis_block_number, genesis_block_hash));
+        store.current_snapshot_block = Some(BlockNumHash {
+            block_number: genesis_block_number,
+            block_hash: genesis_block_hash,
+        });
 
         for (address, nonce, balance, code_hash, removed) in genesis_accounts {
             if *removed {
@@ -412,7 +427,7 @@ impl StoreEngine for Store {
 
     fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
         let store: MutexGuard<'_, StoreInner> = self.inner()?;
-        Ok(store.current_snapshot_block.map(|block| block.1))
+        Ok(store.current_snapshot_block.map(|block| block.block_hash))
     }
 
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
@@ -427,7 +442,10 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
-        store.current_snapshot_block = Some(BlockNumHash(genesis_block_number, genesis_block_hash));
+        store.current_snapshot_block = Some(BlockNumHash {
+            block_number: genesis_block_number,
+            block_hash: genesis_block_hash,
+        });
 
         for (address, slot, value) in genesis_accounts {
             if !value.is_zero() {

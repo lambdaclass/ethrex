@@ -285,9 +285,9 @@ impl Store {
     // Check if the snapshot is at the canonical chain
     fn is_at_canonical_chain(&self, snapshot: BlockNumHash) -> Result<bool, StoreError> {
         let canonical_hash = self
-            .get_block_hash_by_block_number(snapshot.0)?
+            .get_block_hash_by_block_number(snapshot.block_number)?
             .unwrap_or_default();
-        Ok(canonical_hash == snapshot.1)
+        Ok(canonical_hash == snapshot.block_hash)
     }
 
     // Restore the previous state of the account info and storage
@@ -736,12 +736,15 @@ impl StoreEngine for Store {
 
         for canonical_block in tx
             .cursor::<CanonicalBlockHashes>()?
-            .walk(Some(current_snapshot.0 + 1))
+            .walk(Some(current_snapshot.block_number + 1))
         {
             let (block_num, block_hash_rlp) = canonical_block?;
             let block_hash = block_hash_rlp.to()?;
             // Update the snapshot to the next canonical block
-            let next_snapshot = BlockNumHash(block_num, block_hash);
+            let next_snapshot = BlockNumHash {
+                block_number: block_num,
+                block_hash,
+            };
 
             // If there are logs for the transition to the next block, replay the changes
             if self.has_logs_for_transition(
@@ -765,7 +768,7 @@ impl StoreEngine for Store {
 
             current_snapshot = next_snapshot;
 
-            if head_hash == current_snapshot.1 {
+            if head_hash == current_snapshot.block_hash {
                 tracing::debug!("REPLAY: reached head {head_hash:?}");
                 break;
             }
@@ -1725,9 +1728,11 @@ impl StoreEngine for Store {
     fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
         Ok(self
             .db
-            .begin_read()?
-            .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
-            .map(|v| v.1))
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?
+            .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
+            .map_err(StoreError::LibmdbxError)?
+            .map(|v| v.block_hash))
     }
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
