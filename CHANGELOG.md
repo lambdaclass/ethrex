@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-067-04
+
+- Change U256 library [#3460](https://github.com/lambdaclass/ethrex/pull/3460)
+
 ### 2025-06-30
 
 - Use a stack pool [#3386](https://github.com/lambdaclass/ethrex/pull/3386)
