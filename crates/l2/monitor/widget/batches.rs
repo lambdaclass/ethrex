@@ -50,19 +50,13 @@ impl BatchesTable {
             rollup_store,
         )
         .await;
+        new_latest_batches.truncate(50);
 
         let n_new_latest_batches = new_latest_batches.len();
-
-        if n_new_latest_batches > 50 {
-            new_latest_batches.truncate(50);
-            self.items.truncate(0);
-            self.items.extend_from_slice(&new_latest_batches);
-        } else {
-            self.items.truncate(50 - n_new_latest_batches);
-            self.refresh_items(rollup_store).await;
-            self.items.extend_from_slice(&new_latest_batches);
-            self.items.rotate_right(n_new_latest_batches);
-        }
+        self.items.truncate(50 - n_new_latest_batches);
+        self.refresh_items(rollup_store).await;
+        self.items.extend_from_slice(&new_latest_batches);
+        self.items.rotate_right(n_new_latest_batches);
     }
 
     async fn refresh_items(&mut self, rollup_store: &StoreRollup) {

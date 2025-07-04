@@ -99,17 +99,12 @@ impl L2ToL1MessagesTable {
             rollup_client,
         )
         .await;
+        new_l1_to_l2_messages.truncate(50);
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
-
-        if n_new_latest_batches > 50 {
-            new_l1_to_l2_messages.truncate(50);
-            self.items.extend_from_slice(&new_l1_to_l2_messages);
-        } else {
-            self.items.truncate(50 - n_new_latest_batches);
-            self.items.extend_from_slice(&new_l1_to_l2_messages);
-            self.items.rotate_right(n_new_latest_batches);
-        }
+        self.items.truncate(50 - n_new_latest_batches);
+        self.items.extend_from_slice(&new_l1_to_l2_messages);
+        self.items.rotate_right(n_new_latest_batches);
     }
 
     async fn refresh_items(

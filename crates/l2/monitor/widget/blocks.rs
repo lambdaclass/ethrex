@@ -36,17 +36,12 @@ impl BlocksTable {
 
     pub async fn on_tick(&mut self, store: &Store) {
         let mut new_blocks = Self::refresh_items(&mut self.last_l2_block_known, store).await;
+        new_blocks.truncate(50);
 
         let n_new_blocks = new_blocks.len();
-
-        if n_new_blocks > 50 {
-            new_blocks.truncate(50);
-            self.items.extend_from_slice(&new_blocks);
-        } else {
-            self.items.truncate(50 - n_new_blocks);
-            self.items.extend_from_slice(&new_blocks);
-            self.items.rotate_right(n_new_blocks);
-        }
+        self.items.truncate(50 - n_new_blocks);
+        self.items.extend_from_slice(&new_blocks);
+        self.items.rotate_right(n_new_blocks);
     }
 
     async fn refresh_items(
