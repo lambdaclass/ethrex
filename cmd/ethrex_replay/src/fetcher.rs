@@ -23,11 +23,7 @@ pub async fn get_blockdata(
         ));
     }
 
-    let cache = Cache {
-        blocks: vec![block],
-        witness,
-        l2_fields: None,
-    };
+    let cache = Cache::new(vec![block], witness);
     write_cache(&cache, &file_name).expect("failed to write cache");
     Ok(cache)
 }
@@ -61,11 +57,7 @@ async fn fetch_rangedata_from_client(
         ));
     }
 
-    let cache = Cache {
-        blocks,
-        witness,
-        l2_fields: None,
-    };
+    let cache = Cache::new(blocks, witness);
     Ok(cache)
 }
 

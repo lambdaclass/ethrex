@@ -1,12 +1,20 @@
 use ethrex_common::types::blobs_bundle;
 use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
+use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
     fs::File,
     io::{BufReader, BufWriter},
 };
 
-use serde::{Deserialize, Serialize};
+#[serde_as]
+#[derive(Serialize, Deserialize)]
+pub struct L2Fields {
+    #[serde_as(as = "[_; 48]")]
+    pub blob_commitment: blobs_bundle::Commitment,
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Cache {
@@ -17,13 +25,14 @@ pub struct Cache {
     pub l2_fields: Option<L2Fields>,
 }
 
-#[serde_as]
-#[derive(Serialize, Deserialize)]
-pub struct L2Fields {
-    #[serde_as(as = "[_; 48]")]
-    pub blob_commitment: blobs_bundle::Commitment,
-    #[serde_as(as = "[_; 48]")]
-    pub blob_proof: blobs_bundle::Proof,
+impl Cache {
+    pub fn new(blocks: Vec<Block>, witness: ExecutionWitnessResult) -> Self {
+        Self {
+            blocks,
+            witness,
+            l2_fields: None,
+        }
+    }
 }
 
 pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
