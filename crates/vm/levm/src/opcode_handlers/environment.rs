@@ -1,9 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self},
-    memory::{self, calculate_memory_size},
-    utils::word_to_address,
-    vm::VM,
+    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError}, gas_cost::{self}, memory::{self, calculate_memory_size}, utils::word_to_address, vm::VM
 };
 use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
@@ -210,26 +206,34 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let mut data = vec![0u8; size];
+       
         if code_offset < current_call_frame.bytecode.len().into() {
             let code_offset: usize = code_offset
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?;
 
-            for (i, byte) in current_call_frame
-                .bytecode
-                .iter()
-                .skip(code_offset)
-                .take(size)
-                .enumerate()
-            {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
-                }
-            }
+            let available = size.min(current_call_frame.bytecode.len().saturating_sub(code_offset));
+
+            if size <= 32 {
+                let mut data = [0u8; 32];
+
+                data[..available].copy_from_slice(&current_call_frame
+                    .bytecode[code_offset..code_offset + available]);
+
+                memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data[..size])?;
+            } else {
+                let mut data = vec![0u8; size];
+                
+                data[..available].copy_from_slice(&current_call_frame
+                    .bytecode[code_offset..code_offset + available]);
+
+                memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
+           }
+        } else {
+            memory::try_store_data(&mut current_call_frame.memory, destination_offset, &vec![0u8;size])?;
         }
 
-        memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
+        
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
