@@ -51,7 +51,7 @@ jobs:
           name: ethrex-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
-  build-prover-exec:
+  build-prover-and-replay-exec:
     strategy:
       matrix:
         platform:
@@ -109,7 +109,7 @@ jobs:
           name: ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
 
-  build-prover-sp1:
+  build-prover-and-replay-sp1:
     strategy:
       matrix:
         include:
@@ -172,7 +172,7 @@ jobs:
           name: ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
-  build-prover-risc0:
+  build-prover-and-replay-risc0:
     strategy:
       matrix:
         include:
@@ -265,9 +265,9 @@ jobs:
   # finalize-release:
   #   needs:
   #     - build-ethrex
-  #     - build-prover-exec
-  #     - build-prover-sp1
-  #   # - build-prover-risc0 # Uncomment when fixed RISC0
+  #     - build-prover-and-replay-exec
+  #     - build-prover-and-replay-sp1
+  #     - build-prover-and-replay-risc0
   #     - package-contracts
   #   runs-on: ubuntu-latest
   #   steps:
