@@ -114,7 +114,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             blob_proof,
         );
     }
-    stateless_validation_l1(&blocks, &mut db,  chain_config, elasticity_multiplier)
+    stateless_validation_l1(&blocks, &mut db, chain_config, elasticity_multiplier)
 }
 
 pub fn stateless_validation_l1(
@@ -173,7 +173,10 @@ pub fn stateless_validation_l2(
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
-    let first_header = &blocks.first().ok_or(StatelessExecutionError::EmptyBatchError)?.header;
+    let first_header = &blocks
+        .first()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?
+        .header;
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
@@ -217,7 +220,10 @@ fn execute_stateless(
     chain_config: ChainConfig,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    let first_header = &blocks.first().ok_or(StatelessExecutionError::EmptyBatchError)?.header;
+    let first_header = &blocks
+        .first()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?
+        .header;
 
     db.rebuild_tries(chain_config, first_header)
         .map_err(StatelessExecutionError::ExecutionWitness)?;

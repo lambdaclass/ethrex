@@ -9,7 +9,7 @@ use crate::{
     H160,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
-use bytes::{buf::Chain, Bytes};
+use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
@@ -110,8 +110,8 @@ pub fn rebuild_trie(
 }
 
 // This funciton is an option because we expect it to fail sometimes, and we just want to filter it
-pub fn rebuild_storage_trie(address: &Vec<u8>, trie: &Trie, state: Vec<Vec<u8>>) -> Option<Trie> {
-    let account_state_rlp = trie.get(address).ok()??;
+pub fn rebuild_storage_trie(address: &H160, trie: &Trie, state: Vec<Vec<u8>>) -> Option<Trie> {
+    let account_state_rlp = trie.get(&hash_address(address)).ok()??;
     let account_state = AccountState::decode(&account_state_rlp).ok()?;
     if account_state.storage_root == *EMPTY_TRIE_HASH {
         return None;
@@ -120,9 +120,13 @@ pub fn rebuild_storage_trie(address: &Vec<u8>, trie: &Trie, state: Vec<Vec<u8>>)
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(&mut self, chain_config: ChainConfig, first_header: &BlockHeader) -> Result<(), ExecutionWitnessError> {
+    pub fn rebuild_tries(
+        &mut self,
+        chain_config: ChainConfig,
+        first_header: &BlockHeader,
+    ) -> Result<(), ExecutionWitnessError> {
         self.chain_config = chain_config;
-        
+
         let Some(state) = self.state.as_ref() else {
             return Err(ExecutionWitnessError::RebuildTrie(
                 "Tried to rebuild tries with empty nodes, rebuilding the trie can only be done once"
@@ -133,20 +137,25 @@ impl ExecutionWitnessResult {
         for header in &self.headers {
             self.block_headers.insert(header.number, header.clone());
         }
- 
+
         let parent_header = self.get_block_parent_header(first_header.number)?;
         let state_trie = rebuild_trie(parent_header.state_root, state.clone())?;
 
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. Addresses are 20 u8 long
-        let addresses: Vec<&Vec<u8>> = self.keys.iter().filter(|k| k.len() == 20).collect();
+        let addresses: Vec<Address> = self
+            .keys
+            .iter()
+            .filter(|k| k.len() == 20)
+            .map(|k| Address::from_slice(k))
+            .collect();
 
         let storage_tries: HashMap<Address, Trie> = HashMap::from_iter(
             addresses
                 .iter()
                 .filter_map(|addr| {
                     Some((
-                        Address::from_slice(addr),
+                        *addr,
                         rebuild_storage_trie(addr, &state_trie, state.clone())?,
                     ))
                 })

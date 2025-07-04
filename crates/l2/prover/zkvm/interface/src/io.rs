@@ -1,5 +1,6 @@
 use ethrex_common::{
-    types::{block_execution_witness::ExecutionWitnessResult, Block, ChainConfig}, H256
+    H256,
+    types::{Block, ChainConfig, block_execution_witness::ExecutionWitnessResult},
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};

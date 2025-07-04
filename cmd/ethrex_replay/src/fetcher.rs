@@ -34,7 +34,7 @@ pub async fn get_blockdata(
     let cache = Cache {
         blocks: vec![block],
         witness,
-        chain_config
+        chain_config,
     };
     write_cache(&cache, &file_name).expect("failed to write cache");
     Ok(cache)
@@ -61,7 +61,11 @@ pub async fn get_rangedata(
     let witness = get_witness_range(rpc_url, from, to, &chain_config)
         .await
         .wrap_err("Failed to get execution witness for range")?;
-    let cache = Cache { blocks, witness, chain_config };
+    let cache = Cache {
+        blocks,
+        witness,
+        chain_config,
+    };
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
