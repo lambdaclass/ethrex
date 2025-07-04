@@ -64,7 +64,6 @@ jobs:
             binary: ethrex_prover
             os: linux
             arch: x86-64
-        include:
           - platform: ubuntu-22.04
             rustflags: -C target-cpu=native
             binary: ethrex_replay
@@ -196,7 +195,6 @@ jobs:
             binary: ethrex_prover
             os: linux
             arch: x86-64
-        include:
           - platform: ubuntu-22.04
             binary: ethrex_replay
             os: linux
