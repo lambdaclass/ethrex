@@ -58,9 +58,9 @@ impl ProverType {
     pub fn verifier_getter(&self) -> Option<String> {
         // These values have to match with the OnChainProposer.sol contract
         match self {
-            Self::RISC0 => Some("R0VERIFIER()".to_string()),
-            Self::SP1 => Some("SP1VERIFIER()".to_string()),
-            Self::TDX => Some("TDXVERIFIER()".to_string()),
+            Self::RISC0 => Some("REQUIRE_RISC0_PROOF()".to_string()),
+            Self::SP1 => Some("REQUIRE_SP1_PROOF()".to_string()),
+            Self::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
             Self::Exec => None,
         }
     }

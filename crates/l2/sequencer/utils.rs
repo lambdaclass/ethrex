@@ -14,11 +14,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
 
-const DEV_MODE_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0xAA,
-]);
-
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
 }
@@ -83,6 +78,7 @@ pub async fn get_needed_proof_types(
             };
             let calldata = keccak(getter)[..4].to_vec();
 
+            // response is a boolean 0x00..01 or 0x00..00
             let response = eth_client
                 .call(
                     on_chain_proposer_address,
@@ -90,16 +86,13 @@ pub async fn get_needed_proof_types(
                     Overrides::default(),
                 )
                 .await?;
-            // trim to 20 bytes, also removes 0x prefix
-            let trimmed_response = &response[26..];
 
-            let address = Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-                EthClientError::Custom(format!(
-                    "Failed to parse OnChainProposer response {response}"
-                ))
-            })?;
-
-            if address != DEV_MODE_ADDRESS {
+            let required_proof_type = response
+                .chars()
+                .last()
+                .ok_or(EthClientError::InternalError("empty response"))?
+                == "1";
+            if !required_proof_type {
                 info!("{prover_type} proof needed");
                 needed_proof_types.push(prover_type);
             }
