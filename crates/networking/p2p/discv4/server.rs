@@ -9,7 +9,6 @@ use super::{
     },
 };
 use crate::{
-    discv4::lookup::Discv4NodeIterator,
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::P2PContext,
     rlpx::{connection::server::RLPxConnection, utils::node_id},
@@ -25,6 +24,8 @@ use std::{
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
 use tracing::{debug, error};
+
+pub use crate::discv4::lookup::Discv4NodeIterator;
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;

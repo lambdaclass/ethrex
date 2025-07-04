@@ -287,6 +287,7 @@ impl Discv4LookupHandler {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Discv4NodeIterator {
     lookup_handler: Discv4LookupHandler,
     target: H512,
