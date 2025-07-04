@@ -253,21 +253,23 @@
 <p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
 <pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
 </code></pre>
+<p>The <code>ETH_ADDRESS</code> is an arbitrary address we use, meaning the "token" to transfer is ETH.</p>
 </li>
 <li>
-<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics.</p>
+<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
 </li>
 </ol>
 <p>Off-chain:</p>
 <ol>
-<li>On each L2 node, the L1 watcher extracts <code>L1Message</code> events, generating a merkle tree with the hashed messages as leaves.</li>
+<li>On each L2 node, the L1 watcher extracts <code>L1Message</code> events, generating a merkle tree with the hashed messages as leaves.
+The merkle tree format is explained in the <a href="#l1message-merkle-tree">"<code>L1Message</code> Merkle tree"</a> section below.</li>
 </ol>
 <p>On L1:</p>
 <ol>
 <li>A sequencer commits the batch on L1, publishing the merkle tree's root with <code>publishWithdrawals</code> on the L1 <code>CommonBridge</code>.</li>
 <li>The user submits a withdrawal proof when calling <code>claimWithdrawal</code> on the L1 <code>CommonBridge</code>.
 The proof can be obtained by calling <code>ethrex_getWithdrawalProof</code> in any L2 node, after the batch containing the withdrawal transaction was verified in the L1.</li>
-<li>The bridge asserts the proof is valid.</li>
+<li>The bridge asserts the proof is valid and wasn't previously claimed.</li>
 <li>The bridge sends the locked funds specified in the <code>L1Message</code> to the user.</li>
 </ol>
 <pre class="mermaid">---
@@ -320,23 +322,24 @@ sequenceDiagram
 </li>
 <li>
 <p>The bridge calls <code>sendMessageToL1(bytes32 data)</code> on the <code>L2ToL1Messenger</code> contract, with <code>data</code> being:</p>
-<pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(l1Token, _token, _receiverOnL1, _value))
+<pre><code class="language-solidity">bytes32 data = keccak256(abi.encodePacked(_token.l1Address(), _token, _receiverOnL1, _value))
 </code></pre>
 </li>
 <li>
-<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics.</p>
+<p><code>L2ToL1Messenger</code> emits an <code>L1Message</code> event, with the address of the L2 bridge contract and <code>data</code> as topics, along with a unique message ID.</p>
 </li>
 </ol>
 <p>Off-chain:</p>
 <ol>
-<li>On each L2 node, the L1 watcher extracts <code>L1Message</code> events, generating a merkle tree with the hashed messages as leaves.</li>
+<li>On each L2 node, the L1 watcher extracts <code>L1Message</code> events, generating a merkle tree with the hashed messages as leaves.
+The merkle tree format is explained in the <a href="#l1message-merkle-tree">"<code>L1Message</code> Merkle tree"</a> section below.</li>
 </ol>
 <p>On L1:</p>
 <ol>
 <li>A sequencer commits the batch on L1, publishing the <code>L1Message</code> with <code>publishWithdrawals</code> on the L1 <code>CommonBridge</code>.</li>
 <li>The user submits a withdrawal proof when calling <code>claimWithdrawalERC20</code> on the L1 <code>CommonBridge</code>.
 The proof can be obtained by calling <code>ethrex_getWithdrawalProof</code> in any L2 node, after the batch containing the withdrawal transaction was verified in the L1.</li>
-<li>The bridge asserts the proof is valid and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.</li>
+<li>The bridge asserts the proof is valid and wasn't previously claimed, and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.</li>
 <li>The bridge transfers the locked tokens specified in the <code>L1Message</code> to the user and discounts the transferred amount from the L1 and L2 token pair in the mapping.</li>
 </ol>
 <pre class="mermaid">---
@@ -376,16 +379,18 @@ sequenceDiagram
 </pre>
 <h2 id="generic-l2-l1-messaging"><a class="header" href="#generic-l2-l1-messaging">Generic L2-&gt;L1 messaging</a></h2>
 <p>First, we need to understand the generic mechanism behind it:</p>
-<h3 id="l1message"><a class="header" href="#l1message">L1Message</a></h3>
+<h3 id="l1message"><a class="header" href="#l1message"><code>L1Message</code></a></h3>
 <p>To allow generic L2-&gt;L1 messages, a system contract is added which allows sending arbitrary data. This data is emitted as <code>L1Message</code> events, which nodes automatically extract from blocks.</p>
 <pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>struct L1Message {
-    tx_hash: H256, // L2 transaction where it was included
-    from: Address, // Who called L1Message.sol
-    data_hash: H256 // hashed payload
+    tx_hash: H256,    // L2 transaction where it was included
+    from: Address,    // Who sent the message in L2
+    data_hash: H256,  // Hashed payload
+    message_id: U256, // Unique message ID
 }
 <span class="boring">}</span></code></pre></pre>
+<h3 id="l1message-merkle-tree"><a class="header" href="#l1message-merkle-tree"><code>L1Message</code> Merkle tree</a></h3>
 <p>When sequencers commit a new batch, they include the merkle root of all the <code>L1Message</code>s inside the batch.
 That way, L1 contracts can verify some data was sent from a specific L2 sender.</p>
 <pre class="mermaid">---
@@ -407,20 +412,30 @@ flowchart TD
         txHash1[&quot;txHash&lt;sub&gt;1&lt;/sub&gt;&quot;]
         from1[&quot;from&lt;sub&gt;1&lt;/sub&gt;&quot;]
         dataHash1[&quot;hash(data&lt;sub&gt;1&lt;/sub&gt;)&quot;]
+        messageId1[&quot;messageId&lt;sub&gt;1&lt;/sub&gt;&quot;]
 
         txHash1 --- from1
         from1 --- dataHash1
+        dataHash1 --- messageId1
     end
 
     Node1 --- Msg1
     Node2 --- Msg2
 </pre>
 <p>As shown in the diagram, the leaves of the tree are the hash of each encoded <code>L1Message</code>.
-Messages are encoded by packing the bytes of the transaction hash that generated it in the L2, the address of the sender, and the hashed data attached to the message.</p>
+Messages are encoded by packing, in order:</p>
+<ul>
+<li>the transaction hash that generated it in the L2</li>
+<li>the address of the L2 sender</li>
+<li>the hashed data attached to the message</li>
+<li>the unique message ID</li>
+</ul>
 <h3 id="bridging"><a class="header" href="#bridging">Bridging</a></h3>
 <p>On the L2 side, for the case of asset bridging, a contract burns some assets.
 It then sends a message to the L1 containing the details of this operation:</p>
 <ul>
+<li>From: L2 token address that was burnt</li>
+<li>To: L1 token address that will be withdrawn</li>
 <li>Destination: L1 address that can claim the deposit</li>
 <li>Amount: how much was burnt</li>
 </ul>
