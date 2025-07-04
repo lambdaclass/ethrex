@@ -1,7 +1,9 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::{GetBatchByNumberError, GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{
+        GetBatchByNumberError, GetNodeStatusError, GetWitnessError, TxPoolContentError,
+    },
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -689,7 +691,7 @@ impl EthClient {
         from_block: U256,
         to_block: U256,
         address: Address,
-        topic: H256,
+        topics: Vec<H256>,
     ) -> Result<Vec<RpcLog>, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -700,7 +702,7 @@ impl EthClient {
                     "fromBlock": format!("{:#x}", from_block),
                     "toBlock": format!("{:#x}", to_block),
                     "address": format!("{:#x}", address),
-                    "topics": [format!("{:#x}", topic)]
+                    "topics": topics.iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>()
                 }
             )]),
         };
@@ -1379,6 +1381,25 @@ impl EthClient {
             RpcResponse::Error(error_response) => {
                 Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
             }
+        }
+    }
+
+    pub async fn node_status(&self) -> Result<String, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "debug_nodeStatus".to_string(),
+            params: None,
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetNodeStatusError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetNodeStatusError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
         }
     }
 }

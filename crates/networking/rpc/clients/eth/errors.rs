@@ -60,6 +60,8 @@ pub enum EthClientError {
     FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
+    #[error("Failed to get node status: {0}")]
+    GetNodeStatusError(#[from] GetNodeStatusError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -278,6 +280,14 @@ pub enum TxPoolContentError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetNodeStatusError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]

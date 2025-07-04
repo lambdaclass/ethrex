@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
+use ethrex_l2::based::sequencer_state::SequencerState;
 use ethrex_p2p::kademlia::KademliaTable;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -13,9 +14,12 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::warn;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 use crate::cli::Options as L1Options;
-use crate::initializers::{get_authrpc_socket_addr, get_http_socket_addr};
+use crate::initializers::{self, get_authrpc_socket_addr, get_http_socket_addr};
 use crate::l2::L2Options;
 use crate::utils::{get_client_version, read_jwtsecret_file};
 
@@ -31,6 +35,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     rollup_store: StoreRollup,
+    initial_state: SequencerState,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -58,6 +63,7 @@ pub async fn init_rpc_api(
         get_valid_delegation_addresses(l2_opts),
         l2_opts.sponsor_private_key,
         rollup_store,
+        initial_state,
     );
 
     tracker.spawn(rpc_api);
@@ -113,4 +119,19 @@ pub fn init_metrics(opts: &L1Options, tracker: TaskTracker) {
         opts.metrics_port.clone(),
     );
     tracker.spawn(metrics_api);
+}
+
+pub fn init_tracing(opts: &L2Options) {
+    if opts.sequencer_opts.monitor {
+        let level_filter = EnvFilter::builder()
+            .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
+        let subscriber = tracing_subscriber::registry()
+            .with(TuiTracingSubscriberLayer)
+            .with(level_filter);
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+        tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
+    } else {
+        initializers::init_tracing(&opts.node_opts);
+    }
 }
