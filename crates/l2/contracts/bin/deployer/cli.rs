@@ -148,7 +148,6 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_RISC0",
         help_heading = "Deployer options",
-        requires = "risc0_vk_path",
         help = "If true, L2 will require Risc0 proofs to validate batch proofs and settle state."
     )]
     pub risc0: bool,
@@ -165,7 +164,6 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_SP1",
         help_heading = "Deployer options",
-        requires = "sp1_vk_path",
         help = "If true, L2 will require SP1 proofs to validate batch proofs and settle state."
     )]
     pub sp1: bool,
