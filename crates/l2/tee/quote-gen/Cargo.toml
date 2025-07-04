@@ -12,7 +12,6 @@ hex = "0.4"
 zerocopy = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-kzg-rs = "0.2.6"
 
 ethrex-common = { path = "../../../common", default-features = false }
 ethrex-storage = { path = "../../../storage", default-features = false }
@@ -39,4 +38,4 @@ vergen-git2 = { version = "1.0.7" }
 
 [features]
 default = ["l2"]
-l2 = ["zkvm_interface/l2", "ethrex-blockchain/l2", "ethrex-l2/l2"]
+l2 = ["zkvm_interface/l2", "ethrex-l2/l2"]
