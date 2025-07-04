@@ -299,7 +299,7 @@ impl Store {
         storage_log_cursor: &mut libmdbx::orm::Cursor<'_, libmdbx::RW, AccountsStorageWriteLog>,
         flat_info_cursor: &mut libmdbx::orm::Cursor<'_, libmdbx::RW, FlatAccountInfo>,
         flat_storage_cursor: &mut libmdbx::orm::Cursor<'_, libmdbx::RW, FlatAccountStorage>,
-    ) -> Result<BlockNumHash, StoreError> {
+    ) -> Result<Option<BlockNumHash>, StoreError> {
         tracing::debug!("UNDO: processing block {current_snapshot:?}");
 
         // Undo account info changes
@@ -311,12 +311,7 @@ impl Store {
             self.undo_storage_changes(current_snapshot, storage_log_cursor, flat_storage_cursor)?;
 
         // Both should give us the same parent block if they have logs for the current block
-        // REVIEW: What should we do if we don't have logs for the current block? Is this possible?
-        let parent_snapshot = account_parent.or(storage_parent).ok_or(StoreError::Custom(
-            "Parent block not found in account or storage logs".to_string(),
-        ))?;
-
-        Ok(parent_snapshot)
+        Ok(account_parent.or(storage_parent))
     }
 
     /// Iterate over the [`AccountsStateWriteLog`] table and restore the previous state
@@ -705,14 +700,19 @@ impl StoreEngine for Store {
 
         // Iterate over the blocks until the snapshot is at the canonical chain
         while !self.is_at_canonical_chain(current_snapshot)? {
-            current_snapshot = self.undo_block(
+            let Some(next_snapshot) = self.undo_block(
                 current_snapshot,
                 &mut state_log_cursor,
                 &mut storage_log_cursor,
                 &mut flat_info_cursor,
                 &mut flat_storage_cursor,
-            )?;
+            )?
+            else {
+                tracing::warn!("UNDO: logs exhausted, back to canonical chain");
+                break;
+            };
 
+            current_snapshot = next_snapshot;
             tracing::debug!("UNDO: moved to snapshot {current_snapshot:?}");
         }
 

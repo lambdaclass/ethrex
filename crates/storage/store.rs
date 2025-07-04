@@ -733,6 +733,7 @@ impl Store {
             .collect();
         self.setup_genesis_flat_account_storage(genesis_block_number, genesis_hash, &flat_storage)
             .await?;
+
         let flat_info: Vec<_> = genesis
             .alloc
             .iter()
