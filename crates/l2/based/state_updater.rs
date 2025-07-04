@@ -376,7 +376,7 @@ async fn retrieve_latest_batch_committed_head(
     // - bytes32 stateDiffKZGVersionedHash        (bytes 32-64)
     // - bytes32 processedDepositLogsRollingHash  (bytes 64-96)
     // - bytes32 withdrawalsLogsMerkleRoot        (bytes 96-128)
-    // - bytes32 lastBlockHash                    (bytes 128-160) <- We're extracting this field
+    // - bytes32 lastBlockHash                    (bytes 128-160)
     let fcu_head_bytes = decoded_bytes.get(128..160).ok_or_else(|| {
         StateUpdaterError::CalldataParsingError(format!(
             "Batch commitment has insufficient length (expected at least 160 bytes, got {})",
