@@ -170,7 +170,7 @@ export $(cat .env | xargs)
 
 In a console inside the same directory (`crates/l2`), run the following command to start a based L2 node:
 ```bash
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 init \
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 init \
   --watcher.block-delay 0 \
   --eth.rpc-url http://localhost:8545 \
   --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
