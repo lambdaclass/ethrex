@@ -259,7 +259,7 @@ async fn get_logs(state: &mut BlockFetcherState) -> Result<Vec<RpcLog>, BlockFet
                 state.last_l1_block_fetched + 1,
                 new_last_l1_fetched_block,
                 state.on_chain_proposer_address,
-                keccak(b"BatchCommitted(uint256,bytes32,bytes32)"),
+                keccak(b"BatchCommitted(uint256,bytes32)"),
             )
             .await?;
 

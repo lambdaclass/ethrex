@@ -1,17 +1,17 @@
 use std::{sync::Arc, time::Duration};
 
+use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
     fork_choice::apply_fork_choice,
     sequencer_state::{SequencerState, SequencerStatus},
 };
-use ethrex_common::{Address, U256, types::Block};
-use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_common::{Address, H256, U256, types::Block};
+use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use keccak_hash::keccak;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerError, send_after};
 use tracing::{debug, error, info, warn};
 
@@ -190,39 +190,14 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
                 .eth_client
                 .get_last_committed_batch(state.on_chain_proposer_address)
                 .await?;
-            // dbg!(latest_batch_committed);
-            // dbg!(
-            //     state
-            //         .rollup_store
-            //         .contains_batch(&latest_batch_committed)
-            //         .await?
-            // );
-            let logs = state
-                .eth_client
-                .get_logs(
-                    state.latest_block_fetched,
-                    latest_l1_block,
-                    state.on_chain_proposer_address,
-                    keccak(b"BatchCommitted(uint256,bytes32,bytes32)"),
-                )
-                .await?;
-            if let Some(last_committed_batch_log) = logs.last() {
-                let newest_fcu_head =
-                    last_committed_batch_log.log.topics.get(3).ok_or_else(|| {
-                        StateUpdaterError::InternalError(
-                            "BatchCommitted log does not contain enough topics".to_string(),
-                        )
-                    })?;
-                state
-                    .sync_manager
-                    .sync_to_head(*newest_fcu_head, latest_batch_committed);
-                if !state.sync_manager.is_active() {
-                    // dbg!("Sync manager is not active, updating latest block fetched.");
-                    state.latest_block_fetched = latest_l1_block;
-                }
-                // state.blockchain.set_synced();
-            } else {
-                // warn!("No new BatchCommitted logs found, continuing to sync.");
+            let newest_fcu_head =
+                retrieve_latest_batch_committed_head(state, latest_batch_committed).await?;
+
+            state
+                .sync_manager
+                .sync_to_head(newest_fcu_head, latest_batch_committed);
+            if !state.sync_manager.is_active() {
+                state.latest_block_fetched = latest_l1_block;
             }
         }
     }
@@ -364,4 +339,50 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
     .await
     .map_err(StateUpdaterError::InvalidForkChoice)?;
     Ok(())
+}
+
+async fn retrieve_latest_batch_committed_head(
+    state: &StateUpdaterState,
+    latest_batch_committed: u64,
+) -> Result<H256, StateUpdaterError> {
+    let calldata = encode_calldata(
+        "batchCommitments(uint256)",
+        &[Value::Uint(U256::from(latest_batch_committed))],
+    )?;
+
+    let batch_commitment_hex = state
+        .eth_client
+        .call(
+            state.on_chain_proposer_address,
+            Bytes::from(calldata),
+            Overrides::default(),
+        )
+        .await?;
+
+    let hex_string = batch_commitment_hex
+        .strip_prefix("0x")
+        .unwrap_or(&batch_commitment_hex);
+
+    let decoded_bytes = hex::decode(hex_string).map_err(|e| {
+        StateUpdaterError::CalldataParsingError(format!(
+            "Failed to decode batch commitment hex string: {}",
+            e
+        ))
+    })?;
+
+    // Extract the FCU (Finalized Chain Update) head from the batch commitment data
+    // In based/OnChainProposer.sol, batchCommitments is a struct with the following layout:
+    // - bytes32 newStateRoot                     (bytes 0-32)
+    // - bytes32 stateDiffKZGVersionedHash        (bytes 32-64)
+    // - bytes32 processedDepositLogsRollingHash  (bytes 64-96)
+    // - bytes32 withdrawalsLogsMerkleRoot        (bytes 96-128)
+    // - bytes32 lastBlockHash                    (bytes 128-160) <- We're extracting this field
+    let fcu_head_bytes = decoded_bytes.get(128..160).ok_or_else(|| {
+        StateUpdaterError::CalldataParsingError(format!(
+            "Batch commitment has insufficient length (expected at least 160 bytes, got {})",
+            decoded_bytes.len()
+        ))
+    })?;
+
+    Ok(H256::from_slice(fcu_head_bytes))
 }
