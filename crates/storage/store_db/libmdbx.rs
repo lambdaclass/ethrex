@@ -506,7 +506,7 @@ impl StoreEngine for Store {
             // for each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
             // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
+            for (node_hash, mut node_data) in update_batch.account_updates {
                 tracing::info!(
                     node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
                     parent_block_number = parent_block.block_number,
@@ -515,6 +515,7 @@ impl StoreEngine for Store {
                     final_block_hash = hex::encode(final_block.block_hash),
                     "[WRITING STATE TRIE NODE]",
                 );
+                node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
             }
 
@@ -531,7 +532,7 @@ impl StoreEngine for Store {
 
             for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
                 let key_1: [u8; 32] = hashed_address.into();
-                for (node_hash, node_data) in nodes {
+                for (node_hash, mut node_data) in nodes {
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
                     tracing::info!(
@@ -543,6 +544,7 @@ impl StoreEngine for Store {
                         final_block_hash = hex::encode(final_block.block_hash),
                         "[WRITING STORAGE TRIE NODE]",
                     );
+                    node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
                 }
                 for node_hash in invalidated_nodes {
