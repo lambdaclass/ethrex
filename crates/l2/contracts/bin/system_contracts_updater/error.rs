@@ -11,6 +11,8 @@ pub enum SystemContractsUpdaterError {
     FailedToSerializeModifiedGenesis(#[from] serde_json::Error),
     #[error("Failed to write modified genesis file: {0}")]
     FailedToWriteModifiedGenesisFile(#[from] std::io::Error),
+    #[error("Failed to download dependencies: {0}")]
+    FailedToDownloadDependencies(String),
     #[error("Failed to read path: {0}")]
     InvalidPath(String),
 }

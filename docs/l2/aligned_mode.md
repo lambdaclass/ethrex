@@ -177,8 +177,8 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0xFD471836031dc5108809D173A067e8486B9047A3 \
-	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
