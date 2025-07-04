@@ -26,6 +26,7 @@ where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        tracing::info!(node_hash = key.finalize().0.as_ref(), "GET STATE TRIE NODE",);
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
         txn.get::<T>(key).map_err(TrieError::DbError)
     }

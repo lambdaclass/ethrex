@@ -38,6 +38,11 @@ where
     SK: Clone + Encodable,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        tracing::info!(
+            hashed_address = self.fixed_key.clone().encode().as_ref(),
+            node_hash = key.finalize().0.as_ref(),
+            "GET STORAGE TRIE NODE",
+        );
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
         txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
             .map_err(TrieError::DbError)
