@@ -32,7 +32,7 @@ pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 const MAX_PARALLEL_REBUILDS: usize = 10;
 
 const MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
-const MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
+const MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 10;
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
