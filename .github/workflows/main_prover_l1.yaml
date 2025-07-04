@@ -1,7 +1,5 @@
 name: Replay proving
 on:
-  pull_request:
-    branches: ["**"]
   push:
     branches: ["main"]
 
@@ -57,10 +55,7 @@ jobs:
       - name: Build
         run: |
           cd cmd/ethrex_replay
-          whoami
-          echo $PATH
           export PATH=$PATH:/usr/local/cuda-12.8/bin
-          nvcc -V
           cargo b -r --features "${{ matrix.backend }},gpu"
 
       - name: Run
@@ -89,11 +84,11 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-      # - name: Report Status
-      #   if: always()
-      #   uses: ravsamhq/notify-slack-action@v2
-      #   with:
-      #     status: ${{ job.status }}
-      #     notify_when: 'failure'
-      #   env:
-      #     SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      - name: Report Status
+        if: always()
+        uses: ravsamhq/notify-slack-action@v2
+        with:
+          status: ${{ job.status }}
+          notify_when: 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
