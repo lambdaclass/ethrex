@@ -54,7 +54,11 @@ pub(crate) async fn heal_state_trie(
     while !paths.is_empty() {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
-            let speed = healing_start.elapsed().as_millis().checked_div(total_healed as u128).unwrap_or(9999);
+            let speed = healing_start
+                .elapsed()
+                .as_millis()
+                .checked_div(total_healed as u128)
+                .unwrap_or(9999);
             info!(
                 "State Healing in Progress, pending paths: {}, healing speed: {}ms/node",
                 paths.len(),
@@ -90,10 +94,10 @@ pub(crate) async fn heal_state_trie(
             break;
         }
     }
-    debug!("State Healing stopped, signaling storage healer");
+    info!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle
     if !paths.is_empty() {
-        debug!("Caching {} paths for the next cycle", paths.len());
+        info!("Caching {} paths for the next cycle", paths.len());
         store.set_state_heal_paths(paths.clone()).await?;
     }
     // Send empty batch to signal that no more batches are incoming
