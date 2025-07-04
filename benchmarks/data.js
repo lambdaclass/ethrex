@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751643232897,
+  "lastUpdate": 1751644686109,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2545,6 +2545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208748164326,
             "range": "± 306672263",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5abf85df328b22d2674a321d30a89dae033b01f6",
+          "message": "fix(l2): gas used in replay block range (#3483)\n\n**Motivation**\n\nThe `gas_used` value in block range execution/proving was incorrect. We\nwere returning the gas used by only the first block.\n\n**Description**\n\n- Returns the total gas used across all blocks.\n- Also moves the `or_latest` function, as it doesn’t belong in `fetcher`\nanymore.\n\nCloses: None",
+          "timestamp": "2025-07-04T14:57:07Z",
+          "tree_id": "4fa8efbdb3ce22caed01d05826918a163151f9b5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5abf85df328b22d2674a321d30a89dae033b01f6"
+        },
+        "date": 1751644676522,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208587874888,
+            "range": "± 583828328",
             "unit": "ns/iter"
           }
         ]
