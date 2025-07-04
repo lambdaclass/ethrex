@@ -131,14 +131,9 @@ impl REVM {
         block_header: &BlockHeader,
         state: &mut EvmState,
     ) -> Result<(), EvmError> {
-        let beacon_root = match block_header.parent_beacon_block_root {
-            None => {
-                return Err(EvmError::Header(
-                    "parent_beacon_block_root field is missing".to_string(),
-                ));
-            }
-            Some(beacon_root) => beacon_root,
-        };
+        let beacon_root = block_header.parent_beacon_block_root.ok_or_else(|| {
+            EvmError::Header("parent_beacon_block_root field is missing".to_string())
+        })?;
 
         generic_system_contract_revm(
             block_header,
@@ -329,22 +324,22 @@ impl REVM {
             // Apply account changes to DB
             let mut account_update = AccountUpdate::new(address);
             // If the account was changed then both original and current info will be present in the bundle account
-            if account.is_info_changed() {
+            if account.is_info_changed()
+                && let Some(new_acc_info) = account.account_info()
+            {
                 // Update account info in DB
-                if let Some(new_acc_info) = account.account_info() {
-                    let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-                    let account_info = AccountInfo {
-                        code_hash,
-                        balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
-                        nonce: new_acc_info.nonce,
-                    };
-                    account_update.info = Some(account_info);
-                    if account.is_contract_changed() {
-                        // Update code in db
-                        if let Some(code) = new_acc_info.code {
-                            account_update.code = Some(code.original_bytes().0);
-                        }
-                    }
+                let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
+                let account_info = AccountInfo {
+                    code_hash,
+                    balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                    nonce: new_acc_info.nonce,
+                };
+                account_update.info = Some(account_info);
+                // Update code in db
+                if account.is_contract_changed()
+                    && let Some(code) = new_acc_info.code
+                {
+                    account_update.code = Some(code.original_bytes().0);
                 }
             }
             // Update account storage in DB

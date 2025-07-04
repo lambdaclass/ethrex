@@ -480,7 +480,7 @@ async fn extract_block_messages(
         txs.push(tx.clone());
         receipts.push(receipt);
     }
-    Ok(get_block_l1_messages(&txs, &receipts))
+    Ok(get_block_l1_messages(&receipts))
 }
 
 async fn get_batch(
