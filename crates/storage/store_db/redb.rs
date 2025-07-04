@@ -737,7 +737,7 @@ impl StoreEngine for RedBStore {
 
                 // Store storage trie updates
                 let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
-                for (hashed_address, nodes, _) in update_batch.storage_updates {
+                for (hashed_address, nodes) in update_batch.storage_updates {
                     for (node_hash, node_data) in nodes {
                         addr_store.insert(
                             (hashed_address.0, node_hash_to_fixed_size(node_hash)),
