@@ -287,6 +287,66 @@ impl Discv4LookupHandler {
     }
 }
 
+pub struct Discv4NodeIterator {
+    lookup_handler: Discv4LookupHandler,
+    target: H512,
+    target_node_id: H256,
+    peers_to_ask: Vec<Node>,
+    seen_peers: HashSet<H512>,
+    asked_peers: HashSet<H512>,
+    buffer: Vec<Node>,
+}
+
+impl Discv4NodeIterator {
+    pub fn new(ctx: P2PContext, udp_socket: Arc<UdpSocket>) -> Self {
+        let random_signing_key = SigningKey::random(&mut OsRng);
+        let target = public_key_from_signing_key(&random_signing_key);
+        let target_node_id = node_id(&target);
+
+        let lookup_handler = Discv4LookupHandler::new(ctx, udp_socket);
+
+        Discv4NodeIterator {
+            lookup_handler,
+            target,
+            target_node_id,
+            peers_to_ask: vec![],
+            seen_peers: Default::default(),
+            asked_peers: Default::default(),
+            buffer: vec![],
+        }
+    }
+
+    pub async fn next(&mut self) -> Node {
+        if let Some(node) = self.buffer.pop() {
+            return node;
+        }
+        loop {
+            let (found_nodes, should_continue) = self
+                .lookup_handler
+                .recursive_lookup_step(
+                    self.target,
+                    self.target_node_id,
+                    &mut self.peers_to_ask,
+                    &mut self.seen_peers,
+                    &mut self.asked_peers,
+                )
+                .await;
+
+            self.buffer.extend(found_nodes);
+
+            if !should_continue {
+                self.peers_to_ask.clear();
+                self.seen_peers.clear();
+                self.asked_peers.clear();
+            }
+
+            if let Some(node) = self.buffer.pop() {
+                return node;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::time::sleep;

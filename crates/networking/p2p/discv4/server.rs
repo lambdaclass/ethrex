@@ -9,6 +9,7 @@ use super::{
     },
 };
 use crate::{
+    discv4::lookup::Discv4NodeIterator,
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::P2PContext,
     rlpx::{connection::server::RLPxConnection, utils::node_id},
@@ -88,6 +89,10 @@ impl Discv4Server {
         lookup_handler.start(self.lookup_interval_minutes, 10);
 
         Ok(())
+    }
+
+    pub fn new_random_iterator(&self) -> Discv4NodeIterator {
+        Discv4NodeIterator::new(self.ctx.clone(), self.udp_socket.clone())
     }
 
     fn new_lookup_handler(&self) -> Discv4LookupHandler {
