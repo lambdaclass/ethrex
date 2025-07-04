@@ -17,10 +17,12 @@ use crate::{
     sequencer::l1_watcher::PrivilegedTransactionData,
 };
 
+// kind | status | L1 tx hash | L2 tx hash | amount
+pub type L1ToL2MessagesRow = (L1ToL2MessageKind, L1ToL2MessageStatus, H256, H256, U256);
+
 pub struct L1ToL2MessagesTable {
     pub state: TableState,
-    // Status | Kind | L1 tx hash | L2 tx hash | amount
-    pub items: Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)>,
+    pub items: Vec<L1ToL2MessagesRow>,
     last_l1_block_fetched: U256,
     common_bridge_address: Address,
 }
@@ -110,7 +112,7 @@ impl L1ToL2MessagesTable {
         last_l1_block_fetched: &mut U256,
         common_bridge_address: Address,
         eth_client: &EthClient,
-    ) -> Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)> {
+    ) -> Vec<L1ToL2MessagesRow> {
         let logs = Self::get_logs(last_l1_block_fetched, common_bridge_address, eth_client).await;
         Self::process_logs(&logs, common_bridge_address, eth_client).await
     }
@@ -133,7 +135,7 @@ impl L1ToL2MessagesTable {
         logs: &[RpcLog],
         common_bridge_address: Address,
         eth_client: &EthClient,
-    ) -> Vec<(L1ToL2MessageStatus, L1ToL2MessageKind, H256, H256, U256)> {
+    ) -> Vec<L1ToL2MessagesRow> {
         let mut processed_logs = Vec::new();
 
         let pending_l1_to_l2_messages = eth_client
@@ -158,12 +160,12 @@ impl L1ToL2MessagesTable {
             );
 
             processed_logs.push((
+                L1ToL2MessageKind::from(&l1_to_l2_message),
                 if pending_l1_to_l2_messages.contains(&log.transaction_hash) {
                     L1ToL2MessageStatus::Pending
                 } else {
                     L1ToL2MessageStatus::Processed
                 },
-                L1ToL2MessageKind::from(&l1_to_l2_message),
                 log.transaction_hash,
                 l1_to_l2_message_hash,
                 l1_to_l2_message.value,
@@ -182,8 +184,8 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
         Self: Sized,
     {
         let constraints = vec![
-            Constraint::Length(9),
             Constraint::Length(10),
+            Constraint::Length(9),
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Fill(1),
@@ -192,10 +194,10 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
         let rows = self
             .items
             .iter()
-            .map(|(status, kind, l1_tx_hash, l2_tx_hash, amount)| {
+            .map(|(kind, status, l1_tx_hash, l2_tx_hash, amount)| {
                 Row::new(vec![
-                    Span::styled(format!("{status}"), Style::default()),
                     Span::styled(format!("{kind}"), Style::default()),
+                    Span::styled(format!("{status}"), Style::default()),
                     Span::styled(format!("{l1_tx_hash:#x}"), Style::default()),
                     Span::styled(format!("{l2_tx_hash:#x}"), Style::default()),
                     Span::styled(amount.to_string(), Style::default()),
@@ -204,7 +206,7 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
 
         let l1_to_l2_messages_table = Table::new(rows, constraints)
             .header(
-                Row::new(vec!["Status", "Kind", "L1 Tx Hash", "L2 Tx Hash", "Value"])
+                Row::new(vec!["Kind", "Status", "L1 Tx Hash", "L2 Tx Hash", "Value"])
                     .style(Style::default()),
             )
             .block(
