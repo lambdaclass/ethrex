@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use aligned_sdk::{
     aggregation_layer::{
         AggregationModeVerificationData, ProofStatus, ProofVerificationAggModeError,
@@ -6,16 +8,13 @@ use aligned_sdk::{
     common::types::Network,
 };
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_common::{
-    calldata::Value,
-    prover::{BatchProof, ProverType},
-};
+use ethrex_l2_common::{calldata::Value, prover::ProverType};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
 use secp256k1::SecretKey;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
@@ -29,7 +28,7 @@ use super::{
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatchesAligned(uint256,bytes[],bytes32[][],bytes[],bytes32[][])";
+    "verifyBatchesAligned(uint256,bytes[],bytes32[][],bytes32[][])";
 
 pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
@@ -149,60 +148,144 @@ impl L1ProofVerifier {
         Ok(())
     }
 
+    /// Checks that all consecutive batches starting from `first_batch_number` have been
+    /// verified and aggregated in Aligned Layer.
     async fn verify_proofs_aggregation(
         &self,
         first_batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        let proofs = self.get_available_proofs(first_batch_number).await?;
-        let aggregated_proofs = self.get_aggregated_proofs(proofs).await?;
+        let mut public_inputs_list = Vec::new();
+        let mut sp1_merkle_proofs_list = Vec::new();
+        let mut risc0_merkle_proofs_list = Vec::new();
 
-        let aggregated_proofs_count = u64::try_from(aggregated_proofs.len())
-            .map_err(|e| ProofVerifierError::InternalError(e.to_string()))?;
-
-        match aggregated_proofs_count {
-            0 => return Ok(None),
-            1 => info!("Sending verify tx for batch {first_batch_number}"),
-            n => {
-                info!(
-                    "Sending verify tx for batches {first_batch_number} to {}",
-                    first_batch_number + n - 1
-                );
-            }
-        };
-
-        let mut sp1_public_inputs_vec = Vec::new();
-        let mut sp1_merkle_paths = Vec::new();
-        let mut risc0_public_inputs_vec = Vec::new();
-        let mut risc0_merkle_paths = Vec::new();
-
-        for (prover_type, public_inputs, merkle_path) in aggregated_proofs {
-            let merkle_path = merkle_path
-                .iter()
-                .map(|x| Value::FixedBytes(bytes::Bytes::from_owner(*x)))
-                .collect();
-            match prover_type {
-                ProverType::SP1 => {
-                    sp1_public_inputs_vec.push(Value::Bytes(public_inputs.into()));
-                    sp1_merkle_paths.push(Value::Array(merkle_path));
-                }
-                ProverType::RISC0 => {
-                    risc0_public_inputs_vec.push(Value::Bytes(public_inputs.into()));
-                    risc0_merkle_paths.push(Value::Array(merkle_path));
-                }
-                unsupported_type => {
-                    return Err(ProofVerifierError::UnsupportedProverType(
-                        unsupported_type.to_string(),
-                    ));
+        let mut batch_number = first_batch_number;
+        loop {
+            let mut proofs_for_batch = HashMap::new();
+            for prover_type in &self.needed_proof_types {
+                if let Some(proof) = self
+                    .rollup_store
+                    .get_proof_by_batch_and_type(batch_number, *prover_type)
+                    .await?
+                {
+                    proofs_for_batch.insert(*prover_type, proof);
+                } else {
+                    break;
                 }
             }
+
+            // break if not all required proof types have been found for this batch
+            if proofs_for_batch.len() != self.needed_proof_types.len() {
+                break;
+            }
+
+            let mut aggregated_proofs_for_batch = HashMap::new();
+            let mut current_batch_public_inputs = None;
+
+            for (prover_type, proof) in proofs_for_batch {
+                let public_inputs = proof.public_values();
+
+                if let Some(ref existing_pi) = current_batch_public_inputs {
+                    if *existing_pi != public_inputs {
+                        return Err(ProofVerifierError::InternalError(format!(
+                            "Mismatched public inputs for batch {batch_number}"
+                        )));
+                    }
+                } else {
+                    current_batch_public_inputs = Some(public_inputs.clone());
+                }
+
+                let verification_data = match prover_type {
+                    ProverType::SP1 => AggregationModeVerificationData::SP1 {
+                        vk: self.sp1_vk,
+                        public_inputs: public_inputs.clone(),
+                    },
+                    ProverType::RISC0 => AggregationModeVerificationData::Risc0 {
+                        image_id: self.risc0_vk,
+                        public_inputs: public_inputs.clone(),
+                    },
+                    unsupported_type => {
+                        return Err(ProofVerifierError::UnsupportedProverType(
+                            unsupported_type.to_string(),
+                        ));
+                    }
+                };
+
+                if let Some((merkle_root, merkle_path)) =
+                    self.check_proof_aggregation(verification_data).await?
+                {
+                    info!(
+                        ?batch_number,
+                        ?prover_type,
+                        merkle_root = %format_args!("{merkle_root:#x}"),
+                        "Proof aggregated by Aligned"
+                    );
+                    aggregated_proofs_for_batch.insert(prover_type, merkle_path);
+                } else {
+                    warn!(
+                        ?batch_number,
+                        ?prover_type,
+                        "Proof has not been aggregated by Aligned, aborting"
+                    );
+                    break;
+                }
+            }
+
+            // break if not all required proof types have been aggregated for this batch
+            if aggregated_proofs_for_batch.len() != self.needed_proof_types.len() {
+                break;
+            }
+
+            if let Some(public_inputs) = current_batch_public_inputs {
+                public_inputs_list.push(Value::Bytes(public_inputs.into()));
+
+                let sp1_path = aggregated_proofs_for_batch
+                    .get(&ProverType::SP1)
+                    .map(|path| {
+                        Value::Array(
+                            path.iter()
+                                .map(|p| Value::FixedBytes(bytes::Bytes::from_owner(*p)))
+                                .collect(),
+                        )
+                    })
+                    .unwrap_or_else(|| Value::Array(vec![]));
+                sp1_merkle_proofs_list.push(sp1_path);
+
+                let risc0_path = aggregated_proofs_for_batch
+                    .get(&ProverType::RISC0)
+                    .map(|path| {
+                        Value::Array(
+                            path.iter()
+                                .map(|p| Value::FixedBytes(bytes::Bytes::from_owner(*p)))
+                                .collect(),
+                        )
+                    })
+                    .unwrap_or_else(|| Value::Array(vec![]));
+                risc0_merkle_proofs_list.push(risc0_path);
+            } else {
+                break;
+            }
+
+            batch_number += 1;
         }
+
+        if public_inputs_list.is_empty() {
+            return Ok(None);
+        }
+
+        let num_batches: u64 = public_inputs_list.len().try_into().map_err(|_| {
+            ProofVerifierError::InternalError("Failed to convert num_batches into u64".to_string())
+        })?;
+        info!(
+            "Sending verify tx for batches {} to {}",
+            first_batch_number,
+            first_batch_number + num_batches - 1
+        );
 
         let calldata_values = [
             Value::Uint(U256::from(first_batch_number)),
-            Value::Array(sp1_public_inputs_vec),
-            Value::Array(sp1_merkle_paths),
-            Value::Array(risc0_public_inputs_vec),
-            Value::Array(risc0_merkle_paths),
+            Value::Array(public_inputs_list),
+            Value::Array(sp1_merkle_proofs_list),
+            Value::Array(risc0_merkle_proofs_list),
         ];
 
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
@@ -217,7 +300,7 @@ impl L1ProofVerifier {
         .await?;
 
         // Store the verify transaction hash for each batch that was aggregated.
-        for i in 0..aggregated_proofs_count {
+        for i in 0..num_batches {
             let batch_number = first_batch_number + i;
             self.rollup_store
                 .store_verify_tx_by_batch(batch_number, verify_tx_hash)
@@ -225,68 +308,6 @@ impl L1ProofVerifier {
         }
 
         Ok(Some(verify_tx_hash))
-    }
-
-    /// Returns all proofs that have already been generated, starting from the given batch number.
-    async fn get_available_proofs(
-        &self,
-        mut batch_number: u64,
-    ) -> Result<Vec<(u64, BatchProof)>, ProofVerifierError> {
-        let mut proofs = Vec::new();
-        for prover_type in &self.needed_proof_types {
-            while let Some(proof) = self
-                .rollup_store
-                .get_proof_by_batch_and_type(batch_number, *prover_type)
-                .await?
-            {
-                proofs.push((batch_number, proof));
-                batch_number += 1;
-            }
-        }
-        Ok(proofs)
-    }
-
-    /// Receives an array of proofs.
-    /// Returns merkle proofs for only those zk proofs that were aggregated by Aligned.
-    async fn get_aggregated_proofs(
-        &self,
-        proofs: Vec<(u64, BatchProof)>,
-    ) -> Result<Vec<(ProverType, Vec<u8>, Vec<[u8; 32]>)>, ProofVerifierError> {
-        let mut aggregated_proofs = Vec::new();
-        for (batch_number, proof) in proofs {
-            let public_inputs = proof.public_values();
-            let prover_type = proof.prover_type();
-
-            let verification_data = match prover_type {
-                ProverType::RISC0 => AggregationModeVerificationData::Risc0 {
-                    image_id: self.risc0_vk,
-                    public_inputs: public_inputs.clone(),
-                },
-                ProverType::SP1 => AggregationModeVerificationData::SP1 {
-                    vk: self.sp1_vk,
-                    public_inputs: public_inputs.clone(),
-                },
-                unsupported_type => {
-                    return Err(ProofVerifierError::UnsupportedProverType(
-                        unsupported_type.to_string(),
-                    ));
-                }
-            };
-            let commitment = H256(verification_data.commitment());
-
-            if let Some((merkle_root, merkle_path)) =
-                self.check_proof_aggregation(verification_data).await?
-            {
-                info!(
-                    ?batch_number,
-                    commitment = %format_args!("{commitment:#x}"),
-                    merkle_root = %format_args!("{merkle_root:#x}"),
-                    "Proof aggregated by Aligned"
-                );
-                aggregated_proofs.push((prover_type, public_inputs, merkle_path));
-            }
-        }
-        Ok(aggregated_proofs)
     }
 
     /// Checks if the received proof was aggregated by Aligned.

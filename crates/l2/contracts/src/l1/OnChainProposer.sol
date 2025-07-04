@@ -318,49 +318,55 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata sp1PublicInputsList,
+        bytes[] calldata publicInputsList,
         bytes32[][] calldata sp1MerkleProofsList,
-        bytes[] calldata risc0PublicInputsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external override onlySequencer whenNotPaused {
         require(
             ALIGNED,
             "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
         );
-
-        require(
-            alignedPublicInputsList.length == alignedMerkleProofsList.length,
-            "OnChainProposer: input/proof array length mismatch"
-        );
-        require(
-            firstBatchNumber == lastVerifiedBatch + 1,
+        require( firstBatchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: incorrect first batch number"
         );
 
+        if (REQUIRE_SP1_PROOF) {
+            require(
+                publicInputsList.length == sp1MerkleProofsList.length,
+                "OnChainProposer: SP1 input/proof array length mismatch"
+            );
+        }
+        if (REQUIRE_RISC0_PROOF) {
+            require(
+                publicInputsList.length == risc0MerkleProofsList.length,
+                "OnChainProposer: Risc0 input/proof array length mismatch"
+            );
+        }
+
         uint256 batchNumber = firstBatchNumber;
 
-        for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
+        for (uint256 i = 0; i < publicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
                 "OnChainProposer: cannot verify an uncommitted batch"
             );
 
             // Verify public data for the batch
-            _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
+            _verifyPublicData(batchNumber, publicInputsList[i][8:]);
 
             // Verify inclusion in aggregated Aligned proof
             if (REQUIRE_SP1_PROOF) {
                 _verifyProofInclusionAligned(
                     sp1MerkleProofsList[i],
                     SP1_VERIFICATION_KEY,
-                    sp1PublicInputsList[i]
+                    publicInputsList[i]
                 );
             }
             if (REQUIRE_RISC0_PROOF) {
                 _verifyProofInclusionAligned(
                     risc0MerkleProofsList[i],
                     RISC0_VERIFICATION_KEY,
-                    risc0PublicInputsList[i]
+                    publicInputsList[i]
                 );
             }
 
