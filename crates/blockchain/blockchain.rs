@@ -362,9 +362,10 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
+        let parent_hash = block.header.parent_hash;
         let apply_updates_list = self
             .storage
-            .apply_account_updates_batch(block.header.parent_hash, account_updates)
+            .apply_account_updates_batch(parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -372,6 +373,14 @@ impl Blockchain {
         let state_updates = apply_updates_list.state_updates;
         let accounts_updates = apply_updates_list.storage_updates;
         let code_updates = apply_updates_list.code_updates;
+        let account_info_log_updates = self
+            .storage
+            .build_account_info_logs(parent_hash, account_updates.iter())
+            .map_err(ChainError::StoreError)?;
+        let storage_log_updates = self
+            .storage
+            .build_account_storage_logs(parent_hash, account_updates.iter())
+            .map_err(ChainError::StoreError)?;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -382,10 +391,11 @@ impl Blockchain {
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
             code_updates,
+            account_info_log_updates,
+            storage_log_updates,
         };
 
         self.storage
-            .clone()
             .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
@@ -517,10 +527,6 @@ impl Blockchain {
             log_batch_progress(blocks_len, i);
         }
 
-        let account_updates = vm
-            .get_state_transitions()
-            .map_err(|err| (ChainError::EvmError(err), None))?;
-
         let last_block = blocks
             .last()
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
@@ -528,10 +534,15 @@ impl Blockchain {
         let last_block_number = last_block.header.number;
         let last_block_gas_limit = last_block.header.gas_limit;
 
+        let account_updates = vm
+            .get_state_transitions()
+            .map_err(|err| (ChainError::EvmError(err), None))?;
+
+        let parent_hash = first_block_header.parent_hash;
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates_batch(parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
@@ -544,12 +555,25 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        // call helper function to build write logs
+        let account_info_log_updates = self
+            .storage
+            .build_account_info_logs(parent_hash, account_updates.iter())
+            .map_err(|e| (e.into(), None))?;
+
+        let storage_log_updates = self
+            .storage
+            .build_account_storage_logs(parent_hash, account_updates.iter())
+            .map_err(|e| (e.into(), None))?;
+
         let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
             code_updates,
+            account_info_log_updates,
+            storage_log_updates,
         };
 
         self.storage

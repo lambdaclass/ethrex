@@ -3,12 +3,17 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    store_db::codec::{
+        account_info_log_entry::AccountInfoLogEntry,
+        account_storage_log_entry::AccountStorageLogEntry, block_num_hash::BlockNumHash,
+    },
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::Address;
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, payload::PayloadBundle,
+    AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, payload::PayloadBundle,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -47,6 +52,24 @@ struct StoreInner {
     state_snapshot: BTreeMap<H256, AccountState>,
     // Stores Storage trie leafs from the last downloaded tries
     storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    /// Stores current account info
+    account_info: HashMap<Address, AccountInfo>,
+    /// Stores current account storage
+    account_storage: HashMap<(Address, H256), U256>,
+    /// Current snapshot block number and hash
+    current_snapshot_block: Option<BlockNumHash>,
+    /// Account info write log table.
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
+    account_state_logs: HashMap<BlockNumHash, Vec<(BlockNumHash, AccountInfoLogEntry)>>,
+    /// Storage write log table.
+    /// The key maps to two blocks: first, and as seek key, the block corresponding to the final
+    /// state after applying the log, and second, the parent of the first block in the range,
+    /// that is, the state to which this log should be applied and the state we get back after
+    /// rewinding these logs.
+    account_storage_logs: HashMap<BlockNumHash, Vec<(BlockNumHash, AccountStorageLogEntry)>>,
 }
 
 #[derive(Default, Debug)]
@@ -89,6 +112,69 @@ impl Store {
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
+
+        // We only need to update the flat tables if the update batch contains blocks
+        // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
+        if let (Some(first_block), Some(last_block)) =
+            (update_batch.blocks.first(), update_batch.blocks.last())
+        {
+            let parent_block = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
+
+            let final_block = (last_block.header.number, last_block.hash()).into();
+            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
+            {
+                let log = AccountInfoLogEntry {
+                    address: addr.0,
+                    info: new_info,
+                    previous_info: old_info,
+                };
+                store
+                    .account_state_logs
+                    .entry(final_block)
+                    .or_default()
+                    .push((parent_block, log));
+            }
+
+            for storage_log in update_batch.storage_log_updates.iter().cloned() {
+                store
+                    .account_storage_logs
+                    .entry(final_block)
+                    .or_default()
+                    .push((parent_block, storage_log));
+            }
+
+            let current_snapshot = store.current_snapshot_block.unwrap_or_default();
+
+            // If the current snapshot is the parent block, we can update the account and storage
+            if current_snapshot == parent_block {
+                for (addr, _old_info, new_info) in
+                    update_batch.account_info_log_updates.iter().cloned()
+                {
+                    if new_info == AccountInfo::default() {
+                        store.account_info.remove(&addr.0);
+                    } else {
+                        store.account_info.insert(addr.0, new_info);
+                    }
+                }
+
+                for entry in update_batch.storage_log_updates.iter().cloned() {
+                    if entry.new_value.is_zero() {
+                        store.account_storage.remove(&(entry.address, entry.slot));
+                    } else {
+                        store
+                            .account_storage
+                            .insert((entry.address, entry.slot), entry.new_value);
+                    }
+                }
+
+                store.current_snapshot_block = Some(final_block);
+            }
+        }
+
         {
             // store account updates
             let mut state_trie_store = store
@@ -147,6 +233,230 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        let Some(mut current_snapshot) = store.current_snapshot_block else {
+            return Ok(());
+        };
+
+        let mut block_num = current_snapshot.block_number;
+        let mut snapshot_hash = current_snapshot.block_hash;
+
+        let mut canonical_hash = store
+            .canonical_hashes
+            .get(&block_num)
+            .copied()
+            .unwrap_or_default();
+
+        while canonical_hash != snapshot_hash {
+            // Restore account info for the block of the current snapshot
+            if let Some(entries) = store.account_state_logs.get(&current_snapshot).cloned() {
+                for (parent_block, log) in entries {
+                    // Restore previous state
+                    if log.previous_info == AccountInfo::default() {
+                        store.account_info.remove(&log.address);
+                    } else {
+                        store
+                            .account_info
+                            .insert(log.address, log.previous_info.clone());
+                    }
+
+                    // We update this here to ensure it's the previous block according
+                    // to the logs found.
+                    BlockNumHash {
+                        block_number: block_num,
+                        block_hash: snapshot_hash,
+                    } = parent_block;
+                }
+            };
+
+            // Restore account storage for the block of the current snapshot
+            if let Some(entries) = store.account_storage_logs.get(&current_snapshot).cloned() {
+                for (parent_block, log) in entries {
+                    // Restore previous state
+                    if log.old_value.is_zero() {
+                        store.account_storage.remove(&(log.address, log.slot));
+                    } else {
+                        store
+                            .account_storage
+                            .insert((log.address, log.slot), log.old_value);
+                    }
+
+                    // We update this here to ensure it's the previous block according
+                    // to the logs found.
+                    BlockNumHash {
+                        block_number: block_num,
+                        block_hash: snapshot_hash,
+                    } = parent_block;
+                }
+            };
+
+            if current_snapshot == (block_num, snapshot_hash).into() {
+                break;
+            }
+
+            // Get the canonical hash of the parent block
+            canonical_hash = store
+                .canonical_hashes
+                .get(&block_num)
+                .copied()
+                .unwrap_or_default();
+
+            // Update the current snapshot with the parent block
+            current_snapshot = BlockNumHash {
+                block_number: block_num,
+                block_hash: snapshot_hash,
+            };
+        }
+
+        store.current_snapshot_block = Some(current_snapshot);
+
+        Ok(())
+    }
+
+    async fn replay_writes_until_head(&self, head_hash: H256) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        let Some(mut current_snapshot) = store.current_snapshot_block else {
+            return Ok(());
+        };
+
+        // Asuming that we are in the bifurcation point, we start from the next block
+        let start_block = current_snapshot.block_number + 1;
+
+        for target_block_num in start_block.. {
+            // Get the canonical hash for this block number
+            let Some(canonical_hash) = store.canonical_hashes.get(&target_block_num).copied()
+            else {
+                break; // No more canonical blocks
+            };
+
+            let target_block = BlockNumHash {
+                block_number: target_block_num,
+                block_hash: canonical_hash,
+            };
+
+            // Apply account state logs for this block
+            if let Some(entries) = store.account_state_logs.get(&target_block).cloned() {
+                for (parent_block, log) in entries {
+                    // Verify this log applies to our current state
+                    if parent_block != current_snapshot {
+                        break;
+                    }
+
+                    // Apply the new state
+                    if log.info == AccountInfo::default() {
+                        store.account_info.remove(&log.address);
+                    } else {
+                        store.account_info.insert(log.address, log.info.clone());
+                    }
+                }
+            }
+
+            // Apply account storage logs for this block
+            if let Some(entries) = store.account_storage_logs.get(&target_block).cloned() {
+                for (parent_block, log) in entries {
+                    // Verify this log applies to our current state
+                    if parent_block != current_snapshot {
+                        break;
+                    }
+
+                    // Apply the new state
+                    if log.new_value.is_zero() {
+                        store.account_storage.remove(&(log.address, log.slot));
+                    } else {
+                        store
+                            .account_storage
+                            .insert((log.address, log.slot), log.new_value);
+                    }
+                }
+            }
+
+            // Update current snapshot to the target block that we just processed
+            current_snapshot = target_block;
+
+            // Stop if we've reached the target head
+            if canonical_hash == head_hash {
+                tracing::warn!("REPLAY: reached head {head_hash:?}");
+                break;
+            }
+        }
+
+        // Update the current snapshot block
+        store.current_snapshot_block = Some(current_snapshot);
+        Ok(())
+    }
+
+    fn get_current_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        let store = self.inner()?;
+        Ok(store.account_info.get(&address).cloned())
+    }
+
+    async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        store.current_snapshot_block = Some(BlockNumHash {
+            block_number: genesis_block_number,
+            block_hash: genesis_block_hash,
+        });
+
+        for (address, nonce, balance, code_hash, removed) in genesis_accounts {
+            if *removed {
+                store.account_info.remove(address);
+            } else {
+                let account_info = AccountInfo {
+                    nonce: *nonce,
+                    balance: *balance,
+                    code_hash: *code_hash,
+                };
+                store.account_info.insert(*address, account_info);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        let store: MutexGuard<'_, StoreInner> = self.inner()?;
+        Ok(store.current_snapshot_block.map(|block| block.block_hash))
+    }
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        let store = self.inner()?;
+        Ok(store.account_storage.get(&(address, key)).cloned())
+    }
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+
+        store.current_snapshot_block = Some(BlockNumHash {
+            block_number: genesis_block_number,
+            block_hash: genesis_block_hash,
+        });
+
+        for (address, slot, value) in genesis_accounts {
+            if !value.is_zero() {
+                store.account_storage.insert((*address, *slot), *value);
+            } else {
+                store.account_storage.remove(&(*address, *slot));
+            }
+        }
+
+        Ok(())
+    }
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner()?;
         if let Some(hash) = store.canonical_hashes.get(&block_number) {
