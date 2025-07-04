@@ -54,10 +54,10 @@ pub(crate) async fn storage_healer(
             let speed = healing_start
                 .elapsed()
                 .as_millis()
-                .checked_div(total_healed as u128)
+                .checked_div((total_healed/100) as u128)
                 .unwrap_or(9999);
             info!(
-                "Storage Healing in Progress, pending paths: {}, healing speed: {}ms/node",
+                "Storage Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
                 pending_paths.len(),
                 speed
             );
