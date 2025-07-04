@@ -326,10 +326,6 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
         .store
         .update_latest_block_number(*last_l2_committed_block_number)
         .await?;
-    state
-        .store
-        .unset_canonical_block(*last_l2_committed_block_number + 1)
-        .await?;
     let _ = apply_fork_choice(
         &state.store,
         last_l2_committed_batch_block_hash,
