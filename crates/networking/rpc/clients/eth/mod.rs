@@ -1,7 +1,10 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::{GetBatchByNumberError, GetWitnessError, TxPoolContentError},
+    admin::NodeInfo,
+    clients::eth::errors::{
+        GetBatchByNumberError, GetNodeError, GetWitnessError, TxPoolContentError,
+    },
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -21,9 +24,9 @@ use eth_sender::Overrides;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        BlobsBundle, Block, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction, batch::Batch,
-        block_execution_witness::ExecutionWitnessResult,
+        BlobsBundle, Block, BlockHash, ChainConfig, EIP1559Transaction, EIP4844Transaction,
+        GenericTransaction, PrivilegedL2Transaction, Signable, TxKind, TxType,
+        WrappedEIP4844Transaction, batch::Batch, block_execution_witness::ExecutionWitnessResult,
     },
     utils::decode_hex,
 };
@@ -1286,6 +1289,31 @@ impl EthClient {
             message_proof = self.get_message_proof(transaction_hash).await?;
         }
         message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
+    }
+
+    pub async fn get_node_info(&self) -> Result<NodeInfo, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "admin_nodeInfo".to_string(),
+            params: Some(vec![]),
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetNodeError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetNodeError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
+    pub async fn get_chain_config(&self) -> Result<ChainConfig, EthClientError> {
+        let node = self.get_node_info().await?;
+        node.protocols
+            .eth
+            .ok_or(EthClientError::from(GetNodeError::MissingChainConfig()))
     }
 
     /// Fethches the execution witnes for a given block or range of blocks.

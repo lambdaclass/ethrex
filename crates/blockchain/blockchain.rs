@@ -318,7 +318,10 @@ impl Blockchain {
         }
 
         // If the initial block_hash is missing we add it
-        block_hashes.insert(first_block_header.number.saturating_sub(1), first_block_header.parent_hash);
+        block_hashes.insert(
+            first_block_header.number.saturating_sub(1),
+            first_block_header.parent_hash,
+        );
 
         let headers: Vec<BlockHeader> = block_hashes
             .values()

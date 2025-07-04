@@ -10,7 +10,6 @@ use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
-use crate::rpc::{get_chain_config_rpc, get_tx_block};
 use crate::run::{exec, prove, run_tx};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
@@ -89,7 +88,7 @@ impl SubcommandExecute {
                 let eth_client = EthClient::new(&rpc_url)?;
                 let chain_config = match network {
                     Some(net) => get_chain_config(&net)?,
-                    None => get_chain_config_rpc(&eth_client).await?,
+                    None => eth_client.get_chain_config().await?,
                 };
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
@@ -115,7 +114,7 @@ impl SubcommandExecute {
                 let eth_client = EthClient::new(&rpc_url)?;
                 let chain_config = match network {
                     Some(net) => get_chain_config(&net)?,
-                    None => get_chain_config_rpc(&eth_client).await?,
+                    None => eth_client.get_chain_config().await?,
                 };
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
@@ -134,7 +133,7 @@ impl SubcommandExecute {
                 let eth_client = EthClient::new(&rpc_url)?;
                 let chain_config = match network {
                     Some(net) => get_chain_config(&net)?,
-                    None => get_chain_config_rpc(&eth_client).await?,
+                    None => eth_client.get_chain_config().await?,
                 };
                 // Get the block number of the transaction
                 let tx = eth_client

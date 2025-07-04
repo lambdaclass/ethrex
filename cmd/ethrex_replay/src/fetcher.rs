@@ -59,7 +59,11 @@ pub async fn get_rangedata(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    let cache = Cache { blocks, witness, chain_config };
+    let cache = Cache {
+        blocks,
+        witness,
+        chain_config,
+    };
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
