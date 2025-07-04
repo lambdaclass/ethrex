@@ -217,10 +217,9 @@ fn execute_stateless(
     chain_config: ChainConfig,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    
-    db.rebuild_tries(
-        chain_config
-        , &blocks.first().ok_or(StatelessExecutionError::InvalidInitialStateTrie)?.header)
+    let first_header = &blocks.first().ok_or(StatelessExecutionError::EmptyBatchError)?.header;
+
+    db.rebuild_tries(chain_config, first_header)
         .map_err(StatelessExecutionError::ExecutionWitness)?;
 
     // Validate block hashes, except parent block hash (latest block hash)

@@ -55,7 +55,7 @@ pub enum BlockchainType {
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
-    storage: Store,
+    pub storage: Store,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after

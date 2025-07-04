@@ -120,7 +120,7 @@ pub fn rebuild_storage_trie(address: &Vec<u8>, trie: &Trie, state: Vec<Vec<u8>>)
 }
 
 impl ExecutionWitnessResult {
-    pub fn rebuild_tries(&mut self, chain_config: ChainConfig, parent_block: &BlockHeader) -> Result<(), ExecutionWitnessError> {
+    pub fn rebuild_tries(&mut self, chain_config: ChainConfig, first_header: &BlockHeader) -> Result<(), ExecutionWitnessError> {
         self.chain_config = chain_config;
         
         let Some(state) = self.state.as_ref() else {
@@ -133,8 +133,9 @@ impl ExecutionWitnessResult {
         for header in &self.headers {
             self.block_headers.insert(header.number, header.clone());
         }
-
-        let state_trie = rebuild_trie(parent_block.state_root, state.clone())?;
+ 
+        let parent_header = self.get_block_parent_header(first_header.number)?;
+        let state_trie = rebuild_trie(parent_header.state_root, state.clone())?;
 
         // Keys can either be account addresses or storage slots. They have different sizes,
         // so we filter them by size. Addresses are 20 u8 long

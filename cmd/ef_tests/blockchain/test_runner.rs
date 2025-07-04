@@ -403,6 +403,7 @@ async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &st
     let program_input = ProgramInput {
         blocks,
         db: witness,
+        chain_config: blockchain.storage.get_chain_config().unwrap_or_default(),
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
         ..Default::default()
     };
