@@ -69,6 +69,8 @@ pub enum ExceptionalHalt {
     Precompile(#[from] PrecompileError),
 }
 
+// Error strings are attached to execution-spec-tests mapping https://github.com/ethereum/execution-spec-tests
+// If any change is made here without changing the mapper it will break some hive tests.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum TxValidationError {
     #[error("Sender account {0} shouldn't be a contract")]

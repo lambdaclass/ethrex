@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{BlockchainType, error::ChainError};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
@@ -17,12 +17,10 @@ use tracing::{Level, info, warn};
 use crate::{
     DEFAULT_DATADIR,
     initializers::{init_blockchain, init_store, open_store},
+    l2,
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, set_datadir},
 };
-
-#[cfg(feature = "l2")]
-use crate::l2;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -159,7 +157,7 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.enabled", default_value = if cfg!(feature = "l2") { "false" } else { "true" }, value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
+    #[arg(long = "p2p.enabled", default_value = "true", value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_enabled: bool,
     #[arg(
         long = "p2p.addr",
@@ -241,6 +239,8 @@ pub enum Subcommand {
         path: String,
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        l2: bool,
     },
     #[command(
         name = "export",
@@ -279,7 +279,6 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
-    #[cfg(feature = "l2")]
     #[command(subcommand)]
     L2(l2::Command),
 }
@@ -290,7 +289,7 @@ impl Subcommand {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
-            Subcommand::Import { path, removedb } => {
+            Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
@@ -305,7 +304,12 @@ impl Subcommand {
 
                 let network = &opts.network;
                 let genesis = network.get_genesis()?;
-                import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
+                let blockchain_type = if l2 {
+                    BlockchainType::L2
+                } else {
+                    BlockchainType::L1
+                };
+                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -315,7 +319,6 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
-            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
         Ok(())
@@ -354,10 +357,11 @@ pub async fn import_blocks(
     data_dir: &str,
     genesis: Genesis,
     evm: EvmEngine,
+    blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(evm, store.clone());
+    let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
         let mut blocks = vec![];
