@@ -56,6 +56,8 @@ pub enum EthClientError {
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]
     FailedToSignPayload(String),
+    #[error("Failed to get transaction pool: {0}")]
+    FailedToGetTxPool(#[from] TxPoolContentError),
     #[error("ethrex_getBatchByNumber request error: {0}")]
     GetBatchByNumberError(#[from] GetBatchByNumberError),
 }
@@ -267,13 +269,17 @@ pub enum GetMaxPriorityFeeError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GetBatchByNumberError {
-    #[error("{0}")]
-    ReqwestError(#[from] reqwest::Error),
+pub enum TxPoolContentError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
     RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBatchByNumberError {
     #[error("{0}")]
-    ParseIntError(#[from] std::num::ParseIntError),
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
 }
