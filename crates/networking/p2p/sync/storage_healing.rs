@@ -54,7 +54,7 @@ pub(crate) async fn storage_healer(
             let speed = healing_start
                 .elapsed()
                 .as_millis()
-                .checked_div((total_healed/100) as u128)
+                .checked_div((total_healed / 100) as u128)
                 .unwrap_or(9999);
             info!(
                 "Storage Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
@@ -143,15 +143,17 @@ async fn heal_storage_batch(
                 .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+            trie.db()
+                .put_batch_async(
+                    nodes
+                        .iter()
+                        .filter_map(|node| match node.compute_hash() {
+                            hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                            NodeHash::Inline(_) => None,
+                        })
+                        .collect(),
+                )
+                .await?;
             if nodes.is_empty() {
                 break;
             }
