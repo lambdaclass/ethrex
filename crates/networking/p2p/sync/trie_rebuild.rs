@@ -190,7 +190,8 @@ async fn rebuild_state_trie_segment(
         }
         if snapshot_reads_since_last_commit > MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
-            state_trie.commit_async().await?;
+            // Trie is left in unusable after commiting, we must create a new one
+            state_trie = store.open_state_trie(state_trie.hash_async().await?)?;
         }
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
