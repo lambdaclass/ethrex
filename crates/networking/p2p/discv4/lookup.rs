@@ -20,16 +20,11 @@ use tracing::debug;
 pub struct Discv4LookupHandler {
     ctx: P2PContext,
     udp_socket: Arc<UdpSocket>,
-    interval_minutes: u64,
 }
 
 impl Discv4LookupHandler {
-    pub fn new(ctx: P2PContext, udp_socket: Arc<UdpSocket>, interval_minutes: u64) -> Self {
-        Self {
-            ctx,
-            udp_socket,
-            interval_minutes,
-        }
+    pub fn new(ctx: P2PContext, udp_socket: Arc<UdpSocket>) -> Self {
+        Self { ctx, udp_socket }
     }
 
     /// Starts a tokio scheduler that:
@@ -52,19 +47,19 @@ impl Discv4LookupHandler {
     ///    doesn't have any node to ask.
     ///
     /// See more https://github.com/ethereum/devp2p/blob/master/discv4.md#recursive-lookup
-    pub fn start(&self, initial_interval_wait_seconds: u64) {
+    pub fn start(&self, interval_minutes: u64, initial_interval_wait_seconds: u64) {
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
             async move {
                 self_clone
-                    .start_lookup_loop(initial_interval_wait_seconds)
+                    .start_lookup_loop(interval_minutes, initial_interval_wait_seconds)
                     .await;
             }
         });
     }
 
-    async fn start_lookup_loop(&self, initial_interval_wait_seconds: u64) {
-        let mut interval = tokio::time::interval(Duration::from_secs(self.interval_minutes));
+    async fn start_lookup_loop(&self, interval_minutes: u64, initial_interval_wait_seconds: u64) {
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_minutes * 60));
         tokio::time::sleep(Duration::from_secs(initial_interval_wait_seconds)).await;
 
         loop {
@@ -277,11 +272,7 @@ mod tests {
     };
 
     fn lookup_handler_from_server(server: Discv4Server) -> Discv4LookupHandler {
-        Discv4LookupHandler::new(
-            server.ctx.clone(),
-            server.udp_socket.clone(),
-            server.lookup_interval_minutes,
-        )
+        Discv4LookupHandler::new(server.ctx.clone(), server.udp_socket.clone())
     }
 
     #[tokio::test]
