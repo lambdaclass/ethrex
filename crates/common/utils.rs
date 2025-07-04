@@ -43,16 +43,19 @@ pub enum Error {
     OverFlowError,
 }
 
+#[inline]
 pub fn u256_from_u512(value: U512) -> Result<ethnum::U256, Error> {
     let value: ethereum_types::U256 = value.try_into().map_err(|_| Error::OverFlowError)?;
 
     Ok(ethnum::U256::from_le_bytes(value.to_little_endian()))
 }
 
+#[inline]
 pub fn u512_from_u256(value: ethnum::U256) -> U512 {
     U512::from_little_endian(&value.to_le_bytes())
 }
 
+#[inline]
 pub fn u256_from_h160(value: H160) -> ethnum::U256 {
     let value = value.to_fixed_bytes();
     let mut buffer = [0u8; 32];
@@ -60,6 +63,7 @@ pub fn u256_from_h160(value: H160) -> ethnum::U256 {
     ethnum::U256::from_be_bytes(buffer)
 }
 
+#[inline]
 pub fn h160_from_u256(value: ethnum::U256) -> H160 {
     H160::from_slice(&value.to_be_bytes()[12..])
 }
