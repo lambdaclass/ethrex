@@ -1,4 +1,4 @@
-use crate::cache::Cache;
+use crate::cache::{Cache, L2Fields};
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
@@ -13,47 +13,14 @@ use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<()> {
-    let Cache {
-        blocks,
-        witness: db,
-        // L2 specific fields
-        blob_commitment,
-        blob_proof,
-    } = cache;
-    let input = ProgramInput {
-        blocks,
-        db,
-        elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        #[cfg(feature = "l2")]
-        blob_commitment: blob_commitment.unwrap_or([0; 48]),
-        #[cfg(feature = "l2")]
-        blob_proof: blob_proof.unwrap_or([0; 48]),
-    };
+    let input = get_input(cache)?;
     ethrex_prover_lib::execute(input).map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
 }
 
 pub async fn prove(cache: Cache) -> eyre::Result<()> {
-    let Cache {
-        blocks,
-        witness: db,
-        // L2 specific fields
-        blob_commitment,
-        blob_proof,
-    } = cache;
-    ethrex_prover_lib::prove(
-        ProgramInput {
-            blocks,
-            db,
-            elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            #[cfg(feature = "l2")]
-            blob_commitment: blob_commitment.unwrap_or([0; 48]),
-            #[cfg(feature = "l2")]
-            blob_proof: blob_proof.unwrap_or([0; 48]),
-        },
-        false,
-    )
-    .map_err(|e| eyre::Error::msg(e.to_string()))?;
+    let input = get_input(cache)?;
+    ethrex_prover_lib::prove(input, false).map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
 }
 
@@ -94,4 +61,47 @@ pub async fn run_tx(
         }
     }
     Err(eyre::Error::msg("transaction not found inside block"))
+}
+
+/// Returns the input based on whether the feature "l2" is enabled or not.
+/// If the feature is enabled, it includes L2 fields (blob commitment and proof).
+fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
+    let input = {
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                let Cache {
+                    blocks,
+                    witness: db,
+                    l2_fields: None,
+                } = cache;
+
+                ProgramInput {
+                    blocks,
+                    db,
+                    elasticity_multiplier: ELASTICITY_MULTIPLIER,
+                }
+            } else {
+                let Cache {
+                    blocks,
+                    witness: db,
+                    l2_fields: Some(L2Fields {
+                        blob_commitment,
+                        blob_proof,
+                    }),
+                } = cache else {
+                    return Err(eyre::Error::msg("missing L2 fields in cache"));
+                };
+
+                ProgramInput {
+                    blocks,
+                    db,
+                    elasticity_multiplier: ELASTICITY_MULTIPLIER,
+                    blob_commitment,
+                    blob_proof,
+                }
+            }
+        }
+    };
+
+    Ok(input)
 }

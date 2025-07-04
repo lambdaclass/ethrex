@@ -80,7 +80,7 @@ enum SubcommandExecute {
     #[command(about = "Execute an L2 batch.")]
     Batch {
         #[arg(help = "Batch number to use.")]
-        batch: usize,
+        batch: u64,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
         #[arg(
@@ -228,7 +228,7 @@ enum SubcommandProve {
     #[command(about = "Execute an L2 batch.")]
     Batch {
         #[arg(help = "Batch number to use.")]
-        batch: usize,
+        batch: u64,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
         #[arg(

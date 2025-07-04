@@ -8,18 +8,22 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[serde_as]
 #[derive(Serialize, Deserialize)]
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: ExecutionWitnessResult,
-    // L2 specific fields
-    #[serde_as(as = "Option<[_; 48]>")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub blob_commitment: Option<blobs_bundle::Commitment>,
-    #[serde_as(as = "Option<[_; 48]>")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blob_proof: Option<blobs_bundle::Commitment>,
+    #[serde(flatten)]
+    pub l2_fields: Option<L2Fields>,
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize)]
+pub struct L2Fields {
+    #[serde_as(as = "[_; 48]")]
+    pub blob_commitment: blobs_bundle::Commitment,
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
 }
 
 pub fn load_cache(file_name: &str) -> eyre::Result<Cache> {
