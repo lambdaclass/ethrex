@@ -208,7 +208,7 @@ async fn deploy_contracts(
     let sp1_verifier_address = match opts.sp1_verifier_address {
         Some(addr) if opts.sp1 => addr,
         None if opts.sp1 => {
-            info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
+            info!("Deploying SP1Verifier");
             let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
                 &[],
                 &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
@@ -225,10 +225,15 @@ async fn deploy_contracts(
     };
 
     // we can't deploy the risc0 contract because of uncompatible licenses
-    let Some(risc0_verifier_address) = opts.risc0_verifier_address else {
-        return Err(DeployerError::InternalError(
-            "Risc0Verifier address is not set and risc0 is a required prover".to_string(),
-        ));
+    let risc0_verifier_address = match opts.risc0_verifier_address {
+        Some(addr) if opts.risc0 => addr,
+        None if opts.risc0 => {
+            return Err(DeployerError::InternalError(
+                "Risc0Verifier address is not set and risc0 is a required prover".to_string(),
+            ));
+        }
+
+        _ => Address::zero(),
     };
 
     // if it's a required proof type, but no address has been specified, deploy it.
