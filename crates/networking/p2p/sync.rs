@@ -224,6 +224,7 @@ impl Syncer {
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
             else {
+                warn!("1 search head: {search_head:?}, sync head: {sync_head:?}");
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
             };
@@ -246,6 +247,7 @@ impl Syncer {
                 && search_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
+                warn!("2 search head: {search_head:?}, sync head: {sync_head:?}");
                 warn!("Sync failed to find target block header, going back to the previous parent");
                 search_head = first_block_header.parent_hash;
                 continue;
