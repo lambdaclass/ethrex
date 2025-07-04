@@ -201,18 +201,23 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         } else {
             send_proof_to_contract(state, batch_to_send, proofs).await?;
         }
+        // if transaction succeeds, then the proof was correctly sent.
         state
             .rollup_store
             .set_latest_sent_batch_proof(batch_to_send)
             .await?;
+
+        // TODO: we should anyways handle the "OnChainProposer: batch already verified" error and
+        // modify the latest sent proof accordingly, otherwise we risk the proof sender getting stuck.
     } else {
         let missing_proof_types: Vec<String> = missing_proof_types
             .iter()
             .map(|proof_type| format!("{proof_type:?}"))
             .collect();
         info!(
-            "Missing {} batch proof(s), will not send",
-            missing_proof_types.join(", ")
+            ?missing_proof_types,
+            ?batch_to_send,
+            "Missing batch proof(s), will not send",
         );
     }
 

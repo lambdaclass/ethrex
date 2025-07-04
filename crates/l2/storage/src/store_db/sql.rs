@@ -435,13 +435,16 @@ impl StoreEngineRollup for SQLStore {
             return read_from_row_int(&row, 1);
         }
         Err(RollupStoreError::Custom(
-            "missing operation_count row".to_string(),
+            "missing latest_sent row".to_string(),
         ))
     }
 
     async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
-        self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
-            .await?;
+        self.execute(
+            "UPDATE latest_sent SET batch = ?1 WHERE _id = 0",
+            [batch_number],
+        )
+        .await?;
         Ok(())
     }
 
