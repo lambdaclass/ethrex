@@ -225,7 +225,7 @@ enum SubcommandProve {
         #[arg(long, required = false)]
         bench: bool,
     },
-    #[command(about = "Execute an L2 batch.")]
+    #[command(about = "Proves an L2 batch.")]
     Batch {
         #[arg(help = "Batch number to use.")]
         batch: u64,
