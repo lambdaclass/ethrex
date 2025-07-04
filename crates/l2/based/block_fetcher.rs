@@ -8,8 +8,8 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_common::{
-    deposits::compute_deposit_logs_hash,
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
+    privileged_transactions::compute_privileged_transactions_hash,
     state_diff::prepare_state_diff,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -17,7 +17,11 @@ use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, send_after};
+use spawned_concurrency::{
+    error::GenServerError,
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -53,9 +57,13 @@ pub enum BlockFetcherError {
     #[error("Failed to produce the blob bundle")]
     BlobBundleError,
     #[error("Failed to compute deposit logs hash: {0}")]
-    DepositError(#[from] ethrex_l2_common::deposits::DepositError),
+    PrivilegedTransactionError(
+        #[from] ethrex_l2_common::privileged_transactions::PrivilegedTransactionError,
+    ),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
-    GenServerError(spawned_concurrency::GenServerError),
+    GenServerError(GenServerError),
 }
 
 #[derive(Clone)]
@@ -129,7 +137,8 @@ impl BlockFetcher {
 }
 
 impl GenServer for BlockFetcher {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = BlockFetcherState;
     type Error = BlockFetcherError;
@@ -138,32 +147,23 @@ impl GenServer for BlockFetcher {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> spawned_concurrency::CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> spawned_concurrency::CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
         if let SequencerStatus::Following = state.sequencer_state.status().await {
-            let _ = fetch(state).await.inspect_err(|err| {
+            let _ = fetch(&mut state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
         }
         send_after(
             Duration::from_millis(state.fetch_interval_ms),
-            _tx.clone(),
-            Self::InMsg::Fetch,
+            handle.clone(),
+            Self::CastMsg::Fetch,
         );
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 
@@ -343,7 +343,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //     bytes32 newStateRoot,
     //     bytes32 stateDiffKZGVersionedHash,
     //     bytes32 messagesLogsMerkleRoot,
-    //     bytes32 processedDepositLogsRollingHash,
+    //     bytes32 processedPrivilegedTransactionsRollingHash,
     //     bytes[] calldata _rlpEncodedBlocks
     // ) external;
 
@@ -352,7 +352,7 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     //          || 32 bytes (new state root) 36..68
     //          || 32 bytes (state diff KZG versioned hash) 68..100
     //          || 32 bytes (messages logs merkle root) 100..132
-    //          || 32 bytes (processed deposit logs rolling hash) 132..164
+    //          || 32 bytes (processed privileged transactions rolling hash) 132..164
 
     let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
         BlockFetcherError::WrongBatchCalldata("Couldn't get batch length bytes".to_owned()),
@@ -480,7 +480,7 @@ async fn extract_block_messages(
         txs.push(tx.clone());
         receipts.push(receipt);
     }
-    Ok(get_block_l1_messages(&txs, &receipts))
+    Ok(get_block_l1_messages(&receipts))
 }
 
 async fn get_batch(
@@ -489,29 +489,29 @@ async fn get_batch(
     batch_number: U256,
     commit_tx: H256,
 ) -> Result<Batch, BlockFetcherError> {
-    let deposits: Vec<PrivilegedL2Transaction> = batch
+    let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
         .iter()
         .flat_map(|block| {
             block.body.transactions.iter().filter_map(|tx| {
                 if let Transaction::PrivilegedL2Transaction(tx) = tx {
                     Some(tx.clone())
-                    // tx.get_deposit_hash()
                 } else {
                     None
                 }
             })
         })
         .collect();
-    let deposit_log_hashes = deposits
+    let privileged_transaction_hashes = privileged_transactions
         .iter()
-        .filter_map(|tx| tx.get_deposit_hash())
+        .filter_map(|tx| tx.get_privileged_hash())
         .collect();
     let mut messages = Vec::new();
     for block in batch {
         let block_messages = extract_block_messages(state, block.header.number).await?;
         messages.extend(block_messages);
     }
-    let deposit_logs_hash = compute_deposit_logs_hash(deposit_log_hashes)?;
+    let privileged_transactions_hash =
+        compute_privileged_transactions_hash(privileged_transaction_hashes)?;
 
     let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
         "Batch is empty. This shouldn't happen.".to_owned(),
@@ -558,7 +558,7 @@ async fn get_batch(
         last_block.header.clone(),
         &parent_db,
         &messages,
-        &deposits,
+        &privileged_transactions,
         acc_account_updates.into_values().collect(),
     )
     .map_err(|_| BlockFetcherError::BlobBundleError)?;
@@ -571,7 +571,7 @@ async fn get_batch(
         first_block: first_block.header.number,
         last_block: last_block.header.number,
         state_root: new_state_root,
-        deposit_logs_hash,
+        privileged_transactions_hash,
         message_hashes: get_batch_message_hashes(state, batch).await?,
         blobs_bundle,
         commit_tx: Some(commit_tx),

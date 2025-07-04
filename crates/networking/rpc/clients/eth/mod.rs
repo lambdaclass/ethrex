@@ -1,10 +1,13 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::{GetBatchByNumberError, GetNodeStatusError},
+    clients::eth::errors::{
+        GetBatchByNumberError, GetNodeStatusError, GetWitnessError, TxPoolContentError,
+    },
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
+        block_identifier::{BlockIdentifier, BlockTag},
         receipt::{RpcLog, RpcReceipt},
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
@@ -13,17 +16,20 @@ use bytes::Bytes;
 use errors::{
     EstimateGasError, EthClientError, GetBalanceError, GetBlockByHashError, GetBlockByNumberError,
     GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError, GetMaxPriorityFeeError,
-    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
+    GetNonceError, GetRawBlockError, GetTransactionByHashError, GetTransactionReceiptError,
+    SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        BlobsBundle, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
+        BlobsBundle, Block, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction, batch::Batch,
+        block_execution_witness::ExecutionWitnessResult,
     },
+    utils::decode_hex,
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::SecretKey;
@@ -59,31 +65,6 @@ pub enum WrappedTransaction {
     EIP4844(WrappedEIP4844Transaction),
     EIP1559(EIP1559Transaction),
     L2(PrivilegedL2Transaction),
-}
-
-#[derive(Debug, Clone)]
-pub enum BlockByNumber {
-    Number(u64),
-    Latest,
-    Earliest,
-    Pending,
-}
-
-impl From<BlockByNumber> for Value {
-    fn from(value: BlockByNumber) -> Self {
-        match value {
-            BlockByNumber::Number(n) => json!(format!("{n:#x}")),
-            BlockByNumber::Latest => json!("latest"),
-            BlockByNumber::Earliest => json!("earliest"),
-            BlockByNumber::Pending => json!("pending"),
-        }
-    }
-}
-
-impl From<u64> for BlockByNumber {
-    fn from(value: u64) -> Self {
-        BlockByNumber::Number(value)
-    }
 }
 
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
@@ -589,7 +570,7 @@ impl EthClient {
     pub async fn get_nonce(
         &self,
         address: Address,
-        block: BlockByNumber,
+        block: BlockIdentifier,
     ) -> Result<u64, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -659,7 +640,7 @@ impl EthClient {
     /// If no `block_number` is provided, get the latest.
     pub async fn get_block_by_number(
         &self,
-        block: BlockByNumber,
+        block: BlockIdentifier,
     ) -> Result<RpcBlock, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -678,6 +659,31 @@ impl EthClient {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub async fn get_raw_block(&self, block: BlockIdentifier) -> Result<Block, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "debug_getRawBlock".to_string(),
+            params: Some(vec![block.into()]),
+        };
+
+        let encoded_block: Result<String, _> = match self.send_request(request).await? {
+            RpcResponse::Success(result) => {
+                serde_json::from_value(result.result).map_err(GetRawBlockError::SerdeJSONError)
+            }
+            RpcResponse::Error(error_response) => {
+                Err(GetRawBlockError::RPCError(error_response.error.message))
+            }
+        };
+
+        let encoded_block = decode_hex(&encoded_block?)
+            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex: {e}")))?;
+
+        let block = Block::decode_unfinished(&encoded_block)
+            .map_err(|e| GetRawBlockError::RLPDecodeError(e.to_string()))?;
+        Ok(block.0)
     }
 
     pub async fn get_logs(
@@ -737,7 +743,7 @@ impl EthClient {
     pub async fn get_balance(
         &self,
         address: Address,
-        block: BlockByNumber,
+        block: BlockIdentifier,
     ) -> Result<U256, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -779,7 +785,7 @@ impl EthClient {
     pub async fn get_code(
         &self,
         address: Address,
-        block: BlockByNumber,
+        block: BlockIdentifier,
     ) -> Result<Bytes, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -1050,7 +1056,8 @@ impl EthClient {
         if let Some(nonce) = overrides.nonce {
             return Ok(nonce);
         }
-        self.get_nonce(address, BlockByNumber::Latest).await
+        self.get_nonce(address, BlockIdentifier::Tag(BlockTag::Latest))
+            .await
     }
 
     pub async fn get_last_committed_batch(
@@ -1085,12 +1092,12 @@ impl EthClient {
             .await
     }
 
-    pub async fn get_pending_deposit_logs(
+    pub async fn get_pending_privileged_transactions(
         &self,
         common_bridge_address: Address,
     ) -> Result<Vec<H256>, EthClientError> {
         let response = self
-            ._generic_call(b"getPendingDepositLogs()", common_bridge_address)
+            ._generic_call(b"getPendingTransactionHashes()", common_bridge_address)
             .await?;
         Self::from_hex_string_to_h256_array(&response)
     }
@@ -1283,6 +1290,36 @@ impl EthClient {
         message_proof.ok_or(EthClientError::Custom("L1Message proof is None".to_owned()))
     }
 
+    /// Fethches the execution witnes for a given block or range of blocks.
+    /// WARNNING: This method is only compatible with ethrex and not with other debug_executionWitness implementations.
+    pub async fn get_witness(
+        &self,
+        from: BlockIdentifier,
+        to: Option<BlockIdentifier>,
+    ) -> Result<ExecutionWitnessResult, EthClientError> {
+        let params = if let Some(to_block) = to {
+            Some(vec![from.into(), to_block.into()])
+        } else {
+            Some(vec![from.into()])
+        };
+
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "debug_executionWitness".to_string(),
+            params,
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetWitnessError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetWitnessError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
     async fn get_fee_from_override_or_get_gas_price(
         &self,
         maybe_gas_fee: Option<u64>,
@@ -1311,6 +1348,42 @@ impl EthClient {
         self.get_fee_from_override_or_get_gas_price(None).await
     }
 
+    pub async fn tx_pool_content(&self) -> Result<MempoolContent, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "txpool_content".to_string(),
+            params: None,
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(TxPoolContentError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(TxPoolContentError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
+    pub async fn get_batch_by_number(&self, batch_number: u64) -> Result<RpcBatch, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "ethrex_getBatchByNumber".to_string(),
+            params: Some(vec![json!(format!("{batch_number:#x}")), json!(true)]),
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetBatchByNumberError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
     pub async fn node_status(&self) -> Result<String, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -1325,44 +1398,6 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetNodeStatusError::RPCError(error_response.error.message).into())
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    pub async fn tx_pool_content(&self) -> Result<MempoolContent, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "txpool_content".to_string(),
-            params: None,
-        };
-
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
-                .map_err(GetNodeStatusError::SerdeJSONError)
-                .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(GetNodeStatusError::RPCError(error_response.error.message).into())
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    pub async fn get_batch_by_number(&self, batch_number: u64) -> Result<RpcBatch, EthClientError> {
-        let request = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "ethrex_getBatchByNumber".to_string(),
-            params: Some(vec![json!(format!("{batch_number:#x}")), json!(true)]),
-        };
-
-        match self.send_request(request).await {
-            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
-                .map_err(GetBatchByNumberError::SerdeJSONError)
-                .map_err(EthClientError::from),
-            Ok(RpcResponse::Error(error_response)) => {
-                Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }

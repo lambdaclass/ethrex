@@ -46,7 +46,7 @@ ethrex-common = { path = "./crates/common" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage" }
-ethrex-vm = { path = "./crates/vm" }
+ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
@@ -74,7 +74,7 @@ crc32fast = "1.4.2"
 lazy_static = "1.5.0"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tokio-util = { version = "0.7.12", features = ["rt"] }
+tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
 cfg-if = "1.0.0"
@@ -92,8 +92,13 @@ axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
+kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
+# Changing the tag for spawned will break the TDX image build
+# When updating it try to build the TDX image and update service.nix with the new hash
+spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
+spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 

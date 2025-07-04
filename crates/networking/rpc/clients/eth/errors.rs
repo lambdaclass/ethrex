@@ -22,6 +22,8 @@ pub enum EthClientError {
     GetBlockByHashError(#[from] GetBlockByHashError),
     #[error("eth_getBlockByNumber request error: {0}")]
     GetBlockByNumberError(#[from] GetBlockByNumberError),
+    #[error("debug_getRawBlock request error: {0}")]
+    GetRawBlockError(#[from] GetRawBlockError),
     #[error("eth_getLogs request error: {0}")]
     GetLogsError(#[from] GetLogsError),
     #[error("eth_getTransactionReceipt request error: {0}")]
@@ -36,6 +38,8 @@ pub enum EthClientError {
     GetTransactionByHashError(#[from] GetTransactionByHashError),
     #[error("ethrex_getWithdrawalProof request error: {0}")]
     GetMessageProofError(#[from] GetMessageProofError),
+    #[error("debug_executionWitness request error: {0}")]
+    GetWitnessError(#[from] GetWitnessError),
     #[error("eth_maxPriorityFeePerGas request error: {0}")]
     GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
     #[error("Unreachable nonce")]
@@ -52,10 +56,12 @@ pub enum EthClientError {
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]
     FailedToSignPayload(String),
+    #[error("Failed to get transaction pool: {0}")]
+    FailedToGetTxPool(#[from] TxPoolContentError),
+    #[error("ethrex_getBatchByNumber request error: {0}")]
+    GetBatchByNumberError(#[from] GetBatchByNumberError),
     #[error("Failed to get node status: {0}")]
     GetNodeStatusError(#[from] GetNodeStatusError),
-    #[error("eth_getBatchByNumber request error: {0}")]
-    GetBatchByNumberError(#[from] GetBatchByNumberError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +159,16 @@ pub enum GetBlockByNumberError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetRawBlockError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    RLPDecodeError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetLogsError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
@@ -235,6 +251,14 @@ pub enum GetMessageProofError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetWitnessError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetMaxPriorityFeeError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
@@ -247,25 +271,24 @@ pub enum GetMaxPriorityFeeError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GetNodeStatusError {
-    #[error("{0}")]
-    ReqwestError(#[from] reqwest::Error),
+pub enum TxPoolContentError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
     RPCError(String),
-    #[error("{0}")]
-    ParseIntError(#[from] std::num::ParseIntError),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetBatchByNumberError {
     #[error("{0}")]
-    ReqwestError(#[from] reqwest::Error),
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+pub enum GetNodeStatusError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
     #[error("{0}")]
     RPCError(String),
-    #[error("{0}")]
-    ParseIntError(#[from] std::num::ParseIntError),
 }

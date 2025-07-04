@@ -17,7 +17,7 @@ pub struct MempoolContent {
     pub queued: MempoolContentEntry,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct MempoolStatus {
     pending: String,
     queued: String,

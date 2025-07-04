@@ -19,7 +19,8 @@ use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer};
+use spawned_concurrency::messages::Unused;
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::{
@@ -213,8 +214,9 @@ impl ProofCoordinatorState {
     }
 }
 
+#[derive(Clone)]
 pub enum ProofCordInMessage {
-    Listen { listener: TcpListener },
+    Listen { listener: Arc<TcpListener> },
 }
 
 #[derive(Clone, PartialEq)]
@@ -243,7 +245,8 @@ impl ProofCoordinator {
             needed_proof_types,
         )
         .await?;
-        let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
+        let listener =
+            Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
         let mut proof_coordinator = ProofCoordinator::start(state);
         let _ = proof_coordinator
             .cast(ProofCordInMessage::Listen { listener })
@@ -253,7 +256,8 @@ impl ProofCoordinator {
 }
 
 impl GenServer for ProofCoordinator {
-    type InMsg = ProofCordInMessage;
+    type CallMsg = Unused;
+    type CastMsg = ProofCordInMessage;
     type OutMsg = ProofCordOutMessage;
     type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
@@ -262,32 +266,22 @@ impl GenServer for ProofCoordinator {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(ProofCordOutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
-        info!("Receiving message");
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         match message {
             ProofCordInMessage::Listen { listener } => {
-                handle_listens(state, listener).await;
+                handle_listens(&state, listener).await;
             }
         }
         CastResponse::Stop
     }
 }
 
-async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
+async fn handle_listens(state: &ProofCoordinatorState, listener: Arc<TcpListener>) {
     info!("Starting TCP server at {}:{}.", state.listen_ip, state.port);
     loop {
         let res = listener.accept().await;
@@ -323,14 +317,21 @@ impl ConnectionHandler {
     ) -> Result<(), ConnectionHandlerError> {
         let mut connection_handler = ConnectionHandler::start(state);
         connection_handler
-            .cast(ConnInMessage::Connection { stream, addr })
+            .cast(ConnInMessage::Connection {
+                stream: Arc::new(stream),
+                addr,
+            })
             .await
             .map_err(ConnectionHandlerError::GenServerError)
     }
 }
 
+#[derive(Clone)]
 pub enum ConnInMessage {
-    Connection { stream: TcpStream, addr: SocketAddr },
+    Connection {
+        stream: Arc<TcpStream>,
+        addr: SocketAddr,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -339,7 +340,8 @@ pub enum ConnOutMessage {
 }
 
 impl GenServer for ConnectionHandler {
-    type InMsg = ConnInMessage;
+    type CallMsg = Unused;
+    type CastMsg = ConnInMessage;
     type OutMsg = ConnOutMessage;
     type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
@@ -348,25 +350,15 @@ impl GenServer for ConnectionHandler {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(ConnOutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
-        info!("Receiving message");
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         match message {
             ConnInMessage::Connection { stream, addr } => {
-                if let Err(err) = handle_connection(state, stream).await {
+                if let Err(err) = handle_connection(&state, stream).await {
                     error!("Error handling connection from {addr}: {err}");
                 } else {
                     debug!("Connection from {addr} handled successfully");
@@ -379,43 +371,48 @@ impl GenServer for ConnectionHandler {
 
 async fn handle_connection(
     state: &ProofCoordinatorState,
-    mut stream: TcpStream,
+    stream: Arc<TcpStream>,
 ) -> Result<(), ProofCoordinatorError> {
     let mut buffer = Vec::new();
-    stream.read_to_end(&mut buffer).await?;
+    // TODO: This should be fixed in https://github.com/lambdaclass/ethrex/issues/3316
+    // (stream should not be wrapped in an Arc)
+    if let Some(mut stream) = Arc::into_inner(stream) {
+        stream.read_to_end(&mut buffer).await?;
 
-    let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
-    match data {
-        Ok(ProofData::BatchRequest { commit_hash }) => {
-            if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
-                error!("Failed to handle BatchRequest: {e}");
+        let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+        match data {
+            Ok(ProofData::BatchRequest { commit_hash }) => {
+                if let Err(e) = handle_request(state, &mut stream, commit_hash).await {
+                    error!("Failed to handle BatchRequest: {e}");
+                }
+            }
+            Ok(ProofData::ProofSubmit {
+                batch_number,
+                batch_proof,
+            }) => {
+                if let Err(e) = handle_submit(state, &mut stream, batch_number, batch_proof).await {
+                    error!("Failed to handle ProofSubmit: {e}");
+                }
+            }
+            Ok(ProofData::ProverSetup {
+                prover_type,
+                payload,
+            }) => {
+                if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
+                    error!("Failed to handle ProverSetup: {e}");
+                }
+            }
+            Ok(_) => {
+                warn!("Invalid request");
+            }
+            Err(e) => {
+                warn!("Failed to parse request: {e}");
             }
         }
-        Ok(ProofData::ProofSubmit {
-            batch_number,
-            batch_proof,
-        }) => {
-            if let Err(e) = handle_submit(state, &mut stream, batch_number, batch_proof).await {
-                error!("Failed to handle ProofSubmit: {e}");
-            }
-        }
-        Ok(ProofData::ProverSetup {
-            prover_type,
-            payload,
-        }) => {
-            if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
-                error!("Failed to handle ProverSetup: {e}");
-            }
-        }
-        Err(e) => {
-            warn!("Failed to parse request: {e}");
-        }
-        _ => {
-            warn!("Invalid request");
-        }
+        debug!("Connection closed");
+    } else {
+        error!("Unable to use stream");
     }
-
-    debug!("Connection closed");
     Ok(())
 }
 
