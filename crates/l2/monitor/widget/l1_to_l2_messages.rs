@@ -123,7 +123,7 @@ impl L1ToL2MessagesTable {
         monitor::utils::get_logs(
             last_l1_block_fetched,
             common_bridge_address,
-            vec!["L1ToL2Message(uint256,address,uint256,address,uint256,bytes,bytes32)"],
+            vec!["PrivilegedTxSent(address,address,uint256,uint256,uint256,bytes)"],
             eth_client,
         )
         .await
@@ -143,10 +143,10 @@ impl L1ToL2MessagesTable {
 
         for log in logs {
             let l1_to_l2_message = PrivilegedTransactionData::from_log(log.log.clone())
-                .expect("Failed to parse L1ToL2Message log");
+                .expect("Failed to parse PrivilegedTxSent log");
 
             let l1_to_l2_message_hash = keccak(
-                &[
+                [
                     l1_to_l2_message.from.as_bytes(),
                     l1_to_l2_message.to_address.as_bytes(),
                     &l1_to_l2_message.transaction_id.to_big_endian(),
