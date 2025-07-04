@@ -4,11 +4,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[async_trait::async_trait]
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
+    }
+    async fn put_batch_async(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+        self.put_batch(key_values)
     }
 }
 

@@ -8,11 +8,10 @@
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
-use std::array;
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie};
+use std::{array, collections::HashMap};
 use tokio::{
     sync::mpsc::{Receiver, Sender, channel},
-    task::JoinSet,
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -30,9 +29,10 @@ use super::{
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 
 /// Max storages to rebuild in parallel
-const MAX_PARALLEL_REBUILDS: usize = 15;
+const MAX_PARALLEL_REBUILDS: usize = 10;
 
-const MAX_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
+const MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
+const MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 10;
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
@@ -109,15 +109,15 @@ async fn rebuild_state_trie_in_backgound(
     });
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
-    let start_time = Instant::now();
+    let mut total_rebuild_time = 0;
     let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
-            tokio::spawn(show_trie_rebuild_progress(
-                start_time,
+            tokio::spawn(show_state_trie_rebuild_progress(
+                total_rebuild_time,
                 initial_rebuild_status.clone(),
                 rebuild_status.clone(),
             ));
@@ -126,6 +126,7 @@ async fn rebuild_state_trie_in_backgound(
         if cancel_token.is_cancelled() {
             return Ok(());
         }
+        let rebuild_start = Instant::now();
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_root, current_hash) = rebuild_state_trie_segment(
@@ -136,6 +137,11 @@ async fn rebuild_state_trie_in_backgound(
                 cancel_token.clone(),
             )
             .await?;
+
+            // Count time taken if rebuild took place
+            if current_root != root {
+                total_rebuild_time += rebuild_start.elapsed().as_millis();
+            }
             // Update status
             root = current_root;
             rebuild_status[current_segment].current = current_hash;
@@ -169,7 +175,7 @@ async fn rebuild_state_trie_segment(
             break;
         }
         snapshot_reads_since_last_commit += 1;
-        let mut batch = store.read_account_snapshot(start)?;
+        let mut batch = store.read_account_snapshot(start).await?;
         // Remove out of bounds elements
         batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
@@ -182,9 +188,10 @@ async fn rebuild_state_trie_segment(
         for (hash, account) in batch.iter() {
             state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
         }
-        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+        if snapshot_reads_since_last_commit > MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
-            state_trie.hash()?;
+            // Trie is left in unusable after commiting, we must create a new one
+            state_trie = store.open_state_trie(state_trie.hash_async().await?)?;
         }
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
@@ -199,7 +206,7 @@ async fn rebuild_state_trie_segment(
             break;
         }
     }
-    root = state_trie.hash()?;
+    root = state_trie.hash_async().await?;
     Ok((root, start))
 }
 
@@ -216,21 +223,38 @@ async fn rebuild_storage_trie_in_background(
         .get_storage_trie_rebuild_pending()
         .await?
         .unwrap_or_default();
+    let mut total_rebuild_time: u128 = 0;
+    let mut last_show_progress = Instant::now();
+    // Count of all storages that have entered the queue
+    let mut pending_historic_count = pending_storages.len();
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
         if cancel_token.is_cancelled() {
             break;
+        }
+        // Show Progress stats (this task is not vital so we can detach it)
+        if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_show_progress = Instant::now();
+            tokio::spawn(show_storage_tries_rebuild_progress(
+                total_rebuild_time,
+                pending_historic_count,
+                pending_storages.len(),
+                store.clone(),
+            ));
         }
         // Read incoming batch
         if !receiver.is_empty() || pending_storages.is_empty() {
             let mut buffer = vec![];
             receiver.recv_many(&mut buffer, MAX_CHANNEL_READS).await;
             incoming = !buffer.iter().any(|batch| batch.is_empty());
+            pending_historic_count += buffer.iter().fold(0, |acc, batch| acc + batch.len());
             pending_storages.extend(buffer.iter().flatten());
         }
 
         // Spawn tasks to rebuild current storages
-        let mut rebuild_tasks = JoinSet::new();
+        let rebuild_start = Instant::now();
+        let mut account_hashes = Vec::new();
+        let mut expected_roots = Vec::new();
         for _ in 0..MAX_PARALLEL_REBUILDS {
             if pending_storages.is_empty() {
                 break;
@@ -238,16 +262,11 @@ async fn rebuild_storage_trie_in_background(
             let (account_hash, expected_root) = pending_storages
                 .pop()
                 .expect("Unreachable code, pending_storages can't be empty in this point");
-            let store = store.clone();
-            rebuild_tasks.spawn(rebuild_storage_trie(
-                account_hash,
-                expected_root,
-                store.clone(),
-            ));
+            account_hashes.push(account_hash);
+            expected_roots.push(expected_root);
         }
-        for res in rebuild_tasks.join_all().await {
-            res?;
-        }
+        rebuild_storage_tries(account_hashes, expected_roots, store.clone()).await?;
+        total_rebuild_time += rebuild_start.elapsed().as_millis();
     }
     store
         .set_storage_trie_rebuild_pending(pending_storages)
@@ -258,44 +277,92 @@ async fn rebuild_storage_trie_in_background(
 /// Rebuilds a storage trie by reading from the storage snapshot
 /// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
 /// If the expected_root is `REBUILDER_INCOMPLETE_STORAGE_ROOT` then this validation will be skipped, the sender should make sure to queue said storage for healing
-async fn rebuild_storage_trie(
-    account_hash: H256,
-    expected_root: H256,
+async fn rebuild_storage_tries(
+    account_hashes: Vec<H256>,
+    expected_roots: Vec<H256>,
     store: Store,
 ) -> Result<(), SyncError> {
-    let mut start = H256::zero();
-    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    debug_assert_eq!(account_hashes.len(), expected_roots.len());
+    struct TrieTracker {
+        account_hash: H256,
+        expected_root: H256,
+        trie: Trie,
+        start: H256,
+        complete: bool,
+    }
+
+    let mut trie_trackers = Vec::new();
+    for (account_hash, expected_root) in account_hashes.into_iter().zip(expected_roots.into_iter())
+    {
+        let tracker = TrieTracker {
+            account_hash,
+            expected_root,
+            trie: store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?,
+            start: H256::zero(),
+            complete: false,
+        };
+        trie_trackers.push(tracker);
+    }
+    let mut nodes = HashMap::new();
     let mut snapshot_reads_since_last_commit = 0;
-    loop {
+    while trie_trackers.iter().any(|t| !t.complete) {
         snapshot_reads_since_last_commit += 1;
-        let batch = store.read_storage_snapshot(account_hash, start).await?;
+        for tracker in trie_trackers.iter_mut() {
+            if tracker.complete {
+                continue;
+            }
+            let batch = store
+                .read_storage_snapshot(tracker.account_hash, tracker.start)
+                .await?;
+            let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
+            // Update start
+            if let Some(last) = batch.last() {
+                tracker.start = next_hash(last.0);
+            }
+            // Process batch
+            for (key, val) in batch {
+                tracker.trie.insert(key.0.to_vec(), val.encode_to_vec())?;
+            }
 
-        let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
-        // Update start
-        if let Some(last) = batch.last() {
-            start = next_hash(last.0);
+            // Commit nodes if needed
+            if unfilled_batch
+                || snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT
+            {
+                nodes
+                    .entry(tracker.account_hash)
+                    .or_insert(Vec::new())
+                    .extend(tracker.trie.commit_without_storing());
+
+                // If this is the last batch, check the root and mark it as complete
+                if unfilled_batch {
+                    if tracker.trie.hash_no_commit() != tracker.expected_root {
+                        warn!(
+                            "Mismatched storage root for account {}",
+                            tracker.account_hash
+                        );
+                        store
+                            .set_storage_heal_paths(vec![(
+                                tracker.account_hash,
+                                vec![Nibbles::default()],
+                            )])
+                            .await?;
+                    }
+                    // Mark as complete
+                    tracker.complete = true;
+                } else {
+                    // Trie is left in unusable after commiting, we must create a new one
+                    tracker.trie = store
+                        .open_storage_trie(tracker.account_hash, tracker.trie.hash_no_commit())?;
+                }
+                // Mark as complete
+                tracker.complete = true;
+            }
         }
-        // Process batch
-        // Launch storage rebuild tasks for all non-empty storages
-        for (key, val) in batch {
-            storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
-        }
-        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
+        if snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
-            storage_trie.hash()?;
-        }
-
-        // Return if we have no more snapshot values to process for this storage
-        if unfilled_batch {
-            break;
         }
     }
-    if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
-        warn!("Mismatched storage root for account {account_hash}");
-        store
-            .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
-            .await?;
-    }
+    store.commit_storage_nodes(nodes).await?;
     Ok(())
 }
 
@@ -305,8 +372,8 @@ fn next_hash(hash: H256) -> H256 {
 }
 
 /// Shows the completion rate and estimated finish time of the state trie rebuild
-async fn show_trie_rebuild_progress(
-    start_time: Instant,
+async fn show_state_trie_rebuild_progress(
+    total_rebuild_time: u128,
     initial_rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
     rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
 ) {
@@ -324,12 +391,48 @@ async fn show_trie_rebuild_progress(
         / U512::from(U256::max_value());
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
     let remaining_accounts = U256::MAX.saturating_sub(accounts_processed);
-    let time_to_finish = (U512::from(start_time.elapsed().as_secs())
-        * U512::from(remaining_accounts))
-        / (U512::from(accounts_processed_this_cycle));
+    let time_to_finish = (U512::from(total_rebuild_time) * U512::from(remaining_accounts))
+        / (U512::from(accounts_processed_this_cycle))
+        / 1000;
     info!(
         "State Trie Rebuild Progress: {}%, estimated time to finish: {}",
         completion_rate,
         seconds_to_readable(time_to_finish)
     );
+}
+
+async fn show_storage_tries_rebuild_progress(
+    total_rebuild_time: u128,
+    all_storages_in_queue: usize,
+    current_storages_in_queue: usize,
+    store: Store,
+) {
+    // Calculate current rebuild speed
+    let rebuilt_storages_count = all_storages_in_queue.saturating_sub(current_storages_in_queue);
+    let storage_rebuild_time = total_rebuild_time / (rebuilt_storages_count as u128 + 1);
+    // Check if state sync has already finished before reporting estimated finish time
+    let state_sync_finished =
+        if let Ok(Some(checkpoint)) = store.get_state_trie_key_checkpoint().await {
+            checkpoint
+                .iter()
+                .enumerate()
+                .all(|(i, checkpoint)| checkpoint == &STATE_TRIE_SEGMENTS_END[i])
+        } else {
+            false
+        };
+    // Show current speed only as debug data
+    info!(
+        "Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
+        storage_rebuild_time, current_storages_in_queue,
+    );
+    if state_sync_finished {
+        // storage_rebuild_time (ms) * remaining storages / 1000
+        let estimated_time_to_finish = (U512::from(storage_rebuild_time)
+            * U512::from(current_storages_in_queue))
+            / (U512::from(1000));
+        info!(
+            "Storage Tries Rebuild in Progress, estimated time to finish: {}",
+            seconds_to_readable(estimated_time_to_finish)
+        )
+    }
 }
