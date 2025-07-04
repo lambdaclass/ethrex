@@ -40,14 +40,9 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
-
-
-      # TODO when https://github.com/lambdaclass/ethrex/pull/3381 is merged
-      # Rename to Build ethrex
-      # replace --features l2 with --all-features
-      - name: Build ethrex L2
+      - name: Build ethrex
         run: |
-          cargo build --release --features "l2,metrics,rollup_storage_sql" --bin ethrex
+          cargo build --release --all-features --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
