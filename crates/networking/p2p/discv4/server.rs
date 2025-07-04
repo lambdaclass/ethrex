@@ -806,7 +806,7 @@ pub(super) mod tests {
             store_rollup: StoreRollup::default(),
             committer_key: None,
             #[cfg(feature = "l2")]
-            shared_state: SequencerState::from(SequencerStatus::default()),
+            sequencer_state: SequencerState::from(SequencerStatus::default()),
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;

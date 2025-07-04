@@ -59,7 +59,7 @@ pub struct P2PContext {
     pub store_rollup: StoreRollup,
     pub committer_key: Option<SecretKey>,
     #[cfg(feature = "l2")]
-    pub shared_state: SequencerState,
+    pub sequencer_state: SequencerState,
 }
 
 impl P2PContext {
@@ -76,7 +76,7 @@ impl P2PContext {
         based: bool,
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
         committer_key: Option<SecretKey>,
-        #[cfg(feature = "l2")] shared_state: SequencerState,
+        #[cfg(feature = "l2")] sequencer_state: SequencerState,
     ) -> Self {
         let (channel_broadcast_send_end, _) =
             tokio::sync::broadcast::channel::<(tokio::task::Id, H256, Arc<RLPxMessage>)>(
@@ -98,7 +98,7 @@ impl P2PContext {
             store_rollup,
             committer_key,
             #[cfg(feature = "l2")]
-            shared_state,
+            sequencer_state,
         }
     }
 

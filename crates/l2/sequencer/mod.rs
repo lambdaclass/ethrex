@@ -39,10 +39,13 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     sync_manager: SyncManager,
-    shared_state: SequencerState,
+    sequencer_state: SequencerState,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    info!("Starting Sequencer in {} mode", shared_state.status().await);
+    info!(
+        "Starting Sequencer in {} mode",
+        sequencer_state.status().await
+    );
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
@@ -67,7 +70,7 @@ pub async fn start_l2(
         store.clone(),
         blockchain.clone(),
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -78,7 +81,7 @@ pub async fn start_l2(
         rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -98,7 +101,7 @@ pub async fn start_l2(
 
     let _ = L1ProofSender::spawn(
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
     )
@@ -111,7 +114,7 @@ pub async fn start_l2(
         blockchain.clone(),
         execution_cache.clone(),
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -125,7 +128,7 @@ pub async fn start_l2(
     if cfg.based.based {
         let _ = StateUpdater::spawn(
             cfg.clone(),
-            shared_state.clone(),
+            sequencer_state.clone(),
             blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
@@ -141,7 +144,7 @@ pub async fn start_l2(
             store.clone(),
             rollup_store.clone(),
             blockchain.clone(),
-            shared_state.clone(),
+            sequencer_state.clone(),
         )
         .await
         .inspect_err(|err| {

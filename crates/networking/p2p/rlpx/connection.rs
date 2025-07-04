@@ -141,7 +141,7 @@ pub(crate) struct RLPxConnection<S> {
     #[cfg(feature = "l2")]
     committer_key: Option<SigningKeySecp256k1>,
     #[cfg(feature = "l2")]
-    shared_state: SequencerState,
+    sequencer_state: SequencerState,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -158,7 +158,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
         based: bool,
         #[cfg(feature = "l2")] committer_key: Option<SigningKeySecp256k1>,
-        #[cfg(feature = "l2")] shared_state: SequencerState,
+        #[cfg(feature = "l2")] sequencer_state: SequencerState,
     ) -> Self {
         #[cfg(feature = "l2")]
         let latest_batch_on_store = store_rollup.get_latest_batch_number().await.unwrap_or(0);
@@ -197,7 +197,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             #[cfg(feature = "l2")]
             committer_key,
             #[cfg(feature = "l2")]
-            shared_state,
+            sequencer_state,
         }
     }
 
@@ -862,7 +862,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if self.should_process_new_block(&req).await? {
                     debug!("adding block to queue: {}", req.block.header.number);
                     #[cfg(feature = "l2")]
-                    if let SequencerStatus::Following = self.shared_state.status().await {
+                    if let SequencerStatus::Following = self.sequencer_state.status().await {
                         self.blocks_on_queue
                             .entry(req.block.header.number)
                             .or_insert_with(|| req.block.clone());
@@ -873,7 +873,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     }
                 }
                 #[cfg(feature = "l2")]
-                if let SequencerStatus::Following = self.shared_state.status().await {
+                if let SequencerStatus::Following = self.sequencer_state.status().await {
                     // If the sequencer is following, we process the new block
                     // to keep the state updated.
                     self.process_new_block(&req).await?;
@@ -894,7 +894,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::GetBatchSealed(_req) => {
                 #[cfg(feature = "l2")]
                 {
-                    if let SequencerStatus::Syncing = self.shared_state.status().await {
+                    if let SequencerStatus::Syncing = self.sequencer_state.status().await {
                         // If the sequencer is syncing, we won't send any batches
                         self.send(Message::GetBatchSealedResponse(
                             GetBatchSealedResponseMessage {

@@ -182,7 +182,7 @@ pub async fn init_network(
     based: bool,
     #[cfg(feature = "l2")] store_rollup: StoreRollup,
     committer_key: Option<SecretKey>,
-    #[cfg(feature = "l2")] shared_state: SequencerState,
+    #[cfg(feature = "l2")] sequencer_state: SequencerState,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -207,7 +207,7 @@ pub async fn init_network(
         store_rollup,
         committer_key,
         #[cfg(feature = "l2")]
-        shared_state,
+        sequencer_state,
     );
 
     context.set_fork_id().await.expect("Set fork id");

@@ -70,7 +70,7 @@ where
         #[cfg(feature = "l2")]
         context.committer_key,
         #[cfg(feature = "l2")]
-        context.shared_state.clone(),
+        context.sequencer_state.clone(),
     )
     .await)
 }
@@ -106,7 +106,7 @@ where
         #[cfg(feature = "l2")]
         context.committer_key,
         #[cfg(feature = "l2")]
-        context.shared_state.clone(),
+        context.sequencer_state.clone(),
     )
     .await)
 }
