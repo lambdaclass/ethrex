@@ -1,8 +1,8 @@
 .PHONY: sp1 sp1-gpu risc0 risc0-gpu prove-sp1 prove-sp1-gpu \
 		prove-sp1-gpu-ci prove-risc0 prove-risc0-gpu prove-risc0-gpu-ci \
 		batch-sp1 batch-sp1-gpu batch-risc0 batch-risc0-gpu \
-		prove-batch-sp1 prove-batch-sp1-gpu prove-batch-sp1-gpu-ci \
-		prove-batch-risc0 prove-batch-risc0-gpu prove-batch-risc0-gpu-ci
+		prove-batch-sp1 prove-batch-sp1-gpu \
+		prove-batch-risc0 prove-batch-risc0-gpu
 
 NETWORK ?= mainnet
 
