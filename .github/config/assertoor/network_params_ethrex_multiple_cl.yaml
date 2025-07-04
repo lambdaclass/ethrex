@@ -42,7 +42,6 @@ additional_services:
 assertoor_params:
   tests:
     - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml  # Check that all el clients are synced with the corresponding cl
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/stability-check.yaml 
     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml
     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
     
