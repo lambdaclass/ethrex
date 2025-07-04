@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainType, error::ChainError};
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -363,67 +363,79 @@ pub async fn import_blocks(
     let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
-    let blocks = if path_metadata.is_dir() {
-        let mut blocks = vec![];
-        let dir_reader = read_dir(path).expect("Failed to read blocks directory");
-        for file_res in dir_reader {
-            let file = file_res.expect("Failed to open file in directory");
-            let path = file.path();
-            let s = path
-                .to_str()
-                .expect("Path could not be converted into string");
-            blocks.push(utils::read_block_file(s));
-        }
-        blocks
+
+    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
+    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+        info!("Importing blocks from directory: {path}");
+        let mut entries: Vec<_> = read_dir(path)
+            .expect("Failed to read blocks directory")
+            .map(|res| res.expect("Failed to open file in directory").path())
+            .collect();
+
+        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
+        entries.sort();
+
+        entries
+            .iter()
+            .map(|entry| {
+                let path_str = entry.to_str().expect("Couldn't convert path to string");
+                info!("Importing blocks from chain file: {path_str}");
+                utils::read_chain_file(path_str)
+            })
+            .collect()
     } else {
         info!("Importing blocks from chain file: {path}");
-        utils::read_chain_file(path)
+        vec![utils::read_chain_file(path)]
     };
-    let size = blocks.len();
-    for block in blocks.iter() {
-        let hash = block.hash();
-        let number = block.header.number;
-        info!("Adding block {number} with hash {hash:#x}.");
-        // Check if the block is already in the blockchain, if it is do nothing, if not add it
-        let block_number = store.get_block_number(hash).await.map_err(|_e| {
-            ChainError::Custom(String::from(
-                "Couldn't check if block is already in the blockchain",
-            ))
-        })?;
 
-        if block_number.is_some() {
-            info!("Block {} is already in the blockchain", block.hash());
-            continue;
+    for blocks in chains {
+        let size = blocks.len();
+        // Execute block by block
+        for block in &blocks {
+            let hash = block.hash();
+            let number = block.header.number;
+            info!("Adding block {number} with hash {hash:#x}.");
+            // Check if the block is already in the blockchain, if it is do nothing, if not add it
+            let block_number = store.get_block_number(hash).await.map_err(|_e| {
+                ChainError::Custom(String::from(
+                    "Couldn't check if block is already in the blockchain",
+                ))
+            })?;
+
+            if block_number.is_some() {
+                info!("Block {} is already in the blockchain", block.hash());
+                continue;
+            }
+
+            blockchain
+                .add_block(block)
+                .await
+                .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
         }
 
-        blockchain
-            .add_block(block)
-            .await
-            .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
-    }
-
-    _ = store
-        .mark_chain_as_canonical(&blocks)
-        .await
-        .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-
-    // Make head canonical and label all special blocks correctly.
-    if let Some(block) = blocks.last() {
         _ = store
-            .reconstruct_snapshots_for_new_canonical_chain(block.hash())
+            .mark_chain_as_canonical(&blocks)
             .await
-            .inspect_err(|error| warn!("Failed to reconstruct snapshot: {}", error));
+            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 
-        store
-            .update_finalized_block_number(block.header.number)
-            .await?;
-        store.update_safe_block_number(block.header.number).await?;
-        store
-            .update_latest_block_number(block.header.number)
-            .await?;
+        // Make head canonical and label all special blocks correctly.
+        if let Some(block) = blocks.last() {
+            _ = store
+                .reconstruct_snapshots_for_new_canonical_chain(block.hash())
+                .await
+                .inspect_err(|error| warn!("Failed to reconstruct snapshot: {}", error));
+
+            store
+                .update_finalized_block_number(block.header.number)
+                .await?;
+            store.update_safe_block_number(block.header.number).await?;
+            store
+                .update_latest_block_number(block.header.number)
+                .await?;
+        }
+
+        info!("Added {size} blocks to blockchain");
     }
-
-    info!("Added {size} blocks to blockchain");
     Ok(())
 }
 
