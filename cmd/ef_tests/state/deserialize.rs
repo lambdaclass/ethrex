@@ -129,15 +129,12 @@ pub fn deserialize_u256_safe<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    U256::from_str_radix(
-        String::deserialize(deserializer)?.trim_start_matches("0x:bigint "),
-        16,
-    )
-    .map_err(|err| {
-        serde::de::Error::custom(format!(
-            "error parsing U256 when deserializing U256  a safely: {err}"
-        ))
-    })
+    U256::from_str_prefixed(String::deserialize(deserializer)?.trim_start_matches("0x:bigint "))
+        .map_err(|err| {
+            serde::de::Error::custom(format!(
+                "error parsing U256 when deserializing U256 safely: {err}"
+            ))
+        })
 }
 
 /// This serializes a hexadecimal string to u64
@@ -218,10 +215,10 @@ where
 {
     let s = Option::<String>::deserialize(deserializer)?;
     match s {
-        Some(s) => U256::from_str_radix(s.trim_start_matches("0x:bigint "), 16)
+        Some(s) => U256::from_str_prefixed(s.trim_start_matches("0x:bigint "))
             .map_err(|err| {
                 serde::de::Error::custom(format!(
-                    "error parsing U256 when deserializing U256 safely: {err}"
+                    "error parsing U256 when deserializing U256 opt safely: {err}"
                 ))
             })
             .map(Some),
@@ -236,7 +233,7 @@ where
     Vec::<String>::deserialize(deserializer)?
         .iter()
         .map(|s| {
-            U256::from_str_radix(s.trim_start_matches("0x:bigint "), 16).map_err(|err| {
+            U256::from_str_prefixed(s.trim_start_matches("0x:bigint ")).map_err(|err| {
                 serde::de::Error::custom(format!(
                     "error parsing U256 when deserializing U256 vector safely: {err}"
                 ))
@@ -269,12 +266,12 @@ where
     HashMap::<String, String>::deserialize(deserializer)?
         .iter()
         .map(|(key, value)| {
-            let key = U256::from_str_radix(key.trim_start_matches("0x:bigint "), 16).map_err(|err| {
+            let key = U256::from_str_prefixed(key.trim_start_matches("0x:bigint ")).map_err(|err| {
                 serde::de::Error::custom(format!(
                     "(key) error parsing U256 when deserializing U256 valued hashmap safely: {err}"
                 ))
             })?;
-            let value = U256::from_str_radix(value.trim_start_matches("0x:bigint "), 16).map_err(|err| {
+            let value = U256::from_str_prefixed(value.trim_start_matches("0x:bigint ")).map_err(|err| {
                 serde::de::Error::custom(format!(
                     "(value) error parsing U256 when deserializing U256 valued hashmap safely: {err}"
                 ))
