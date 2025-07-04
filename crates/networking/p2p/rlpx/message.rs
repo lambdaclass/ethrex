@@ -257,7 +257,7 @@ impl Display for Message {
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
             Message::NewBlock(_) => "based:NewBlock".fmt(f),
-            Message::NewBatchSealed(_) => "based:BatchSealed".fmt(f),
+            Message::NewBatchSealed(_) => "based:NewBatchSealed".fmt(f),
             Message::GetBatchSealed(_) => "based:GetBatchSealed".fmt(f),
             Message::GetBatchSealedResponse(_) => "based:GetBatchSealedResponse".fmt(f),
         }

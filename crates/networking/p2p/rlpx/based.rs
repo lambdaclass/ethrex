@@ -190,29 +190,5 @@ impl RLPxMessage for GetBatchSealedResponseMessage {
         let (batches, decoder) = decoder.decode_field("batches")?;
         decoder.finish()?;
         Ok(GetBatchSealedResponseMessage { batches })
-        // let (batch_number, decoder) = decoder.decode_field("batch_number")?;
-        // let (first_block, decoder) = decoder.decode_field("first_block")?;
-        // let (last_block, decoder) = decoder.decode_field("last_block")?;
-        // let (state_root, decoder) = decoder.decode_field("state_root")?;
-        // let (deposit_logs_hash, decoder) = decoder.decode_field("deposit_logs_hash")?;
-        // let (withdrawal_hashes, decoder) = decoder.decode_field("withdrawal_hashes")?;
-        // let (blobs, decoder) = decoder.decode_field("blobs")?;
-        // let (commitments, decoder) = decoder.decode_field("commitments")?;
-        // let (proofs, decoder) = decoder.decode_field("proofs")?;
-        // decoder.finish()?;
-        // let batch = Batch {
-        //     number: batch_number,
-        //     first_block,
-        //     last_block,
-        //     state_root,
-        //     deposit_logs_hash,
-        //     withdrawal_hashes,
-        //     blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
-        //         blobs,
-        //         commitments,
-        //         proofs,
-        //     },
-        // };
-        // Ok(GetBatchSealedResponseMessage { batch })
     }
 }
