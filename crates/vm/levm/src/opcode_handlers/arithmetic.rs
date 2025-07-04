@@ -257,8 +257,10 @@ impl<'a> VM<'a> {
 }
 
 /// Checks its negative by checking leading zeros is 0
+#[allow(clippy::arithmetic_side_effects)]
 pub fn is_negative(value: U256) -> bool {
-    value.leading_zeros() == 0
+
+    (value >> 255) == U256::ONE
 }
 
 /// Negates a number in two's complement

@@ -5,7 +5,7 @@ use crate::{
     opcode_handlers::arithmetic::is_negative,
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::{I256, U256};
 
 // Comparison and Bitwise Logic Operations (14)
 // Opcodes: LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR
@@ -213,7 +213,10 @@ impl<'a> VM<'a> {
             if !is_negative {
                 value >> shift
             } else {
-                (value >> shift) | ((U256::MAX) << (U256::from(256u32) - shift))
+                U256::from_le_bytes(
+                    (I256::from_le_bytes(value.to_le_bytes()).wrapping_shr(shift.as_u32()))
+                        .to_le_bytes(),
+                )
             }
         } else if is_negative {
             U256::MAX

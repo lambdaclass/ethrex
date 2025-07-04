@@ -9,4 +9,4 @@ pub mod kzg;
 pub mod tracing;
 pub mod utils;
 
-pub use ethnum::U256;
+pub use ethnum::{U256, I256};
