@@ -56,7 +56,7 @@ lazy_static::lazy_static! {
     static ref STATE_TRIE_SEGMENT_SIZE: U256 = U256::from_be_bytes(HASH_MAX.0) / (STATE_TRIE_SEGMENTS as u128);
     // Starting hash of each state trie segment
     static ref STATE_TRIE_SEGMENTS_START: [H256; STATE_TRIE_SEGMENTS] = {
-        array::from_fn(|i| H256((*STATE_TRIE_SEGMENT_SIZE * (i as u128)).to_be_bytes()))
+        array::from_fn(|i| H256::from_slice(&(*STATE_TRIE_SEGMENT_SIZE * (i as u128)).to_be_bytes()))
     };
     // Ending hash of each state trie segment
     static ref STATE_TRIE_SEGMENTS_END: [H256; STATE_TRIE_SEGMENTS] = {
