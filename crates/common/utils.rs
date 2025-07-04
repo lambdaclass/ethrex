@@ -1,4 +1,5 @@
 use ethereum_types::{H160, U256, U512};
+use hex::FromHexError;
 
 /// Converts a big endian slice to a u256, faster than `u256::from_big_endian`.
 pub fn u256_from_big_endian(slice: &[u8]) -> U256 {
@@ -61,6 +62,11 @@ pub fn u256_from_h160(value: H160) -> ethnum::U256 {
 
 pub fn h160_from_u256(value: ethnum::U256) -> H160 {
     H160::from_slice(&value.to_be_bytes()[12..])
+}
+
+pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
+    let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
+    hex::decode(trimmed)
 }
 
 #[cfg(test)]

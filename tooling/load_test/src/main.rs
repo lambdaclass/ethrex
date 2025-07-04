@@ -5,8 +5,8 @@ use ethrex_common::U256;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
+use ethrex_rpc::types::block_identifier::{BlockIdentifier, BlockTag};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
@@ -226,7 +226,7 @@ async fn load_test(
                 get_address_from_secret_key(&sk).expect("Failed to get address from secret key");
 
             let nonce = client
-                .get_nonce(address, BlockByNumber::Latest)
+                .get_nonce(address, BlockIdentifier::Tag(BlockTag::Latest))
                 .await
                 .unwrap();
             let src = address;
@@ -280,7 +280,10 @@ async fn wait_until_all_included(
         let mut last_nonce = 0;
 
         loop {
-            let nonce = client.get_nonce(src, BlockByNumber::Latest).await.unwrap();
+            let nonce = client
+                .get_nonce(src, BlockIdentifier::Tag(BlockTag::Latest))
+                .await
+                .unwrap();
             if nonce >= tx_amount {
                 println!(
                     "All transactions sent from {encoded_src} have been included in blocks. Nonce: {nonce}",
