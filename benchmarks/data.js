@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751656809018,
+  "lastUpdate": 1751659693487,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2665,6 +2665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208752795777,
             "range": "± 512499926",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9d4d6b4766c238e7f11ac98dc450eb49691e4069",
+          "message": "ci(core): create release when pushing a semver tag  (#3431)\n\n**Motivation**\n\nCreate an ethrex release when a semver tag is pushed to the repo\n\n**Description**\n\n- Modifies already existing L2 releases workflow to build \n- For `ethrex client` (right now only for L2 but can be used for both L1\nand L2 after #3381 is merged )\n     - Build for `linux-x86_64` , `linux-arm64`, `macos-arm64`\n  - For `ethrex prover client`\n    - For `exec` mode\n       - Build for `linux-x86_64` `linux-arm64` and `macos-arm64`\n     - For `sp1 gpu` mode \n         - Build for `linux-x86_64` `linux-arm64`\n     - For `risc0 gpu` mode\n        - Build for `linux-x86_64`\n - For `ethrex replay`\n    - For `exec` mode\n       - Build for `linux-x86_64` `linux-arm64` and `macos-arm64`\n     - For `sp1 gpu` mode \n         - Build for `linux-x86_64` `linux-arm64`\n     - For `risc0 gpu` mode\n        - Build for `linux-x86_64`\n  - Creates a release with\n- Changelog from all the changes between the previous tag and the newly\ncreated one.\n- All the built binaries and the rollup L1 and L2 contracts in a tar\narchive\n- Example from testing repo\nhttps://github.com/LeanSerra/ethrex/releases/tag/v0.0.7-rc.1 before\nadding the contracts to the release output\n- Another example with the contracts\nhttps://github.com/LeanSerra/ethrex/releases/tag/v0.0.7-rc.2\n- Example of all outputs\nhttps://github.com/lambdaclass/ethrex/actions/runs/16077779945\n- Non related change: pin the version for the docker image in sp1 \n- With #3381 merged we now build ethrex with --all-features so the\ndefault database was changed to libmdbx when initializing the store.\n**Other considerations**\n\n> Q: No sp1 cpu?\n> A: Right now it's too slow to be viable in production environments\n\n> Q: No sp1 macos?\n> A: sp1 does not support the metal api for gpu acceleration. Also\nbecause zkvms are built using docker we'll run into a problem where the\nmacos github runner does not have docker installed.\n> After a quick investigation into this issue we have to use\n[colima](https://github.com/actions/runner/issues/1456#issuecomment-1676495453)\nfor docker.\n> This leads into another issue where sp1 uses a docker image built only\nfor amd64 this requires nested virtualization support that is enabled in\napple M3 chips or later but [the runner is currently using M1\nchips](https://docs.github.com/en/actions/concepts/runners/about-larger-runners#limitations-for-macos-larger-runners).\n\n> Q: Why does building the sp1 prover for\n[arm-64](https://github.com/LeanSerra/ethrex/actions/runs/16010958409/job/45168455867)\ntake twice as long as building for\n[x86-64](https://github.com/LeanSerra/ethrex/actions/runs/16010958409/job/45168455854)\n> A: We have to use QEMU inside the `arm-64` runner because the sp1\ndocker image is only built for `amd64`\n\n> Q: wen risc0\n> A: ~After #3172 is merged~\n[Now](https://github.com/lambdaclass/ethrex/actions/runs/16036016678/job/45247866997)",
+          "timestamp": "2025-07-04T19:07:17Z",
+          "tree_id": "7866af3a86be0f74b5fd91ce7bfb3795eb4edc2d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9d4d6b4766c238e7f11ac98dc450eb49691e4069"
+        },
+        "date": 1751659682724,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208049843480,
+            "range": "± 211691326",
             "unit": "ns/iter"
           }
         ]
