@@ -1,5 +1,5 @@
 use aligned_sdk::common::types::Network;
-use ethrex_common::{Address, H160, H256};
+use ethrex_common::{Address, H256};
 use ethrex_l2_common::prover::ProverType;
 use ethrex_rpc::{
     EthClient,
@@ -9,7 +9,6 @@ use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
 use rand::Rng;
 use secp256k1::SecretKey;
-use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
@@ -90,8 +89,8 @@ pub async fn get_needed_proof_types(
             let required_proof_type = response
                 .chars()
                 .last()
-                .ok_or(EthClientError::InternalError("empty response"))?
-                == "1";
+                .ok_or(EthClientError::InternalError("empty response".to_string()))?
+                == '1';
             if !required_proof_type {
                 info!("{prover_type} proof needed");
                 needed_proof_types.push(prover_type);
