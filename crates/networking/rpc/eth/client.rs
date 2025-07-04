@@ -1,4 +1,5 @@
-use serde_json::{Map, Value, json};
+use serde::ser::{Serialize, SerializeStruct, Serializer};
+use serde_json::Value;
 use tracing::info;
 
 use crate::{
@@ -24,6 +25,26 @@ impl RpcHandler for ChainId {
 }
 
 pub struct Syncing;
+
+struct SyncingMessage {
+    starting_block: u64,
+    current_block: u64,
+    highest_block: u64,
+}
+
+impl Serialize for SyncingMessage {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("SyncingMessage", 3)?;
+        s.serialize_field("startingBlock", &format!("{:#x}", &self.starting_block))?;
+        s.serialize_field("currentBlock", &format!("{:#x}", &self.current_block))?;
+        s.serialize_field("highestBlock", &format!("{:#x}", &self.highest_block))?;
+        s.end()
+    }
+}
+
 impl RpcHandler for Syncing {
     /// Ref: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_syncing
     fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
@@ -34,34 +55,17 @@ impl RpcHandler for Syncing {
         if context.blockchain.is_synced() {
             Ok(Value::Bool(!context.blockchain.is_synced()))
         } else {
-            let mut map = Map::new();
-            map.insert(
-                "startingBlock".to_string(),
-                json!(format!(
-                    "{:#x}",
-                    context.storage.get_earliest_block_number().await?
-                )),
-            );
-            map.insert(
-                "currentBlock".to_string(),
-                json!(format!(
-                    "{:#x}",
-                    context.storage.get_latest_block_number().await?
-                )),
-            );
-            map.insert(
-                "highestBlock".to_string(),
-                json!(format!(
-                    "{:#x}",
-                    context
-                        .syncer
-                        .get_last_fcu_head()
-                        .try_lock()
-                        .map_err(|error| RpcErr::Internal(error.to_string()))?
-                        .to_low_u64_ne()
-                )),
-            );
-            serde_json::to_value(map).map_err(|error| RpcErr::Internal(error.to_string()))
+            let msg = SyncingMessage {
+                starting_block: context.storage.get_earliest_block_number().await?,
+                current_block: context.storage.get_latest_block_number().await?,
+                highest_block: context
+                    .syncer
+                    .get_last_fcu_head()
+                    .try_lock()
+                    .map_err(|error| RpcErr::Internal(error.to_string()))?
+                    .to_low_u64_be(),
+            };
+            serde_json::to_value(msg).map_err(|error| RpcErr::Internal(error.to_string()))
         }
     }
 }
