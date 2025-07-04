@@ -44,12 +44,22 @@ pub(crate) async fn storage_healer(
     let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
     let mut stale = false;
     let mut last_update = Instant::now();
+    let healing_start = Instant::now();
+    let mut total_healed = 0;
     while !(stale || cancel_token.is_cancelled()) {
-        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+        if true
+        /*last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION*/
+        {
             last_update = Instant::now();
+            let speed = healing_start
+                .elapsed()
+                .as_millis()
+                .checked_div(total_healed as u128)
+                .unwrap_or(9999);
             info!(
-                "Storage Healing in Progress, storages queued: {}",
-                pending_paths.len()
+                "Storage Healing in Progress, pending paths: {}, healing speed: {}ms/node",
+                pending_paths.len(),
+                speed
             );
         }
         // If we have few storages in queue, fetch more from the store
@@ -90,7 +100,8 @@ pub(crate) async fn storage_healer(
         }
         // Add unfetched paths to queue and handle stale signal
         for res in storage_tasks.join_all().await {
-            let (remaining, is_stale) = res?;
+            let (remaining, is_stale, nodes_healed) = res?;
+            total_healed += nodes_healed;
             pending_paths.extend(remaining);
             stale |= is_stale;
         }
@@ -111,11 +122,12 @@ async fn heal_storage_batch(
     mut batch: BTreeMap<H256, Vec<Nibbles>>,
     peers: PeerHandler,
     store: Store,
-) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool), SyncError> {
+) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool, usize), SyncError> {
     if let Some(mut nodes) = peers
         .request_storage_trienodes(state_root, batch.clone())
         .await
     {
+        let nodes_received = nodes.len();
         debug!("Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
@@ -147,8 +159,8 @@ async fn heal_storage_batch(
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
         batch.retain(|_, v| !v.is_empty());
-        return Ok((batch, false));
+        return Ok((batch, false, nodes_received));
     }
     // Pivot became stale, lets inform the fetcher
-    Ok((batch, true))
+    Ok((batch, true, 0))
 }
