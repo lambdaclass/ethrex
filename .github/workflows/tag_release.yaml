@@ -172,7 +172,7 @@ jobs:
               --bin ethrex_prover
             cd ../../
             mv target/release/ethrex_prover ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
-            mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk ethrex-${{ matrix.arch }}-riscv32im-succinct-zkvm-vk
+            mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk ethrex-riscv32im-succinct-zkvm-vk
           else
             cd cmd/ethrex_replay
             cargo build --release --features "sp1,gpu"
@@ -187,11 +187,11 @@ jobs:
           path: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload sp1 vk
-        if: ${{ matrix.binary == 'ethrex_prover' }}
+        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86-64') }}
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-${{ matrix.arch }}-riscv32im-succinct-zkvm-vk
-          path: ethrex-${{ matrix.arch }}-riscv32im-succinct-zkvm-vk
+          name: ethrex-riscv32im-succinct-zkvm-vk
+          path: ethrex-riscv32im-succinct-zkvm-vk
 
   build-prover-and-replay-risc0:
     strategy:
@@ -241,7 +241,7 @@ jobs:
               --bin ethrex_prover
             cd ../../
             mv target/release/ethrex_prover ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
-            mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk ethrex-${{ matrix.arch }}-riscv32im-risc0-vk
+            mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk ethrex-riscv32im-risc0-vk
           else
             cd cmd/ethrex_replay
             cargo build --release --features "risc0,gpu"
@@ -256,11 +256,11 @@ jobs:
           path: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload risc0 vk
-        if: ${{ matrix.binary == 'ethrex_prover' }}
+        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86-64') }}
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex-${{ matrix.arch }}-riscv32im-risc0-vk
-          path: ethrex-${{ matrix.arch }}-riscv32im-risc0-vk
+          name: ethrex-riscv32im-risc0-vk
+          path: ethrex-riscv32im-risc0-vk
 
   package-contracts:
     runs-on: ubuntu-latest
