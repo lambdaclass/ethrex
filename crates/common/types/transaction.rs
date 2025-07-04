@@ -1925,7 +1925,7 @@ mod serde_impl {
                 )
                 .map(Transaction::PrivilegedL2Transaction)
                 .map_err(|e| {
-                    serde::de::Error::custom(format!("Couldn't Deserialize Privileged {e}"))
+                    serde::de::Error::custom(format!("Couldn't Deserialize Privileged: {e}"))
                 }),
             }
         }

@@ -42,7 +42,7 @@ secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
 itertools = "0.14.0"
-tui-logger = { workspace = true, optional = true }
+tui-logger.workspace = true
 
 cfg-if = "1.0.0"
 
