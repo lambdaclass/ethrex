@@ -80,8 +80,6 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
-
-
       - name: Build prover
         run: |
           cd crates/l2
@@ -92,11 +90,24 @@ jobs:
           cd ../../
           mv target/release/ethrex_prover ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
 
+      - name: Build ethrex replay
+        run: |
+          cd cmd/ethrex_replay
+          cargo build --release
+          cd ../../
+          mv target/release/ethrex-replay ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
 
   build-prover-sp1:
     strategy:
@@ -126,8 +137,6 @@ jobs:
           curl -L https://sp1up.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.0
 
-
-
       - name: Set up QEMU
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
@@ -144,11 +153,24 @@ jobs:
           cd ../../
           mv target/release/ethrex_prover ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
+      - name: Build ethrex replay
+        run: |
+          cd cmd/ethrex_replay
+          cargo build --release --features "sp1,gpu"
+          cd ../../
+          mv target/release/ethrex-replay ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
   build-prover-risc0:
     strategy:
@@ -175,8 +197,6 @@ jobs:
           ~/.risc0/bin/rzup install cargo-risczero 2.1.0
           ~/.risc0/bin/rzup install rust
 
-
-
       - uses: Jimver/cuda-toolkit@v0.2.24
         id: cuda-toolkit
         with:
@@ -195,11 +215,24 @@ jobs:
           cd ../../
           mv target/release/ethrex_prover ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
+      - name: Build ethrex replay
+        run: |
+          cd cmd/ethrex_replay
+          cargo build --release --features "risc0,gpu"
+          cd ../../
+          mv target/release/ethrex-replay ethrex_replay_risc0-${{ matrix.os }}_${{ matrix.arch }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_replay_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex_replay_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
   package-contracts:
     runs-on: ubuntu-latest
