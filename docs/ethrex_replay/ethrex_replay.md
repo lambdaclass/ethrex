@@ -73,10 +73,8 @@ Optionally: `BLOCK_NUMBER`, `NETWORK`.
 ```sh
 make prove-sp1
 make prove-sp1-gpu
-make prove-sp1-gpu-ci   # SP1 + GPU + CI flag
 make prove-risc0
 make prove-risc0-gpu
-make prove-risc0-gpu-ci
 ```
 
 ### Execute an L2 batch (no proving)
