@@ -23,13 +23,14 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::SnapStateIndex;
 use crate::{api::StoreEngine, utils::ChainDataIndex};
+use std::collections::HashMap;
 
 const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("StateTrieNodes");
@@ -307,9 +308,27 @@ impl RedBStore {
 impl StoreEngine for RedBStore {
     async fn commit_storage_nodes(
         &self,
-        _changeset: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+        nodes: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
     ) -> Result<(), StoreError> {
-        todo!();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let write_txn = db.begin_write().map_err(Box::new)?;
+            {
+                let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+                for (hashed_address, nodes) in nodes {
+                    for (node_hash, node_data) in nodes {
+                        addr_store.insert(
+                            (hashed_address.0, node_hash_to_fixed_size(node_hash)),
+                            &*node_data,
+                        )?;
+                    }
+                }
+            }
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
