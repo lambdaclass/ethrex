@@ -218,6 +218,8 @@ jobs:
       - name: Build ethrex replay
         run: |
           cd cmd/ethrex_replay
+          RUSTFLAGS='-C target-cpu=native' \
+          NVCC_PREPEND_FLAGS='-arch=sm_70' \
           cargo build --release --features "risc0,gpu"
           cd ../../
           mv target/release/ethrex-replay ethrex_replay_risc0-${{ matrix.os }}_${{ matrix.arch }}
