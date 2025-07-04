@@ -189,7 +189,7 @@ jobs:
           path: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload sp1 vk
-        if: ${{ matrix.ethrex_prover }}
+        if: ${{ matrix.binary == 'ethrex_prover' }}
         uses: actions/upload-artifact@v4
         with:
           name: ethrex-${{ matrix.arch }}-riscv32im-succinct-zkvm-vk
