@@ -312,15 +312,10 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-fn read_vk(path: &str) -> Bytes {
+fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
     std::fs::read(path)
-    .unwrap_or_else(|_| {
-        warn!(
-            ?path,
-            "Failed to read verification key file, will use 0x00..00, this is expected in dev mode"
-        );
-        vec![0u8; 32]
-    }).into()
+        .map(|bytes| bytes.into())
+        .map_err(DeployerError::from)
 }
 
 async fn initialize_contracts(
@@ -338,8 +333,16 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = read_vk(&opts.sp1_vk_path);
-    let risc0_vk = read_vk(&opts.risc0_vk_path);
+    let sp1_vk = if opts.sp1 {
+        read_vk(&opts.sp1_vk_path)?
+    } else {
+        Bytes::new()
+    };
+    let risc0_vk = if opts.risc0 {
+        read_vk(&opts.risc0_vk_path)?
+    } else {
+        Bytes::new()
+    };
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -405,6 +408,10 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
+            Value::Bool(opts.risc0),
+            Value::Bool(opts.sp1),
+            Value::Bool(opts.tdx),
+            Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
