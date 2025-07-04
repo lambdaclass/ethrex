@@ -62,6 +62,8 @@ impl Default for Trie {
     }
 }
 
+// TODO: add a method to get traversed hashes for a path.
+// That way I can simply get the invalidated nodes externally from the effective account updates.
 impl Trie {
     /// Creates a new Trie from a clean DB
     pub fn new(db: Box<dyn TrieDB>) -> Self {
@@ -97,11 +99,15 @@ impl Trie {
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
-            NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
-                    .map_err(TrieError::RLPDecode)?
-                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
-            }
+            NodeRef::Hash(hash) if hash.is_valid() => Node::decode(
+                &self
+                    .db
+                    .get(hash)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .unwrap(),
+            )
+            .map_err(TrieError::RLPDecode)?
+            .get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             _ => None,
         })
     }
@@ -112,14 +118,15 @@ impl Trie {
         let mut invalidated_nodes = Vec::with_capacity(64);
 
         self.root = if self.root.is_valid() {
-            if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
-                invalidated_nodes.push(hash)
-            }
+            // if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
+            //     invalidated_nodes.push(hash)
+            // }
 
             // If the trie is not empty, call the root node's insertion logic.
             self.root
                 .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
+                .ok_or(TrieError::InconsistentTree)
+                .unwrap()
                 .insert(self.db.as_ref(), path, value, &mut invalidated_nodes)?
                 .into()
         } else {
@@ -139,15 +146,16 @@ impl Trie {
         }
 
         let mut invalidated_nodes = Vec::with_capacity(64);
-        if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
-            invalidated_nodes.push(hash)
-        }
+        // if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
+        //     invalidated_nodes.push(hash)
+        // }
 
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .root
             .get_node(self.db.as_ref())?
-            .ok_or(TrieError::InconsistentTree)?
+            .ok_or(TrieError::InconsistentTree)
+            .unwrap()
             .remove(
                 self.db.as_ref(),
                 Nibbles::from_bytes(&path),
@@ -256,7 +264,8 @@ impl Trie {
             let encoded_root = self
                 .root
                 .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
+                .ok_or(TrieError::InconsistentTree)
+                .unwrap()
                 .encode_raw();
 
             let mut node_path = HashSet::new();
@@ -407,8 +416,10 @@ impl Trie {
                     Some(idx) => {
                         let child_ref = &branch_node.choices[idx];
                         if child_ref.is_valid() {
-                            let child_node =
-                                child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                            let child_node = child_ref
+                                .get_node(db)?
+                                .ok_or(TrieError::InconsistentTree)
+                                .unwrap();
                             get_node_inner(db, child_node, partial_path)
                         } else {
                             Ok(vec![])
@@ -423,7 +434,8 @@ impl Trie {
                         let child_node = extension_node
                             .child
                             .get_node(db)?
-                            .ok_or(TrieError::InconsistentTree)?;
+                            .ok_or(TrieError::InconsistentTree)
+                            .unwrap();
                         get_node_inner(db, child_node, partial_path)
                     } else {
                         Ok(vec![])
@@ -439,7 +451,8 @@ impl Trie {
                 self.db.as_ref(),
                 self.root
                     .get_node(self.db.as_ref())?
-                    .ok_or(TrieError::InconsistentTree)?,
+                    .ok_or(TrieError::InconsistentTree)
+                    .unwrap(),
                 partial_path,
             )
         } else {
@@ -491,7 +504,8 @@ impl ProofTrie {
             self.0
                 .root
                 .get_node(self.0.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
+                .ok_or(TrieError::InconsistentTree)
+                .unwrap()
                 .insert(
                     self.0.db.as_ref(),
                     partial_path,

@@ -340,7 +340,7 @@ impl Store {
         {
             // delete nodes in back order
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
-            let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
+            let start_key = key_num.saturating_sub(16); // we keep the last 1024 blocks
             let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
             while let Some((block_num_hash, nodehash_value)) = keyval {
                 if start_key <= block_num_hash.block_number {
@@ -375,7 +375,7 @@ impl Store {
         {
             // delete nodes in back order
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
-            let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
+            let start_key = key_num.saturating_sub(16); // we keep the last 1024 blocks
             let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
             while let Some((block_num_hash, nodehash_value)) = keyval {
                 if start_key <= block_num_hash.block_number {
