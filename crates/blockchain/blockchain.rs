@@ -181,11 +181,9 @@ impl Blockchain {
 
         let mut block_hashes = HashMap::new();
         let mut codes = Vec::new();
-        let mut code_map = HashMap::new();
-
-        let mut used_trie_nodes = Vec::new();
-
         let mut keys: Vec<Vec<u8>> = Vec::new();
+        // This will become the state trie + storage trie
+        let mut used_trie_nodes = Vec::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -199,6 +197,7 @@ impl Blockchain {
 
             // Re-execute block with logger
             vm.execute_block(block)?;
+
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
@@ -209,7 +208,6 @@ impl Blockchain {
                 }
             }
 
-            let mut used_storage_tries = HashMap::new();
             // Get the used block hashes from the logger
             let logger_block_hashes = logger
                 .block_hashes_accessed
@@ -218,8 +216,9 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to get block hashes".to_string())
                 })?
                 .clone();
+
             block_hashes.extend(logger_block_hashes);
-            // Access all the accounts needed for withdrawals
+            // Access all the accounts needed for withdrawals, this adds it to the loggers
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
                 for withdrawal in withdrawals {
                     trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
@@ -228,6 +227,7 @@ impl Blockchain {
                 }
             }
 
+            let mut used_storage_tries = HashMap::new();
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
             for (account, keys) in logger
@@ -280,7 +280,6 @@ impl Blockchain {
                     .ok_or(ChainError::WitnessGeneration(
                         "Failed to get account code".to_string(),
                     ))?;
-                code_map.insert(*code_hash, code.clone());
                 codes.push(code.to_vec());
             }
 
@@ -318,42 +317,35 @@ impl Blockchain {
             }
         }
 
-        let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
-        needed_block_numbers.sort();
-        // The last block number we need is the parent of the last block we execute
-        let last_needed_block_number = blocks
-            .last()
-            .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
-            .header
-            .number
-            .saturating_sub(1);
-        // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
-        let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
-        if let Some(block_number_from_logger) = needed_block_numbers.first() {
-            if **block_number_from_logger < first_needed_block_number {
-                first_needed_block_number = **block_number_from_logger;
-            }
-        }
-        let mut headers: Vec<BlockHeader> = Vec::new();
-        for block_number in first_needed_block_number..=last_needed_block_number {
-            let header = self.storage.get_block_header(block_number)?.ok_or(
-                ChainError::WitnessGeneration("Failed to get block header".to_string()),
-            )?;
-            headers.push(header);
-        }
+        // If the initial block_hash is missing we add it
+        block_hashes.insert(first_block_header.number.saturating_sub(1), first_block_header.parent_hash);
 
-        let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
+        let headers: Vec<BlockHeader> = block_hashes
+            .values()
+            .flat_map(|block_hash| {
+                self.storage
+                    .get_block_header_by_hash(*block_hash)
+                    .map_err(ChainError::StoreError)
+                    .map(|block_option| {
+                        block_option.ok_or(ChainError::WitnessGeneration(
+                            "Couldn't find needed BlockHeaders".to_owned(),
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<BlockHeader>, ChainError>>()?;
 
         Ok(ExecutionWitnessResult {
             state: Some(used_trie_nodes),
             codes,
-            code_map,
+            keys,
+            headers,
+            // Below these, the get rebuilt in rebuild_tries()
+            // Potential improvement, decopule the executionwitnessresult from execution witness
             state_trie: None,
             storage_tries: None,
-            headers,
+            code_map: HashMap::new(),
             block_headers: HashMap::new(),
-            chain_config,
-            keys,
+            chain_config: Default::default(),
         })
     }
 
