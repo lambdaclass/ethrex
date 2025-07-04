@@ -330,13 +330,20 @@ impl Store {
             .map_err(|e| anyhow::anyhow!("error: {e}"))?;
 
         let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
-        if let Some((BlockNumHash(key_num, _), _)) = cursor_state_trie_pruning_log.last()? {
+        if let Some((
+            BlockNumHash {
+                block_number: key_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_state_trie_pruning_log.last()?
+        {
             // delete nodes in back order
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
             let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
             let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
             while let Some((block_num_hash, nodehash_value)) = keyval {
-                if start_key <= block_num_hash.0 {
+                if start_key <= block_num_hash.block_number {
                     keyval = cursor_state_trie_pruning_log.prev()?;
                     continue;
                 }
@@ -352,13 +359,20 @@ impl Store {
         }
 
         let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
-        if let Some((BlockNumHash(key_num, _), _)) = cursor_storage_trie_pruning_log.last()? {
+        if let Some((
+            BlockNumHash {
+                block_number: key_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_storage_trie_pruning_log.last()?
+        {
             // delete nodes in back order
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
             let start_key = key_num.saturating_sub(1024); // we keep the last 1024 blocks
             let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
             while let Some((block_num_hash, nodehash_value)) = keyval {
-                if start_key <= block_num_hash.0 {
+                if start_key <= block_num_hash.block_number {
                     keyval = cursor_storage_trie_pruning_log.prev()?;
                     continue;
                 }
@@ -574,8 +588,8 @@ impl StoreEngine for Store {
         let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
         let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
 
-        let mut block_num = current_snapshot.0;
-        let mut snapshot_hash = current_snapshot.1;
+        let mut block_num = current_snapshot.block_number;
+        let mut snapshot_hash = current_snapshot.block_hash;
 
         let mut canonical_hash = canonical_cursor
             .seek_exact(block_num)?
@@ -584,7 +598,10 @@ impl StoreEngine for Store {
             .unwrap_or_default();
 
         while canonical_hash != snapshot_hash {
-            let current_block = BlockNumHash(block_num, snapshot_hash);
+            let current_block = BlockNumHash {
+                block_number: block_num,
+                block_hash: snapshot_hash,
+            };
             tracing::warn!("UNDO: searching for {current_block:?}");
 
             let mut found_state_log = state_log_cursor.seek_closest(current_block)?;
@@ -610,8 +627,8 @@ impl StoreEngine for Store {
 
                 // We update this here to ensure it's the previous block according
                 // to the logs found.
-                block_num = parent_block.0;
-                snapshot_hash = parent_block.1;
+                block_num = parent_block.block_number;
+                snapshot_hash = parent_block.block_hash;
                 found_state_log = state_log_cursor.next()?;
             }
 
@@ -632,12 +649,15 @@ impl StoreEngine for Store {
 
                 // We update this here to ensure it's the previous block according
                 // to the logs found.
-                block_num = parent_block.0;
-                snapshot_hash = parent_block.1;
+                block_num = parent_block.block_number;
+                snapshot_hash = parent_block.block_hash;
                 found_storage_log = storage_log_cursor.next()?;
             }
 
-            let updated_block = BlockNumHash(block_num, snapshot_hash);
+            let updated_block = BlockNumHash {
+                block_number: block_num,
+                block_hash: snapshot_hash,
+            };
 
             if updated_block == current_block {
                 tracing::info!("logs exhausted: back to canonical chain");
@@ -651,7 +671,10 @@ impl StoreEngine for Store {
                 .transpose()?
                 .unwrap_or_default();
         }
-        let final_snapshot = BlockNumHash(block_num, snapshot_hash);
+        let final_snapshot = BlockNumHash {
+            block_number: block_num,
+            block_hash: snapshot_hash,
+        };
 
         tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_snapshot)?;
         tx.commit().map_err(|err| err.into())
@@ -672,12 +695,15 @@ impl StoreEngine for Store {
 
         for key_value in tx
             .cursor::<CanonicalBlockHashes>()?
-            .walk(Some(current_snapshot.0 + 1))
+            .walk(Some(current_snapshot.block_number + 1))
         {
             let (block_num, block_hash_rlp) = key_value?;
             let block_hash = block_hash_rlp.to()?;
             let previous_snapshot = updated_snapshot;
-            updated_snapshot = BlockNumHash(block_num, block_hash);
+            updated_snapshot = BlockNumHash {
+                block_number: block_num,
+                block_hash,
+            };
 
             let mut found_state_log = state_log_cursor.seek_closest(updated_snapshot)?;
             let mut found_storage_log = storage_log_cursor.seek_closest(updated_snapshot)?;
@@ -729,7 +755,7 @@ impl StoreEngine for Store {
 
                 found_storage_log = storage_log_cursor.next()?;
             }
-            if head_hash == updated_snapshot.1 {
+            if head_hash == updated_snapshot.block_hash {
                 break;
             }
         }
@@ -1715,7 +1741,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?
             .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
             .map_err(StoreError::LibmdbxError)?
-            .map(|v| v.1))
+            .map(|v| v.block_hash))
     }
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
         // tracing::info!("called get_current_storage");

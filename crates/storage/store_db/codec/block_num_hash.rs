@@ -10,11 +10,17 @@ use ethrex_rlp::{
 use libmdbx::orm::{Decodable, Encodable};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct BlockNumHash(pub BlockNumber, pub BlockHash);
+pub struct BlockNumHash {
+    pub block_number: BlockNumber,
+    pub block_hash: BlockHash,
+}
 
 impl From<(BlockNumber, BlockHash)> for BlockNumHash {
     fn from(value: (BlockNumber, BlockHash)) -> Self {
-        Self(value.0, value.1)
+        Self {
+            block_number: value.0,
+            block_hash: value.1,
+        }
     }
 }
 
@@ -24,8 +30,8 @@ impl Encodable for BlockNumHash {
 
     fn encode(self) -> Self::Encoded {
         let mut encoded = [0u8; 40];
-        encoded[0..8].copy_from_slice(&self.0.to_be_bytes());
-        encoded[8..40].copy_from_slice(&self.1.0);
+        encoded[0..8].copy_from_slice(&self.block_number.to_be_bytes());
+        encoded[8..40].copy_from_slice(&self.block_hash.0);
         encoded
     }
 }
@@ -38,7 +44,10 @@ impl Decodable for BlockNumHash {
         }
         let block_number = BlockNumber::from_be_bytes(b[0..8].try_into()?);
         let block_hash = ethereum_types::H256::from_slice(&b[8..40]);
-        Ok((block_number, block_hash).into())
+        Ok(Self {
+            block_number,
+            block_hash,
+        })
     }
 }
 
@@ -46,8 +55,8 @@ impl Decodable for BlockNumHash {
 impl RLPEncode for BlockNumHash {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
-            .encode_field(&self.0)
-            .encode_field(&self.1)
+            .encode_field(&self.block_number)
+            .encode_field(&self.block_hash)
             .finish();
     }
 }
@@ -58,6 +67,12 @@ impl RLPDecode for BlockNumHash {
         let decoder = Decoder::new(rlp)?;
         let (block_number, decoder) = decoder.decode_field("block_number")?;
         let (block_hash, decoder) = decoder.decode_field("block_hash")?;
-        Ok((BlockNumHash(block_number, block_hash), decoder.finish()?))
+        Ok((
+            BlockNumHash {
+                block_number,
+                block_hash,
+            },
+            decoder.finish()?,
+        ))
     }
 }

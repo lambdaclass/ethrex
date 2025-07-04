@@ -504,17 +504,18 @@ impl StoreEngine for RedBStore {
 
             let mut current_block = current_snapshot;
             loop {
-                let Some(canonical_hash) = self.get_block_hash_by_block_number(current_block.0)?
+                let Some(canonical_hash) =
+                    self.get_block_hash_by_block_number(current_block.block_number)?
                 else {
                     tracing::info!(
                         "UNDO: No canonical hash found for block {}",
-                        current_block.0
+                        current_block.block_number
                     );
                     break;
                 };
 
                 // If current block is canonical, we're done
-                if canonical_hash == current_block.1 {
+                if canonical_hash == current_block.block_hash {
                     break;
                 }
 
@@ -570,7 +571,7 @@ impl StoreEngine for RedBStore {
             let mut block_num_hash = current_snapshot;
 
             // Walk through canonical blocks from current snapshot to head
-            let mut current_block_num = current_snapshot.0 + 1;
+            let mut current_block_num = current_snapshot.block_number + 1;
 
             loop {
                 // Get canonical hash for current block number
@@ -582,7 +583,10 @@ impl StoreEngine for RedBStore {
                 };
 
                 let old_block_num_hash = block_num_hash;
-                block_num_hash = BlockNumHash(current_block_num, canonical_hash);
+                block_num_hash = BlockNumHash {
+                    block_number: current_block_num,
+                    block_hash: canonical_hash,
+                };
 
                 // Create key to search for logs for this block transition
                 let block_key: BlockNumHashRLP = block_num_hash.into();
@@ -610,7 +614,7 @@ impl StoreEngine for RedBStore {
                 }
 
                 // Check if we've reached the target head
-                if head_hash == block_num_hash.1 {
+                if head_hash == block_num_hash.block_hash {
                     tracing::info!("REPLAY: Reached target head block {:?}", head_hash);
                     break;
                 }
@@ -631,7 +635,7 @@ impl StoreEngine for RedBStore {
             .map(|a| {
                 a.value()
                     .to()
-                    .map(|block_num_hash: BlockNumHash| block_num_hash.1)
+                    .map(|block_num_hash: BlockNumHash| block_num_hash.block_hash)
             })
             .transpose()
             .map_err(StoreError::from)
@@ -646,11 +650,11 @@ impl StoreEngine for RedBStore {
                 // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
                 if let (Some(first_block), Some(last_block)) = (update_batch.blocks.first(), update_batch.blocks.last()) {
 
-                    let parent_block = BlockNumHash(
-                        first_block.header.number - 1,
-                        first_block.header.parent_hash,
-                    );
-                    let final_block = BlockNumHash(last_block.header.number, last_block.hash());
+                    let parent_block = BlockNumHash{
+                        block_number: first_block.header.number - 1,
+                        block_hash: first_block.header.parent_hash,
+                    };
+                    let final_block = BlockNumHash{block_number: last_block.header.number, block_hash:last_block.hash()};
 
                     // Write account info logs
                     let mut state_logs_table = write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
@@ -733,7 +737,7 @@ impl StoreEngine for RedBStore {
 
                 // Store storage trie updates
                 let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
-                for (hashed_address, nodes) in update_batch.storage_updates {
+                for (hashed_address, nodes, _) in update_batch.storage_updates {
                     for (node_hash, node_data) in nodes {
                         addr_store.insert(
                             (hashed_address.0, node_hash_to_fixed_size(node_hash)),
@@ -1798,7 +1802,11 @@ impl StoreEngine for RedBStore {
         self.write(
             CURRENT_SNAPSHOT_BLOCK_TABLE,
             (),
-            BlockNumHash(genesis_block_number, genesis_block_hash).into(),
+            BlockNumHash {
+                block_number: genesis_block_number,
+                block_hash: genesis_block_hash,
+            }
+            .into(),
         )
         .await?;
 
@@ -1862,7 +1870,11 @@ impl StoreEngine for RedBStore {
         self.write(
             CURRENT_SNAPSHOT_BLOCK_TABLE,
             (),
-            BlockNumHash(genesis_block_number, genesis_block_hash).into(),
+            BlockNumHash {
+                block_number: genesis_block_number,
+                block_hash: genesis_block_hash,
+            }
+            .into(),
         )
         .await?;
 
