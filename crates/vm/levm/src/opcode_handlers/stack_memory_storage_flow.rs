@@ -276,14 +276,16 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
         let current_call_frame = self.current_call_frame_mut()?;
-        let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
-        let dest_offset: usize = dest_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let src_offset: usize = src_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let [dest_offset_u256, src_offset, size] = *current_call_frame.stack.pop()?;
         let size: usize = size
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset: usize = match dest_offset_u256.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::OutOfGas.into()),
+        };
+        let src_offset: usize = src_offset
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 

@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
     utils::word_to_address,
@@ -84,19 +84,15 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
-
         let [offset] = *current_call_frame.stack.pop()?;
-
-        // If the offset is larger than the actual calldata, then you
-        // have no data to return.
-        if offset > calldata_size {
+        let Some(offset) = offset
+            .try_into()
+            .ok()
+            .filter(|&offset: &usize| offset <= current_call_frame.calldata.len())
+        else {
             current_call_frame.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
