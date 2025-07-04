@@ -1,4 +1,7 @@
+use crate::rlpx::connection::server::Capabilities;
 use crate::rlpx::{error::RLPxError, message as rlpx, utils::ecdh_xchng};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use super::handshake::{LocalState, RemoteState};
 use aes::{
@@ -24,6 +27,7 @@ pub(crate) struct RLPxCodec {
     pub(crate) egress_mac: Keccak256,
     pub(crate) ingress_aes: Aes256Ctr64BE,
     pub(crate) egress_aes: Aes256Ctr64BE,
+    pub capabilities: Arc<Mutex<Capabilities>>,
 }
 
 impl RLPxCodec {
@@ -31,6 +35,7 @@ impl RLPxCodec {
         local_state: &LocalState,
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
+        capabilities: Arc<Mutex<Capabilities>>,
     ) -> Result<Self, RLPxError> {
         let ephemeral_key_secret = ecdh_xchng(
             &local_state.ephemeral_key,
@@ -67,8 +72,49 @@ impl RLPxCodec {
             egress_mac,
             ingress_aes,
             egress_aes,
+            capabilities,
         })
     }
+
+    // pub fn set_p2p_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
+    //     if !cap.is_p2p() {
+    //         return Err(RLPxError::InternalError(
+    //             "The protocol should be p2p".into(),
+    //         ));
+    //     }
+    //     self.p2p_protocol = Some(cap.clone());
+    //     Ok(())
+    // }
+
+    // pub fn set_eth_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
+    //     if !cap.is_eth() {
+    //         return Err(RLPxError::InternalError(
+    //             "The protocol should be eth".into(),
+    //         ));
+    //     }
+    //     if self.p2p_protocol.is_none() {
+    //         return Err(RLPxError::InternalError(
+    //             "p2p protocol should be established first".into(),
+    //         ));
+    //     }
+    //     self.eth_protocol = Some(cap.clone());
+    //     Ok(())
+    // }
+
+    // pub fn set_snap_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
+    //     if !cap.is_snap() {
+    //         return Err(RLPxError::InternalError(
+    //             "The protocol should be snap".into(),
+    //         ));
+    //     }
+    //     if self.eth_protocol.is_none() {
+    //         return Err(RLPxError::InternalError(
+    //             "Eth protocol should be established first".into(),
+    //         ));
+    //     }
+    //     self.snap_protocol = Some(cap.clone());
+    //     Ok(())
+    // }
 }
 
 impl Decoder for RLPxCodec {
@@ -193,7 +239,18 @@ impl Decoder for RLPxCodec {
         let (frame_data, _padding) = frame_ciphertext.split_at(frame_size);
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
-        Ok(Some(rlpx::Message::decode(msg_id, msg_data)?))
+
+        // NOTE: this crashes since it is not possible to create a runtime within an async context.
+        // Find the right way to lock the capabilities mutex
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let capabilities = rt.block_on(async { self.capabilities.lock().await });
+        Ok(Some(rlpx::Message::decode(
+            msg_id,
+            msg_data,
+            &capabilities.p2p,
+            &capabilities.eth,
+            &capabilities.snap,
+        )?))
     }
 
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -222,7 +279,17 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
     fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
-        message.encode(&mut frame_data)?;
+
+        // NOTE: this crashes since it is not possible to create a runtime within an async context.
+        // Find the right way to lock the capabilities mutex
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let capabilities = rt.block_on(async { self.capabilities.lock().await });
+        message.encode(
+            &mut frame_data,
+            &capabilities.p2p,
+            &capabilities.eth,
+            &capabilities.snap,
+        )?;
 
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 
