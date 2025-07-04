@@ -40,6 +40,8 @@ pub enum EthClientError {
     GetMessageProofError(#[from] GetMessageProofError),
     #[error("debug_executionWitness request error: {0}")]
     GetWitnessError(#[from] GetWitnessError),
+    #[error("admin_nodeInfo request error: {0}")]
+    GetNodeError(#[from] GetNodeError),
     #[error("eth_maxPriorityFeePerGas request error: {0}")]
     GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
     #[error("Unreachable nonce")]
@@ -246,6 +248,16 @@ pub enum GetMessageProofError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetNodeError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("The NodeInfo is lacking the ChainConfig")]
+    MissingChainConfig(),
 }
 
 #[derive(Debug, thiserror::Error)]

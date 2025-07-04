@@ -1,4 +1,3 @@
-mod admin;
 mod authentication;
 mod engine;
 mod eth;
@@ -7,6 +6,7 @@ mod net;
 mod rpc;
 mod tracing;
 
+pub mod admin;
 pub mod clients;
 pub mod types;
 pub mod utils;

@@ -51,7 +51,7 @@ pub struct GetRawReceipts {
 pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
-pub struct ExecutionWitness {
+pub struct ExecutionWitnessHandler {
     pub from: BlockIdentifier,
     pub to: Option<BlockIdentifier>,
 }
@@ -335,7 +335,7 @@ impl RpcHandler for GetBlobBaseFee {
     }
 }
 
-impl RpcHandler for ExecutionWitness {
+impl RpcHandler for ExecutionWitnessHandler {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
@@ -354,7 +354,7 @@ impl RpcHandler for ExecutionWitness {
             None
         };
 
-        Ok(ExecutionWitness { from, to })
+        Ok(ExecutionWitnessHandler { from, to })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {

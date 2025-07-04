@@ -10,7 +10,7 @@ pub async fn get_blockdata(
     block_number: BlockIdentifier,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{block_number}.json");
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(mut cache) = load_cache(&file_name) {
         return Ok(cache);
     }
     let block = eth_client.get_raw_block(block_number.clone()).await?;
@@ -26,6 +26,7 @@ pub async fn get_blockdata(
     let cache = Cache {
         blocks: vec![block],
         witness,
+        chain_config,
     };
     write_cache(&cache, &file_name).expect("failed to write cache");
     Ok(cache)
@@ -38,7 +39,7 @@ pub async fn get_rangedata(
     to: usize,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{from}-{to}.json");
-    if let Ok(cache) = load_cache(&file_name) {
+    if let Ok(mut cache) = load_cache(&file_name) {
         return Ok(cache);
     }
     let mut blocks = Vec::with_capacity(to - from);
@@ -58,13 +59,11 @@ pub async fn get_rangedata(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    if witness.chain_config.chain_id != chain_config.chain_id {
-        return Err(eyre::eyre!(
-            "Rpc endpoint returned a different chain id than the one set by --network"
-        ));
-    }
-
-    let cache = Cache { blocks, witness };
+    let cache = Cache {
+        blocks,
+        witness,
+        chain_config,
+    };
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
