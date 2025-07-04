@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::{GetWitnessError, TxPoolContentError},
+    clients::eth::errors::{GetBatchByNumberError, GetWitnessError, TxPoolContentError},
     mempool::MempoolContent,
     types::{
         block::RpcBlock,
@@ -21,8 +21,8 @@ use eth_sender::Overrides;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        BlobsBundle, Block, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
+        BlobsBundle, Block, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
+        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction, batch::Batch,
         block_execution_witness::ExecutionWitnessResult,
     },
     utils::decode_hex,
@@ -82,6 +82,17 @@ pub struct L1MessageProof {
     pub message_id: U256,
     pub message_hash: H256,
     pub merkle_proof: Vec<H256>,
+}
+
+// TODO: This struct is duplicated from `crates/l2/networking/rpc/l2/batch.rs`.
+// It can't be imported because of circular dependencies. After fixed, we should
+// remove the duplication.
+#[derive(Serialize, Deserialize)]
+pub struct RpcBatch {
+    #[serde(flatten)]
+    pub batch: Batch,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_hashes: Option<Vec<BlockHash>>,
 }
 
 impl EthClient {
@@ -1349,6 +1360,24 @@ impl EthClient {
                 .map_err(EthClientError::from),
             RpcResponse::Error(error_response) => {
                 Err(TxPoolContentError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
+    pub async fn get_batch_by_number(&self, batch_number: u64) -> Result<RpcBatch, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "ethrex_getBatchByNumber".to_string(),
+            params: Some(vec![json!(format!("{batch_number:#x}")), json!(true)]),
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetBatchByNumberError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
             }
         }
     }
