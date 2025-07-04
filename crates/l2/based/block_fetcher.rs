@@ -177,15 +177,7 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     {
         info!("Node is not up to date. Syncing via L1");
 
-        let last_l2_block_number_known = state.store.get_latest_block_number().await?;
-
-        let last_l2_batch_number_known = state
-            .rollup_store
-            .get_batch_number_by_block(last_l2_block_number_known)
-            .await?
-            .ok_or(BlockFetcherError::InternalError(format!(
-                "Failed to get last batch number known for block {last_l2_block_number_known}"
-            )))?;
+        let last_l2_batch_number_known = state.rollup_store.get_latest_batch_number().await?;
 
         let last_l2_committed_batch_number = state
             .eth_client
