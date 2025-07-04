@@ -352,9 +352,9 @@ impl Store {
                     && key == k_delete
                 {
                     tracing::info!(
-                        node = nodehash_value.as_ref(),
+                        node = hex::encode(nodehash_value.as_ref()),
                         block_number = block_num_hash.block_number,
-                        block_hash = block_num_hash.block_hash.0.as_ref(),
+                        block_hash = hex::encode(block_num_hash.block_hash.0.as_ref()),
                         "[DELETING STATE NODE]"
                     );
                     cursor_state_trie.delete_current()?;
@@ -386,10 +386,10 @@ impl Store {
                     && key == nodehash_value
                 {
                     tracing::info!(
-                        hashed_address = nodehash_value.0.as_ref(),
-                        node_hash = nodehash_value.1.as_ref(),
+                        hashed_address = hex::encode(nodehash_value.0.as_ref()),
+                        node_hash = hex::encode(nodehash_value.1.as_ref()),
                         block_number = block_num_hash.block_number,
-                        block_hash = block_num_hash.block_hash.0.as_ref(),
+                        block_hash = hex::encode(block_num_hash.block_hash.0.as_ref()),
                         "[DELETING STORAGE NODE]"
                     );
                     cursor_storage_trie.delete_current()?;

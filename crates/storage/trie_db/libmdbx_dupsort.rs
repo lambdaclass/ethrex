@@ -39,8 +39,8 @@ where
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         tracing::info!(
-            hashed_address = self.fixed_key.clone().encode().as_ref(),
-            node_hash = key.finalize().0.as_ref(),
+            hashed_address = hex::encode(self.fixed_key.clone().encode().as_ref()),
+            node_hash = hex::encode(key.finalize().0.as_ref()),
             "GET STORAGE TRIE NODE",
         );
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
