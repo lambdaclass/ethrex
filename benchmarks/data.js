@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751655497130,
+  "lastUpdate": 1751656809018,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2635,6 +2635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209286317190,
             "range": "± 1508328942",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0c4beceb320f47a1223674cf95ba19b9e204006f",
+          "message": "chore(l2): remove leftover l2 feature flag references (#3488)\n\n**Motivation**\n\nThe `make rm-db-l2` command was broken due to a leftover reference to\nthe removed `l2` feature flag. This PR also removes a few other outdated\nreferences.\n\nCloses: None",
+          "timestamp": "2025-07-04T18:19:40Z",
+          "tree_id": "73a90b78b8de44e830d79f9a0b4d6f7c9f2202e0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0c4beceb320f47a1223674cf95ba19b9e204006f"
+        },
+        "date": 1751656799028,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208752795777,
+            "range": "± 512499926",
             "unit": "ns/iter"
           }
         ]
