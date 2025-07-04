@@ -3,7 +3,7 @@ use crate::{
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
-    memory::{self, calculate_memory_size},
+    memory::{self, calculate_memory_size, try_resize},
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -40,7 +40,13 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let callee: Address = word_to_address(callee);
+            let args_start_offset = args_start_offset
+                .try_into()
+                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
             let args_size = args_size
+                .try_into()
+                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+            let return_data_start_offset: usize = return_data_start_offset
                 .try_into()
                 .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_size: usize = return_data_size
@@ -142,7 +148,13 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
+            let args_start_offset = args_start_offset
+                .try_into()
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let args_size = args_size
+                .try_into()
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let return_data_start_offset = return_data_start_offset
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_size = return_data_size
@@ -219,6 +231,9 @@ impl<'a> VM<'a> {
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [offset, size] = *current_call_frame.stack.pop()?;
+        let offset = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -263,7 +278,13 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
+            let args_start_offset = args_start_offset
+                .try_into()
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let args_size = args_size
+                .try_into()
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let return_data_start_offset = return_data_start_offset
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_size = return_data_size
@@ -358,7 +379,13 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
+            let args_start_offset = args_start_offset
+                .try_into()
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let args_size = args_size
+                .try_into()
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let return_data_start_offset = return_data_start_offset
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_size = return_data_size
@@ -439,6 +466,9 @@ impl<'a> VM<'a> {
             code_offset_in_memory,
             code_size_in_memory,
         ] = *current_call_frame.stack.pop()?;
+        let code_offset_in_memory: usize = code_offset_in_memory
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -470,6 +500,9 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             salt,
         ] = *current_call_frame.stack.pop()?;
+        let code_offset_in_memory: usize = code_offset_in_memory
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -500,6 +533,9 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [offset, size] = *current_call_frame.stack.pop()?;
+        let offset = offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -589,7 +625,7 @@ impl<'a> VM<'a> {
     pub fn generic_create(
         &mut self,
         value: U256,
-        code_offset_in_memory: U256,
+        code_offset_in_memory: usize,
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
@@ -695,7 +731,7 @@ impl<'a> VM<'a> {
             new_depth,
             true,
             true,
-            U256::zero(),
+            0,
             0,
             stack,
         );
@@ -726,7 +762,7 @@ impl<'a> VM<'a> {
         should_transfer_value: bool,
         is_static: bool,
         calldata: Bytes,
-        ret_offset: U256,
+        ret_offset: usize,
         ret_size: usize,
         bytecode: Bytes,
         is_delegation_7702: bool,
@@ -843,11 +879,25 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
-        memory::try_store_range(
+        if ret_size > 0 && ctx_result.output.len() < ret_size {
+            try_resize(
+                &mut parent_call_frame.memory,
+                ret_offset
+                    .checked_add(ret_size)
+                    .ok_or(ExceptionalHalt::OutOfBounds)?,
+            )?;
+        }
+        memory::try_store_data(
             &mut parent_call_frame.memory,
             ret_offset,
-            ret_size,
-            &ctx_result.output,
+            if ctx_result.output.len() >= ret_size {
+                ctx_result
+                    .output
+                    .get(..ret_size)
+                    .ok_or(ExceptionalHalt::OutOfBounds)?
+            } else {
+                &ctx_result.output
+            },
         )?;
         parent_call_frame.sub_return_data = ctx_result.output.clone();
 
@@ -921,9 +971,9 @@ impl<'a> VM<'a> {
     /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
     fn get_call_gas_params(
         &mut self,
-        args_start_offset: U256,
+        args_start_offset: usize,
         args_size: usize,
-        return_data_start_offset: U256,
+        return_data_start_offset: usize,
         return_data_size: usize,
         eip7702_gas_consumed: u64,
         address: Address,
@@ -952,7 +1002,7 @@ impl<'a> VM<'a> {
         ))
     }
 
-    fn get_calldata(&mut self, offset: U256, size: usize) -> Result<Bytes, VMError> {
+    fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
         Ok(Bytes::from(
             memory::load_range(&mut self.current_call_frame_mut()?.memory, offset, size)?.to_vec(),
         ))

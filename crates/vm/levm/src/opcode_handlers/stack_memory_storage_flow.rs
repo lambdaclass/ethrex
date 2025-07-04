@@ -72,6 +72,9 @@ impl<'a> VM<'a> {
     pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [offset] = *current_call_frame.stack.pop()?;
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
@@ -96,6 +99,10 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
         let current_call_frame = self.current_call_frame_mut()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -119,6 +126,9 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [offset] = *current_call_frame.stack.pop()?;
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
@@ -266,10 +276,20 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
         let current_call_frame = self.current_call_frame_mut()?;
-        let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
+        let [dest_offset_u256, src_offset, size] = *current_call_frame.stack.pop()?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset: usize = match dest_offset_u256.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::OutOfGas.into()),
+        };
+        let src_offset: usize = match src_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::OutOfGas.into()),
+        };
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
 

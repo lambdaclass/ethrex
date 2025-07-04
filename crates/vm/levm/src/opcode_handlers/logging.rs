@@ -19,6 +19,9 @@ impl<'a> VM<'a> {
         }
 
         let [offset, size] = *current_call_frame.stack.pop()?;
+        let offset = offset
+            .try_into()
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
