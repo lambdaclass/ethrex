@@ -82,6 +82,15 @@ contract OnChainProposer is
 
     bytes32 public RISC0_VERIFICATION_KEY;
 
+    /// @notice Maximum time the sequencer can take without sending privileged transactions
+    uint256 public constant PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = 300;
+    /// @notice Minimum of privileged transactions that must be included to reset the deadline
+    /// @dev If there aren't that many pending, pendingTxHashes.length is used
+    uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 10;
+
+    /// @notice Deadline for including the next batch of privileged transactions, if any are pending
+    uint256 public txInclusionDeadline;
+
     modifier onlyLeaderSequencer() {
         require(
             msg.sender ==
@@ -360,6 +369,8 @@ contract OnChainProposer is
             );
         }
 
+        _checkAndUpdateInclusionQuota(privileged_transaction_count);
+
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
 
@@ -415,17 +426,19 @@ contract OnChainProposer is
             );
 
             // The first 2 bytes are the number of privileged transactions.
-            uint16 transaction_count = uint16(
+            uint16 privileged_transaction_count = uint16(
                 bytes2(
                     batchCommitments[batchNumber]
                         .processedPrivilegedTransactionsRollingHash
                 )
             );
-            if (transaction_count > 0) {
+            if (privileged_transaction_count > 0) {
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                    transaction_count
+                    privileged_transaction_count
                 );
             }
+
+            _checkAndUpdateInclusionQuota(privileged_transaction_count);
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
@@ -435,6 +448,17 @@ contract OnChainProposer is
         }
 
         emit BatchVerified(lastVerifiedBatch);
+    }
+
+    function _checkAndUpdateInclusionQuota(uint16 privileged_transaction_count) private {
+        uint256 pending_count = ICommonBridge(BRIDGE).getPendingTransactionHashes().length;
+        uint16 mimimum_to_include = MIN_INCLUDED_PRIVILEGED_TX > pending_count ? uint16(pending_count) : MIN_INCLUDED_PRIVILEGED_TX;
+        if (block.timestamp > txInclusionDeadline) {
+            require(privileged_transaction_count >= mimimum_to_include, "OnChainProposer: batch does not include enough privileged transactions");
+        }
+        if (privileged_transaction_count >= mimimum_to_include) {
+            txInclusionDeadline = block.timestamp + PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+        }
     }
 
     function _verifyPublicData(
