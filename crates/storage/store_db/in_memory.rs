@@ -330,7 +330,7 @@ impl StoreEngine for Store {
                 for (parent_block, log) in entries {
                     // Verify this log applies to our current state
                     if parent_block != current_snapshot {
-                        continue;
+                        break;
                     }
 
                     // Apply the new state
@@ -347,7 +347,7 @@ impl StoreEngine for Store {
                 for (parent_block, log) in entries {
                     // Verify this log applies to our current state
                     if parent_block != current_snapshot {
-                        continue;
+                        break;
                     }
 
                     // Apply the new state
@@ -366,7 +366,7 @@ impl StoreEngine for Store {
 
             // Stop if we've reached the target head
             if canonical_hash == head_hash {
-                tracing::warn!("logs exhausted: back to canonical chain");
+                tracing::warn!("REPLAY: reached head {head_hash:?}");
                 break;
             }
         }
