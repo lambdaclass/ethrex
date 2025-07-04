@@ -5,7 +5,7 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::{Address, BigEndianHash, H256, U256};
+use ethrex_common::{Address, H256, U256};
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -137,7 +137,7 @@ impl RpcHandler for GetStorageAtRequest {
             .get_storage_at(block_number, self.address, self.storage_slot)
             .await?
             .unwrap_or_default();
-        let storage_value = H256::from_uint(&storage_value);
+        let storage_value = H256(storage_value.to_be_bytes());
         serde_json::to_value(format!("{storage_value:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -200,7 +200,7 @@ impl RpcHandler for GetProofRequest {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         };
         let storage_keys: Vec<U256> = serde_json::from_value(params[1].clone())?;
-        let storage_keys = storage_keys.iter().map(H256::from_uint).collect();
+        let storage_keys = storage_keys.iter().map(|v| H256(v.to_be_bytes())).collect();
         Ok(GetProofRequest {
             address: serde_json::from_value(params[0].clone())?,
             storage_keys,
@@ -240,7 +240,7 @@ impl RpcHandler for GetProofRequest {
                 Vec::new()
             };
             let storage_proof = StorageProof {
-                key: storage_key.into_uint(),
+                key: U256::from_be_bytes(storage_key.to_fixed_bytes()),
                 proof,
                 value,
             };

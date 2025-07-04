@@ -191,7 +191,7 @@ fn map_call(
         call_type: map_call_type(revm_call.kind()),
         from: Address::from_slice(revm_call.trace.caller.0.as_slice()),
         to,
-        value: U256(*revm_call.trace.value.as_limbs()),
+        value: U256::from_le_bytes(revm_call.trace.value.to_le_bytes()),
         gas: revm_call.trace.gas_limit,
         gas_used: revm_call.trace.gas_used,
         input: revm_call.trace.data.0.clone(),

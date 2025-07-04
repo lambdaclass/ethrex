@@ -116,11 +116,11 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
         nonce: 0,
         gas_price: 1,
         to: TxKind::Call(H160::random()),
-        value: U256::zero(),
+        value: U256::ZERO,
         data: Bytes::new(),
-        v: U256::one(),
-        r: U256::one(),
-        s: U256::one(),
+        v: U256::ONE,
+        r: U256::ONE,
+        s: U256::ONE,
         gas: 21000,
     });
     tx.sign_inplace(sk).expect("Unreachable error: Digest to sign should be correct size since it's calculated with the keccak algorithm");

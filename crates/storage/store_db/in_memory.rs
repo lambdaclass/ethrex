@@ -5,10 +5,13 @@ use crate::{
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
-use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, payload::PayloadBundle,
+use ethereum_types::H256;
+use ethrex_common::{
+    U256,
+    types::{
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+        Receipt, payload::PayloadBundle,
+    },
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{

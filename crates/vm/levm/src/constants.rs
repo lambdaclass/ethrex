@@ -8,8 +8,8 @@ use std::sync::LazyLock;
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
 
-pub const SUCCESS: U256 = U256::one();
-pub const FAIL: U256 = U256::zero();
+pub const SUCCESS: U256 = U256::ONE;
+pub const FAIL: U256 = U256::ZERO;
 pub const WORD_SIZE: usize = 32;
 
 pub const STACK_LIMIT: usize = 1024;
@@ -36,9 +36,9 @@ pub const EOF_PREFIX: u8 = 0xef;
 pub mod create_opcode {
     use ethrex_common::U256;
 
-    pub const INIT_CODE_WORD_COST: U256 = U256([2, 0, 0, 0]);
-    pub const CODE_DEPOSIT_COST: U256 = U256([200, 0, 0, 0]);
-    pub const CREATE_BASE_COST: U256 = U256([32000, 0, 0, 0]);
+    pub const INIT_CODE_WORD_COST: U256 = U256::from_words(0, 2);
+    pub const CODE_DEPOSIT_COST: U256 = U256::from_words(0, 200);
+    pub const CREATE_BASE_COST: U256 = U256::from_words(0, 32000);
 }
 
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
@@ -47,7 +47,7 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 393216; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: u64 = 786432; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 
-pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
+pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::ONE;
 
 // WARNING: Do _not_ use the BLOB_BASE_FEE_UPDATE_FRACTION_* family of
 // constants as is. Use the `get_blob_base_fee_update_fraction_value`
@@ -63,13 +63,13 @@ pub const MAX_BLOB_COUNT_ELECTRA: u64 = 9;
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
 // Block constants
-pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
+pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256::from_words(0, 256);
 
 // EIP7702 - EOA Load Code
 pub static SECP256K1_ORDER: LazyLock<U256> =
-    LazyLock::new(|| U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()));
+    LazyLock::new(|| U256::from_be_bytes(Secp256k1::ORDER.to_be_bytes()));
 pub static SECP256K1_ORDER_OVER2: LazyLock<U256> =
-    LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
+    LazyLock::new(|| *SECP256K1_ORDER / U256::from(2u32));
 pub const MAGIC: u8 = 0x05;
 pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 // Set the code of authority to be 0xef0100 || address. This is a delegation designation.

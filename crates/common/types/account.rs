@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
+use ethereum_types::H256;
+use ethnum::U256;
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,7 @@ impl From<GenesisAccount> for Account {
             storage: genesis
                 .storage
                 .iter()
-                .map(|(k, v)| (H256(k.to_big_endian()), *v))
+                .map(|(k, v)| (H256(k.to_be_bytes()), *v))
                 .collect(),
         }
     }
@@ -138,8 +139,8 @@ impl RLPDecode for AccountState {
 
 pub fn compute_storage_root(storage: &HashMap<U256, U256>) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((
-            Keccak256::digest(k.to_big_endian()).to_vec(),
+        (v != &U256::ZERO).then_some((
+            Keccak256::digest(k.to_be_bytes()).to_vec(),
             v.encode_to_vec(),
         ))
     });
@@ -183,7 +184,7 @@ impl Account {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.info.balance.is_zero()
+        self.info.balance == U256::ZERO
             && self.info.nonce == 0
             && self.info.code_hash == *EMPTY_KECCACK_HASH
     }

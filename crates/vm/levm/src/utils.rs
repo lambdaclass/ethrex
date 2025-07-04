@@ -21,10 +21,11 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{Fork, tx_fields::*},
+    utils::u256_from_h160,
 };
 use ethrex_common::{
     types::{Account, TxKind},
-    utils::u256_from_big_endian_const,
+    utils::h160_from_u256,
 };
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
@@ -40,13 +41,7 @@ pub type Storage = HashMap<U256, H256>;
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
 pub fn address_to_word(address: Address) -> U256 {
-    let mut word = [0u8; 32];
-
-    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
-        *word_byte = *address_byte;
-    }
-
-    u256_from_big_endian_const(word)
+    u256_from_h160(address)
 }
 
 /// Calculates the address of a new conctract using the CREATE
@@ -83,7 +78,7 @@ pub fn calculate_create2_address(
             [
                 &[0xff],
                 sender_address.as_bytes(),
-                &salt.to_big_endian(),
+                &salt.to_be_bytes(),
                 init_code_hash.as_bytes(),
             ]
             .concat(),
@@ -212,7 +207,7 @@ pub fn get_blob_gas_price(
 
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&word.to_big_endian()[12..])
+    h160_from_u256(word)
 }
 
 // ================== EIP-7702 related functions =====================
@@ -252,13 +247,13 @@ pub fn get_authorized_address(account: &Account) -> Result<Address, VMError> {
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
 ) -> Result<Option<Address>, VMError> {
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
+    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::ZERO >= auth_tuple.s_signature {
         return Ok(None);
     }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
+    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::ZERO >= auth_tuple.r_signature {
         return Ok(None);
     }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+    if auth_tuple.y_parity != U256::ONE && auth_tuple.y_parity != U256::ZERO {
         return Ok(None);
     }
 
@@ -274,8 +269,8 @@ pub fn eip7702_recover_address(
     };
 
     let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
+        auth_tuple.r_signature.to_be_bytes(),
+        auth_tuple.s_signature.to_be_bytes(),
     ]
     .concat();
 
@@ -362,7 +357,7 @@ impl<'a> VM<'a> {
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
         for auth_tuple in self.tx.authorization_list().cloned().unwrap_or_default() {
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
-            let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
+            let chain_id_not_zero = auth_tuple.chain_id != U256::ZERO;
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.
             if chain_id_not_zero && chain_id_not_equals_this_chain_id {

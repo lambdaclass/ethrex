@@ -3,9 +3,8 @@ use super::{
     error::RLPDecodeError,
 };
 use bytes::{Bytes, BytesMut};
-use ethereum_types::{
-    Address, Bloom, H32, H64, H128, H160, H256, H264, H512, H520, Signature, U256,
-};
+use ethereum_types::{Address, Bloom, H32, H64, H128, H160, H256, H264, H512, H520, Signature};
+use ethnum::U256;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Trait for decoding RLP encoded slices of data.
@@ -199,7 +198,7 @@ impl RLPDecode for U256 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes: [u8; 32] = static_left_pad(bytes)?;
-        Ok((U256::from_big_endian(&padded_bytes), rest))
+        Ok((U256::from_be_bytes(padded_bytes), rest))
     }
 }
 
@@ -631,14 +630,14 @@ mod tests {
     fn test_decode_u256() {
         let rlp = vec![RLP_NULL + 1, 0x01];
         let decoded = U256::decode(&rlp).unwrap();
-        let expected = U256::from(1);
+        let expected = U256::from(1u32);
         assert_eq!(decoded, expected);
 
         let mut rlp = vec![RLP_NULL + 32];
         let number_bytes = [0x01; 32];
         rlp.extend(number_bytes);
         let decoded = U256::decode(&rlp).unwrap();
-        let expected = U256::from_big_endian(&number_bytes);
+        let expected = U256::from_be_bytes(number_bytes);
         assert_eq!(decoded, expected);
     }
 

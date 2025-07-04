@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethereum_types::U256;
+use ethnum::U256;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use tinyvec::ArrayVec;
 
@@ -168,7 +168,7 @@ impl RLPEncode for String {
 impl RLPEncode for U256 {
     fn encode(&self, buf: &mut dyn BufMut) {
         let leading_zeros_in_bytes: usize = (self.leading_zeros() / 8) as usize;
-        let bytes = self.to_big_endian();
+        let bytes = self.to_be_bytes();
         bytes[leading_zeros_in_bytes..].encode(buf)
     }
 }
@@ -342,7 +342,8 @@ pub trait PayloadRLPEncode {
 mod tests {
     use std::net::IpAddr;
 
-    use ethereum_types::{Address, U256};
+    use ethereum_types::Address;
+    use ethnum::U256;
     use hex_literal::hex;
 
     use crate::constants::{RLP_EMPTY_LIST, RLP_NULL};
@@ -594,15 +595,15 @@ mod tests {
     #[test]
     fn can_encode_u256() {
         let mut encoded = Vec::new();
-        U256::from(1).encode(&mut encoded);
+        U256::from(1u32).encode(&mut encoded);
         assert_eq!(encoded, vec![1]);
 
         let mut encoded = Vec::new();
-        U256::from(128).encode(&mut encoded);
+        U256::from(128u32).encode(&mut encoded);
         assert_eq!(encoded, vec![0x80 + 1, 128]);
 
         let mut encoded = Vec::new();
-        U256::max_value().encode(&mut encoded);
+        U256::MAX.encode(&mut encoded);
         let bytes = [0xff; 32];
         let mut expected: Vec<u8> = bytes.into();
         expected.insert(0, 0x80 + 32);

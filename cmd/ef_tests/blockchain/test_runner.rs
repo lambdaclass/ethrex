@@ -297,7 +297,7 @@ pub async fn build_store_for_test(test: &TestUnit) -> Store {
 /// Checks db is correct after setting up initial state
 /// Panics if any comparison fails
 fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
-    let block_number = test.genesis_block_header.number.low_u64();
+    let block_number = test.genesis_block_header.number.as_u64();
     let db_block_header = db.get_block_header(block_number).unwrap().unwrap();
     let computed_genesis_block_hash = db_block_header.hash();
     // Check genesis block hash

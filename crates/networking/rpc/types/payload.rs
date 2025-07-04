@@ -114,7 +114,7 @@ impl ExecutionPayload {
             transactions_root: compute_transactions_root(&body.transactions),
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
-            difficulty: 0.into(),
+            difficulty: 0u32.into(),
             number: self.block_number,
             gas_limit: self.gas_limit,
             gas_used: self.gas_used,

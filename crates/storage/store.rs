@@ -7,8 +7,9 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256};
 use ethrex_common::{
+    U256,
     constants::EMPTY_TRIE_HASH,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
@@ -400,7 +401,7 @@ impl Store {
                 )?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
-                    if storage_value.is_zero() {
+                    if *storage_value == U256::ZERO {
                         storage_trie.remove(hashed_key)?;
                     } else {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
@@ -467,7 +468,7 @@ impl Store {
 
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
-                        if storage_value.is_zero() {
+                        if *storage_value == U256::ZERO {
                             storage_trie.remove(hashed_key)?;
                         } else {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
@@ -498,8 +499,8 @@ impl Store {
                 .engine
                 .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
-                if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
+                if storage_value != U256::ZERO {
+                    let hashed_key = hash_key(&H256(storage_key.to_be_bytes()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
@@ -1285,7 +1286,7 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use ethereum_types::{H256, U256};
+    use ethereum_types::H256;
     use ethrex_common::{
         Bloom, H160,
         constants::EMPTY_KECCACK_HASH,
@@ -1429,7 +1430,7 @@ mod tests {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 1,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
