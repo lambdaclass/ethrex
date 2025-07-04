@@ -57,6 +57,12 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
+    /// @notice Committed and verified batches
+    /// @dev This mapping contains the batch hashes and tells if they are committed or verified.
+    /// @dev If the value is false, the batch has been committed but not verified yet.
+    /// @dev If the value is true, the batch has been committed and verified by the proposer.
+    mapping(bytes32 => bool) public verifiedBatches;
+
     address public BRIDGE;
     address public PICOVERIFIER;
     address public R0VERIFIER;
@@ -285,6 +291,9 @@ contract OnChainProposer is
             withdrawalsLogsMerkleRoot,
             lastBlockHash
         );
+
+        verifiedBatches[lastBlockHash] = false;
+
         emit BatchCommitted(batchNumber, newStateRoot);
 
         lastCommittedBatch = batchNumber;
@@ -362,6 +371,8 @@ contract OnChainProposer is
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
+
+        verifiedBatches[batchCommitments[batchNumber].lastBlockHash] = true;
 
         emit BatchVerified(lastVerifiedBatch);
     }

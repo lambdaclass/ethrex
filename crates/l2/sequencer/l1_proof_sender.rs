@@ -52,6 +52,7 @@ pub struct L1ProofSenderState {
 }
 
 impl L1ProofSenderState {
+    #[expect(clippy::too_many_arguments)]
     async fn new(
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
@@ -324,7 +325,6 @@ pub async fn send_proof_to_contract(
             .as_slice(),
     ]
     .concat();
-
     let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
     let verify_tx_hash = send_verify_tx(
