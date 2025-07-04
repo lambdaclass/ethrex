@@ -61,13 +61,31 @@ jobs:
         include:
           - platform: ubuntu-22.04
             rustflags: -C target-cpu=native
+            binary: ethrex_prover
+            os: linux
+            arch: x86-64
+        include:
+          - platform: ubuntu-22.04
+            rustflags: -C target-cpu=native
+            binary: ethrex_replay
             os: linux
             arch: x86-64
           - platform: ubuntu-22.04-arm
             rustflags: -C target-cpu=native
+            binary: ethrex_prover
+            os: linux
+            arch: arm64
+          - platform: ubuntu-22.04-arm
+            rustflags: -C target-cpu=native
+            binary: ethrex_replay
             os: linux
             arch: arm64
           - platform: macos-latest
+            binary: ethrex_prover
+            os: macos
+            arch: arm64
+          - platform: macos-latest
+            binary: ethrex_replay
             os: macos
             arch: arm64
     runs-on: ${{ matrix.platform }}
@@ -80,43 +98,47 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
-      - name: Build prover
+      - name: Build binary
         run: |
-          cd crates/l2
           export RUSTFLAGS="${{ matrix.rustflags }}"
-          cargo build --release --features "l2" \
-            --manifest-path ./prover/Cargo.toml \
-            --bin ethrex_prover
-          cd ../../
-          mv target/release/ethrex_prover ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Build ethrex replay
-        run: |
-          cd cmd/ethrex_replay
-          cargo build --release
-          cd ../../
-          mv target/release/ethrex-replay ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
+          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
+            cd crates/l2
+            cargo build --release --features "l2" \
+              --manifest-path ./prover/Cargo.toml \
+              --bin ethrex_prover
+            cd ../../
+            mv target/release/ethrex_prover ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          else
+            cd cmd/ethrex_replay
+            cargo build --release
+            cd ../../
+            mv target/release/ethrex-replay ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_replay_exec-${{ matrix.os }}_${{ matrix.arch }}
+          name: ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          path: ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
 
   build-prover-and-replay-sp1:
     strategy:
       matrix:
         include:
           - platform: ubuntu-22.04
+            binary: ethrex_prover
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-22.04
+            binary: ethrex_replay
             os: linux
             arch: x86-64
           - platform: ubuntu-22.04-arm
+            binary: ethrex_prover
+            os: linux
+            arch: arm64
+          - platform: ubuntu-22.04-arm
+            binary: ethrex_replay
             os: linux
             arch: arm64
     runs-on: ${{ matrix.platform }}
@@ -143,40 +165,40 @@ jobs:
         with:
           platforms: amd64
 
-      - name: Build prover
+      - name: Build binary
         run: |
-          cd crates/l2
-          RUSTFLAGS='-C target-cpu=native' \
-          cargo build --release --features "sp1,gpu,l2" \
-            --manifest-path ./prover/Cargo.toml \
-            --bin ethrex_prover
-          cd ../../
-          mv target/release/ethrex_prover ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Build ethrex replay
-        run: |
-          cd cmd/ethrex_replay
-          cargo build --release --features "sp1,gpu"
-          cd ../../
-          mv target/release/ethrex-replay ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          export RUSTFLAGS='-C target-cpu=native'
+          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
+            cd crates/l2
+            cargo build --release --features "sp1,gpu,l2" \
+              --manifest-path ./prover/Cargo.toml \
+              --bin ethrex_prover
+            cd ../../
+            mv target/release/ethrex_prover ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          else
+            cd cmd/ethrex_replay
+            cargo build --release --features "sp1,gpu"
+            cd ../../
+            mv target/release/ethrex-replay ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_replay_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          name: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          path: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
   build-prover-and-replay-risc0:
     strategy:
       matrix:
         include:
           - platform: ubuntu-22.04
+            binary: ethrex_prover
+            os: linux
+            arch: x86-64
+        include:
+          - platform: ubuntu-22.04
+            binary: ethrex_replay
             os: linux
             arch: x86-64
     runs-on: ${{ matrix.platform }}
@@ -204,37 +226,29 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc"]'
 
-      - name: Build prover
+      - name: Build binary
         run: |
           cd crates/l2
-          RUSTFLAGS='-C target-cpu=native' \
-          NVCC_PREPEND_FLAGS='-arch=sm_70' \
-          cargo build --release --features "risc0,gpu,l2" \
-            --manifest-path ./prover/Cargo.toml \
-            --bin ethrex_prover
-          cd ../../
-          mv target/release/ethrex_prover ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Build ethrex replay
-        run: |
-          cd cmd/ethrex_replay
-          RUSTFLAGS='-C target-cpu=native' \
-          NVCC_PREPEND_FLAGS='-arch=sm_70' \
-          cargo build --release --features "risc0,gpu"
-          cd ../../
-          mv target/release/ethrex-replay ethrex_replay_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          export RUSTFLAGS='-C target-cpu=native'
+          export NVCC_PREPEND_FLAGS='-arch=sm_70'
+          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
+            cargo build --release --features "risc0,gpu,l2" \
+              --manifest-path ./prover/Cargo.toml \
+              --bin ethrex_prover
+            cd ../../
+            mv target/release/ethrex_prover ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          else
+            cd cmd/ethrex_replay
+            cargo build --release --features "risc0,gpu"
+            cd ../../
+            mv target/release/ethrex-replay ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex_replay_risc0-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_replay_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          name: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          path: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
   package-contracts:
     runs-on: ubuntu-latest
