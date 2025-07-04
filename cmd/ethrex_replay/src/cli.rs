@@ -318,7 +318,7 @@ enum EthrexReplayCommand {
         about = "Proves blocks, ranges of blocks, or individual transactions."
     )]
     Prove(SubcommandProve),
-    #[command(about = "Plots the compositiong of a range of blocks.")]
+    #[command(about = "Plots the composition of a range of blocks.")]
     BlockComposition {
         #[arg(help = "Starting block. (Inclusive)")]
         start: usize,
