@@ -708,6 +708,7 @@ impl StoreEngine for Store {
                 &mut flat_storage_cursor,
             )?
             else {
+                // If the snapshot don't have parent block, we are in genesis
                 tracing::warn!("UNDO: logs exhausted, back to canonical chain");
                 break;
             };
