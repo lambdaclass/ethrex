@@ -1,0 +1,79 @@
+name: PR Label
+
+on:
+  pull_request:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  label-pr:
+    name: Set Label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if PR already has labels
+        id: check_labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels;
+            if (labels.length > 0) {
+              console.log("PR already has labels, skipping labeling.");
+              core.setOutput('has_labels', 'true');
+            } else {
+              console.log("PR has no labels, proceeding with labeling.");
+              core.setOutput('has_labels', 'false');
+            }
+
+      - name: Determine labels from PR title
+        if: steps.check_labels.outputs.has_labels == 'false'
+        id: set_labels
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          labels=()
+
+          if [[ "$TITLE" =~ \(.*l1.*\) ]]; then
+            labels+=("L1")
+          fi
+
+          if [[ "$TITLE" =~ \(.*levm.*\) ]]; then
+            labels+=("levm")
+          fi
+
+          if [[ "$TITLE" =~ \(.*l2.*\) ]]; then
+            labels+=("L2")
+          fi
+
+          if [[ "$TITLE" =~ \(.*core.*\) ]]; then
+            labels+=("L1" "L2")
+          fi
+
+          if [[ "$TITLE" =~ ^perf ]]; then
+            labels+=("performance")
+          fi
+
+          # Remove duplicates
+          mapfile -t unique_labels < <(printf "%s\n" "${labels[@]}" | sort -u)
+          labels_csv=$(IFS=, ; echo "${unique_labels[*]}")
+          echo "labels=$labels_csv" >> $GITHUB_OUTPUT
+
+      - name: Apply labels to PR
+        if: steps.check_labels.outputs.has_labels == 'false' && steps.set_labels.outputs.labels != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = "${{ steps.set_labels.outputs.labels }}".split(',');
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels
+            });
