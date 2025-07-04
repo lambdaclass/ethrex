@@ -826,13 +826,13 @@ impl PeerHandler {
         )
     }
 
-    pub async fn read_total_peers(&self) -> Vec<PeerData> {
+    pub async fn total_peers_count(&self) -> usize {
         self.peer_table
             .lock()
             .await
             .iter_peers()
-            .cloned()
             .collect::<Vec<_>>()
+            .len()
     }
 
     pub async fn remove_peer(&self, peer_id: H256) {
