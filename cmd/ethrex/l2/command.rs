@@ -185,7 +185,7 @@ impl Command {
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
-                    blockchain.clone(),
+                    blockchain,
                     l2_sequencer_cfg,
                     sync_manager.await,
                     shared_state,
