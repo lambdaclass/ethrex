@@ -121,7 +121,7 @@ make plot
 
 ---
 
-## 📖 Full CLI Reference
+## Check All Available Commands
 
 Run:
 
