@@ -38,7 +38,7 @@ where
     SK: Clone + Encodable,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        tracing::info!(
+        tracing::debug!(
             hashed_address = hex::encode(self.fixed_key.clone().encode().as_ref()),
             node_hash = hex::encode(node_hash_to_fixed_size(key)),
             "[QUERYING STORAGE TRIE NODE]",

@@ -351,7 +351,7 @@ impl Store {
                 if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
                     && key == k_delete
                 {
-                    tracing::info!(
+                    tracing::debug!(
                         node = hex::encode(nodehash_value.as_ref()),
                         block_number = block_num_hash.block_number,
                         block_hash = hex::encode(block_num_hash.block_hash.0.as_ref()),
@@ -385,7 +385,7 @@ impl Store {
                 if let Some((key, _)) = cursor_storage_trie.seek_exact(nodehash_value)?
                     && key == nodehash_value
                 {
-                    tracing::info!(
+                    tracing::debug!(
                         hashed_address = hex::encode(nodehash_value.0.as_ref()),
                         node_hash = hex::encode(nodehash_value.1.as_ref()),
                         block_number = block_num_hash.block_number,
@@ -507,7 +507,7 @@ impl StoreEngine for Store {
             // we store account info changes in the table StateWriteBatch
             // store account updates
             for (node_hash, mut node_data) in update_batch.account_updates {
-                tracing::info!(
+                tracing::debug!(
                     node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
                     parent_block_number = parent_block.block_number,
                     parent_block_hash = hex::encode(parent_block.block_hash),
@@ -535,7 +535,7 @@ impl StoreEngine for Store {
                 for (node_hash, mut node_data) in nodes {
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    tracing::info!(
+                    tracing::debug!(
                         hashed_address = hex::encode(hashed_address.0),
                         node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
                         parent_block_number = parent_block.block_number,

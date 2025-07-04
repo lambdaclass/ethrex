@@ -28,7 +28,7 @@ where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        tracing::info!(
+        tracing::debug!(
             node_hash = hex::encode(node_hash_to_fixed_size(key)),
             "[QUERYING STATE TRIE NODE]",
         );
