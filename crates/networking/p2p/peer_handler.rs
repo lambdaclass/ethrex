@@ -826,6 +826,13 @@ impl PeerHandler {
         )
     }
 
+    pub async fn add_trusted_peer(&self, node: crate::types::Node) {
+        debug!("Adding peer with id {:?}", node.node_id());
+        let mut table = self.peer_table.lock().await;
+        // TODO: we should treat them specially
+        table.insert_node_forced(node);
+    }
+
     pub async fn remove_peer(&self, peer_id: H256) {
         debug!("Removing peer with id {:?}", peer_id);
         let mut table = self.peer_table.lock().await;
