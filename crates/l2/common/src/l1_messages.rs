@@ -1,10 +1,7 @@
 use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
-use ethrex_common::{
-    H160, U256,
-    types::{Receipt, Transaction},
-};
+use ethrex_common::{H160, U256, types::Receipt};
 use keccak_hash::keccak;
 
 use serde::{Deserialize, Serialize};
@@ -17,8 +14,6 @@ pub const L1MESSENGER_ADDRESS: Address = H160([
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to the L1
 pub struct L1Message {
-    /// L2 Transaction the message was included in, for ease of usage
-    pub tx_hash: H256,
     /// Address that called the L1Messanger
     pub from: Address,
     /// Hash of the data given to the L1Messenger
@@ -30,7 +25,6 @@ pub struct L1Message {
 impl L1Message {
     pub fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(&self.tx_hash.0);
         bytes.extend_from_slice(&self.from.to_fixed_bytes());
         bytes.extend_from_slice(&self.data_hash.0);
         bytes.extend_from_slice(&self.message_id.to_big_endian());
@@ -42,21 +36,20 @@ pub fn get_l1_message_hash(msg: &L1Message) -> H256 {
     keccak(msg.encode())
 }
 
-pub fn get_block_l1_message_hashes(txs: &[Transaction], receipts: &[Receipt]) -> Vec<H256> {
-    get_block_l1_messages(txs, receipts)
+pub fn get_block_l1_message_hashes(receipts: &[Receipt]) -> Vec<H256> {
+    get_block_l1_messages(receipts)
         .iter()
         .map(get_l1_message_hash)
         .collect()
 }
 
-pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L1Message> {
+pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
     static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
         LazyLock::new(|| keccak("L1Message(address,bytes32,uint256)".as_bytes()));
 
     receipts
         .iter()
-        .zip(txs.iter())
-        .flat_map(|(receipt, tx)| {
+        .flat_map(|receipt| {
             receipt
                 .logs
                 .iter()
@@ -69,7 +62,6 @@ pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L
                         from: Address::from_slice(&log.topics.get(1)?.0[12..32]),
                         data_hash: *log.topics.get(2)?,
                         message_id: U256::from_big_endian(&log.topics.get(3)?.to_fixed_bytes()),
-                        tx_hash: tx.compute_hash(),
                     })
                 })
         })
