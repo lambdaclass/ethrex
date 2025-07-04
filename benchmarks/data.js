@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751644686109,
+  "lastUpdate": 1751645497821,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2575,6 +2575,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208587874888,
             "range": "± 583828328",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f6a839d10689bbf0c016dc7c486d73d485850b21",
+          "message": "fix(l1): `RpcBlock` `uncles` field should have the hashes and not the block headers (#3245)\n\n**Motivation**\nFix inconsistencies between our RPC outputs and the spec.\nAccording to the spec endpoints such as `eth_getBlockByNumber` return a\nblock where the `uncles` field contains the hashes of the uncle blocks,\nwhile we return the full headers.\nThis has not been a problem for us as we have been mainly using\npost-merge blocks without uncles, but it will become a problem if we\nneed to export/import older blocks via rpc\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Change `uncles` field of `RpcBlock` from `Vec<BlockHeader>` to\n`Vec<H256`\n* (Bonus) Allow deserializing blocks without `base_fee_per_gas`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None",
+          "timestamp": "2025-07-04T15:10:19Z",
+          "tree_id": "4ece4b3ae184c29396de8151f4b8a22ab0a95a0b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f6a839d10689bbf0c016dc7c486d73d485850b21"
+        },
+        "date": 1751645487409,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209056357578,
+            "range": "± 417087772",
             "unit": "ns/iter"
           }
         ]
