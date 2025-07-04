@@ -4,6 +4,8 @@ use super::{
     utils::log_peer_warn,
 };
 #[cfg(feature = "l2")]
+use crate::rlpx::based::GetBatchSealedResponseMessage;
+#[cfg(feature = "l2")]
 use crate::rlpx::based::NewBatchSealedMessage;
 #[cfg(feature = "l2")]
 use crate::rlpx::based::get_hash_batch_sealed;
@@ -401,14 +403,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 self.node.version = Some(hello_message.client_id);
 
-                // let node_id = hello_message.node_id;
-                // let already_connected = {
-                //     let table_lock = table.lock().await;
-                //     let a = table_lock
-                //         .filter_peers(&|peer: &PeerData| peer.node.node_id() == node_id(node_id))
-                //         .collect();
-                // };
-
                 Ok(())
             }
             Message::Disconnect(disconnect) => {
@@ -566,7 +560,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             if !self.blockchain.is_synced() {
                 // We do this since we are syncing, we don't want to broadcast old blocks
                 self.latest_block_sent = latest_block_number;
-                // self.latest_block_added = latest_block_number;
                 return Ok(());
             }
             for i in self.latest_block_sent + 1..=latest_block_number {
@@ -858,25 +851,24 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
-            Message::NewBlock(req) if peer_supports_based => {
-                if self.should_process_new_block(&req).await? {
-                    debug!("adding block to queue: {}", req.block.header.number);
-                    #[cfg(feature = "l2")]
-                    if let SequencerStatus::Following = self.sequencer_state.status().await {
-                        self.blocks_on_queue
-                            .entry(req.block.header.number)
-                            .or_insert_with(|| req.block.clone());
-                        if req.block.header.number > self.last_block_broadcasted {
-                            self.last_block_broadcasted = req.block.header.number;
-                            self.broadcast_message(Message::NewBlock(req.clone()))?;
-                        }
-                    }
-                }
+            Message::NewBlock(_req) if peer_supports_based => {
                 #[cfg(feature = "l2")]
-                if let SequencerStatus::Following = self.sequencer_state.status().await {
-                    // If the sequencer is following, we process the new block
-                    // to keep the state updated.
-                    self.process_new_block(&req).await?;
+                {
+                    if let SequencerStatus::Following = self.sequencer_state.status().await {
+                        if self.should_process_new_block(&_req).await? {
+                            debug!("adding block to queue: {}", _req.block.header.number);
+                            self.blocks_on_queue
+                                .entry(_req.block.header.number)
+                                .or_insert_with(|| _req.block.clone());
+                            if _req.block.header.number > self.last_block_broadcasted {
+                                self.broadcast_message(Message::NewBlock(_req.clone()))?;
+                                self.last_block_broadcasted = _req.block.header.number;
+                            }
+                        }
+                        // If the sequencer is following, we process the new block
+                        // to keep the state updated.
+                        self.process_block_on_queue(&_req).await?;
+                    }
                 }
             }
             Message::NewBatchSealed(_req) => {
@@ -905,12 +897,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         .await?;
                         return Ok(());
                     }
-                    use crate::rlpx::based::GetBatchSealedResponseMessage;
                     let mut batches = vec![];
                     for batch_number in _req.first_batch..=_req.last_batch {
                         let Some(batch) = self.store_rollup.get_batch(batch_number).await? else {
                             return Err(RLPxError::InternalError(
-                                "CHANGE ERROR: Batch not found".to_string(),
+                                "The node is not syncing and was asked for a batch it does not have".to_string(),
                             ));
                         };
                         batches.push(batch);
@@ -931,9 +922,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     if self.blockchain.is_synced() {
                         return Ok(());
                     }
-                    // if self.store_rollup.contains_batch(&_req.batch.number).await? {
-                    //     return Ok(());
-                    // }
                     sender.send(Message::GetBatchSealedResponse(_req)).await?;
                 }
             }
@@ -967,13 +955,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.send(new_msg).await?;
                 }
                 Message::NewBlock(block_msg) => {
-                    println!("-------------");
-                    println!(
-                        "Received broadcasted block: {}",
-                        block_msg.block.header.number
-                    );
-                    println!("From peer: {node_id} and i am : {}", self.node.node_id());
-                    println!("-------------");
                     let new_msg = Message::NewBlock(block_msg.clone());
                     self.send(new_msg).await?;
                 }
@@ -992,20 +973,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
-        // let latest_block_number = self.storage.get_latest_block_number().await?;
-        // if latest_block_number > self.latest_block_added {
-        //     self.latest_block_added = latest_block_number;
-        // }
-
-        // if self.latest_block_added >= msg.block.header.number
-        //     || self.blocks_on_queue.contains_key(&msg.block.header.number)
-        // {
-        //     debug!(
-        //         "Block {} received by peer already stored, ignoring it",
-        //         msg.block.header.number
-        //     );
-        //     return Ok(false);
-        // }
         if self.blocks_on_queue.contains_key(&msg.block.header.number) {
             debug!(
                 "Block {} already in queue, ignoring it",
@@ -1051,19 +1018,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         true
     }
 
-    async fn process_new_block(&mut self, _msg: &NewBlockMessage) -> Result<(), RLPxError> {
+    async fn process_block_on_queue(&mut self, _msg: &NewBlockMessage) -> Result<(), RLPxError> {
         if !self.blockchain.is_synced() {
             let latest_block_in_storage = self.storage.get_latest_block_number().await?;
             self.latest_block_added = latest_block_in_storage;
             return Ok(());
         }
         let mut next_block_to_add = self.latest_block_added + 1;
-        // debug!(
-        //     "next block to add: {}, latest block ins storage: {}, does que block contain the block?: {}",
-        //     next_block_to_add,
-        //     latest_block_in_storage,
-        //     self.blocks_on_queue.contains_key(&next_block_to_add)
-        // );
         #[cfg(feature = "l2")]
         {
             let latest_batch_number = self.store_rollup.get_latest_batch_number().await?;
