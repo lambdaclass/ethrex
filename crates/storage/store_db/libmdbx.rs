@@ -351,6 +351,12 @@ impl Store {
                 if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
                     && key == k_delete
                 {
+                    tracing::info!(
+                        node = nodehash_value.as_ref(),
+                        block_number = block_num_hash.0,
+                        block_hash = block_num_hash.1.as_ref(),
+                        "[DELETING STATE NODE]"
+                    );
                     cursor_state_trie.delete_current()?;
                     cursor_state_trie_pruning_log.delete_current()?;
                 }
@@ -379,6 +385,13 @@ impl Store {
                 if let Some((key, _)) = cursor_storage_trie.seek_exact(nodehash_value)?
                     && key == nodehash_value
                 {
+                    tracing::info!(
+                        hashed_address = nodehash_value.0.as_ref(),
+                        node_hash = nodehash_value.1.as_ref(),
+                        block_number = block_num_hash.0,
+                        block_hash = block_num_hash.1.as_ref(),
+                        "[DELETING STORAGE NODE]"
+                    );
                     cursor_storage_trie.delete_current()?;
                     cursor_storage_trie_pruning_log.delete_current()?;
                 }
