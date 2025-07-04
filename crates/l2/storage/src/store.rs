@@ -246,6 +246,8 @@ impl Store {
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), StoreError> {
+        let actual_latest_batch_number = self.get_latest_batch_number().await?;
+
         let _write_guard = self.storage_lock.write().await;
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
@@ -263,7 +265,9 @@ impl Store {
             .await?;
         self.store_state_root_by_batch(batch.number, batch.state_root)
             .await?;
-        self.engine.set_latest_batch_number(batch.number).await?;
+        if actual_latest_batch_number < batch.number {
+            self.engine.set_latest_batch_number(batch.number).await?;
+        }
         Ok(())
     }
 
