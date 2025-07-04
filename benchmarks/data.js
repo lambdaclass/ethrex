@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751648447014,
+  "lastUpdate": 1751649625711,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4684,6 +4684,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006355866666666667,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4acb6a78bf85f53b36db8cf4197a765f753ad6b7",
+          "message": "test(l1): fix EEST RLP tests (#3415)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Execute `.rlp` files (each represent a block in execution-spec-tests)\nin the correct order\n- Set the canonical block right after executing it, so that if one of\nthe executed block fails then the canonical block is the previous of the\nfailed block. Before we only set the canonical block if all blocks\nexecuted succeeded.\n\n[Example\nRun](https://github.com/lambdaclass/ethrex/actions/runs/15984844429)\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3405",
+          "timestamp": "2025-07-04T14:27:38Z",
+          "tree_id": "75d33b5c23ab5e51fec7f6172510e3c112a21bf1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4acb6a78bf85f53b36db8cf4197a765f753ad6b7"
+        },
+        "date": 1751649614674,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006607584158415842,
             "unit": "Mgas/s"
           }
         ]
