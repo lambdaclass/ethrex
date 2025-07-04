@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
@@ -576,12 +576,13 @@ where
                 return Err(RLPxError::NoMatchingCapabilities());
             }
             debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
-            let mut capabilities = { state.negotiated_capabilities.lock().await };
-            capabilities.eth = Some(Capability::eth(negotiated_eth_version));
-
-            if negotiated_snap_version != 0 {
-                debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
-                capabilities.snap = Some(Capability::snap(negotiated_snap_version));
+            {
+                let mut capabilities = state.negotiated_capabilities.lock().await;
+                capabilities.eth = Some(Capability::eth(negotiated_eth_version));
+                if negotiated_snap_version != 0 {
+                    debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
+                    capabilities.snap = Some(Capability::snap(negotiated_snap_version));
+                }
             }
 
             state.node.version = Some(hello_message.client_id);
