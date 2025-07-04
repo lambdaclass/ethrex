@@ -66,10 +66,18 @@ impl BatchesTable {
     }
 
     async fn refresh_items(&mut self, rollup_store: &StoreRollup) {
-        let mut from = self.items.last().expect("No items in the table").0 - 1;
+        if self.items.is_empty() {
+            return;
+        }
 
-        let refreshed_batches =
-            Self::get_batches(&mut from, self.items.first().expect("").0, rollup_store).await;
+        let mut from = self.items.last().expect("Expected items in the table").0 - 1;
+
+        let refreshed_batches = Self::get_batches(
+            &mut from,
+            self.items.first().expect("Expected items in the table").0,
+            rollup_store,
+        )
+        .await;
 
         let refreshed_items = Self::process_batches(refreshed_batches).await;
 
