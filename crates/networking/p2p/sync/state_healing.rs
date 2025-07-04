@@ -54,7 +54,7 @@ pub(crate) async fn heal_state_trie(
     while !paths.is_empty() {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
-            let speed = healing_start.elapsed().as_millis() / total_healed as u128;
+            let speed = healing_start.elapsed().as_millis().checked_div(total_healed as u128).unwrap_or(9999);
             info!(
                 "State Healing in Progress, pending paths: {}, healing speed: {}ms/node",
                 paths.len(),
