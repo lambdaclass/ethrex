@@ -826,7 +826,7 @@ impl PeerHandler {
         )
     }
 
-    pub async fn total_peers_count(&self) -> usize {
+    pub async fn count_total_peers(&self) -> usize {
         self.peer_table
             .lock()
             .await
