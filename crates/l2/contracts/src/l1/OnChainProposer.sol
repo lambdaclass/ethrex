@@ -440,7 +440,7 @@ contract OnChainProposer is
 
     function _verifyProofInclusionAligned(
         bytes32[] calldata merkleProofsList,
-        bytes calldata verificationKey,
+        bytes32 verificationKey,
         bytes calldata publicInputsList
     ) internal view {
         bytes memory callData = abi.encodeWithSignature(
