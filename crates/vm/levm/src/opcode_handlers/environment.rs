@@ -130,15 +130,15 @@ impl<'a> VM<'a> {
     pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
-        let dest_offset: usize = dest_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-        let calldata_offset: usize = calldata_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let calldata_offset: Option<usize> = calldata_offset.try_into().ok();
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -153,23 +153,25 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if calldata_offset > current_call_frame.calldata.len() {
-            memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
-
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(calldata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        match calldata_offset {
+            Some(calldata_offset) if calldata_offset <= current_call_frame.calldata.len() => {
+                for (i, byte) in current_call_frame
+                    .calldata
+                    .iter()
+                    .skip(calldata_offset)
+                    .take(size)
+                    .enumerate()
+                {
+                    if let Some(data_byte) = data.get_mut(i) {
+                        *data_byte = *byte;
+                    }
+                }
+                memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
+            }
+            _ => {
+                memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
             }
         }
-        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
