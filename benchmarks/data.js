@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751641593007,
+  "lastUpdate": 1751642260523,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4535,6 +4535,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012627549668874172,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8f16da17176a34c5dec3a0284f064382430c5bfc",
+          "message": "ci(l2): ethrex replay risc0 (#3464)\n\n**Motivation**\n\nRisc0 was failing to compile in our self hosted runner because the $PATH\ndidn't have nvcc\n\n\n**Description**\n\n- Add nvcc \n- Use `JSONProgramInput` for risc0 to solve bincode issue\n- Add `prove-risc0-gpu-ci` target to `cmd/ethrex_replay/Makefile` \n- Successful run\n[here](https://github.com/lambdaclass/ethrex/actions/runs/16062825245/job/45331954610)",
+          "timestamp": "2025-07-04T13:34:18Z",
+          "tree_id": "e733b726c2525d6f5af1377a6c8b2593ad851ce7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8f16da17176a34c5dec3a0284f064382430c5bfc"
+        },
+        "date": 1751642259894,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006355866666666667,
             "unit": "Mgas/s"
           }
         ]
