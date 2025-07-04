@@ -286,6 +286,7 @@ pub enum GetBatchByNumberError {
     RPCError(String),
 }
 
+#[derive(Debug, thiserror::Error)]
 pub enum GetNodeStatusError {
     #[error("{0}")]
     SerdeJSONError(#[from] serde_json::Error),
