@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751652236493,
+  "lastUpdate": 1751652935229,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4742,6 +4742,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012450858208955225,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ccfc231b5756c045b2d55febbb796ea63877d56a",
+          "message": "ci(core): fix block benchmark ci (#3484)\n\n**Motivation**\n\nIts broken :(\n\n**Description**\n\n- The file `genesis-perf-ci.json` was moved and the reference was not\nupdated. This PR updates the reference\n- Here is a failing run in main\nhttps://github.com/lambdaclass/ethrex/actions/runs/16075239686/job/45368784296\n- Here is a test run in this pr that didn't panic when reading the file\nhttps://github.com/lambdaclass/ethrex/actions/runs/16075285386/job/45368928205.\n   - The run was cut short because it takes 40+ minutes to run",
+          "timestamp": "2025-07-04T14:33:11Z",
+          "tree_id": "98ae5f4311797a75c27363ff9b6ddb9d43b49a04",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ccfc231b5756c045b2d55febbb796ea63877d56a"
+        },
+        "date": 1751652934799,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006607584158415842,
             "unit": "Mgas/s"
           }
         ]
