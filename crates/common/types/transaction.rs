@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::{cmp::min, fmt::Display};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
@@ -270,6 +270,19 @@ impl From<TxType> for u8 {
             TxType::EIP4844 => 0x03,
             TxType::EIP7702 => 0x04,
             TxType::Privileged => 0x7e,
+        }
+    }
+}
+
+impl Display for TxType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TxType::Legacy => write!(f, "Legacy"),
+            TxType::EIP2930 => write!(f, "EIP2930"),
+            TxType::EIP1559 => write!(f, "EIP1559"),
+            TxType::EIP4844 => write!(f, "EIP4844"),
+            TxType::EIP7702 => write!(f, "EIP7702"),
+            TxType::Privileged => write!(f, "Privileged"),
         }
     }
 }

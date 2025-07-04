@@ -13,8 +13,8 @@ use crate::monitor::widget::{
 
 pub struct MempoolTable {
     pub state: TableState,
-    // hash | sender | nonce
-    pub items: Vec<(String, String, String)>,
+    // type | hash | sender | nonce
+    pub items: Vec<(String, String, String, String)>,
 }
 
 impl MempoolTable {
@@ -29,7 +29,7 @@ impl MempoolTable {
         self.items = Self::refresh_items(rollup_client).await;
     }
 
-    async fn refresh_items(rollup_client: &EthClient) -> Vec<(String, String, String)> {
+    async fn refresh_items(rollup_client: &EthClient) -> Vec<(String, String, String, String)> {
         let mempool = rollup_client
             .tx_pool_content()
             .await
@@ -41,6 +41,7 @@ impl MempoolTable {
             .flat_map(|(sender, txs_sorted_by_nonce)| {
                 txs_sorted_by_nonce.iter().map(|(nonce, tx)| {
                     (
+                        format!("{}", tx.tx.tx_type()),
                         format!("{:#x}", tx.hash),
                         format!("{:#x}", *sender),
                         format!("{nonce}"),
@@ -49,9 +50,11 @@ impl MempoolTable {
             })
             .collect::<Vec<_>>();
 
-        pending_txs.sort_by(|(_, sender_a, nonce_a), (_, sender_b, nonce_b)| {
-            sender_a.cmp(sender_b).then(nonce_a.cmp(nonce_b))
-        });
+        pending_txs.sort_by(
+            |(_tx_type_a, _, sender_a, nonce_a), (_tx_type_b, _, sender_b, nonce_b)| {
+                sender_a.cmp(sender_b).then(nonce_a.cmp(nonce_b))
+            },
+        );
 
         pending_txs
     }
@@ -65,19 +68,21 @@ impl StatefulWidget for &mut MempoolTable {
         Self: Sized,
     {
         let constraints = vec![
+            Constraint::Length(10), // tx_type
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Length(ADDRESS_LENGTH_IN_DIGITS),
             Constraint::Length(NUMBER_LENGTH_IN_DIGITS),
         ];
-        let rows = self.items.iter().map(|(hash, sender, nonce)| {
+        let rows = self.items.iter().map(|(tx_type, hash, sender, nonce)| {
             Row::new(vec![
+                Span::styled(tx_type, Style::default()),
                 Span::styled(hash, Style::default()),
                 Span::styled(sender, Style::default()),
                 Span::styled(nonce, Style::default()),
             ])
         });
         let mempool_table = Table::new(rows, constraints)
-            .header(Row::new(vec!["Hash", "Sender", "Nonce"]).style(Style::default()))
+            .header(Row::new(vec!["Type", "Hash", "Sender", "Nonce"]).style(Style::default()))
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(Color::Cyan))
