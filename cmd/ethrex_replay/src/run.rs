@@ -66,50 +66,44 @@ pub async fn run_tx(
 /// Returns the input based on whether the feature "l2" is enabled or not.
 /// If the feature is enabled, it includes L2 fields (blob commitment and proof).
 fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
-    let input = {
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                let Cache {
-                    blocks,
-                    witness: db,
-                    l2_fields: None,
-                } = cache else {
-                    return Err(eyre::Error::msg("Unexpected l2 fields in cache"));
-                };
+    let Cache {
+        blocks,
+        witness: db,
+        l2_fields,
+    } = cache;
 
-                ProgramInput {
-                    blocks,
-                    db,
-                    elasticity_multiplier: ELASTICITY_MULTIPLIER,
-                    // The L2 specific fields (blob_commitment, blob_proof)
-                    // will be filled by Default::default() if the 'l2' feature of
-                    // 'zkvm_interface' is active (due to workspace compilation).
-                    // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
-                    // these fields won't exist in ProgramInput, and ..Default::default()
-                    // will correctly not try to fill them.
-                    // A better solution would involve rethinking the `l2` feature or the
-                    // inclusion of this crate in the workspace.
-                    ..Default::default()
-                }
-            } else {
-                let Cache {
-                    blocks,
-                    witness: db,
-                    l2_fields: Some(l2_fields),
-                } = cache else {
-                    return Err(eyre::Error::msg("missing L2 fields in cache"));
-                };
-
-                ProgramInput {
-                    blocks,
-                    db,
-                    elasticity_multiplier: ELASTICITY_MULTIPLIER,
-                    blob_commitment: l2_fields.blob_commitment,
-                    blob_proof: l2_fields.blob_proof,
-                }
-            }
+    #[cfg(not(feature = "l2"))]
+    {
+        if l2_fields.is_some() {
+            return Err(eyre::eyre!("Unexpected L2 fields in cache"));
         }
-    };
 
-    Ok(input)
+        return Ok(ProgramInput {
+            blocks,
+            db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            // The L2 specific fields (blob_commitment, blob_proof)
+            // will be filled by Default::default() if the 'l2' feature of
+            // 'zkvm_interface' is active (due to workspace compilation).
+            // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
+            // these fields won't exist in ProgramInput, and ..Default::default()
+            // will correctly not try to fill them.
+            // A better solution would involve rethinking the `l2` feature or the
+            // inclusion of this crate in the workspace.
+            ..Default::default()
+        });
+    }
+
+    #[cfg(feature = "l2")]
+    {
+        let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
+
+        return Ok(ProgramInput {
+            blocks,
+            db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            blob_commitment: l2_fields.blob_commitment,
+            blob_proof: l2_fields.blob_proof,
+        });
+    }
 }

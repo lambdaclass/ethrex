@@ -17,7 +17,6 @@ serde.workspace = true
 hex.workspace = true
 serde_json.workspace = true
 serde_with = "3.11.0"
-cfg-if = "1.0.0"
 bytes.workspace = true
 secp256k1.workspace = true
 
