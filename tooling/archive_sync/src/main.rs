@@ -73,6 +73,7 @@ pub async fn archive_sync(
     let mut should_continue = true;
     let mut state_root = None;
     while should_continue {
+        // [debug_accountRange](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugaccountrange)
         let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
