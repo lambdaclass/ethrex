@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751659693487,
+  "lastUpdate": 1751660239138,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2695,6 +2695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208049843480,
             "range": "± 211691326",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17f3b4be3480414759727a6a485e409dcf645a1a",
+          "message": "chore(levm): improve beacon_root_contract_call readibility (#3490)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-04T19:15:47Z",
+          "tree_id": "f2e3c9c9f5b13e9b9b00aba525f45c58d252f288",
+          "url": "https://github.com/lambdaclass/ethrex/commit/17f3b4be3480414759727a6a485e409dcf645a1a"
+        },
+        "date": 1751660227885,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211999012884,
+            "range": "± 1788137684",
             "unit": "ns/iter"
           }
         ]
