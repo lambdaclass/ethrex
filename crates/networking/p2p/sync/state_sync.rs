@@ -136,7 +136,7 @@ async fn state_sync_segment(
             segment_number,
             start_account_hash,
         ));
-        info!(
+        debug!(
             "[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}"
         );
         if let Some((account_hashes, accounts, should_continue)) = peers
