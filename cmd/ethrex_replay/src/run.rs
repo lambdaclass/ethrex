@@ -78,7 +78,7 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
             return Err(eyre::eyre!("Unexpected L2 fields in cache"));
         }
 
-        return Ok(ProgramInput {
+        Ok(ProgramInput {
             blocks,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
@@ -91,19 +91,19 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
             // A better solution would involve rethinking the `l2` feature or the
             // inclusion of this crate in the workspace.
             ..Default::default()
-        });
+        })
     }
 
     #[cfg(feature = "l2")]
     {
         let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
 
-        return Ok(ProgramInput {
+        Ok(ProgramInput {
             blocks,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             blob_commitment: l2_fields.blob_commitment,
             blob_proof: l2_fields.blob_proof,
-        });
+        })
     }
 }
