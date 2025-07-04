@@ -1,11 +1,12 @@
 use clap::{Parser, Subcommand};
+use ethrex_common::H256;
 use ethrex_common::types::{AccountUpdate, Receipt};
+use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
 use crate::plot_composition::plot;
-use crate::rpc::get_tx_block;
 use crate::run::{exec, prove, run_tx};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
@@ -58,8 +59,8 @@ enum SubcommandExecute {
     },
     #[command(about = "Execute and return transaction info.", visible_alias = "tx")]
     Transaction {
-        #[arg(help = "ID of the transaction")]
-        tx: String,
+        #[arg(help = "Transaction hash.")]
+        tx_hash: H256,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
         #[arg(
@@ -85,8 +86,9 @@ impl SubcommandExecute {
                 bench,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let block = or_latest(block, &rpc_url).await?;
-                let cache = get_blockdata(&rpc_url, chain_config, block).await?;
+                let eth_client = EthClient::new(&rpc_url)?;
+                let block = or_latest(block)?;
+                let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
                     exec(cache).await?;
@@ -107,7 +109,8 @@ impl SubcommandExecute {
                     ));
                 }
                 let chain_config = get_chain_config(&network)?;
-                let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+                let eth_client = EthClient::new(&rpc_url)?;
+                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
                     exec(cache).await?;
@@ -116,15 +119,29 @@ impl SubcommandExecute {
                 run_and_measure(future, bench).await?;
             }
             SubcommandExecute::Transaction {
-                tx,
+                tx_hash,
                 rpc_url,
                 network,
                 l2,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let block_number = get_tx_block(&tx, &rpc_url).await?;
-                let cache = get_blockdata(&rpc_url, chain_config, block_number).await?;
-                let (receipt, transitions) = run_tx(cache, &tx, l2).await?;
+                let eth_client = EthClient::new(&rpc_url)?;
+
+                // Get the block number of the transaction
+                let tx = eth_client
+                    .get_transaction_by_hash(tx_hash)
+                    .await?
+                    .ok_or(eyre::Error::msg("error fetching transaction"))?;
+                let block_number = tx.block_number;
+
+                let cache = get_blockdata(
+                    eth_client,
+                    chain_config,
+                    BlockIdentifier::Number(block_number.as_u64()),
+                )
+                .await?;
+
+                let (receipt, transitions) = run_tx(cache, tx_hash, l2).await?;
                 print_receipt(receipt);
                 for transition in transitions {
                     print_transition(transition);
@@ -185,8 +202,9 @@ impl SubcommandProve {
                 bench,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let block = or_latest(block, &rpc_url).await?;
-                let cache = get_blockdata(&rpc_url, chain_config, block).await?;
+                let eth_client = EthClient::new(&rpc_url)?;
+                let block = or_latest(block)?;
+                let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
                     prove(cache).await?;
@@ -207,7 +225,8 @@ impl SubcommandProve {
                     ));
                 }
                 let chain_config = get_chain_config(&network)?;
-                let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+                let eth_client = EthClient::new(&rpc_url)?;
+                let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
                     prove(cache).await?;
@@ -269,7 +288,8 @@ pub async fn start() -> eyre::Result<()> {
                 ));
             }
             let chain_config = get_chain_config(&network)?;
-            let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+            let eth_client = EthClient::new(&rpc_url)?;
+            let cache = get_rangedata(eth_client, chain_config, start, end).await?;
             plot(cache).await?;
         }
     };
