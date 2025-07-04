@@ -22,7 +22,39 @@ use crate::monitor::{
 pub enum L2ToL1MessageStatus {
     WithdrawalInitiated,
     WithdrawalClaimed,
+    Sent,
     Delivered,
+}
+
+impl L2ToL1MessageStatus {
+    pub async fn for_tx(
+        l2_tx_hash: H256,
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+    ) -> Self {
+        let withdrawal_is_claimed = {
+            let calldata = encode_calldata(
+                "claimedWithdrawals(bytes32)",
+                &[Value::FixedBytes(l2_tx_hash.as_bytes().to_vec().into())],
+            )
+            .expect("Failed to encode claimedWithdrawals(bytes32) calldata");
+
+            let raw_withdrawal_is_claimed: H256 = eth_client
+                .call(common_bridge_address, calldata.into(), Overrides::default())
+                .await
+                .expect("Failed to call claimedWithdrawals(bytes32)")
+                .parse()
+                .unwrap_or_default();
+
+            U256::from_big_endian(raw_withdrawal_is_claimed.as_fixed_bytes()) == U256::one()
+        };
+
+        if withdrawal_is_claimed {
+            Self::WithdrawalClaimed
+        } else {
+            Self::WithdrawalInitiated
+        }
+    }
 }
 
 impl Display for L2ToL1MessageStatus {
@@ -30,6 +62,7 @@ impl Display for L2ToL1MessageStatus {
         match self {
             L2ToL1MessageStatus::WithdrawalInitiated => write!(f, "Initiated"),
             L2ToL1MessageStatus::WithdrawalClaimed => write!(f, "Claimed"),
+            L2ToL1MessageStatus::Sent => write!(f, "Sent"),
             L2ToL1MessageStatus::Delivered => write!(f, "Delivered"),
         }
     }
@@ -76,7 +109,7 @@ impl L2ToL1MessagesTable {
         rollup_client: &EthClient,
     ) -> Self {
         let mut last_l2_block_fetched = U256::zero();
-        let items = Self::refresh_items(
+        let items = Self::fetch_new_items(
             &mut last_l2_block_fetched,
             common_bridge_address,
             eth_client,
@@ -92,7 +125,7 @@ impl L2ToL1MessagesTable {
     }
 
     pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
-        let mut new_l1_to_l2_messages = Self::refresh_items(
+        let mut new_l1_to_l2_messages = Self::fetch_new_items(
             &mut self.last_l2_block_fetched,
             self.common_bridge_address,
             eth_client,
@@ -103,11 +136,20 @@ impl L2ToL1MessagesTable {
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
+        self.refresh_items(eth_client).await;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
     }
 
-    async fn refresh_items(
+    async fn refresh_items(&mut self, eth_client: &EthClient) {
+        for (_kind, status, .., l2_tx_hash) in self.items.iter_mut() {
+            *status =
+                L2ToL1MessageStatus::for_tx(*l2_tx_hash, self.common_bridge_address, eth_client)
+                    .await;
+        }
+    }
+
+    async fn fetch_new_items(
         last_l2_block_fetched: &mut U256,
         common_bridge_address: Address,
         eth_client: &EthClient,
@@ -139,29 +181,12 @@ impl L2ToL1MessagesTable {
             keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
 
         for log in logs {
-            let withdrawal_is_claimed = {
-                let calldata = encode_calldata(
-                    "claimedWithdrawals(bytes32)",
-                    &[Value::FixedBytes(
-                        log.transaction_hash.as_bytes().to_vec().into(),
-                    )],
-                )
-                .expect("Failed to encode claimedWithdrawals(bytes32) calldata");
-
-                let raw_withdrawal_is_claimed: H256 = eth_client
-                    .call(common_bridge_address, calldata.into(), Overrides::default())
-                    .await
-                    .expect("Failed to call claimedWithdrawals(bytes32)")
-                    .parse()
-                    .unwrap_or_default();
-
-                U256::from_big_endian(raw_withdrawal_is_claimed.as_fixed_bytes()) == U256::one()
-            };
-            let withdrawal_status = if withdrawal_is_claimed {
-                L2ToL1MessageStatus::WithdrawalClaimed
-            } else {
-                L2ToL1MessageStatus::WithdrawalInitiated
-            };
+            let withdrawal_status = L2ToL1MessageStatus::for_tx(
+                log.transaction_hash,
+                common_bridge_address,
+                eth_client,
+            )
+            .await;
             match log.log.topics[0] {
                 topic if topic == eth_withdrawal_topic => {
                     processed_logs.push((
