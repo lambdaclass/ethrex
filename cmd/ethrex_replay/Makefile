@@ -6,16 +6,23 @@
 
 NETWORK ?= mainnet
 
+# Block parameters
 ifdef BLOCK_NUMBER
 REPLAY_BLOCK_ARGS = ${BLOCK_NUMBER}
 endif
 REPLAY_BLOCK_ARGS += --rpc-url ${RPC_URL} --network ${NETWORK} --bench
 
-ifdef BATCH_NUMBER
-REPLAY_BATCH_ARGS = ${BATCH_NUMBER}
-endif
-REPLAY_BATCH_ARGS += --rpc-url ${RPC_URL} --network ${NETWORK} --bench
+# Batch parameters
+REPLAY_BATCH_ARGS = ${BATCH_NUMBER} --rpc-url ${RPC_URL} --network ${NETWORK} --bench
 
+# Transaction parameters
+REPLAY_TX_ARGS = ${TX_HASH} --rpc-url ${RPC_URL} --network ${NETWORK}
+ifdef L2
+REPLAY_TX_ARGS += --l2
+endif
+
+# Block Composition parameters
+REPLAY_BLOCK_COMPOSITION_ARGS = ${START_BLOCK} ${END_BLOCK} --rpc-url ${RPC_URL} --network ${NETWORK}
 
 # Execution only
 ## Block
@@ -37,6 +44,14 @@ batch-risc0:
 	cargo r -r --no-default-features --features "risc0,l2" -- execute batch ${REPLAY_BATCH_ARGS}
 batch-risc0-gpu:
 	cargo r -r --no-default-features --features "risc0,gpu,l2" -- execute batch ${REPLAY_BATCH_ARGS}
+
+## Transaction
+transaction:
+	cargo r -r -- execute transaction ${REPLAY_TX_ARGS}
+
+## Plot Composition
+plot:
+	cargo r -r -- block-composition ${REPLAY_BLOCK_COMPOSITION_ARGS}
 
 # Proving
 ## Block
@@ -62,3 +77,6 @@ prove-batch-risc0:
 	cargo r -r --no-default-features --features "risc0,l2" -- prove batch ${REPLAY_BATCH_ARGS}
 prove-batch-risc0-gpu:
 	cargo r -r --no-default-features --features "risc0,gpu,l2" -- prove batch ${REPLAY_BATCH_ARGS}
+
+help:
+	cargo r -r -- --help
