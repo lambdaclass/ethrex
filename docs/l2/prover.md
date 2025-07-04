@@ -66,7 +66,7 @@ make init-prover T="prover_type (risc0,sp1) G=true"
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-4. In a new terminal &rarr; `make init-prover T=(sp1,risc0)`.
+4. In a new terminal &rarr; `make init-prover T="(sp1,risc0)"`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
