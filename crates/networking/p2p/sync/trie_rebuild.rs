@@ -12,7 +12,6 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie};
 use std::{array, collections::HashMap};
 use tokio::{
     sync::mpsc::{Receiver, Sender, channel},
-    task::JoinSet,
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -277,51 +276,9 @@ async fn rebuild_storage_trie_in_background(
 /// Rebuilds a storage trie by reading from the storage snapshot
 /// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
 /// If the expected_root is `REBUILDER_INCOMPLETE_STORAGE_ROOT` then this validation will be skipped, the sender should make sure to queue said storage for healing
-async fn rebuild_storage_trie(
-    account_hash: H256,
-    expected_root: H256,
-    store: Store,
-) -> Result<(), SyncError> {
-    let mut start = H256::zero();
-    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-    let mut snapshot_reads_since_last_commit = 0;
-    loop {
-        snapshot_reads_since_last_commit += 1;
-        let batch = store.read_storage_snapshot(account_hash, start).await?;
-        let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
-        // Update start
-        if let Some(last) = batch.last() {
-            start = next_hash(last.0);
-        }
-        // Process batch
-        for (key, val) in batch {
-            storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
-        }
-        if snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT {
-            snapshot_reads_since_last_commit = 0;
-            storage_trie.hash()?;
-        }
-
-        // Return if we have no more snapshot values to process for this storage
-        if unfilled_batch {
-            break;
-        }
-    }
-    if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
-        warn!("Mismatched storage root for account {account_hash}");
-        store
-            .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
-            .await?;
-    }
-    Ok(())
-}
-
-/// Rebuilds a storage trie by reading from the storage snapshot
-/// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
-/// If the expected_root is `REBUILDER_INCOMPLETE_STORAGE_ROOT` then this validation will be skipped, the sender should make sure to queue said storage for healing
 async fn rebuild_storage_tries(
-    mut account_hashes: Vec<H256>,
-    mut expected_roots: Vec<H256>,
+    account_hashes: Vec<H256>,
+    expected_roots: Vec<H256>,
     store: Store,
 ) -> Result<(), SyncError> {
     debug_assert_eq!(account_hashes.len(), expected_roots.len());
