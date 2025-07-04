@@ -232,7 +232,6 @@ async fn deploy_contracts(
                 "Risc0Verifier address is not set and risc0 is a required prover".to_string(),
             ));
         }
-
         _ => Address::zero(),
     };
 
