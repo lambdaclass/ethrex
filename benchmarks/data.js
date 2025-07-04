@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751645497821,
+  "lastUpdate": 1751648447014,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2605,6 +2605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209056357578,
             "range": "± 417087772",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0f0e27084645dc8fa4675a61ecfc2fe602cdcaf0",
+          "message": "feat(l1): embed dev-mode genesis in binary (#3413)\n\n**Motivation**\n\nGiving the user a default dev-mode genesis block makes starting out with\n`ethrex` easy.\n\n**Description**\n\nThis PR:\n\n- Adds a new network option (`Network::LocalDevnet`).\n- Default to the new network when `--dev` is specified but no custom\nnetwork was specified.\n- Remove the genesis downloading step from install script.\n- Update the readme to reflect that no genesis file needs to be\nspecified; ethrex comes with batteries included 🦖\n\nCloses #3378",
+          "timestamp": "2025-07-04T16:00:11Z",
+          "tree_id": "2185d63d0fde7445a38117dbcc9e0c2398c6e0d1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0f0e27084645dc8fa4675a61ecfc2fe602cdcaf0"
+        },
+        "date": 1751648437404,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209286317190,
+            "range": "± 1508328942",
             "unit": "ns/iter"
           }
         ]
