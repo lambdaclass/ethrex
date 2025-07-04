@@ -197,8 +197,8 @@ impl Store {
             .name("trie_pruner🗑️".to_string())
             .spawn(move || {
                 loop {
-                    thread::sleep(std::time::Duration::from_secs(15));
-                    store.prune_state_and_storage_log().unwrap(); // TODO: handle error properly
+                    thread::sleep(std::time::Duration::from_secs(1));
+                    // store.prune_state_and_storage_log().unwrap(); // TODO: handle error properly
                 }
             });
 
@@ -584,7 +584,8 @@ impl StoreEngine for Store {
             tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))??;
+        self.prune_state_and_storage_log()
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
