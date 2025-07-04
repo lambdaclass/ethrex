@@ -178,7 +178,10 @@ impl PeerHandler {
 
     #[cfg(feature = "l2")]
     pub async fn request_batch(&self, first_batch: u64, last_batch: u64) -> Option<Vec<Batch>> {
-        use crate::rlpx::{based::GetBatchSealedMessage, p2p::SUPPORTED_BASED_CAPABILITIES};
+        use crate::rlpx::{
+            based::{GetBatchSealedMessage, GetBatchSealedResponseMessage},
+            p2p::SUPPORTED_BASED_CAPABILITIES,
+        };
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage {
                 first_batch,
@@ -197,7 +200,6 @@ impl PeerHandler {
             }
             if let Some(batches) = tokio::time::timeout(PEER_REPLY_TIMEOUT * 2, async move {
                 loop {
-                    use crate::rlpx::based::GetBatchSealedResponseMessage;
                     match receiver.recv().await {
                         Some(RLPxMessage::GetBatchSealedResponse(
                             GetBatchSealedResponseMessage { batches },
@@ -208,13 +210,13 @@ impl PeerHandler {
                             }
                             return Some(batches);
                         }
-                        // Ignore replies that don't match the expected id (such as late responses)
+                        // Ignore replies that don't match the expected message (such as late responses)
                         Some(_) => {
                             continue;
                         }
                         None => {
                             return None;
-                        } // Retry request
+                        }
                     }
                 }
             })
@@ -225,8 +227,8 @@ impl PeerHandler {
                 // TODO: penalize peer if the signature is incorrect or the batch is invalid
                 return Some(batches);
             }
-            // warn!("[SYNCING] Didn't receive batch from peer, penalizing peer {peer_id}...");
-            // self.record_peer_failure(peer_id).await;
+            // TODO: think how to penalize peer if the response is None
+            // The peer may return None if it is syncing, so in the future the peer may be useful
         }
         None
     }
