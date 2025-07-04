@@ -29,15 +29,48 @@ pub struct L1ToL2MessagesTable {
 
 #[derive(Debug, Clone)]
 pub enum L1ToL2MessageStatus {
-    Pending,
-    Processed,
+    Unknown = 0,
+    Pending = 1,
+    ProcessedOnL2 = 3,
+    Committed = 4,
+    Verified = 5,
+}
+
+impl L1ToL2MessageStatus {
+    pub async fn for_tx(
+        l2_tx_hash: H256,
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Self {
+        if rollup_client
+            .get_transaction_receipt(l2_tx_hash)
+            .await
+            .expect("Failed retrieving privilege tx receipt")
+            .is_some()
+        {
+            Self::ProcessedOnL2
+        } else if eth_client
+            .get_pending_privileged_transactions(common_bridge_address)
+            .await
+            .expect("Failed to get pending L1 to L2 messages")
+            .contains(&l2_tx_hash)
+        {
+            Self::Pending
+        } else {
+            Self::Unknown
+        }
+    }
 }
 
 impl Display for L1ToL2MessageStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            L1ToL2MessageStatus::Unknown => write!(f, "Unknown"),
             L1ToL2MessageStatus::Pending => write!(f, "Pending"),
-            L1ToL2MessageStatus::Processed => write!(f, "Processed"),
+            L1ToL2MessageStatus::ProcessedOnL2 => write!(f, "Processed on L2"),
+            L1ToL2MessageStatus::Committed => write!(f, "Committed"),
+            L1ToL2MessageStatus::Verified => write!(f, "Verified"),
         }
     }
 }
@@ -68,16 +101,21 @@ impl Display for L1ToL2MessageKind {
 }
 
 impl L1ToL2MessagesTable {
-    pub async fn new(common_bridge_address: Address, eth_client: &EthClient) -> Self {
+    pub async fn new(
+        common_bridge_address: Address,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Self {
         let mut last_l1_block_fetched = eth_client
             .get_last_fetched_l1_block(common_bridge_address)
             .await
             .expect("Failed to get last fetched L1 block")
             .into();
-        let items = Self::refresh_items(
+        let items = Self::fetch_new_items(
             &mut last_l1_block_fetched,
             common_bridge_address,
             eth_client,
+            rollup_client,
         )
         .await;
         Self {
@@ -88,28 +126,43 @@ impl L1ToL2MessagesTable {
         }
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient) {
-        let mut new_l1_to_l2_messages = Self::refresh_items(
+    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+        let mut new_l1_to_l2_messages = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.common_bridge_address,
             eth_client,
+            rollup_client,
         )
         .await;
         new_l1_to_l2_messages.truncate(50);
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
+        self.refresh_items(eth_client, rollup_client).await;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
     }
 
-    async fn refresh_items(
+    async fn refresh_items(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+        for (_kind, status, _l1_tx_hash, l2_tx_hash, ..) in self.items.iter_mut() {
+            *status = L1ToL2MessageStatus::for_tx(
+                *l2_tx_hash,
+                self.common_bridge_address,
+                eth_client,
+                rollup_client,
+            )
+            .await;
+        }
+    }
+
+    async fn fetch_new_items(
         last_l1_block_fetched: &mut U256,
         common_bridge_address: Address,
         eth_client: &EthClient,
+        rollup_client: &EthClient,
     ) -> Vec<L1ToL2MessagesRow> {
         let logs = Self::get_logs(last_l1_block_fetched, common_bridge_address, eth_client).await;
-        Self::process_logs(&logs, common_bridge_address, eth_client).await
+        Self::process_logs(&logs, common_bridge_address, eth_client, rollup_client).await
     }
 
     async fn get_logs(
@@ -130,13 +183,9 @@ impl L1ToL2MessagesTable {
         logs: &[RpcLog],
         common_bridge_address: Address,
         eth_client: &EthClient,
+        rollup_client: &EthClient,
     ) -> Vec<L1ToL2MessagesRow> {
         let mut processed_logs = Vec::new();
-
-        let pending_l1_to_l2_messages = eth_client
-            .get_pending_privileged_transactions(common_bridge_address)
-            .await
-            .expect("Failed to get pending L1 to L2 messages");
 
         for log in logs {
             let l1_to_l2_message = PrivilegedTransactionData::from_log(log.log.clone())
@@ -156,11 +205,13 @@ impl L1ToL2MessagesTable {
 
             processed_logs.push((
                 L1ToL2MessageKind::from(&l1_to_l2_message),
-                if pending_l1_to_l2_messages.contains(&log.transaction_hash) {
-                    L1ToL2MessageStatus::Pending
-                } else {
-                    L1ToL2MessageStatus::Processed
-                },
+                L1ToL2MessageStatus::for_tx(
+                    l1_to_l2_message_hash,
+                    common_bridge_address,
+                    eth_client,
+                    rollup_client,
+                )
+                .await,
                 log.transaction_hash,
                 l1_to_l2_message_hash,
                 l1_to_l2_message.value,
@@ -180,7 +231,7 @@ impl StatefulWidget for &mut L1ToL2MessagesTable {
     {
         let constraints = vec![
             Constraint::Length(10),
-            Constraint::Length(9),
+            Constraint::Length(15),
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Fill(1),

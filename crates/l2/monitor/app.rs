@@ -109,8 +109,12 @@ impl<'a> EthrexMonitor<'a> {
             )
             .await,
             blocks_table: BlocksTable::new(&store).await,
-            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address, &eth_client)
-                .await,
+            l1_to_l2_messages: L1ToL2MessagesTable::new(
+                cfg.l1_watcher.bridge_address,
+                &eth_client,
+                &rollup_client,
+            )
+            .await,
             l2_to_l1_messages: L2ToL1MessagesTable::new(
                 cfg.l1_watcher.bridge_address,
                 &eth_client,
@@ -251,7 +255,9 @@ impl<'a> EthrexMonitor<'a> {
             .on_tick(&self.eth_client, &self.rollup_store)
             .await;
         self.blocks_table.on_tick(&self.store).await;
-        self.l1_to_l2_messages.on_tick(&self.eth_client).await;
+        self.l1_to_l2_messages
+            .on_tick(&self.eth_client, &self.rollup_client)
+            .await;
         self.l2_to_l1_messages
             .on_tick(&self.eth_client, &self.rollup_client)
             .await;
