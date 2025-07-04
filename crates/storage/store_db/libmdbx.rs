@@ -340,7 +340,7 @@ impl Store {
         {
             // delete nodes in back order
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
-            let start_key = key_num.saturating_sub(16); // we keep the last 1024 blocks
+            let start_key = key_num.saturating_sub(2); // we keep the last 1024 blocks
             let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
             while let Some((block_num_hash, nodehash_value)) = keyval {
                 if start_key <= block_num_hash.block_number {
@@ -353,8 +353,8 @@ impl Store {
                 {
                     tracing::info!(
                         node = nodehash_value.as_ref(),
-                        block_number = block_num_hash.0,
-                        block_hash = block_num_hash.1.as_ref(),
+                        block_number = block_num_hash.block_number,
+                        block_hash = block_num_hash.block_hash.0.as_ref(),
                         "[DELETING STATE NODE]"
                     );
                     cursor_state_trie.delete_current()?;
@@ -375,7 +375,7 @@ impl Store {
         {
             // delete nodes in back order
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
-            let start_key = key_num.saturating_sub(16); // we keep the last 1024 blocks
+            let start_key = key_num.saturating_sub(2); // we keep the last 1024 blocks
             let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
             while let Some((block_num_hash, nodehash_value)) = keyval {
                 if start_key <= block_num_hash.block_number {
@@ -388,8 +388,8 @@ impl Store {
                     tracing::info!(
                         hashed_address = nodehash_value.0.as_ref(),
                         node_hash = nodehash_value.1.as_ref(),
-                        block_number = block_num_hash.0,
-                        block_hash = block_num_hash.1.as_ref(),
+                        block_number = block_num_hash.block_number,
+                        block_hash = block_num_hash.block_hash.0.as_ref(),
                         "[DELETING STORAGE NODE]"
                     );
                     cursor_storage_trie.delete_current()?;
