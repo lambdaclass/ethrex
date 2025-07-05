@@ -276,13 +276,16 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
             ) | (
                 TransactionExpectedException::PriorityGreaterThanMaxFeePerGas,
-                VMError::TxValidation(TxValidationError::PriorityGreaterThanMaxFeePerGas)
+                VMError::TxValidation(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                    priority_fee: _,
+                    max_fee_per_gas: _
+                })
             ) | (
                 TransactionExpectedException::GasLimitPriceProductOverflow,
                 VMError::TxValidation(TxValidationError::GasLimitPriceProductOverflow)
             ) | (
                 TransactionExpectedException::SenderNotEoa,
-                VMError::TxValidation(TxValidationError::SenderNotEOA)
+                VMError::TxValidation(TxValidationError::SenderNotEOA(_))
             ) | (
                 TransactionExpectedException::InsufficientMaxFeePerGas,
                 VMError::TxValidation(TxValidationError::InsufficientMaxFeePerGas)
@@ -291,13 +294,19 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::NonceIsMax)
             ) | (
                 TransactionExpectedException::GasAllowanceExceeded,
-                VMError::TxValidation(TxValidationError::GasAllowanceExceeded)
+                VMError::TxValidation(TxValidationError::GasAllowanceExceeded {
+                    block_gas_limit: _,
+                    tx_gas_limit: _
+                })
             ) | (
                 TransactionExpectedException::Type3TxPreFork,
                 VMError::TxValidation(TxValidationError::Type3TxPreFork)
             ) | (
                 TransactionExpectedException::Type3TxBlobCountExceeded,
-                VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded)
+                VMError::TxValidation(TxValidationError::Type3TxBlobCountExceeded {
+                    max_blob_count: _,
+                    actual_blob_count: _
+                })
             ) | (
                 TransactionExpectedException::Type3TxZeroBlobs,
                 VMError::TxValidation(TxValidationError::Type3TxZeroBlobs)
@@ -309,10 +318,16 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::Type3TxInvalidBlobVersionedHash)
             ) | (
                 TransactionExpectedException::InsufficientMaxFeePerBlobGas,
-                VMError::TxValidation(TxValidationError::InsufficientMaxFeePerBlobGas)
+                VMError::TxValidation(TxValidationError::InsufficientMaxFeePerBlobGas {
+                    base_fee_per_blob_gas: _,
+                    tx_max_fee_per_blob_gas: _,
+                })
             ) | (
                 TransactionExpectedException::InitcodeSizeExceeded,
-                VMError::TxValidation(TxValidationError::InitcodeSizeExceeded)
+                VMError::TxValidation(TxValidationError::InitcodeSizeExceeded {
+                    max_size: _,
+                    actual_size: _
+                })
             ) | (
                 TransactionExpectedException::Type4TxContractCreation,
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
