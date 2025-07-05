@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751670784962,
+  "lastUpdate": 1751743957223,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2725,6 +2725,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211999012884,
             "range": "± 1788137684",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "516cc4dcd68616f2e61c988e23e91aa59ffc2f93",
+          "message": "refactor(levm): give more details in `TxValidationError` (#3408)\n\n**Motivation**\nFrom #3062 \n> When validating a transaction it would be useful for the LEVM user to\nknow more details about why a transaction didn't pass the initial\nvalidations.\nThis involves changing errors inside of `TxValidationError` enum.\n\n**Description**\nThis PR adds more detail to some of the `TxValidationError` error types.\nIt also introduces the following changes:\n* Updates the error messages in the `ef_tests` deserializer.\n* Adds a regex to match the new error format in the `ef_tests` runner.\nThis is required since the deserialized messages do not include the\nnewly added details, so we need to ignore those details and ensure the\nmatch still succeeds.\n\n> [!CAUTION]\n> Do not merge until [the PR to\nexecution-spec-tests](https://github.com/ethereum/execution-spec-tests/pull/1832)\nhas been merged.\n\nCloses #3062\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-07-05T18:32:29Z",
+          "tree_id": "1e946722ffcf6cf6e1d1641533fffada47d8a2cb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/516cc4dcd68616f2e61c988e23e91aa59ffc2f93"
+        },
+        "date": 1751743947164,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209748175258,
+            "range": "± 659747660",
             "unit": "ns/iter"
           }
         ]
