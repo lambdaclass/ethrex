@@ -25,6 +25,8 @@ use std::{
 use tokio::{net::UdpSocket, sync::MutexGuard};
 use tracing::{debug, error};
 
+pub use crate::discv4::lookup::Discv4NodeIterator;
+
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
@@ -74,11 +76,7 @@ impl Discv4Server {
     /// - Loads bootnodes to establish initial peer connections.
     /// - Starts the lookup handler via [`Discv4LookupHandler`] to periodically search for new peers.
     pub async fn start(&self, bootnodes: Vec<Node>) -> Result<(), DiscoveryError> {
-        let lookup_handler = Discv4LookupHandler::new(
-            self.ctx.clone(),
-            self.udp_socket.clone(),
-            self.lookup_interval_minutes,
-        );
+        let lookup_handler = self.new_lookup_handler();
 
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
@@ -89,9 +87,17 @@ impl Discv4Server {
             async move { self_clone.start_revalidation().await }
         });
         self.load_bootnodes(bootnodes).await;
-        lookup_handler.start(10);
+        lookup_handler.start(self.lookup_interval_minutes, 10);
 
         Ok(())
+    }
+
+    pub fn new_random_iterator(&self) -> Discv4NodeIterator {
+        Discv4NodeIterator::new(self.ctx.clone(), self.udp_socket.clone())
+    }
+
+    fn new_lookup_handler(&self) -> Discv4LookupHandler {
+        Discv4LookupHandler::new(self.ctx.clone(), self.udp_socket.clone())
     }
 
     async fn load_bootnodes(&self, bootnodes: Vec<Node>) {
@@ -102,7 +108,7 @@ impl Discv4Server {
         }
     }
 
-    pub async fn receive(&self) {
+    async fn receive(&self) {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
         loop {

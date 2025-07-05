@@ -3,6 +3,7 @@ use crate::kademlia::{self, KademliaTable};
 use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
 use crate::rlpx::message::Message as RLPxMessage;
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
+use crate::rlpx::server::RLPxServer;
 use crate::types::{Node, NodeRecord};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
@@ -101,6 +102,9 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         .start(bootnodes)
         .await
         .map_err(NetworkError::DiscoveryStart)?;
+
+    let iter = discovery.new_random_iterator();
+    let _rlpx_server = RLPxServer::spawn(iter);
 
     info!(
         "Listening for requests at {}",

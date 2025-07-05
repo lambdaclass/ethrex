@@ -20,16 +20,11 @@ use tracing::debug;
 pub struct Discv4LookupHandler {
     ctx: P2PContext,
     udp_socket: Arc<UdpSocket>,
-    interval_minutes: u64,
 }
 
 impl Discv4LookupHandler {
-    pub fn new(ctx: P2PContext, udp_socket: Arc<UdpSocket>, interval_minutes: u64) -> Self {
-        Self {
-            ctx,
-            udp_socket,
-            interval_minutes,
-        }
+    pub fn new(ctx: P2PContext, udp_socket: Arc<UdpSocket>) -> Self {
+        Self { ctx, udp_socket }
     }
 
     /// Starts a tokio scheduler that:
@@ -52,19 +47,19 @@ impl Discv4LookupHandler {
     ///    doesn't have any node to ask.
     ///
     /// See more https://github.com/ethereum/devp2p/blob/master/discv4.md#recursive-lookup
-    pub fn start(&self, initial_interval_wait_seconds: u64) {
+    pub fn start(&self, interval_minutes: u64, initial_interval_wait_seconds: u64) {
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
             async move {
                 self_clone
-                    .start_lookup_loop(initial_interval_wait_seconds)
+                    .start_lookup_loop(interval_minutes, initial_interval_wait_seconds)
                     .await;
             }
         });
     }
 
-    async fn start_lookup_loop(&self, initial_interval_wait_seconds: u64) {
-        let mut interval = tokio::time::interval(Duration::from_secs(self.interval_minutes));
+    async fn start_lookup_loop(&self, interval_minutes: u64, initial_interval_wait_seconds: u64) {
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_minutes * 60));
         tokio::time::sleep(Duration::from_secs(initial_interval_wait_seconds)).await;
 
         loop {
@@ -104,41 +99,70 @@ impl Discv4LookupHandler {
     async fn recursive_lookup(&self, target: H512) {
         // lookups start with the closest nodes to the target from our table
         let target_node_id = node_id(&target);
-        let mut peers_to_ask: Vec<Node> = self
-            .ctx
-            .table
-            .lock()
-            .await
-            .get_closest_nodes(target_node_id);
+
+        let mut peers_to_ask = vec![];
         // stores the peers in peers_to_ask + the peers that were in peers_to_ask but were replaced by closer targets
-        let mut seen_peers: HashSet<H512> = HashSet::default();
+        let mut seen_peers = HashSet::default();
         let mut asked_peers = HashSet::default();
 
-        seen_peers.insert(self.ctx.local_node.public_key);
-        for node in &peers_to_ask {
-            seen_peers.insert(node.public_key);
-        }
-
         loop {
-            let (nodes_found, queries) = self.lookup(target, &mut asked_peers, &peers_to_ask).await;
-
-            for node in nodes_found {
-                if !seen_peers.contains(&node.public_key) {
-                    seen_peers.insert(node.public_key);
-                    self.peers_to_ask_push(&mut peers_to_ask, target_node_id, node);
-                }
-            }
-
+            let (_, should_continue) = self
+                .recursive_lookup_step(
+                    target,
+                    target_node_id,
+                    &mut peers_to_ask,
+                    &mut seen_peers,
+                    &mut asked_peers,
+                )
+                .await;
             // the lookup finishes when there are no more queries to do
             // that happens when we have asked all the peers
-            if queries == 0 {
+            if !should_continue {
                 break;
             }
         }
     }
 
+    /// Performs a single step of the recursive lookup.
+    /// Returns `true` if we found new peers, `false` otherwise.
+    async fn recursive_lookup_step(
+        &self,
+        target: H512,
+        target_node_id: H256,
+        peers_to_ask: &mut Vec<Node>,
+        seen_peers: &mut HashSet<H512>,
+        asked_peers: &mut HashSet<H512>,
+    ) -> (Vec<Node>, bool) {
+        if peers_to_ask.is_empty() {
+            let initial_peers = self
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_closest_nodes(target_node_id);
+
+            peers_to_ask.extend(initial_peers.clone());
+
+            seen_peers.insert(self.ctx.local_node.public_key);
+            for node in peers_to_ask {
+                seen_peers.insert(node.public_key);
+            }
+            return (initial_peers, true);
+        }
+        let (nodes_found, queries) = self.lookup(target, asked_peers, &peers_to_ask).await;
+
+        for node in &nodes_found {
+            if !seen_peers.contains(&node.public_key) {
+                seen_peers.insert(node.public_key);
+                self.peers_to_ask_push(peers_to_ask, target_node_id, node.clone());
+            }
+        }
+
+        return (nodes_found, queries > 0);
+    }
+
     /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
-    async fn lookup(
+    pub async fn lookup(
         &self,
         target: H512,
         asked_peers: &mut HashSet<H512>,
@@ -263,6 +287,67 @@ impl Discv4LookupHandler {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Discv4NodeIterator {
+    lookup_handler: Discv4LookupHandler,
+    target: H512,
+    target_node_id: H256,
+    peers_to_ask: Vec<Node>,
+    seen_peers: HashSet<H512>,
+    asked_peers: HashSet<H512>,
+    buffer: Vec<Node>,
+}
+
+impl Discv4NodeIterator {
+    pub fn new(ctx: P2PContext, udp_socket: Arc<UdpSocket>) -> Self {
+        let random_signing_key = SigningKey::random(&mut OsRng);
+        let target = public_key_from_signing_key(&random_signing_key);
+        let target_node_id = node_id(&target);
+
+        let lookup_handler = Discv4LookupHandler::new(ctx, udp_socket);
+
+        Discv4NodeIterator {
+            lookup_handler,
+            target,
+            target_node_id,
+            peers_to_ask: vec![],
+            seen_peers: Default::default(),
+            asked_peers: Default::default(),
+            buffer: vec![],
+        }
+    }
+
+    pub async fn next(&mut self) -> Node {
+        if let Some(node) = self.buffer.pop() {
+            return node;
+        }
+        loop {
+            let (found_nodes, should_continue) = self
+                .lookup_handler
+                .recursive_lookup_step(
+                    self.target,
+                    self.target_node_id,
+                    &mut self.peers_to_ask,
+                    &mut self.seen_peers,
+                    &mut self.asked_peers,
+                )
+                .await;
+
+            self.buffer.extend(found_nodes);
+
+            if !should_continue {
+                self.peers_to_ask.clear();
+                self.seen_peers.clear();
+                self.asked_peers.clear();
+            }
+
+            if let Some(node) = self.buffer.pop() {
+                return node;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::time::sleep;
@@ -277,11 +362,7 @@ mod tests {
     };
 
     fn lookup_handler_from_server(server: Discv4Server) -> Discv4LookupHandler {
-        Discv4LookupHandler::new(
-            server.ctx.clone(),
-            server.udp_socket.clone(),
-            server.lookup_interval_minutes,
-        )
+        Discv4LookupHandler::new(server.ctx.clone(), server.udp_socket.clone())
     }
 
     #[tokio::test]
