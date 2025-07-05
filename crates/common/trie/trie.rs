@@ -118,9 +118,9 @@ impl Trie {
         let mut invalidated_nodes = Vec::with_capacity(64);
 
         self.root = if self.root.is_valid() {
-            // if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
-            //     invalidated_nodes.push(hash)
-            // }
+            if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
+                invalidated_nodes.push(hash)
+            }
 
             // If the trie is not empty, call the root node's insertion logic.
             self.root
@@ -146,9 +146,9 @@ impl Trie {
         }
 
         let mut invalidated_nodes = Vec::with_capacity(64);
-        // if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
-        //     invalidated_nodes.push(hash)
-        // }
+        if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.root {
+            invalidated_nodes.push(hash)
+        }
 
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
