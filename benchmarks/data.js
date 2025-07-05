@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751743957223,
+  "lastUpdate": 1751744452855,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2755,6 +2755,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209748175258,
             "range": "± 659747660",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3e35ab5aede958a262917a7dff1b8396e3806748",
+          "message": "ci(l2): comment out slack notification on risc0 replay job because of timeouts (#3501)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-05T18:38:43Z",
+          "tree_id": "203c1a0437ad879a6a411e6e2e75027f22d5ce4a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3e35ab5aede958a262917a7dff1b8396e3806748"
+        },
+        "date": 1751744442928,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210146635681,
+            "range": "± 482304169",
             "unit": "ns/iter"
           }
         ]
