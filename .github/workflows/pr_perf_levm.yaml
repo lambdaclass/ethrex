@@ -21,7 +21,7 @@ jobs:
           ref: ${{ github.head_ref }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.87.0
         with:
           toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
@@ -49,7 +49,7 @@ jobs:
           ref: main
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.87.0
         with:
           toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
