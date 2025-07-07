@@ -188,6 +188,9 @@ You will see that some deposits fail with the following error:
 
 This is because not all the accounts are pre-funded from the genesis.
 
+> [!IMPORTANT]
+> Save the CommonBridge and OnChainProposer proxy addresses.
+
 2. Send some funds to the Aligned batcher payment service contract from the proof sender:
 ```
 cd aligned_layer/batcher/aligned
@@ -197,15 +200,12 @@ cargo run deposit-to-batcher \
 --amount 1ether
 ```
 
-3. Start our l2 node:
+3. Start our l2 node, setting `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1:
 
 ```
 cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address 0x66acf0a5d5a24bca248ed93c0c2f346a108d8f13 --l1.on-chain-proposer-address 0x82c8bcf38d86a840a7ba1fb3f2d04c05fde194c4 --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet
 ```
-
-> [!IMPORTANT]
-> Set `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1.
 
 Suggestion:
 When running the integration test, consider increasing the `--committer.commit-time` to 2 minutes. This helps avoid having to aggregate the proofs twice. You can do this by adding the following flag to the `init-l2-no-metrics` target:
