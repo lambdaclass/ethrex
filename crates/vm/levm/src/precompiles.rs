@@ -3,7 +3,7 @@ use bls12_381::{
     hash_to_curve::MapToCurve, multi_miller_loop,
 };
 
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
@@ -920,53 +920,22 @@ fn blake2f_compress_f(
     Ok(output)
 }
 
-/// Reads part of the calldata and returns what is read as u64 or an error
-/// in the case where the calculated indexes don't match the calldata
-fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Result<u64, VMError> {
-    let index_start = (index
-        .checked_mul(BLAKE2F_ELEMENT_SIZE)
-        .ok_or(PrecompileError::ParsingInputError)?)
-    .checked_add(offset)
-    .ok_or(PrecompileError::ParsingInputError)?;
-    let index_end = index_start
-        .checked_add(BLAKE2F_ELEMENT_SIZE)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    Ok(u64::from_le_bytes(
-        calldata
-            .get(index_start..index_end)
-            .ok_or(InternalError::Slicing)?
-            .try_into()
-            .map_err(|_| PrecompileError::ParsingInputError)?,
-    ))
-}
-
 type SliceArguments = ([u64; 8], [u64; 16], [u64; 2]);
 
 fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     let mut h = [0; 8];
-    for i in 0..8_usize {
-        let data_read = read_bytes_from_offset(calldata, 4, i)?;
 
-        let read_slice = h.get_mut(i).ok_or(InternalError::Slicing)?;
-        *read_slice = data_read;
-    }
+    let mut buf = calldata.clone(); // this clone is cheap.
+    buf.get_u32_le(); // advance offset by 4.
+
+    h.copy_from_slice(&std::array::from_fn::<u64, 8, _>(|_| buf.get_u64_le()));
 
     let mut m = [0; 16];
-    for i in 0..16_usize {
-        let data_read = read_bytes_from_offset(calldata, 68, i)?;
 
-        let read_slice = m.get_mut(i).ok_or(InternalError::Slicing)?;
-        *read_slice = data_read;
-    }
+    m.copy_from_slice(&std::array::from_fn::<u64, 16, _>(|_| buf.get_u64_le()));
 
     let mut t = [0; 2];
-    for i in 0..2_usize {
-        let data_read = read_bytes_from_offset(calldata, 196, i)?;
-
-        let read_slice = t.get_mut(i).ok_or(InternalError::Slicing)?;
-        *read_slice = data_read;
-    }
+    t.copy_from_slice(&std::array::from_fn::<u64, 2, _>(|_| buf.get_u64_le()));
 
     Ok((h, m, t))
 }
@@ -977,14 +946,15 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let rounds = u256_from_big_endian(calldata.get(0..4).ok_or(InternalError::Slicing)?);
+    let rounds = u32::from_be_bytes(
+        calldata
+            .get(0..4)
+            .ok_or(InternalError::Slicing)?
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    );
 
-    let rounds: usize = rounds
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
-    let gas_cost =
-        u64::try_from(rounds).map_err(|_| InternalError::TypeConversion)? * BLAKE2F_ROUND_COST;
+    let gas_cost = u64::from(rounds) * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let (h, m, t) = parse_slice_arguments(calldata)?;
@@ -995,7 +965,8 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
     }
     let f = *f == 1;
 
-    let result = blake2f_compress_f(rounds, h, &m, &t, f)?;
+    #[expect(clippy::as_conversions)] // safe to convert a u32 to usize
+    let result = blake2f_compress_f(rounds as usize, h, &m, &t, f)?;
 
     // map the result to the output format (from a u64 slice to a u8 one)
     let output: Vec<u8> = result.iter().flat_map(|num| num.to_le_bytes()).collect();
