@@ -35,9 +35,6 @@ pub enum InMessage {
     BookKeeping,
 }
 
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {}
-
 #[derive(Debug, Clone)]
 pub struct RLPxServer;
 
@@ -61,7 +58,7 @@ impl RLPxServer {
 impl GenServer for RLPxServer {
     type CallMsg = Unused;
     type CastMsg = InMessage;
-    type OutMsg = OutMessage;
+    type OutMsg = Unused;
     type State = RLPxServerState;
     type Error = std::convert::Infallible;
 
