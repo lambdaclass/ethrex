@@ -16,7 +16,7 @@ interface ICommonBridge {
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
     event PrivilegedTxSent (
-        address indexed L1from,
+        address indexed l1From,
         address from,
         address to,
         uint256 transactionId,
