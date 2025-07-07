@@ -106,7 +106,7 @@ impl SubcommandExecute {
                 bench,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(&rpc_url.as_str())?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
@@ -145,7 +145,7 @@ impl SubcommandExecute {
                 l2,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(&rpc_url.as_str())?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
 
                 // Get the block number of the transaction
                 let tx = eth_client
@@ -174,7 +174,7 @@ impl SubcommandExecute {
                 bench,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(&rpc_url.as_str())?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
@@ -293,7 +293,7 @@ impl SubcommandProve {
                 bench,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(&rpc_url.as_str())?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
                 let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
