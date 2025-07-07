@@ -172,49 +172,33 @@ impl EthrexMonitor {
     }
 
     pub fn on_key_event(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Left => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::LeftKey),
-            },
-            KeyCode::Down => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::DownKey),
-            },
-            KeyCode::Up => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::UpKey),
-            },
-            KeyCode::Right => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::RightKey),
-            },
-            KeyCode::Char('Q') => self.should_quit = true,
-            KeyCode::Char('h') => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::HideKey),
-            },
-            KeyCode::Char('f') => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::FocusKey),
-            },
-            KeyCode::Char('+') => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::PlusKey),
-            },
-            KeyCode::Char('-') => match self.tabs {
-                TabsSate::Overview => {}
-                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::MinusKey),
-            },
-            KeyCode::Tab => self.tabs.next(),
+        match (&self.tabs, code) {
+            (TabsSate::Logs, KeyCode::Left) => self.logger.transition(TuiWidgetEvent::LeftKey),
+            (TabsSate::Logs, KeyCode::Down) => self.logger.transition(TuiWidgetEvent::DownKey),
+            (TabsSate::Logs, KeyCode::Up) => self.logger.transition(TuiWidgetEvent::UpKey),
+            (TabsSate::Logs, KeyCode::Right) => self.logger.transition(TuiWidgetEvent::RightKey),
+            (TabsSate::Logs, KeyCode::Char('h')) => self.logger.transition(TuiWidgetEvent::HideKey),
+            (TabsSate::Logs, KeyCode::Char('f')) => {
+                self.logger.transition(TuiWidgetEvent::FocusKey)
+            }
+            (TabsSate::Logs, KeyCode::Char('+')) => self.logger.transition(TuiWidgetEvent::PlusKey),
+            (TabsSate::Logs, KeyCode::Char('-')) => {
+                self.logger.transition(TuiWidgetEvent::MinusKey)
+            }
+            (TabsSate::Overview, KeyCode::Char('Q')) => self.should_quit = true,
+            (TabsSate::Overview | TabsSate::Logs, KeyCode::Tab) => self.tabs.next(),
             _ => {}
         }
     }
 
     pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
-        match kind {
-            MouseEventKind::ScrollDown => self.logger.transition(TuiWidgetEvent::NextPageKey),
-            MouseEventKind::ScrollUp => self.logger.transition(TuiWidgetEvent::PrevPageKey),
+        match (&self.tabs, kind) {
+            (TabsSate::Logs, MouseEventKind::ScrollDown) => {
+                self.logger.transition(TuiWidgetEvent::NextPageKey)
+            }
+            (TabsSate::Logs, MouseEventKind::ScrollUp) => {
+                self.logger.transition(TuiWidgetEvent::PrevPageKey)
+            }
             _ => {}
         }
     }
