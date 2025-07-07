@@ -13,7 +13,7 @@ let
     name = "solc-0.8.29";
     src = pkgs.fetchurl {
       url = "https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux";
-      sha256 = "";
+      sha256 = "sha256-GNQYpA3ATRdlaxtcins1z7q4lCtR840AXVtZ6KpmN+A=";
     };
     phases = [ "installPhase" ];
     installPhase = ''
