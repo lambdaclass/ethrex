@@ -1,32 +1,32 @@
 [workspace]
 members = [
-  "cmd/ef_tests/blockchain",
-  "cmd/ef_tests/state",
-  "cmd/ethrex",
-  "cmd/ethrex_replay",
-  "crates/blockchain",
-  "crates/blockchain/dev",
-  "crates/common",
-  "crates/common/rlp",
-  "crates/common/trie",
-  "crates/l2/",
-  "crates/l2/contracts",
-  "crates/l2/common",
-  "crates/l2/prover",
-  "crates/l2/prover/zkvm/interface",
-  "crates/l2/sdk",
-  "crates/l2/storage",
-  "crates/l2/networking/rpc",
-  "crates/networking/p2p",
-  "crates/networking/rpc",
-  "crates/storage",
-  "crates/vm",
-  "crates/vm/levm",
-  "crates/vm/levm/bench/revm_comparison",
-  "tooling/genesis",
-  "tooling/hive_report",
-  "tooling/load_test",
-  "tooling/loc",
+    "cmd/ef_tests/blockchain",
+    "cmd/ef_tests/state",
+    "cmd/ethrex",
+    "cmd/ethrex_replay",
+    "crates/blockchain",
+    "crates/blockchain/dev",
+    "crates/common",
+    "crates/common/rlp",
+    "crates/common/trie",
+    "crates/l2/",
+    "crates/l2/contracts",
+    "crates/l2/common",
+    "crates/l2/prover",
+    "crates/l2/prover/zkvm/interface",
+    "crates/l2/sdk",
+    "crates/l2/storage",
+    "crates/l2/networking/rpc",
+    "crates/networking/p2p",
+    "crates/networking/rpc",
+    "crates/storage",
+    "crates/vm",
+    "crates/vm/levm",
+    "crates/vm/levm/bench/revm_comparison",
+    "tooling/genesis",
+    "tooling/hive_report",
+    "tooling/load_test",
+    "tooling/loc",
 ]
 resolver = "2"
 
@@ -83,9 +83,9 @@ redb = "=2.4.0"
 snap = "1.1.1"
 k256 = { version = "0.13.3", features = ["ecdh"] }
 secp256k1 = { version = "0.29.1", default-features = false, features = [
-  "global-context",
-  "recovery",
-  "rand",
+    "global-context",
+    "recovery",
+    "rand",
 ] }
 keccak-hash = "0.11.0"
 axum = "0.8.1"
@@ -97,8 +97,10 @@ libsql = "0.9.10"
 futures = "0.3.31"
 # Changing the tag for spawned will break the TDX image build
 # When updating it try to build the TDX image and update service.nix with the new hash
-spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
-spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
+# spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", branch = "stream_listener" }
+# spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", branch = "stream_listener" }
 lambdaworks-crypto = "0.11.0"
 
 [patch.crates-io]

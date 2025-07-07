@@ -10818,7 +10818,7 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.2-alpha#c6f757c0cc07a34f9e56c8c7ea8fde483b50ea20"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=stream_listener#2dc4cc1340331bcde68b68a2d1dfed45867bac6e"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -10828,10 +10828,11 @@ dependencies = [
 [[package]]
 name = "spawned-rt"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.2-alpha#c6f757c0cc07a34f9e56c8c7ea8fde483b50ea20"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=stream_listener#2dc4cc1340331bcde68b68a2d1dfed45867bac6e"
 dependencies = [
  "crossbeam",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
@@ -11541,6 +11542,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
