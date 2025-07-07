@@ -320,9 +320,9 @@ cargo run --bin ethrex -- removedb
 
 ## Ethereum Metrics Exporter
 
-We use the [Ethereum Metrics Exporter](https://github.com/ethpandaops/ethereum-metrics-exporter), a Prometheus metrics exporter for Ethereum execution and consensus nodes, to gather metrics during syncing for L1. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics.
+We use the [Ethereum Metrics Exporter](https://github.com/ethpandaops/ethereum-metrics-exporter), a Prometheus metrics exporter for Ethereum execution and consensus nodes, to gather metrics during syncing for L1. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics. For the syncing to work there must be a consensus node running along with the execution node.
 
-Currently we have two make targets that start the nodes and set up the exporter for either hoodi or holesky's syncing. In both cases we use a lighthouse consensus node.
+Currently we have two make targets to easily start an execution node and a consensus node on either hoodi or holesky, and display the syncing metrics. In both cases we use a lighthouse consensus node.
 
 ### Quickstart guide
 
@@ -344,7 +344,7 @@ Make sure you have your docker daemon running.
 
 To see the dashboards go to [http://localhost:3001](http://localhost:3001). Use “admin” for user and password. Select the Dashboards menu and go to Ethereum Metrics Exporter (Single) to see the exported metrics.
 
-To see the prometheus exported metrics and its respective request with more detail in case you need to debug go to [http://localhost:9093/metrics](http://localhost:9093/metrics).
+To see the prometheus exported metrics and its respective requests with more detail in case you need to debug go to [http://localhost:9093/metrics](http://localhost:9093/metrics).
 
 ### Running other execution nodes with metrics enabled
 
@@ -364,4 +364,4 @@ To run the execution node on any network with metrics, the next steps should be 
 
     docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
     ```
-For more details on running a sync go to `ethrex/tooling/sync/readme.md`
+For more details on running a sync go to `ethrex/tooling/sync/readme.md`.
