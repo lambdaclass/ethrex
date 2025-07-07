@@ -75,7 +75,6 @@ impl GenServer for RLPxServer {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
-        info!("Received cast message");
         match msg {
             InMessage::NewPeer(node) => {
                 state.connections.push(node);
