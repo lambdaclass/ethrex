@@ -34,7 +34,6 @@ secp256k1 = { version = "0.29.1", default-features = false, features = [
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
 
-
 [workspace]
 
 [features]
