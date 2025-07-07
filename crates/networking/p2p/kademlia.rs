@@ -105,7 +105,7 @@ impl KademliaTable {
             .replacements
             .iter()
             .any(|p| p.node.node_id() == node.node_id());
-        if peer_already_in_replacements {
+        if peer_already_in_replacements && !force_push {
             return (None, false);
         }
 
