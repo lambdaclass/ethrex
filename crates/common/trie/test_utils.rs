@@ -7,10 +7,10 @@ macro_rules! pmt_node {
         branch { $( $choice:expr => $child_type:ident { $( $child_tokens:tt )* } ),+ $(,)? }
         $( offset $offset:expr )?
     ) => {
-        $crate::node::BranchNode::new({
+        $crate::node::node::BranchNode::new({
             #[allow(unused_variables)]
             let offset = true $( ^ $offset )?;
-            let mut choices = $crate::node::BranchNode::EMPTY_CHOICES;
+            let mut choices = $crate::node::node::BranchNode::EMPTY_CHOICES;
             $(
                 let child_node: Node = pmt_node! { @($trie)
                     $child_type { $( $child_tokens )* }
@@ -27,12 +27,12 @@ macro_rules! pmt_node {
         with_leaf { $path:expr => $value:expr }
         $( offset $offset:expr )?
     ) => {{
-        $crate::node::BranchNode::new_with_value({
+        $crate::node::node::BranchNode::new_with_value({
             #[allow(unused_variables)]
             let offset = true $( ^ $offset )?;
-            let mut choices = $crate::node::BranchNode::EMPTY_CHOICES;
+            let mut choices = $crate::node::node::BranchNode::EMPTY_CHOICES;
             $(
-                choices[$choice as usize] = $crate::node::Node::from(
+                choices[$choice as usize] = $crate::node::node::Node::from(
                     pmt_node! { @($trie)
                         $child_type { $( $child_tokens )* }
                         offset offset
@@ -50,10 +50,10 @@ macro_rules! pmt_node {
         #[allow(unused_variables)]
         let prefix = $crate::nibbles::Nibbles::from_hex($prefix.to_vec());
 
-        $crate::node::ExtensionNode::new(
+        $crate::node::node::ExtensionNode::new(
             prefix.clone(),
             {
-                let child_node = $crate::node::Node::from(pmt_node! { @($trie)
+                let child_node = $crate::node::node::Node::from(pmt_node! { @($trie)
                     $child_type { $( $child_tokens )* }
                 });
                 child_node.into()
@@ -67,7 +67,7 @@ macro_rules! pmt_node {
         $( offset $offset:expr )?
     ) => {
         {
-            $crate::node::LeafNode::new(Nibbles::from_hex($path), $value)
+            $crate::node::node::LeafNode::new(Nibbles::from_hex($path), $value)
         }
     };
 }

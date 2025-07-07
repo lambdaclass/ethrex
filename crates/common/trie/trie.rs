@@ -1,11 +1,9 @@
 pub mod db;
 pub mod error;
 pub mod logger;
-mod nibbles;
-mod node;
-mod node_hash;
-mod node_ref;
-mod rlp;
+pub mod nibbles;
+pub mod node;
+
 #[cfg(test)]
 mod test_utils;
 mod trie_iter;
@@ -20,10 +18,10 @@ pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
-pub use self::{node::Node, node_hash::NodeHash, node_ref::NodeRef};
+pub use node::{node::LeafNode, node::Node, node_hash::NodeHash, node_ref::NodeRef};
 
 pub use self::error::TrieError;
-use self::{node::LeafNode, trie_iter::TrieIterator};
+use self::trie_iter::TrieIterator;
 
 use ethrex_rlp::decode::RLPDecode;
 use lazy_static::lazy_static;

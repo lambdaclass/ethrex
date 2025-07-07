@@ -1,8 +1,11 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
+use super::{
+    branch::BranchNode, extension::ExtensionNode, node::Node, node::ValueOrHash,
+    node_hash::NodeHash,
+};
+use crate::{ValueRLP, error::TrieError, nibbles::Nibbles};
 
-use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
 #[derive(Debug, Clone, Default, PartialEq)]

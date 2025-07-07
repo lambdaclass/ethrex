@@ -1,17 +1,13 @@
-mod branch;
-mod extension;
-mod leaf;
-
 use std::array;
 
-pub use branch::BranchNode;
+pub use super::branch::BranchNode;
+pub use super::extension::ExtensionNode;
+pub use super::leaf::LeafNode;
 use ethrex_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
-pub use extension::ExtensionNode;
-pub use leaf::LeafNode;
 
-use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles};
 
-use super::{ValueRLP, node_hash::NodeHash};
+use super::node_hash::NodeHash;
 
 pub enum ValueOrHash {
     Value(ValueRLP),

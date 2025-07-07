@@ -3,10 +3,9 @@ use ethrex_rlp::structs::Encoder;
 use crate::NodeRef;
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
-use crate::node_hash::NodeHash;
 use crate::{TrieDB, error::TrieError};
 
-use super::{BranchNode, Node, ValueOrHash};
+use super::{branch::BranchNode, node::Node, node::ValueOrHash, node_hash::NodeHash};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
@@ -185,8 +184,9 @@ impl ExtensionNode {
 
 #[cfg(test)]
 mod test {
+    use super::super::node::LeafNode;
     use super::*;
-    use crate::{Trie, node::LeafNode, pmt_node};
+    use crate::{Trie, pmt_node};
 
     #[test]
     fn new() {
