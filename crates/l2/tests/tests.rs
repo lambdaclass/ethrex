@@ -6,10 +6,9 @@ use ethrex_common::{H160, types::BlockNumber};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS,
+    COMMON_BRIDGE_L2_ADDRESS, L1ToL2TransactionData,
     calldata::{self},
     claim_erc20withdraw, compile_contract, deposit_erc20, get_address_from_secret_key,
-    l1_to_l2_tx_data::L1ToL2TransactionData,
     wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
