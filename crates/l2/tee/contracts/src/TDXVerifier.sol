@@ -56,7 +56,7 @@ contract TDXVerifier is Ownable {
     /// @param _ocp OnChainProposer contract address, used for permission checks
     function initializeOnChainProposer(address _ocp) public onlyOwner {
         require(onChainProposer == address(0), "TDXVerifier: OnChainProposer already initialized");
-        require(_ocp != address(0), "TDXVerifier: OnChainPropser address can't be null");
+        require(_ocp != address(0), "TDXVerifier: OnChainProposer address can't be null");
         onChainProposer = _ocp;
     }
 
