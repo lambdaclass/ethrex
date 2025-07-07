@@ -200,7 +200,7 @@ impl Discv4Server {
                     ));
                 }
 
-                // all validations went well, mark as answered and start a rlpx connection
+                // all validations went well, mark as answered
                 self.ctx
                     .table
                     .lock()
@@ -217,22 +217,22 @@ impl Discv4Server {
                     }
                 }
 
-                // We won't initiate a connection if we are already connected.
-                // This will typically be the case when revalidating a node.
-                if peer.is_connected {
-                    return Ok(());
-                }
+                // // We won't initiate a connection if we are already connected.
+                // // This will typically be the case when revalidating a node.
+                // if peer.is_connected {
+                //     return Ok(());
+                // }
 
-                // We won't initiate a connection if we have reached the maximum number of peers.
-                let active_connections = {
-                    let table = self.ctx.table.lock().await;
-                    table.count_connected_peers()
-                };
-                if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
-                    return Ok(());
-                }
+                // // We won't initiate a connection if we have reached the maximum number of peers.
+                // let active_connections = {
+                //     let table = self.ctx.table.lock().await;
+                //     table.count_connected_peers()
+                // };
+                // if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
+                //     return Ok(());
+                // }
 
-                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
+                // RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())
             }
@@ -504,28 +504,28 @@ impl Discv4Server {
                         peer.node.public_key
                     );
                 }
-                let peer = {
-                    let table = self.ctx.table.lock().await;
-                    table.get_by_node_id(packet.get_node_id()).cloned()
-                };
-                let Some(peer) = peer else {
-                    return Err(DiscoveryError::InvalidMessage("not known node".into()));
-                };
-                // This will typically be the case when revalidating a node.
-                if peer.is_connected {
-                    return Ok(());
-                }
+                // let peer = {
+                //     let table = self.ctx.table.lock().await;
+                //     table.get_by_node_id(packet.get_node_id()).cloned()
+                // };
+                // let Some(peer) = peer else {
+                //     return Err(DiscoveryError::InvalidMessage("not known node".into()));
+                // };
+                // // This will typically be the case when revalidating a node.
+                // if peer.is_connected {
+                //     return Ok(());
+                // }
 
-                // We won't initiate a connection if we have reached the maximum number of peers.
-                let active_connections = {
-                    let table = self.ctx.table.lock().await;
-                    table.count_connected_peers()
-                };
-                if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
-                    return Ok(());
-                }
+                // // We won't initiate a connection if we have reached the maximum number of peers.
+                // let active_connections = {
+                //     let table = self.ctx.table.lock().await;
+                //     table.count_connected_peers()
+                // };
+                // if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
+                //     return Ok(());
+                // }
 
-                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
+                // RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())
             }
