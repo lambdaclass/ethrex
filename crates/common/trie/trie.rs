@@ -176,7 +176,8 @@ impl Trie {
     pub fn commit(&mut self) -> Result<(), TrieError> {
         if self.root.is_valid() {
             let mut acc = Vec::new();
-            self.root.commit(&mut acc);
+            let mut encoding_buffer = Vec::new();
+            self.root.commit(&mut acc, &mut encoding_buffer);
             self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
@@ -188,7 +189,8 @@ impl Trie {
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
-            self.root.commit(&mut acc);
+            let mut encoding_buffer = Vec::new();
+            self.root.commit(&mut acc, &mut encoding_buffer);
         }
 
         acc
