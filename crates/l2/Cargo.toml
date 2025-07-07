@@ -38,7 +38,7 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 directories = "5.0.1"
 bincode = "1.3.3"
-serde_with = "3.11.0"
+serde_with.workspace = true
 lazy_static.workspace = true
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag = "v0.16.1" }
 ethers = "2.0"

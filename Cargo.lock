@@ -583,6 +583,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "archive_sync"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.40",
+ "clap_complete",
+ "ethrex",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "eyre",
+ "hex",
+ "keccak-hash",
+ "lazy_static",
+ "reqwest 0.12.22",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
 name = "ark-bn254"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3148,6 +3171,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "lazy_static",
+ "regex",
  "serde",
  "serde_json",
  "tokio",
@@ -4063,6 +4087,7 @@ dependencies = [
  "futures-util",
  "hex",
  "lazy_static",
+ "reqwest 0.12.22",
  "revm 19.7.0",
  "revm-inspectors",
  "revm-primitives 15.2.0",
