@@ -100,17 +100,13 @@ impl<'a> VM<'a> {
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(offset)
-            .take(32)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
-            }
-        }
+        data.copy_from_slice(
+            current_call_frame
+                .calldata
+                .get(offset..(offset.checked_add(32).ok_or(InternalError::Overflow)?))
+                .ok_or(InternalError::Slicing)?,
+        );
+
         let result = u256_from_big_endian_const(data);
 
         current_call_frame.stack.push(&[result])?;
@@ -160,17 +156,18 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| InternalError::TypeConversion)?;
 
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(calldata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
-            }
-        }
+        data.copy_from_slice(
+            current_call_frame
+                .calldata
+                .get(
+                    calldata_offset
+                        ..(calldata_offset
+                            .checked_add(size)
+                            .ok_or(InternalError::Overflow)?),
+                )
+                .ok_or(InternalError::Slicing)?,
+        );
+
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -295,11 +292,12 @@ impl<'a> VM<'a> {
             let offset: usize = offset
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?;
-            for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
-                }
-            }
+
+            data.copy_from_slice(
+                bytecode
+                    .get(offset..(offset.checked_add(size).ok_or(InternalError::Overflow)?))
+                    .ok_or(InternalError::Slicing)?,
+            );
         }
 
         memory::try_store_data(
@@ -359,17 +357,18 @@ impl<'a> VM<'a> {
         // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
         // I would've used copy_from_slice but it can panic.
         let mut data = vec![0u8; size];
-        for (i, byte) in current_call_frame
-            .sub_return_data
-            .iter()
-            .skip(returndata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
-            }
-        }
+
+        data.copy_from_slice(
+            current_call_frame
+                .sub_return_data
+                .get(
+                    returndata_offset
+                        ..(returndata_offset
+                            .checked_add(size)
+                            .ok_or(InternalError::Overflow)?),
+                )
+                .ok_or(InternalError::Slicing)?,
+        );
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 

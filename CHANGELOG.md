@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-07
+
+- Improve data copying in environment opcodes [https://github.com/lambdaclass/ethrex/pull/3508](https://github.com/lambdaclass/ethrex/pull/3508)
+
 ### 2025-06-30
 
 - Use a stack pool [#3386](https://github.com/lambdaclass/ethrex/pull/3386)
