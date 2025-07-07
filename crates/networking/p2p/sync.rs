@@ -248,7 +248,10 @@ impl Syncer {
                 && search_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancestor
-                dbg!(first_block_header.hash(), sync_head, current_batch_number);
+                #[cfg(feature = "l2")]
+                {
+                    dbg!(first_block_header.hash(), sync_head, current_batch_number);
+                }
                 warn!("Sync failed to find target block header, going back to the previous parent");
                 search_head = first_block_header.parent_hash;
                 continue;
