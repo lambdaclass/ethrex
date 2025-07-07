@@ -12,3 +12,4 @@ You can find more information on our [L1](../l1) or [L2](../l2) docs, respective
 ## Where to start
 
 To get started with ethrex, you can follow the [installation guide](./installing.md) to set up the client on your machine.
+Then, a good next step would be to [run a local node](./running.md) and see ethrex in action.
