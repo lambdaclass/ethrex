@@ -436,6 +436,20 @@ impl EthClient {
                 );
         }
 
+        if !transaction.blobs.is_empty() {
+            let blobs_str: Vec<_> = transaction
+                .blobs
+                .into_iter()
+                .map(|blob| format!("0x{}", hex::encode(blob)))
+                .collect();
+
+            data.as_object_mut()
+                .ok_or_else(|| {
+                    EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
+                })?
+                .insert("blobs".to_owned(), json!(blobs_str));
+        }
+
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
         if let Some(nonce) = transaction.nonce {
             if let Value::Object(ref mut map) = data {
@@ -843,7 +857,9 @@ impl EthClient {
     ) -> Result<(), EthClientError> {
         let mut transaction = match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
+                let mut tx = GenericTransaction::from(wrapped_eip4844_transaction.clone().tx);
+                add_blobs_to_generic_tx(&mut tx, &wrapped_eip4844_transaction.blobs_bundle);
+                tx
             }
             WrappedTransaction::EIP1559(eip1559_transaction) => {
                 GenericTransaction::from(eip1559_transaction.clone())
@@ -877,7 +893,9 @@ impl EthClient {
     ) -> Result<u64, EthClientError> {
         let mut transaction = match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
+                let mut tx = GenericTransaction::from(wrapped_eip4844_transaction.clone().tx);
+                add_blobs_to_generic_tx(&mut tx, &wrapped_eip4844_transaction.blobs_bundle);
+                tx
             }
             WrappedTransaction::EIP1559(eip1559_transaction) => {
                 GenericTransaction::from(eip1559_transaction.clone())
@@ -1421,6 +1439,14 @@ pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, Et
         })?;
 
     Ok(Address::from(address_bytes))
+}
+
+pub fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, bundle: &BlobsBundle) {
+    tx.blobs = bundle
+        .blobs
+        .iter()
+        .map(|blob| Bytes::copy_from_slice(blob))
+        .collect()
 }
 
 #[derive(Serialize, Deserialize, Debug)]
