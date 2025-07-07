@@ -5,11 +5,6 @@ participants:
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
-    cl_type: nimbus
-    cl_image: statusim/nimbus-eth2:multiarch-latest
-    validator_count: 32
-    ethereum_metrics_exporter_enabled: true
-  - el_type: ethrex
     cl_type: teku
     cl_image: consensys/teku:latest
     validator_count: 32
@@ -17,16 +12,6 @@ participants:
   - el_type: ethrex
     cl_type: prysm
     cl_image: gcr.io/prysmaticlabs/prysm/beacon-chain:latest
-    validator_count: 32
-    ethereum_metrics_exporter_enabled: true
-  - el_type: ethrex
-    cl_type: lodestar
-    cl_image: chainsafe/lodestar:next
-    validator_count: 32
-    ethereum_metrics_exporter_enabled: true
-  - el_type: ethrex
-    cl_type: grandine
-    cl_image: sifrai/grandine:stable
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
 
