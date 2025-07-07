@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     libc6 \
     libssl-dev \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
@@ -21,8 +22,11 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /ethrex/recipe.json recipe.json
-# Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
+
+# Install solc for build scripts
+RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+    && chmod +x /usr/bin/solc
 
 # Optional build flags
 ARG BUILD_FLAGS=""
@@ -35,6 +39,6 @@ FROM ubuntu:24.04
 WORKDIR /usr/local/bin
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
-COPY --from=builder ethrex/target/release/ethrex .
+COPY --from=builder /ethrex/target/release/ethrex .
 EXPOSE 8545
 ENTRYPOINT [ "./ethrex" ]
