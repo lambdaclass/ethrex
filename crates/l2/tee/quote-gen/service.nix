@@ -1,5 +1,19 @@
 let
   pkgs = import <nixpkgs> { };
+  fenix = pkgs.callPackage (pkgs.fetchFromGitHub {
+    owner = "nix-community";
+    repo = "fenix";
+    rev = "95606d64662a730da5d3031ed798dd6315d35f33";
+    hash = "sha256-aP4korVsN5Yy+PB9zjjm8Qbo3a69/m8vlFXS5mdVXtk=";
+  }) { };
+  toolchain = fenix.fromToolchainFile {
+      file = ../../../../rust-toolchain.toml;
+      sha256 = "sha256-Qxt8XAuaUR2OMdKbN4u8dBJOhSHxS+uS06Wl9+flVEk=";
+  };
+  rustPlatform = pkgs.makeRustPlatform {
+    cargo = toolchain;
+    rustc = toolchain;
+  };
   gitignoreSrc = pkgs.fetchFromGitHub { 
     owner = "hercules-ci";
     repo = "gitignore.nix";
@@ -9,14 +23,14 @@ let
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
 in
 let
-  quoteGen = pkgs.rustPlatform.buildRustPackage rec {
+  quoteGen = rustPlatform.buildRustPackage rec {
     pname = "quote-gen";
     version = "0.1";
 
     src = gitignoreSource ./../../../../.;
     sourceRoot = "${src.name}/crates/l2/tee/quote-gen";
 
-    cargoDeps = pkgs.rustPlatform.importCargoLock {
+    cargoDeps = rustPlatform.importCargoLock {
       lockFile = ./Cargo.lock;
       outputHashes = {
         "bls12_381-0.8.0" = "sha256-8/pXRA7hVAPeMKCZ+PRPfQfxqstw5Ob4MJNp85pv5WQ=";
@@ -29,7 +43,7 @@ let
     buildInputs = [ pkgs.openssl ];
     nativeBuildInputs = [
       pkgs.pkg-config
-      pkgs.rustPlatform.cargoSetupHook
+      rustPlatform.cargoSetupHook
     ];
     env.OPENSSL_NO_VENDOR = 1;
   };
