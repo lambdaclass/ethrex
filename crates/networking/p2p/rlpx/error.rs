@@ -67,6 +67,8 @@ pub enum RLPxError {
     IncompatibleProtocol,
     #[error("Invalid block range")]
     InvalidBlockRange,
+    #[error("Internal Error: {0}")]
+    InternalError(String),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly

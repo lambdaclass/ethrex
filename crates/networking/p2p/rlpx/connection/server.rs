@@ -37,8 +37,8 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts},
-            status::StatusMessage,
+            receipts::{GetReceipts, Receipts68, Receipts69},
+            status::{Status68Message, Status69Message},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
         },
@@ -91,8 +91,7 @@ pub struct Established {
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
     pub(crate) capabilities: Vec<Capability>,
-    pub(crate) negotiated_eth_capability: Option<Capability>,
-    pub(crate) negotiated_snap_capability: Option<Capability>,
+    pub(crate) negotiated_capabilities: Arc<Mutex<Capabilities>>,
     pub(crate) last_block_range_update_block: u64,
     pub(crate) broadcasted_txs: HashSet<H256>,
     pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
@@ -111,6 +110,13 @@ pub struct Established {
     pub(crate) table: Arc<Mutex<KademliaTable>>,
     pub(crate) backend_channel: Option<Sender<Message>>,
     pub(crate) inbound: bool,
+}
+
+#[derive(Default, Clone)]
+pub struct Capabilities {
+    pub p2p: Option<Capability>,
+    pub eth: Option<Capability>,
+    pub snap: Option<Capability>,
 }
 
 #[derive(Clone)]
@@ -323,7 +329,8 @@ where
 
     spawn_listener(handle.clone(), &state.node, stream);
 
-    spawn_broadcast_listener(handle.clone(), state);
+    let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
+    spawn_broadcast_listener(handle.clone(), state, eth_capability);
 
     Ok(())
 }
@@ -366,8 +373,9 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
 }
 
 async fn send_block_range_update(state: &mut Established) -> Result<(), RLPxError> {
+    let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
     // BlockRangeUpdate was introduced in eth/69
-    if let Some(eth) = &state.negotiated_eth_capability {
+    if let Some(eth) = eth_capability {
         if eth.version >= 69 {
             log_peer_debug(&state.node, "Sending BlockRangeUpdate");
             let update = BlockRangeUpdate::new(&state.storage).await?;
@@ -393,11 +401,16 @@ async fn init_capabilities<S>(state: &mut Established, stream: &mut S) -> Result
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
+    let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
     // Sending eth Status if peer supports it
-    if let Some(eth) = state.negotiated_eth_capability.clone() {
-        let status = StatusMessage::new(&state.storage, &eth).await?;
+    if let Some(eth) = eth_capability {
+        let status = match eth.version {
+            68 => Message::Status68(Status68Message::new(&state.storage, &eth).await?),
+            69 => Message::Status69(Status69Message::new(&state.storage, &eth).await?),
+            _ => return Err(RLPxError::IncompatibleProtocol),
+        };
         log_peer_debug(&state.node, "Sending status");
-        send(state, Message::Status(status)).await?;
+        send(state, status).await?;
         // The next immediate message in the ETH protocol is the
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
@@ -406,9 +419,13 @@ where
             None => return Err(RLPxError::Disconnected()),
         };
         match msg {
-            Message::Status(msg_data) => {
+            Message::Status68(msg_data) => {
                 log_peer_debug(&state.node, "Received Status");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                backend::validate_status(Box::new(msg_data), &state.storage, &eth).await?
+            }
+            Message::Status69(msg_data) => {
+                log_peer_debug(&state.node, "Received Status");
+                backend::validate_status(Box::new(msg_data), &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
                 return Err(RLPxError::HandshakeError(format!(
@@ -559,11 +576,13 @@ where
                 return Err(RLPxError::NoMatchingCapabilities());
             }
             debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
-            state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
-
-            if negotiated_snap_version != 0 {
-                debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
-                state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
+            {
+                let mut capabilities = state.negotiated_capabilities.lock().await;
+                capabilities.eth = Some(Capability::eth(negotiated_eth_version));
+                if negotiated_snap_version != 0 {
+                    debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
+                    capabilities.snap = Some(Capability::snap(negotiated_snap_version));
+                }
             }
 
             state.node.version = Some(hello_message.client_id);
@@ -578,7 +597,7 @@ where
     }
 }
 
-async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
+async fn send(state: &Established, message: Message) -> Result<(), RLPxError> {
     state.sink.lock().await.send(message).await
 }
 
@@ -631,14 +650,18 @@ where
 // See https://github.com/lambdaclass/ethrex/issues/3387 and
 // https://github.com/lambdaclass/spawned/issues/17 and
 // https://github.com/lambdaclass/ethrex/issues/3388
-fn spawn_broadcast_listener(mut handle: RLPxConnectionHandle, state: &mut Established) {
+fn spawn_broadcast_listener(
+    mut handle: RLPxConnectionHandle,
+    state: &Established,
+    eth_capability: &Option<Capability>,
+) {
     // Subscribe this connection to the broadcasting channel.
     // TODO currently spawning a listener task that will suscribe to a broadcast channel and
     // create RLPxConnection Broadcast messages to send the Genserver
     // We have to improve this mechanism to avoid manual creation of channels and subscriptions
     // (That is, we should have a spawned-based broadcaster or maybe the backend should handle the
     // transactions propagation)
-    if state.negotiated_eth_capability.is_some() {
+    if eth_capability.is_some() {
         let mut receiver = state.connection_broadcast_send.subscribe();
         spawned_rt::tasks::spawn(async move {
             loop {
@@ -651,7 +674,7 @@ fn spawn_broadcast_listener(mut handle: RLPxConnectionHandle, state: &mut Establ
 }
 
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
-    let peer_supports_eth = state.negotiated_eth_capability.is_some();
+    let peer_supports_eth = { state.negotiated_capabilities.lock().await.eth.is_some() };
     match message {
         Message::Disconnect(msg_data) => {
             log_peer_debug(
@@ -668,9 +691,16 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         Message::Pong(_) => {
             // We ignore received Pong messages
         }
-        Message::Status(msg_data) => {
-            if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+        Message::Status68(msg_data) => {
+            let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
+            if let Some(eth) = eth_capability {
+                backend::validate_status(Box::new(msg_data), &state.storage, eth).await?
+            };
+        }
+        Message::Status69(msg_data) => {
+            let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
+            if let Some(eth) = eth_capability {
+                backend::validate_status(Box::new(msg_data), &state.storage, eth).await?
             };
         }
         Message::GetAccountRange(req) => {
@@ -707,13 +737,23 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             send(state, Message::BlockBodies(response)).await?;
         }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-            if let Some(eth) = &state.negotiated_eth_capability {
+            let eth_capability = { &state.negotiated_capabilities.lock().await.eth };
+            if let Some(eth) = eth_capability {
                 let mut receipts = Vec::new();
                 for hash in block_hashes.iter() {
                     receipts.push(state.storage.get_receipts_for_block(hash)?);
                 }
-                let response = Receipts::new(id, receipts, eth)?;
-                send(state, Message::Receipts(response)).await?;
+                match eth.version {
+                    68 => {
+                        let response = Message::Receipts68(Receipts68::new(id, receipts));
+                        send(state, response).await?;
+                    }
+                    69 => {
+                        let response = Message::Receipts69(Receipts69::new(id, receipts));
+                        send(state, response).await?
+                    }
+                    _ => return Err(RLPxError::IncompatibleProtocol),
+                };
             }
         }
         Message::BlockRangeUpdate(update) => {
@@ -779,7 +819,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         | message @ Message::TrieNodes(_)
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
-        | message @ Message::Receipts(_) => {
+        | message @ Message::Receipts68(_)
+        | message @ Message::Receipts69(_) => {
             state
                 .backend_channel
                 .as_mut()
