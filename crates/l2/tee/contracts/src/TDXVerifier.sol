@@ -3,6 +3,7 @@ pragma solidity ^0.8.13;
 
 import "../lib/openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
 import "../lib/openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol";
+import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 
 interface IAttestation {
     function verifyAndAttestOnChain(bytes calldata rawQuote)
@@ -15,7 +16,7 @@ interface IOnChainProposer {
     function authorizedSequencerAddresses(address addr) external returns (bool isAuthorized);
 }
 
-contract TDXVerifier {
+contract TDXVerifier is Ownable {
     IAttestation public quoteVerifier = IAttestation(address(0));
     address public onChainProposer = address(0);
 
@@ -30,7 +31,7 @@ contract TDXVerifier {
     /// @notice Initializes the contract
     /// @param _dcap DCAP contract.
     /// @param _isDevMode Disables quote verification
-    constructor(address _dcap, bytes memory _rtmr0, bytes memory _rtmr1, bytes memory _rtmr2, bytes memory _mrtd, bool _isDevMode) {
+    constructor(address _dcap, bytes memory _rtmr0, bytes memory _rtmr1, bytes memory _rtmr2, bytes memory _mrtd, bool _isDevMode) Ownable(msg.sender) {
         require(_dcap != address(0), "TDXVerifier: DCAP address can't be null");
 
         quoteVerifier = IAttestation(_dcap);
@@ -49,7 +50,7 @@ contract TDXVerifier {
 
     /// @notice Initializes the OnChainProposer
     /// @param _ocp OnChainProposer contract address, used for permission checks
-    function initializeOnChainProposer(address _ocp) public {
+    function initializeOnChainProposer(address _ocp) public onlyOwner {
         require(onChainProposer == address(0), "TDXVerifier: OnChainProposer already initialized");
         require(_ocp != address(0), "TDXVerifier: OnChainPropser address can't be null");
         onChainProposer = _ocp;
