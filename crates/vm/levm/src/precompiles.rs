@@ -929,7 +929,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
         Err(InternalError::Slicing)?;
     }
 
-    let mut buf = calldata.clone(); // this clone is cheap.
+    let mut buf = calldata.slice(0..212); // this clone is cheap.
     buf.get_u32_le(); // advance offset by 4.
 
     h.copy_from_slice(&std::array::from_fn::<u64, 8, _>(|_| buf.get_u64_le()));
