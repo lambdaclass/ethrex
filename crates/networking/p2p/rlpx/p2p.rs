@@ -57,7 +57,7 @@ impl Capability {
     }
 
     pub fn protocol(&self) -> &str {
-        let len = self.protocol.iter().position(|c| c != &b'\0').unwrap_or(8);
+        let len = self.protocol.iter().position(|c| c == &b'\0').unwrap_or(8);
         str::from_utf8(&self.protocol[..len]).expect("value parsed as utf8 in RLPDecode")
     }
 }
@@ -348,5 +348,12 @@ mod tests {
         let decoded = Capability::decode(encoded_bytes).unwrap();
 
         assert_eq!(decoded, Capability::eth(8));
+    }
+
+    #[test]
+    fn test_protocol() {
+        let capability = Capability::eth(68);
+
+        assert_eq!(capability.protocol(), "eth");
     }
 }
