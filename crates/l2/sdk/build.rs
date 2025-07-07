@@ -40,7 +40,7 @@ fn get_contract_dependencies(contracts_path: &Path) {
         std::fs::create_dir_all(contracts_path)
             .expect("failed to create contracts output directory");
 
-        print_tree(Path::new(&source_path), 0);
+        print_tree_dirs_only(Path::new(&source_path), 0, 4);
 
         let status = Command::new("cp")
             .args([
@@ -61,31 +61,24 @@ fn get_contract_dependencies(contracts_path: &Path) {
     }
 }
 
-pub fn print_tree(path: &Path, indent: usize) {
+pub fn print_tree_dirs_only(path: &Path, indent: usize, max_depth: usize) {
+    if indent >= max_depth {
+        return;
+    }
+
     if let Ok(entries) = std::fs::read_dir(path) {
-        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-        entries.sort_by_key(|e| e.file_name());
+        let mut dirs: Vec<_> = entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir())
+            .collect();
 
-        for entry in entries {
-            let path = entry.path();
-            let is_dir = path.is_dir();
+        dirs.sort_by_key(|e| e.file_name());
 
-            // Print current entry with indentation
-            let prefix = "  ".repeat(indent);
-            if is_dir {
-                println!(
-                    "{}📁 {}",
-                    prefix,
-                    path.file_name().unwrap().to_string_lossy()
-                );
-                print_tree(&path, indent + 1); // Recurse into subdirectory
-            } else {
-                println!(
-                    "{}📄 {}",
-                    prefix,
-                    path.file_name().unwrap().to_string_lossy()
-                );
-            }
+        for dir in dirs {
+            let path = dir.path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            println!("{}📁 {}", "  ".repeat(indent), name);
+            print_tree_dirs_only(&path, indent + 1, max_depth);
         }
     } else {
         println!("{}<unreadable>", "  ".repeat(indent));
