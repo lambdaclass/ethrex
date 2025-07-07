@@ -36,6 +36,11 @@ contract TDXVerifier {
         quoteVerifier = IAttestation(_dcap);
         isDevMode = _isDevMode;
 
+        require(_rtmr0.length == 48, "RTMR0 must have 48 bytes");
+        require(_rtmr1.length == 48, "RTMR1 must have 48 bytes");
+        require(_rtmr2.length == 48, "RTMR2 must have 48 bytes");
+        require(_mrtd.length == 48, "MRTD must have 48 bytes");
+
         RTMR0 = _rtmr0;
         RTMR1 = _rtmr1;
         RTMR2 = _rtmr2;
