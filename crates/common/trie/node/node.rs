@@ -153,14 +153,14 @@ impl Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
+                        child: NodeHash::decode_child(&rlp_items[1]).into(),
                     }
                     .into()
                 }
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
+                let choices = array::from_fn(|i| NodeHash::decode_child(&rlp_items[i]).into());
                 let (value, _) = decode_bytes(&rlp_items[16])?;
                 BranchNode {
                     choices,
@@ -183,13 +183,5 @@ impl Node {
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
         }
-    }
-}
-
-fn decode_child(rlp: &[u8]) -> NodeHash {
-    match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-        Ok((&[], &[])) => NodeHash::default(),
-        _ => NodeHash::from_slice(rlp),
     }
 }

@@ -1,5 +1,10 @@
 use ethereum_types::H256;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
+use ethrex_rlp::{
+    decode::{RLPDecode, decode_bytes},
+    encode::RLPEncode,
+    error::RLPDecodeError,
+    structs::Encoder,
+};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 use sha3::{Digest, Keccak256};
@@ -94,6 +99,14 @@ impl NodeHash {
         match self {
             NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
             NodeHash::Inline(value) => value.1 == 0,
+        }
+    }
+
+    pub fn decode_child(rlp: &[u8]) -> Self {
+        match decode_bytes(rlp) {
+            Ok((hash, &[])) if hash.len() == 32 => Self::from_slice(hash),
+            Ok((&[], &[])) => Self::default(),
+            _ => Self::from_slice(rlp),
         }
     }
 }
