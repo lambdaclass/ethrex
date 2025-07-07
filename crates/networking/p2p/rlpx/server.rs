@@ -8,10 +8,7 @@ use spawned_concurrency::{
 use tracing::{error, info};
 
 use crate::{
-    discv4::server::Discv4Server,
-    kademlia::PeerChannels,
-    rlpx::{connection::server::RLPxConnection, lookup::RLPxLookupServer},
-    types::Node,
+    discv4::server::Discv4Server, network::P2PContext, rlpx::lookup::RLPxLookupServer, types::Node,
 };
 
 const MAX_PEER_COUNT: usize = 50;
@@ -22,9 +19,10 @@ pub enum RLPxServerError {}
 
 #[derive(Debug, Clone)]
 pub struct RLPxServerState {
+    ctx: P2PContext,
     discovery_server: Discv4Server,
     lookup_servers: Vec<GenServerHandle<RLPxLookupServer>>,
-    connections: Vec<PeerChannels>,
+    connections: Vec<Node>,
 }
 
 #[derive(Clone)]
@@ -41,9 +39,11 @@ pub struct RLPxServer;
 
 impl RLPxServer {
     pub async fn spawn(
+        ctx: P2PContext,
         discovery_server: Discv4Server,
     ) -> Result<GenServerHandle<Self>, GenServerError> {
         let state = RLPxServerState {
+            ctx,
             discovery_server,
             lookup_servers: vec![],
             connections: vec![],
@@ -76,8 +76,7 @@ impl GenServer for RLPxServer {
             InMessage::NewPeer(node) => {
                 info!("Found new peer: {node}");
                 // start_new_connection
-                RLPxConnection::spawn_as_initiator(state.discovery_server, &node);
-                state.connections.append(node);
+                state.connections.push(node);
             }
             InMessage::BookKeeping => {
                 info!("Performing bookkeeping");
@@ -99,9 +98,10 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
 
     for _ in 0..MAX_CONCURRENT_LOOKUPS {
         let node_iterator = state.discovery_server.new_random_iterator();
-        let Ok(new_lookup_server) = RLPxLookupServer::spawn(node_iterator, handle.clone())
-            .await
-            .inspect_err(|e| error!("Failed to spawn lookup server: {e}"))
+        let Ok(new_lookup_server) =
+            RLPxLookupServer::spawn(state.ctx.clone(), node_iterator, handle.clone())
+                .await
+                .inspect_err(|e| error!("Failed to spawn lookup server: {e}"))
         else {
             continue;
         };

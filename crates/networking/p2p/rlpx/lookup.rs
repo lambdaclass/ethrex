@@ -7,11 +7,16 @@ use tracing::error;
 
 use crate::{
     discv4::server::Discv4NodeIterator,
-    rlpx::server::{InMessage, RLPxServer},
+    network::P2PContext,
+    rlpx::{
+        connection::server::RLPxConnection,
+        server::{InMessage, RLPxServer},
+    },
 };
 
 #[derive(Debug, Clone)]
 pub struct RLPxLookupServerState {
+    ctx: P2PContext,
     node_iterator: Discv4NodeIterator,
     consumer: GenServerHandle<RLPxServer>,
 }
@@ -21,10 +26,12 @@ pub struct RLPxLookupServer;
 
 impl RLPxLookupServer {
     pub async fn spawn(
+        ctx: P2PContext,
         node_iterator: Discv4NodeIterator,
         consumer: GenServerHandle<RLPxServer>,
     ) -> Result<GenServerHandle<Self>, GenServerError> {
         let state = RLPxLookupServerState {
+            ctx,
             node_iterator,
             consumer,
         };
@@ -35,7 +42,7 @@ impl RLPxLookupServer {
 }
 
 #[derive(Debug, Clone)]
-struct FetchPeers;
+pub struct FetchPeers;
 
 impl GenServer for RLPxLookupServer {
     type CallMsg = Unused;
@@ -60,6 +67,9 @@ impl GenServer for RLPxLookupServer {
             return CastResponse::Stop;
         }
         let node = state.node_iterator.next().await;
+
+        // Start a connection
+        RLPxConnection::spawn_as_initiator(state.ctx.clone(), &node).await;
 
         if state.consumer.cast(InMessage::NewPeer(node)).await.is_err() {
             error!("RLPxLookupServer: failed to send message to consumer, stopping lookup");

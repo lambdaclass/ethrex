@@ -103,7 +103,7 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         .await
         .map_err(NetworkError::DiscoveryStart)?;
 
-    let _rlpx_server = RLPxServer::spawn(discovery);
+    let _rlpx_server = RLPxServer::spawn(context.clone(), discovery);
 
     info!(
         "Listening for requests at {}",
