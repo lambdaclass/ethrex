@@ -120,7 +120,7 @@ async fn main() {
         let rtmr2 = quote.get(472..520).unwrap();
 
         println!(
-            "MRTD={}\nRTMR0={}\nRTMR1={}\nRTMR2={}",
+            "MRTD=0x{}\nRTMR0=0x{}\nRTMR1=0x{}\nRTMR2=0x{}",
             hex::encode(mrtd),
             hex::encode(rtmr0),
             hex::encode(rtmr1),
