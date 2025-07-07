@@ -17,7 +17,11 @@ use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
 use keccak_hash::keccak;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, send_after};
+use spawned_concurrency::{
+    error::GenServerError,
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -52,12 +56,14 @@ pub enum BlockFetcherError {
     EvmError(#[from] ethrex_vm::EvmError),
     #[error("Failed to produce the blob bundle")]
     BlobBundleError,
-    #[error("Failed to compute privileged transactions hash: {0}")]
+    #[error("Failed to compute deposit logs hash: {0}")]
     PrivilegedTransactionError(
         #[from] ethrex_l2_common::privileged_transactions::PrivilegedTransactionError,
     ),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
-    GenServerError(spawned_concurrency::GenServerError),
+    GenServerError(GenServerError),
 }
 
 #[derive(Clone)]
@@ -131,7 +137,8 @@ impl BlockFetcher {
 }
 
 impl GenServer for BlockFetcher {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = BlockFetcherState;
     type Error = BlockFetcherError;
@@ -140,32 +147,23 @@ impl GenServer for BlockFetcher {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> spawned_concurrency::CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> spawned_concurrency::CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
         if let SequencerStatus::Following = state.sequencer_state.status().await {
-            let _ = fetch(state).await.inspect_err(|err| {
+            let _ = fetch(&mut state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
         }
         send_after(
             Duration::from_millis(state.fetch_interval_ms),
-            _tx.clone(),
-            Self::InMsg::Fetch,
+            handle.clone(),
+            Self::CastMsg::Fetch,
         );
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 
@@ -482,7 +480,7 @@ async fn extract_block_messages(
         txs.push(tx.clone());
         receipts.push(receipt);
     }
-    Ok(get_block_l1_messages(&txs, &receipts))
+    Ok(get_block_l1_messages(&receipts))
 }
 
 async fn get_batch(

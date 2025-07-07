@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use keccak_hash::H256;
 use serde_json::Value;
 use tracing::info;
@@ -51,20 +53,13 @@ impl RpcHandler for GetL1MessageProof {
             Some(receipt) => receipt,
             _ => return Ok(Value::Null),
         };
-        let tx = match storage
-            .get_transaction_by_hash(self.transaction_hash)
-            .await?
-        {
-            Some(tx) => tx,
-            _ => return Ok(Value::Null),
-        };
 
         // Gets the message hashes from the transaction
-        let tx_messages = get_block_l1_messages(&[tx], &[tx_receipt]);
-        let tx_message_hashes = tx_messages
+        let tx_messages = get_block_l1_messages(&[tx_receipt]);
+        let tx_messages_by_hash = tx_messages
             .iter()
-            .map(get_l1_message_hash)
-            .collect::<Vec<_>>();
+            .map(|msg| (get_l1_message_hash(msg), msg))
+            .collect::<HashMap<_, _>>();
 
         // Gets the batch number for the block
         let batch_number = match context
@@ -88,14 +83,7 @@ impl RpcHandler for GetL1MessageProof {
 
         let mut proofs = vec![];
         for (index, message_hash) in batch_message_hashes.iter().enumerate() {
-            let Some(message_idx) = tx_message_hashes
-                .iter()
-                .position(|hash| hash == message_hash)
-            else {
-                continue;
-            };
-
-            let Some(message) = tx_messages.get(message_idx) else {
+            let Some(message) = tx_messages_by_hash.get(message_hash) else {
                 continue;
             };
 
