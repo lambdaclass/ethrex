@@ -1080,21 +1080,23 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     ) -> Result<bool, RLPxError> {
         println!("Should process batch sealed: {}", msg.batch.number);
         if !self.blockchain.is_synced() {
-            debug!("Not processing new block, blockchain is not synced");
+            dbg!("Not processing new block, blockchain is not synced");
             return Ok(false);
         }
         if self.store_rollup.contains_batch(&msg.batch.number).await? {
-            debug!("Batch {} already sealed, ignoring it", msg.batch.number);
+            dbg!("Batch {} already sealed, ignoring it", msg.batch.number);
             return Ok(false);
         }
         if msg.batch.first_block == msg.batch.last_block {
             // is empty batch
+            dbg!("empty batch");
             return Ok(false);
         }
         if self.latest_block_added < msg.batch.last_block {
-            debug!(
+            dbg!(
                 "Not processing batch {} because the last block {} is not added yet",
-                msg.batch.number, msg.batch.last_block
+                msg.batch.number,
+                msg.batch.last_block
             );
             return Ok(false);
         }
