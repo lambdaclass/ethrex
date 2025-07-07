@@ -168,7 +168,8 @@ impl GenServer for BlockFetcher {
 }
 
 async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
-    while !node_is_up_to_date::<BlockFetcherError>(
+    // Since we call fetch every `fetch_interval_ms`, we don't need a loop until is up to date.
+    if !node_is_up_to_date::<BlockFetcherError>(
         &state.eth_client,
         state.on_chain_proposer_address,
         &state.rollup_store,
@@ -221,7 +222,8 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
         }
     }
 
-    info!("Node is up to date");
+    let last_l2_batch_number_known = state.rollup_store.get_latest_batch_number().await?;
+    info!("Node fetch up to {last_l2_batch_number_known}");
 
     Ok(())
 }
