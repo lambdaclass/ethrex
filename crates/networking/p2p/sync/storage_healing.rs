@@ -6,7 +6,7 @@
 //! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -129,35 +129,41 @@ async fn heal_storage_batch(
     {
         let nodes_received = nodes.len();
         debug!("Received {} storage nodes", nodes.len());
-        // Process the nodes for each account path
+        // Sort nodes by trie & update current batch
+        let mut nodes_to_commit = HashMap::new();
         for (acc_path, paths) in batch.iter_mut() {
+            // TODO: check if we can do this without opening a trie
             let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
-            // Get the corresponding nodes
-            let trie_nodes: Vec<ethrex_trie::Node> =
-                nodes.drain(..paths.len().min(nodes.len())).collect();
-            // Update batch: remove fetched paths & add children
-            let children = trie_nodes
+            // Collect fetched nodes for that particular trie
+            let trie_nodes = nodes
+                .drain(..paths.len().min(nodes.len()))
+                .collect::<Vec<_>>();
+            // Collect missing children paths for the fetched nodes (And also remove the fetched paths from the batch)
+            let missing_children = trie_nodes
                 .iter()
                 .zip(paths.drain(..trie_nodes.len()))
                 .map(|(node, path)| node_missing_children(node, &path, trie.db()))
                 .collect::<Result<Vec<_>, _>>()?;
-            paths.extend(children.into_iter().flatten());
-            // Write nodes to trie
-            trie.db()
-                .put_batch_async(
-                    nodes
-                        .iter()
-                        .filter_map(|node| match node.compute_hash() {
-                            hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                            NodeHash::Inline(_) => None,
-                        })
-                        .collect(),
-                )
-                .await?;
+            // Add the missing children paths of the nodes we fetched to the batch
+            paths.extend(missing_children.into_iter().flatten());
+            // Push nodes to commit list
+            let trie_nodes = trie_nodes
+                .into_iter()
+                .filter_map(|node| {
+                    match node.compute_hash() {
+                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                        // Filter out inline nodes
+                        NodeHash::Inline(_) => None,
+                    }
+                })
+                .collect();
+            nodes_to_commit.insert(*acc_path, trie_nodes);
+
             if nodes.is_empty() {
                 break;
             }
         }
+        store.commit_storage_nodes(nodes_to_commit).await?;
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
         batch.retain(|_, v| !v.is_empty());
