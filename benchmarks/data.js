@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751916510911,
+  "lastUpdate": 1751918732642,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5301,6 +5301,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012474130841121495,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0637f3734e69a5c0fcdf1d972f7cebc0e55c04d5",
+          "message": "ci(l2): make pr-main_l2_prover a required workflow (#3517)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-07T19:38:19Z",
+          "tree_id": "2c235cd71be64af005ff264c24fdb0e2066757ff",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0637f3734e69a5c0fcdf1d972f7cebc0e55c04d5"
+        },
+        "date": 1751918731738,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006510887804878049,
             "unit": "Mgas/s"
           }
         ]
