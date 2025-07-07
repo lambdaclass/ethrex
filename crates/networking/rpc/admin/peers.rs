@@ -49,7 +49,7 @@ impl From<PeerData> for RpcPeer {
         let mut protocols = Protocols::default();
         // Fill protocol data
         for cap in &peer.supported_capabilities {
-            match cap.protocol {
+            match cap.protocol() {
                 "p2p" => {
                     protocols.p2p = Some(ProtocolData {
                         version: cap.version,
