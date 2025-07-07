@@ -364,4 +364,4 @@ To run the execution node on any network with metrics, the next steps should be 
 
     docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
     ```
-For more details on running a sync go [here](../../tooling/sync/readme.MD)
+For more details on running a sync go to `ethrex/tooling/sync/readme.md`
