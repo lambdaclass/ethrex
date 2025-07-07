@@ -38,11 +38,11 @@ let
   };
 
   contracts = pkgs.runCommand "contracts" {} ''
-    mkdir -p $out/contracts/lib/openzeppelin-contracts-upgradeable
-    cp -r ${openzeppelin}/* $out/contracts/lib/openzeppelin-contracts-upgradeable
+    mkdir -p $out/lib/openzeppelin-contracts-upgradeable
+    cp -r ${openzeppelin}/* $out/lib/openzeppelin-contracts-upgradeable
 
-    mkdir -p $out/contracts/lib/sp1-contracts
-    cp -r ${sp1_contracts}/* $out/contracts/lib/sp1-contracts
+    mkdir -p $out/lib/sp1-contracts
+    cp -r ${sp1_contracts}/* $out/lib/sp1-contracts
   '';
 
 in
