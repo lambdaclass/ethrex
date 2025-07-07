@@ -51,10 +51,10 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(
+    pub fn commit<'a>(
         &mut self,
-        acc: &mut Vec<(NodeHash, Vec<u8>)>,
-        encoding_buffer: &mut Vec<u8>,
+        acc: &mut Vec<(NodeHash, (usize, usize))>,
+        encoding_buffer: &'a mut Vec<u8>,
     ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
@@ -71,8 +71,10 @@ impl NodeRef {
                 }
 
                 let hash = hash.get_or_init(|| node.compute_hash());
+                let new_encode_start = encoding_buffer.len();
                 node.encode(encoding_buffer);
-                acc.push((*hash, encoding_buffer.drain(..).as_slice().to_vec()));
+                let new_encode_end = encoding_buffer.len();
+                acc.push((*hash, (new_encode_start, new_encode_end)));
 
                 let hash = *hash;
                 *self = hash.into();
