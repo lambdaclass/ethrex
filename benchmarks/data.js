@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751906475759,
+  "lastUpdate": 1751907866652,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2815,6 +2815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209081240138,
             "range": "± 841121534",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b08fa01cfcefc97428d5d9872aca7a7637dab6c3",
+          "message": "fix(l2): revert to rust 1.87 (#3506)\n\n**Motivation**\n\nThe SP1 and RISC0 workflows are broken because they don't yet support\nRust 1.88.\n\n**Description**\n\nReverts the Rust version to 1.87.\n\n\nCloses None",
+          "timestamp": "2025-07-07T16:02:04Z",
+          "tree_id": "8ec748de442339ffc840eb543717650bdc405e65",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b08fa01cfcefc97428d5d9872aca7a7637dab6c3"
+        },
+        "date": 1751907856527,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210537404199,
+            "range": "± 519479005",
             "unit": "ns/iter"
           }
         ]
