@@ -20,6 +20,7 @@ use ratatui::{
 };
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
+use crate::based::sequencer_state::SequencerState;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::{
     SequencerConfig,
@@ -52,7 +53,12 @@ pub struct EthrexMonitor {
 }
 
 impl EthrexMonitor {
-    pub async fn new(store: Store, rollup_store: StoreRollup, cfg: &SequencerConfig) -> Self {
+    pub async fn new(
+        sequencer_state: SequencerState,
+        store: Store,
+        rollup_store: StoreRollup,
+        cfg: &SequencerConfig,
+    ) -> Self {
         let eth_client = EthClient::new(cfg.eth.rpc_url.first().expect("No RPC URLs provided"))
             .expect("Failed to create EthClient");
         // TODO: De-hardcode the rollup client URL
@@ -76,7 +82,7 @@ impl EthrexMonitor {
             )
             .await,
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(&rollup_client, &store).await,
+            node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
             mempool: MempoolTable::new(&rollup_client).await,
             batches_table: BatchesTable::new(
                 cfg.l1_committer.on_chain_proposer_address,
@@ -214,9 +220,7 @@ impl EthrexMonitor {
     }
 
     pub async fn on_tick(&mut self) {
-        self.node_status
-            .on_tick(&self.rollup_client, &self.store)
-            .await;
+        self.node_status.on_tick(&self.store).await;
         self.global_chain_status
             .on_tick(&self.eth_client, &self.store, &self.rollup_store)
             .await;

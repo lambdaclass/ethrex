@@ -1,4 +1,3 @@
-use crate::based::node_status::NodeStatus;
 use crate::l2::batch::GetBatchByBatchNumberRequest;
 use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
@@ -7,7 +6,6 @@ use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
-use ethrex_l2::based::sequencer_state::SequencerState;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -42,7 +40,6 @@ pub struct RpcApiContext {
     pub valid_delegation_addresses: Vec<Address>,
     pub sponsor_pk: SecretKey,
     pub rollup_store: StoreRollup,
-    pub sequencer_state: SequencerState,
 }
 
 pub trait RpcHandler: Sized {
@@ -79,7 +76,6 @@ pub async fn start_api(
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
-    sequencer_state: SequencerState,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -102,7 +98,6 @@ pub async fn start_api(
         valid_delegation_addresses,
         sponsor_pk,
         rollup_store,
-        sequencer_state,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -179,9 +174,6 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::L1RpcNamespace(ethrex_rpc::RpcNamespace::Eth)) => {
             map_eth_requests(req, context).await
         }
-        Ok(RpcNamespace::L1RpcNamespace(ethrex_rpc::RpcNamespace::Debug)) => {
-            map_debug_requests(req, context).await
-        }
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
         _ => ethrex_rpc::map_http_requests(req, context.l1_ctx)
             .await
@@ -207,15 +199,6 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
                 .map_err(RpcErr::L1RpcErr)
         }
         _other_eth_method => ethrex_rpc::map_eth_requests(req, context.l1_ctx)
-            .await
-            .map_err(RpcErr::L1RpcErr),
-    }
-}
-
-pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    match req.method.as_str() {
-        "debug_nodeStatus" => NodeStatus::call(req, context).await,
-        _other_debug_method => ethrex_rpc::map_debug_requests(req, context.l1_ctx)
             .await
             .map_err(RpcErr::L1RpcErr),
     }

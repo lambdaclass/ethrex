@@ -1,4 +1,3 @@
-use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ratatui::{
     buffer::Buffer,
@@ -8,29 +7,33 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
+use crate::based::sequencer_state::SequencerState;
+
 pub struct NodeStatusTable {
     pub state: TableState,
     pub items: [(String, String); 5],
+    sequencer_state: SequencerState,
 }
 
 impl NodeStatusTable {
-    pub async fn new(rollup_client: &EthClient, store: &Store) -> Self {
+    pub async fn new(sequencer_state: SequencerState, store: &Store) -> Self {
         Self {
             state: TableState::default(),
-            items: Self::refresh_items(rollup_client, store).await,
+            items: Self::refresh_items(&sequencer_state, store).await,
+            sequencer_state,
         }
     }
 
-    pub async fn on_tick(&mut self, rollup_client: &EthClient, store: &Store) {
-        self.items = Self::refresh_items(rollup_client, store).await;
+    pub async fn on_tick(&mut self, store: &Store) {
+        self.items = Self::refresh_items(&self.sequencer_state, store).await;
     }
 
-    async fn refresh_items(rollup_client: &EthClient, store: &Store) -> [(String, String); 5] {
+    async fn refresh_items(
+        sequencer_state: &SequencerState,
+        store: &Store,
+    ) -> [(String, String); 5] {
         let last_update = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let status = rollup_client
-            .node_status()
-            .await
-            .expect("Failed to get node status");
+        let status = sequencer_state.status().await;
         let last_known_batch = "NaN"; // TODO: Implement last known batch retrieval
         let last_known_block = store
             .get_latest_block_number()

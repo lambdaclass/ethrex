@@ -15,10 +15,7 @@ use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
-use ethrex_l2::{
-    SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-};
+use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
@@ -161,14 +158,6 @@ impl Command {
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
-                let initial_status = if opts.sequencer_opts.based {
-                    SequencerStatus::default()
-                } else {
-                    SequencerStatus::Sequencing
-                };
-
-                let shared_state = SequencerState::from(initial_status);
-
                 l2::initializers::init_rpc_api(
                     &opts.node_opts,
                     &opts,
@@ -180,7 +169,6 @@ impl Command {
                     cancel_token.clone(),
                     tracker.clone(),
                     rollup_store.clone(),
-                    shared_state.clone(),
                 )
                 .await;
 
@@ -217,7 +205,6 @@ impl Command {
                     store,
                     rollup_store,
                     blockchain,
-                    shared_state,
                     l2_sequencer_cfg,
                     #[cfg(feature = "metrics")]
                     format!(
