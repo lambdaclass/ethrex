@@ -22,6 +22,29 @@ let
       chmod +x $out/bin/solc
     '';
   };
+
+  openzeppelin = pkgs.fetchFromGitHub {
+    owner = "OpenZeppelin";
+    repo = "openzeppelin-contracts-upgradeable";
+    rev = "v5.3.0";
+    sha256 = "";
+  };
+
+  sp1_contracts = pkgs.fetchFromGitHub {
+    owner = "succinctlabs";
+    repo = "sp1-contracts";
+    rev = "4.0.0";
+    sha256 = "";
+  };
+
+  contracts = pkgs.runCommand "contracts" {} ''
+    mkdir -p $out/lib/openzeppelin-contracts-upgradeable
+    cp -r ${openzeppelin}/* $out/lib/openzeppelin-contracts-upgradeable
+
+    mkdir -p $out/lib/sp1-contracts
+    cp -r ${sp1_contracts}/* $out/lib/sp1-contracts
+  '';
+
 in
 let
   quoteGen = pkgs.rustPlatform.buildRustPackage rec {
@@ -45,10 +68,13 @@ let
     nativeBuildInputs = [
       pkgs.pkg-config
       pkgs.rustPlatform.cargoSetupHook
-      pkgs.git
       solc_0_8_29
     ];
-    env.OPENSSL_NO_VENDOR = 1;
+
+    env = {
+      OPENSSL_NO_VENDOR = 1;
+      CONTRACTS_PATH = contracts;
+    };
   };
 in
 {

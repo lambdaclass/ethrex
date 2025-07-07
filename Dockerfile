@@ -23,6 +23,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /ethrex/recipe.json recipe.json
+# Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Install solc for build scripts
@@ -40,6 +41,6 @@ FROM ubuntu:24.04
 WORKDIR /usr/local/bin
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
-COPY --from=builder /ethrex/target/release/ethrex .
+COPY --from=builder ethrex/target/release/ethrex .
 EXPOSE 8545
 ENTRYPOINT [ "./ethrex" ]
