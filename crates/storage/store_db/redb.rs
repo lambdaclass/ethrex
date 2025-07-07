@@ -797,6 +797,10 @@ impl StoreEngine for RedBStore {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
+    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+        todo!()
+    }
+
     async fn add_block_header(
         &self,
         block_hash: BlockHash,

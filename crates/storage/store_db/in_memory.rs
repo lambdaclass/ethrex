@@ -390,6 +390,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+        todo!()
+    }
+
     fn get_current_account_info(
         &self,
         address: Address,

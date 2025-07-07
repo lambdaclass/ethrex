@@ -317,160 +317,6 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
-        let tx = self.db.begin_readwrite()?;
-
-        let stats_pre_state_log = tx
-            .table_stat::<StateTriePruningLog>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-        let stats_pre_state_nodes = tx
-            .table_stat::<StateTrieNodes>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-        let stats_pre_storage_log = tx
-            .table_stat::<StorageTriesPruningLog>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-        let stats_pre_storage_nodes = tx
-            .table_stat::<StorageTriesNodes>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-
-        let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
-        // Get the block number of the last state trie pruning log entry
-        if let Some((
-            BlockNumHash {
-                block_number: last_num,
-                block_hash: _,
-            },
-            _,
-        )) = cursor_state_trie_pruning_log.last()?
-        {
-            // We keep the last 1024 blocks
-            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
-            tracing::debug!(
-                keep_from = keep_from,
-                last_num = last_num,
-                "[KEEPING STATE TRIE PRUNING LOG]"
-            );
-
-            let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
-            let mut kv_state_trie_pruning = cursor_state_trie_pruning_log.first()?;
-            // Iterate over the first entries of the pruning log and delete the nodes from the trie
-            // until we reach the keep from block number
-            while let Some((block, node_hash)) = kv_state_trie_pruning {
-                // If the block number is higher than the keep from, we can stop
-                // since we reached the keep from block number
-                if block.block_number >= keep_from {
-                    tracing::debug!(
-                        keep_from = keep_from,
-                        last_num = last_num,
-                        "[STOPPING STATE TRIE PRUNING]"
-                    );
-                    break;
-                }
-
-                // Delete the node from the trie
-                let k_delete = NodeHash::Hashed(node_hash.into());
-                if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
-                    && key == k_delete
-                {
-                    tracing::debug!(
-                        node = hex::encode(node_hash.as_ref()),
-                        block_number = block.block_number,
-                        block_hash = hex::encode(block.block_hash.0.as_ref()),
-                        "[DELETING STATE NODE]"
-                    );
-                    cursor_state_trie.delete_current()?;
-                    cursor_state_trie_pruning_log.delete_current()?;
-                }
-                kv_state_trie_pruning = cursor_state_trie_pruning_log.next()?;
-            }
-        }
-
-        let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
-        // Get the block number of the last storage trie pruning log entry
-        if let Some((
-            BlockNumHash {
-                block_number: last_num,
-                block_hash: _,
-            },
-            _,
-        )) = cursor_storage_trie_pruning_log.last()?
-        {
-            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
-
-            let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
-            let mut kv_storage_trie_pruning = cursor_storage_trie_pruning_log.first()?;
-            // Iterate over the first entries of the pruning log and delete the nodes from the trie
-            // until we reach the keep from block number
-            while let Some((block, storage_trie_pruning_hash)) = kv_storage_trie_pruning {
-                // If the block number is higher than the keep from, we can stop
-                // since we reached the keep from block number
-                if block.block_number >= keep_from {
-                    tracing::debug!(
-                        keep_from = keep_from,
-                        last_num = last_num,
-                        "[STOPPING STORAGE TRIE PRUNING]"
-                    );
-                    break;
-                }
-
-                // If the storage trie hash is found, delete it from the trie and the pruning log
-                if let Some((key, _)) = cursor_storage_trie.seek_exact(storage_trie_pruning_hash)?
-                    && key == storage_trie_pruning_hash
-                {
-                    tracing::debug!(
-                        hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
-                        node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
-                        block_number = block.block_number,
-                        block_hash = hex::encode(block.block_hash.0.as_ref()),
-                        "[DELETING STORAGE NODE]"
-                    );
-                    cursor_storage_trie.delete_current()?;
-                    cursor_storage_trie_pruning_log.delete_current()?;
-                }
-
-                kv_storage_trie_pruning = cursor_storage_trie_pruning_log.next()?;
-            }
-        }
-
-        // Get the stats after the pruning and log the metrics
-        let stats_post_state_log = tx
-            .table_stat::<StateTriePruningLog>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-        let stats_post_state_nodes = tx
-            .table_stat::<StateTrieNodes>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-        let stats_post_storage_log = tx
-            .table_stat::<StorageTriesPruningLog>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-        let stats_post_storage_nodes = tx
-            .table_stat::<StorageTriesNodes>()
-            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
-
-        tracing::info!(
-            state_trie_entries_delta = stats_post_state_nodes.entries() as isize
-                - stats_pre_state_nodes.entries() as isize,
-            state_trie_log_entries_delta =
-                stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
-            storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
-                - stats_pre_storage_nodes.entries() as isize,
-            storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
-                - stats_pre_storage_log.entries() as isize,
-            "[PRUNING METRICS]",
-        );
-
-        debug_assert_eq!(
-            stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize,
-            stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
-        );
-        debug_assert_eq!(
-            stats_post_storage_nodes.entries() as isize
-                - stats_pre_storage_nodes.entries() as isize,
-            stats_post_storage_log.entries() as isize - stats_pre_storage_log.entries() as isize,
-        );
-
-        tx.commit().map_err(StoreError::LibmdbxError)
-    }
-
     // Check if the snapshot is at the canonical chain
     fn is_at_canonical_chain(&self, snapshot: BlockNumHash) -> Result<bool, StoreError> {
         let canonical_hash = self
@@ -1001,6 +847,160 @@ impl StoreEngine for Store {
         // Update the snapshot metadata to the last valid snapshot (head)
         tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, current_snapshot)?;
         tx.commit().map_err(|err| err.into())
+    }
+
+    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+        let tx = self.db.begin_readwrite()?;
+
+        let stats_pre_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+
+        let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+        // Get the block number of the last state trie pruning log entry
+        if let Some((
+            BlockNumHash {
+                block_number: last_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_state_trie_pruning_log.last()?
+        {
+            // We keep the last 1024 blocks
+            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
+            tracing::debug!(
+                keep_from = keep_from,
+                last_num = last_num,
+                "[KEEPING STATE TRIE PRUNING LOG]"
+            );
+
+            let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
+            let mut kv_state_trie_pruning = cursor_state_trie_pruning_log.first()?;
+            // Iterate over the first entries of the pruning log and delete the nodes from the trie
+            // until we reach the keep from block number
+            while let Some((block, node_hash)) = kv_state_trie_pruning {
+                // If the block number is higher than the keep from, we can stop
+                // since we reached the keep from block number
+                if block.block_number >= keep_from {
+                    tracing::debug!(
+                        keep_from = keep_from,
+                        last_num = last_num,
+                        "[STOPPING STATE TRIE PRUNING]"
+                    );
+                    break;
+                }
+
+                // Delete the node from the trie
+                let k_delete = NodeHash::Hashed(node_hash.into());
+                if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
+                    && key == k_delete
+                {
+                    tracing::debug!(
+                        node = hex::encode(node_hash.as_ref()),
+                        block_number = block.block_number,
+                        block_hash = hex::encode(block.block_hash.0.as_ref()),
+                        "[DELETING STATE NODE]"
+                    );
+                    cursor_state_trie.delete_current()?;
+                    cursor_state_trie_pruning_log.delete_current()?;
+                }
+                kv_state_trie_pruning = cursor_state_trie_pruning_log.next()?;
+            }
+        }
+
+        let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+        // Get the block number of the last storage trie pruning log entry
+        if let Some((
+            BlockNumHash {
+                block_number: last_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_storage_trie_pruning_log.last()?
+        {
+            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
+
+            let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
+            let mut kv_storage_trie_pruning = cursor_storage_trie_pruning_log.first()?;
+            // Iterate over the first entries of the pruning log and delete the nodes from the trie
+            // until we reach the keep from block number
+            while let Some((block, storage_trie_pruning_hash)) = kv_storage_trie_pruning {
+                // If the block number is higher than the keep from, we can stop
+                // since we reached the keep from block number
+                if block.block_number >= keep_from {
+                    tracing::debug!(
+                        keep_from = keep_from,
+                        last_num = last_num,
+                        "[STOPPING STORAGE TRIE PRUNING]"
+                    );
+                    break;
+                }
+
+                // If the storage trie hash is found, delete it from the trie and the pruning log
+                if let Some((key, _)) = cursor_storage_trie.seek_exact(storage_trie_pruning_hash)?
+                    && key == storage_trie_pruning_hash
+                {
+                    tracing::debug!(
+                        hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
+                        node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
+                        block_number = block.block_number,
+                        block_hash = hex::encode(block.block_hash.0.as_ref()),
+                        "[DELETING STORAGE NODE]"
+                    );
+                    cursor_storage_trie.delete_current()?;
+                    cursor_storage_trie_pruning_log.delete_current()?;
+                }
+
+                kv_storage_trie_pruning = cursor_storage_trie_pruning_log.next()?;
+            }
+        }
+
+        // Get the stats after the pruning and log the metrics
+        let stats_post_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+
+        tracing::info!(
+            state_trie_entries_delta = stats_post_state_nodes.entries() as isize
+                - stats_pre_state_nodes.entries() as isize,
+            state_trie_log_entries_delta =
+                stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+            storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
+                - stats_pre_storage_log.entries() as isize,
+            "[PRUNING METRICS]",
+        );
+
+        debug_assert_eq!(
+            stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize,
+            stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+        );
+        debug_assert_eq!(
+            stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            stats_post_storage_log.entries() as isize - stats_pre_storage_log.entries() as isize,
+        );
+
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn add_block_header(

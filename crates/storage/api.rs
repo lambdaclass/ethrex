@@ -29,6 +29,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// to complete reorg recovery.
     async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
 
+    /// Prunes the state and storage log tables.
+    fn prune_state_and_storage_log(&self) -> Result<(), StoreError>;
+
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
