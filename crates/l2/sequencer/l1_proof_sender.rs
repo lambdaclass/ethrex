@@ -229,6 +229,11 @@ async fn send_proof_to_aligned(
     batch_number: u64,
     batch_proofs: impl IntoIterator<Item = &BatchProof>,
 ) -> Result<(), ProofSenderError> {
+    info!(
+        ?batch_number,
+        "Sending batch proof(s) to Aligned Layer"
+    );
+
     let fee_estimation = estimate_fee(state).await?;
 
     let nonce = get_nonce_from_batcher(state.network.clone(), state.l1_address.0.into())
@@ -249,7 +254,7 @@ async fn send_proof_to_aligned(
             _ => continue,
         };
 
-        debug!(
+        info!(
             prover_type = ?batch_proof.prover_type(),
             ?batch_number,
             "Submitting compressed proof to Aligned"
