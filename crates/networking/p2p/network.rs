@@ -12,6 +12,7 @@ use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
 };
+use spawned_concurrency::error::GenServerError;
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket},
@@ -33,6 +34,7 @@ pub fn peer_table(node_id: H256) -> Arc<Mutex<KademliaTable>> {
 #[derive(Debug)]
 pub enum NetworkError {
     DiscoveryStart(DiscoveryError),
+    RLPxStart(GenServerError),
 }
 
 #[derive(Clone, Debug)]
@@ -103,7 +105,10 @@ pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<
         .await
         .map_err(NetworkError::DiscoveryStart)?;
 
-    let _rlpx_server = RLPxServer::spawn(context.clone(), discovery);
+    info!("Starting P2P service");
+    RLPxServer::spawn(context.clone(), discovery)
+        .await
+        .map_err(NetworkError::RLPxStart)?;
 
     info!(
         "Listening for requests at {}",
