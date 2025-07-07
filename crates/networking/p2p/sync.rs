@@ -257,6 +257,11 @@ impl Syncer {
                         first_block_header.parent_hash
                     );
                 }
+                if store.get_block_by_hash(sync_head).await?.is_some() {
+                    // If we have the sync head in the store, we can stop here
+                    warn!("Sync head found in store, stopping sync");
+                    return Ok(());
+                }
                 warn!("Sync failed to find target block header, going back to the previous parent");
                 search_head = first_block_header.parent_hash;
                 continue;
