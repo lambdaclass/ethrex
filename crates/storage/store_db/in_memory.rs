@@ -21,7 +21,6 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-use tracing::{debug, info, warn};
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
@@ -119,10 +118,6 @@ impl StoreEngine for Store {
         if let (Some(first_block), Some(last_block)) =
             (update_batch.blocks.first(), update_batch.blocks.last())
         {
-            info!(
-                "Applying snapshot updates for blocks {:?} to {:?}",
-                first_block, last_block
-            );
             let parent_block = (
                 first_block.header.number - 1,
                 first_block.header.parent_hash,
@@ -238,15 +233,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    /// Rewinds (a.k.a undo) writes from the write logs until a canonical block is reached.
-    ///
-    /// This is used to restore the flat tables from the write logs after a reorg.
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
-        // Get the current snapshot block
         let Some(mut current_snapshot) = store.current_snapshot_block else {
-            info!("No current snapshot block found, nothing to undo");
             return Ok(());
         };
 
@@ -260,21 +250,13 @@ impl StoreEngine for Store {
             .unwrap_or_default();
 
         while canonical_hash != snapshot_hash {
-            warn!("UNDO: searching for {current_snapshot:?}");
-
             // Restore account info for the block of the current snapshot
             if let Some(entries) = store.account_state_logs.get(&current_snapshot).cloned() {
-                // Iterate through the account info logs for the current snapshot
                 for (parent_block, log) in entries {
-                    warn!(
-                        "UNDO: found account info log for {current_snapshot:?}: {parent_block:?}"
-                    );
                     // Restore previous state
                     if log.previous_info == AccountInfo::default() {
-                        debug!("UNDO: removing account info for {:?}", log.address);
                         store.account_info.remove(&log.address);
                     } else {
-                        debug!("UNDO: restoring account info for {:?}", log.address);
                         store
                             .account_info
                             .insert(log.address, log.previous_info.clone());
@@ -294,10 +276,8 @@ impl StoreEngine for Store {
                 for (parent_block, log) in entries {
                     // Restore previous state
                     if log.old_value.is_zero() {
-                        debug!("UNDO: removing account storage for {:?}", log.address);
                         store.account_storage.remove(&(log.address, log.slot));
                     } else {
-                        debug!("UNDO: restoring account storage for {:?}", log.address);
                         store
                             .account_storage
                             .insert((log.address, log.slot), log.old_value);
@@ -313,7 +293,6 @@ impl StoreEngine for Store {
             };
 
             if current_snapshot == (block_num, snapshot_hash).into() {
-                info!("UNDO: logs exhausted: back to canonical chain");
                 break;
             }
 
@@ -332,26 +311,14 @@ impl StoreEngine for Store {
         }
 
         store.current_snapshot_block = Some(current_snapshot);
-        info!("UNDO: current snapshot block set to {:?}", current_snapshot);
 
         Ok(())
     }
 
-    /// Replays writes from the write logs until the head block is reached.
-    ///
-    /// This is used to restore the flat tables from the write logs after a reorg.
-    /// Assumes that the current flat representation corresponds to a block in the canonical chain.
-    /// *NOTE:* this function is meant to be called after calling `undo_writes_until_canonical` to
-    /// restore the flat tables to stay in sync with the canonical chain after a reorg.
-    ///
-    /// # Arguments
-    ///
-    ///  * `head_hash` - The block hash of the head block to replay writes until.
     async fn replay_writes_until_head(&self, head_hash: H256) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
         let Some(mut current_snapshot) = store.current_snapshot_block else {
-            warn!("REPLAY: No current snapshot block found");
             return Ok(());
         };
 
@@ -370,22 +337,20 @@ impl StoreEngine for Store {
                 block_hash: canonical_hash,
             };
 
-            warn!("REPLAY: processing block {target_block:?}");
+            tracing::warn!("REPLAY: processing block {target_block:?}");
 
             // Apply account state logs for this block
             if let Some(entries) = store.account_state_logs.get(&target_block).cloned() {
                 for (parent_block, log) in entries {
                     // Verify this log applies to our current state
                     if parent_block != current_snapshot {
-                        continue;
+                        break;
                     }
 
                     // Apply the new state
                     if log.info == AccountInfo::default() {
-                        debug!("REPLAY: removing account info for {:?}", log.address);
                         store.account_info.remove(&log.address);
                     } else {
-                        debug!("REPLAY: applying account info for {:?}", log.address);
                         store.account_info.insert(log.address, log.info.clone());
                     }
                 }
@@ -396,15 +361,13 @@ impl StoreEngine for Store {
                 for (parent_block, log) in entries {
                     // Verify this log applies to our current state
                     if parent_block != current_snapshot {
-                        continue;
+                        break;
                     }
 
                     // Apply the new state
                     if log.new_value.is_zero() {
-                        debug!("REPLAY: removing account storage for {:?}", log.address);
                         store.account_storage.remove(&(log.address, log.slot));
                     } else {
-                        debug!("REPLAY: applying account storage for {:?}", log.address);
                         store
                             .account_storage
                             .insert((log.address, log.slot), log.new_value);
@@ -417,18 +380,13 @@ impl StoreEngine for Store {
 
             // Stop if we've reached the target head
             if canonical_hash == head_hash {
-                info!("REPLAY: Reached target head {head_hash:?}");
+                tracing::warn!("REPLAY: reached head {head_hash:?}");
                 break;
             }
         }
 
         // Update the current snapshot block
         store.current_snapshot_block = Some(current_snapshot);
-        info!(
-            "REPLAY: current snapshot block set to {:?}",
-            current_snapshot
-        );
-
         Ok(())
     }
 
