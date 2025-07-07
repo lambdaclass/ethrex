@@ -1078,6 +1078,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         msg: &NewBatchSealedMessage,
     ) -> Result<bool, RLPxError> {
+        println!("Should process batch sealed: {}", msg.batch.number);
         if !self.blockchain.is_synced() {
             debug!("Not processing new block, blockchain is not synced");
             return Ok(false);
@@ -1124,6 +1125,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     #[cfg(feature = "l2")]
     async fn process_batch_sealed(&mut self, msg: &NewBatchSealedMessage) -> Result<(), RLPxError> {
+        println!("Processing batch sealed: {}", msg.batch.number);
         self.store_rollup.seal_batch(msg.batch.clone()).await?;
         info!(
             "Sealed batch {} with blocks from {} to {}",
