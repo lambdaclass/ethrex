@@ -18,7 +18,11 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
 
+// Pads the input array to the right with zeros to ensure it is 8 bytes long.
+// Panics if the input is longer than 8 bytes.
 const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
+    assert!(N <= 8, "Input array must be 8 bytes or less");
+
     let mut padded = [0_u8; 8];
     let mut i = 0;
     while i < input.len() {
