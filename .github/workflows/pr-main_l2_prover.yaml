@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint_exec, lint_tdx, lint_zk]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.lint_exec.result != 'skipped' && needs.linx_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}
+    if: ${{ always() && needs.lint_exec.result != 'skipped' && needs.lint_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
