@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-07
+
+- Improve blake2f [#3503](https://github.com/lambdaclass/ethrex/pull/3503)
+
 ### 2025-06-30
 
 - Use a stack pool [#3386](https://github.com/lambdaclass/ethrex/pull/3386)
