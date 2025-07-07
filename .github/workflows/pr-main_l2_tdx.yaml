@@ -32,6 +32,7 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -78,4 +79,3 @@ jobs:
           sleep 30
           ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          

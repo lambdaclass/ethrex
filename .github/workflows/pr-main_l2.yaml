@@ -41,6 +41,7 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -80,6 +81,7 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -148,6 +150,7 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
