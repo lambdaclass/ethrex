@@ -846,6 +846,7 @@ const R4: u32 = 63;
 /// v[0..15].  The full modified vector is returned.
 /// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.1
 #[allow(clippy::indexing_slicing)]
+#[inline(always)]
 fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u64; 16] {
     let mut ret = v;
     ret[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
@@ -862,6 +863,7 @@ fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u
 
 /// Perform the permutations on the work vector given the rounds to permute and the message block
 #[allow(clippy::indexing_slicing)]
+#[inline(always)]
 fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u64; 16] {
     let mut ret = v;
 
@@ -885,6 +887,7 @@ fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u
 }
 
 /// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.2
+#[inline(always)]
 fn blake2f_compress_f(
     rounds: usize, // Specifies the rounds to permute
     h: [u64; 8],   // State vector, defines the work vector (v) and affects the XOR process
