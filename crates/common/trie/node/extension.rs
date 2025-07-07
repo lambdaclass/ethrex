@@ -1,11 +1,12 @@
 use ethrex_rlp::structs::Encoder;
 
+use crate::NodeRef;
 use crate::ValueRLP;
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
 use crate::{TrieDB, error::TrieError};
 
-use super::{BranchNode, Node, NodeRef, ValueOrHash};
+use super::{BranchNode, Node, ValueOrHash};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value

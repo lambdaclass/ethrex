@@ -8,7 +8,7 @@ use ethrex_rlp::{
 };
 
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
-use crate::{NodeHash, node::NodeRef};
+use crate::{NodeHash, node_ref::NodeRef};
 
 enum NodeType {
     Branch = 0,

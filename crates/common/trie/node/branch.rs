@@ -1,8 +1,9 @@
 use ethrex_rlp::structs::Encoder;
 
+use crate::NodeRef;
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
-use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
+use super::{ExtensionNode, LeafNode, Node, ValueOrHash};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes

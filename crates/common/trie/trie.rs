@@ -4,6 +4,7 @@ pub mod logger;
 mod nibbles;
 mod node;
 mod node_hash;
+mod node_ref;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
@@ -19,10 +20,7 @@ pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
-pub use self::{
-    node::{Node, NodeRef},
-    node_hash::NodeHash,
-};
+pub use self::{node::Node, node_hash::NodeHash, node_ref::NodeRef};
 
 pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
