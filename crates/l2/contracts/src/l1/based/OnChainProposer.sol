@@ -373,8 +373,8 @@ contract OnChainProposer is
         delete batchCommitments[batchNumber - 1];
 
         verifiedBatches[batchCommitments[batchNumber].lastBlockHash] = true;
-
-        emit BatchVerified(lastVerifiedBatch);
+        
+        emit BatchesVerified(lastVerifiedBatch, lastVerifiedBatch);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -397,7 +397,8 @@ contract OnChainProposer is
         );
 
         uint256 batchNumber = firstBatchNumber;
-
+        uint256[] memory batchIds = new uint256[](alignedPublicInputsList.length);
+        
         for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
@@ -441,12 +442,14 @@ contract OnChainProposer is
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
 
-            emit BatchVerified(batchNumber);
+            batchIds[i] = batchNumber;
             verifiedBatches[batchCommitments[batchNumber].lastBlockHash] = true;
          
             lastVerifiedBatch = batchNumber;
             batchNumber++;
         }
+        
+        emit BatchesVerified(firstBatchNumber, lastVerifiedBatch);
     }
 
     function _verifyPublicData(

@@ -248,7 +248,7 @@ async fn fetch_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherErr
                 state.last_l1_block_fetched + 1,
                 new_last_l1_fetched_block,
                 state.on_chain_proposer_address,
-                keccak(b"BatchVerified(uint256)"),
+                keccak(b"BatchesVerified(uint256,uint256)"),
             )
             .await?;
 
@@ -266,7 +266,7 @@ async fn fetch_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherErr
                 ))?
                 .as_bytes();
 
-            let committed_batch_number = u64::from_be_bytes(
+            let commit_batch_number = u64::from_be_bytes(
                 bytes
                     .get(bytes.len() - 8..)
                     .ok_or(BlockFetcherError::InternalError(
@@ -280,10 +280,8 @@ async fn fetch_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherErr
                     })?,
             );
 
-            if committed_batch_number > state.latest_safe_batch {
-                state
-                    .pending_commit_logs
-                    .insert(committed_batch_number, log);
+            if commit_batch_number > state.latest_safe_batch {
+                state.pending_commit_logs.insert(commit_batch_number, log);
             }
         }
 
@@ -298,7 +296,7 @@ async fn fetch_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherErr
                 ))?
                 .as_bytes();
 
-            let verify_batch_number = u64::from_be_bytes(
+            let initial_batch_number = u64::from_be_bytes(
                 bytes
                     .get(bytes.len() - 8..)
                     .ok_or(BlockFetcherError::InternalError(
@@ -312,8 +310,35 @@ async fn fetch_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherErr
                     })?,
             );
 
-            if verify_batch_number > state.latest_safe_batch {
-                state.pending_verify_logs.insert(verify_batch_number, log);
+            let bytes = log
+                .log
+                .topics
+                .get(2)
+                .ok_or(BlockFetcherError::InternalError(
+                    "Failed to get committed batch number from BatchCommitted log".to_string(),
+                ))?
+                .as_bytes();
+
+            let final_batch_number = u64::from_be_bytes(
+                bytes
+                    .get(bytes.len() - 8..)
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Invalid byte length for u64 conversion".to_string(),
+                    ))?
+                    .try_into()
+                    .map_err(|_| {
+                        BlockFetcherError::InternalError(
+                            "Invalid conversion from be bytes to u64".to_string(),
+                        )
+                    })?,
+            );
+
+            if initial_batch_number > state.latest_safe_batch
+                && initial_batch_number <= final_batch_number
+            {
+                for batch_number in initial_batch_number..=final_batch_number {
+                    state.pending_verify_logs.insert(batch_number, log.clone());
+                }
             }
         }
     }
