@@ -94,7 +94,7 @@ jobs:
     steps:
       - name: Check if any job failed
         run: |
-          if [ "${{ needs.run-lint_exec.result }}" != "success" ]; then
+          if [ "${{ needs.lint_exec.result }}" != "success" ]; then
             echo "Job Lint exec Check failed"
             exit 1
           fi
