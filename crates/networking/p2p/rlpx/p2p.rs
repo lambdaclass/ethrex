@@ -69,7 +69,7 @@ impl Capability {
 impl RLPEncode for Capability {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
-            .encode_field(&self.protocol)
+            .encode_field(&self.protocol())
             .encode_field(&self.version)
             .finish();
     }
@@ -342,9 +342,17 @@ impl RLPxMessage for PongMessage {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_rlp::decode::RLPDecode;
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
     use crate::rlpx::p2p::Capability;
+
+    #[test]
+    fn test_encode_capability() {
+        let capability = Capability::eth(8);
+        let encoded = capability.encode_to_vec();
+
+        assert_eq!(&encoded, &[197_u8, 131, b'e', b't', b'h', 8]);
+    }
 
     #[test]
     fn test_decode_capability() {
