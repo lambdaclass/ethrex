@@ -691,7 +691,7 @@ impl EthClient {
         from_block: U256,
         to_block: U256,
         address: Address,
-        topics: Vec<H256>,
+        topic: H256,
     ) -> Result<Vec<RpcLog>, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -702,7 +702,7 @@ impl EthClient {
                     "fromBlock": format!("{:#x}", from_block),
                     "toBlock": format!("{:#x}", to_block),
                     "address": format!("{:#x}", address),
-                    "topics": topics.iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>()
+                    "topics": [format!("{:#x}", topic)]
                 }
             )]),
         };

@@ -206,7 +206,7 @@ pub async fn get_privileged_transactions(
             state.last_block_fetched + 1,
             new_last_block,
             state.address,
-            vec![topic],
+            topic,
         )
         .await
         .inspect_err(|error| {

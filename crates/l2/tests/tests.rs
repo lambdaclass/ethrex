@@ -199,12 +199,7 @@ async fn test_privileged_tx_with_contract_call(
     let topic = keccak(b"NumberSet(uint256)");
 
     while proposer_client
-        .get_logs(
-            first_block,
-            block_number,
-            deployed_contract_address,
-            vec![topic],
-        )
+        .get_logs(first_block, block_number, deployed_contract_address, topic)
         .await
         .is_ok_and(|logs| logs.is_empty())
     {
@@ -214,12 +209,7 @@ async fn test_privileged_tx_with_contract_call(
     }
 
     let logs = proposer_client
-        .get_logs(
-            first_block,
-            block_number,
-            deployed_contract_address,
-            vec![topic],
-        )
+        .get_logs(first_block, block_number, deployed_contract_address, topic)
         .await?;
 
     let number_emitted = U256::from_big_endian(
@@ -1317,7 +1307,7 @@ async fn wait_for_l2_deposit_receipt(
             U256::from(l1_receipt_block_number),
             U256::from(l1_receipt_block_number),
             common_bridge_address(),
-            vec![topic],
+            topic,
         )
         .await?;
     let data = PrivilegedTransactionData::from_log(logs.first().unwrap().log.clone())?;

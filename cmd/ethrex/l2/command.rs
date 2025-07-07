@@ -269,7 +269,7 @@ impl Command {
                             current_block,
                             current_block,
                             contract_address,
-                            vec![event_signature],
+                            event_signature,
                         )
                         .await?;
 
