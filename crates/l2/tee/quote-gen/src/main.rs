@@ -15,7 +15,7 @@ use ethrex_l2_sdk::get_address_from_secret_key;
 use keccak_hash::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
-use std::time::Duration;
+use std::{process::exit, time::Duration};
 use tokio::time::sleep;
 use zkvm_interface::io::ProgramInput;
 
@@ -124,7 +124,9 @@ async fn main() {
             hex::encode(rtmr0),
             hex::encode(rtmr1),
             hex::encode(rtmr2)
-        )
+        );
+
+        exit(0);
     }
 
     let commit_hash = get_commit_hash();
