@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use ethrex_common::H256;
 use spawned_concurrency::{
     error::GenServerError,
     messages::Unused,
@@ -11,8 +10,12 @@ use tracing::{error, info};
 use crate::{
     discv4::server::Discv4Server,
     network::P2PContext,
-    rlpx::{lookup::RLPxLookupServer, p2p::SUPPORTED_SNAP_CAPABILITIES},
-    types::Node,
+    rlpx::{
+        lookup::RLPxLookupServer,
+        p2p::{
+            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+        },
+    },
 };
 
 const MAX_PEER_COUNT: usize = 50;
@@ -25,12 +28,10 @@ pub struct RLPxServerState {
     ctx: P2PContext,
     discovery_server: Discv4Server,
     lookup_servers: Vec<GenServerHandle<RLPxLookupServer>>,
-    connections: Vec<H256>,
 }
 
 #[derive(Clone)]
 pub enum InMessage {
-    NewPeer(Node),
     BookKeeping,
 }
 
@@ -49,16 +50,11 @@ impl RLPxServer {
             ctx,
             discovery_server,
             lookup_servers: vec![],
-            connections: vec![],
         };
         // TODO: spawn multiple lookup servers
         let mut handle = Self::start(state);
         handle.cast(InMessage::BookKeeping).await?;
         Ok(handle)
-    }
-
-    pub async fn add_peer(handle: &mut RLPxServerHandle, peer: Node) -> Result<(), GenServerError> {
-        handle.cast(InMessage::NewPeer(peer)).await
     }
 }
 
@@ -80,9 +76,6 @@ impl GenServer for RLPxServer {
         mut state: Self::State,
     ) -> CastResponse<Self> {
         match msg {
-            InMessage::NewPeer(node) => {
-                state.connections.push(node.node_id());
-            }
             InMessage::BookKeeping => {
                 bookkeeping(handle, &mut state).await;
             }
@@ -98,10 +91,9 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
         handle.clone(),
         InMessage::BookKeeping,
     );
-    prune_peers(state).await;
 
     // Stop looking for peers if we have enough connections
-    if state.connections.len() >= MAX_PEER_COUNT {
+    if got_enough_peers(state).await {
         stop_lookup_servers(state).await;
     // Otherwise, spawn the lookup servers
     } else if state.lookup_servers.is_empty() {
@@ -132,17 +124,27 @@ async fn stop_lookup_servers(state: &mut RLPxServerState) {
     }
 }
 
-async fn prune_peers(state: &mut RLPxServerState) {
+async fn got_enough_peers(state: &RLPxServerState) -> bool {
     let table = state.ctx.table.lock().await;
-    state.connections = state
-        .connections
-        .iter()
-        .flat_map(|node_id| table.get_by_node_id(*node_id))
+    // Check we have a good amount of peers that support p2p+eth+snap
+    let snap_peers = table
+        .iter_peers()
         .filter(|peer| {
-            peer.supported_capabilities
-                .iter()
-                .any(|c| SUPPORTED_SNAP_CAPABILITIES.contains(c))
+            peer.is_connected
+                && peer
+                    .supported_capabilities
+                    .iter()
+                    .any(|c| SUPPORTED_SNAP_CAPABILITIES.contains(c))
+                && peer
+                    .supported_capabilities
+                    .iter()
+                    .any(|c| SUPPORTED_ETH_CAPABILITIES.contains(c))
+                && peer
+                    .supported_capabilities
+                    .iter()
+                    .any(|c| SUPPORTED_P2P_CAPABILITIES.contains(c))
         })
-        .map(|peer| peer.node.node_id())
-        .collect();
+        .count();
+
+    snap_peers >= MAX_PEER_COUNT
 }
