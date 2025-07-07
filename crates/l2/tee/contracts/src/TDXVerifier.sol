@@ -30,6 +30,10 @@ contract TDXVerifier is Ownable {
 
     /// @notice Initializes the contract
     /// @param _dcap DCAP contract.
+    /// @param _rtmr0 RTMR0 register value
+    /// @param _rtmr1 RTMR1 register value
+    /// @param _rtmr2 RTMR2 register value
+    /// @param _mrtd MRTD register value
     /// @param _isDevMode Disables quote verification
     constructor(address _dcap, bytes memory _rtmr0, bytes memory _rtmr1, bytes memory _rtmr2, bytes memory _mrtd, bool _isDevMode) Ownable(msg.sender) {
         require(_dcap != address(0), "TDXVerifier: DCAP address can't be null");
