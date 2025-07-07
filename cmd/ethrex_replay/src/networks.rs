@@ -25,30 +25,14 @@ pub enum PublicNetwork {
     Mainnet,
 }
 
-impl From<&str> for Network {
-    fn from(value: &str) -> Self {
+impl Network {
+    pub fn from_network_name(value: &str) -> eyre::Result<Self> { // TODO: consider removing the () for a proper error
         match value {
-            "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
-            "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
-            "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
-            &_ =>  Network::PublicNetwork(PublicNetwork::Mainnet),
-        }
-    }
-}
-
-impl Default for Network {
-    fn default() -> Self {
-        Network::PublicNetwork(PublicNetwork::Mainnet)
-    }
-}
-
-impl fmt::Display for Network {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Network::PublicNetwork(PublicNetwork::Holesky) => write!(f, "holesky"),
-            Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
-            Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
-            Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            "hoodi" => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            "holesky" => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
+            "mainnet" => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
+            "sepolia" => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
+            &_ => Err(eyre::Error::msg("Network not known"))
         }
     }
 }
