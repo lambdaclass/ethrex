@@ -345,13 +345,7 @@ impl PrivilegedTransactionData {
                 "Failed to parse beneficiary from log: log.topics[3] out of bounds".to_owned(),
             ))?;
 
-        let transaction_id = format!("{transaction_id:#x}")
-            .parse::<U256>()
-            .map_err(|e| {
-                L1WatcherError::FailedToDeserializeLog(format!(
-                    "Failed to parse transactionId value from log: {e:#?}"
-                ))
-            })?;
+        let transaction_id = U256::from_be_bytes(transaction_id.0);
 
         // The previous values are indexed in the topic of the log. Data contains the rest.
         // DATA = value: uint256 || gas_limit: uint256 || offset_calldata: uint256 || length_calldata: uint256 || calldata: bytes
