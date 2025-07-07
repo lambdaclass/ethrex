@@ -37,7 +37,7 @@ fn main() {
 /// This is needed because we are unable to run `git clone` when building the SDK in a TEE environment.
 fn get_contract_dependencies(contracts_path: &Path) {
     if let Some(source_path) = env::var_os("CONTRACTS_PATH") {
-        std::fs::create_dir_all(&contracts_path)
+        std::fs::create_dir_all(contracts_path)
             .expect("failed to create contracts output directory");
 
         let status = Command::new("cp")
@@ -50,7 +50,8 @@ fn get_contract_dependencies(contracts_path: &Path) {
             .expect("failed to run cp -r");
 
         if !status.success() {
-            panic!("cp command failed");
+            eprintln!("`cp` command failed with status: {}", status);
+            std::process::exit(1);
         }
     } else {
         ethrex_sdk_contract_utils::download_contract_deps(&contracts_path)
