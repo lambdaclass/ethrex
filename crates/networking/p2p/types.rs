@@ -16,6 +16,7 @@ use std::{
     str::FromStr,
     sync::OnceLock,
 };
+use tracing::info;
 
 use crate::rlpx::utils::node_id;
 
@@ -269,6 +270,9 @@ impl NodeRecord {
                 "eth" => {
                     // the first byte is ignored as an array within an array is received
                     decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
+                    if decoded_pairs.eth.is_none() {
+                        info!("Decoded Pairs is none, value: {:?}", value);
+                    }
                 }
                 _ => {}
             }

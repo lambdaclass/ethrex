@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
 };
 
 use crate::{
@@ -37,6 +38,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
+use tracing::info;
 
 use super::{
     codec::RLPxCodec,
@@ -66,10 +68,12 @@ pub(crate) async fn perform(
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node }) => {
+            info!("Handshake as Initiator");
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
+                    info!("Error while creating Tcp Stream {}", error);
                     log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
                     context.table.lock().await.replace_peer(node.node_id());
                     return Err(error)?;
@@ -90,6 +94,7 @@ pub(crate) async fn perform(
             peer_addr,
             stream,
         }) => {
+            info!("Handshake as Receiver");
             let Some(mut stream) = Arc::into_inner(stream) else {
                 return Err(RLPxError::StateError("Cannot use the stream".to_string()));
             };
@@ -236,7 +241,11 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     let mut buf = vec![0; 2];
 
     // Read the message's size
-    stream.read_exact(&mut buf).await?;
+    let read_exact_msg_length_result = stream.read_exact(&mut buf).await;
+    info!("Stream Buffer Read 2: {:?}", read_exact_msg_length_result);
+
+    read_exact_msg_length_result?;
+
     let ack_data = [buf[0], buf[1]];
     let msg_size = u16::from_be_bytes(ack_data) as usize;
     if msg_size > P2P_MAX_MESSAGE_SIZE {
@@ -249,7 +258,15 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     if buf.len() < msg_size + 2 {
         return Err(RLPxError::CryptographyError(String::from("bad buf size")));
     }
-    stream.read_exact(&mut buf[2..msg_size + 2]).await?;
+    let read_exact_msg_result = stream.read_exact(&mut buf[2..msg_size + 2]).await;
+    // let read_exact_msg_result = stream.read(&mut buf[2..msg_size + 2]).await;
+    info!(
+        "Stream Buffer Read 3: {:?} {:?}",
+        read_exact_msg_result, buf
+    );
+
+    read_exact_msg_result?;
+
     let ack_bytes = &buf[..msg_size + 2];
     Ok(ack_bytes.to_vec())
 }

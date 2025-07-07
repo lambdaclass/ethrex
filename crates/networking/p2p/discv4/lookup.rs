@@ -14,7 +14,7 @@ use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Clone, Debug)]
 pub struct Discv4LookupHandler {
@@ -65,6 +65,7 @@ impl Discv4LookupHandler {
 
     async fn start_lookup_loop(&self, initial_interval_wait_seconds: u64) {
         let mut interval = tokio::time::interval(Duration::from_secs(self.interval_minutes));
+        info!("Recursive lookup every {} minutes", self.interval_minutes);
         tokio::time::sleep(Duration::from_secs(initial_interval_wait_seconds)).await;
 
         loop {
@@ -84,7 +85,7 @@ impl Discv4LookupHandler {
             });
 
             // lookup closest to 3 random keys
-            for _ in 0..3 {
+            for _ in 0..50 {
                 let random_pub_key = SigningKey::random(&mut OsRng);
                 self.ctx.tracker.spawn({
                     let self_clone = self.clone();

@@ -11,9 +11,9 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
-pub const MAX_NODES_PER_BUCKET: usize = 16;
+pub const MAX_NODES_PER_BUCKET: usize = 1600;
 const NUMBER_OF_BUCKETS: usize = 256;
-const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
+const MAX_NUMBER_OF_REPLACEMENTS: usize = 10000;
 
 #[derive(Clone, Debug, Default)]
 pub struct Bucket {

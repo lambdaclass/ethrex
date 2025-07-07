@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
@@ -194,7 +194,15 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = handshake::perform(state.0).await?;
+        // let (mut established_state, stream) = handshake::perform(state.clone().0).await?;
+        let asd = handshake::perform(state.clone().0).await;
+        if let Err(error) = asd {
+            info!("Error while performing handshake {:?}", error);
+            return Err(error);
+        }
+
+        let (mut established_state, stream) = asd.unwrap();
+
         log_peer_debug(&established_state.node, "Starting RLPx connection");
 
         if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
@@ -207,6 +215,10 @@ impl GenServer for RLPxConnection {
             Err(RLPxError::Disconnected())
         } else {
             // New state
+            info!(
+                "Successfully established connection with peer {}",
+                &established_state.node.ip
+            );
             state.0 = InnerState::Established(established_state);
             Ok(state)
         }
@@ -298,8 +310,13 @@ where
             state.inbound,
         );
     }
+    info!("Before Negotiating Capabilities with {}", &state.node.ip);
     init_capabilities(state, &mut stream).await?;
     log_peer_debug(&state.node, "Peer connection initialized.");
+    info!(
+        "Capabilities negotiated successfully with {}",
+        &state.node.ip
+    );
 
     // Send transactions transaction hashes from mempool at connection start
     send_new_pooled_tx_hashes(state).await?;
@@ -402,7 +419,12 @@ where
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
         let msg = match receive(stream).await {
-            Some(msg) => msg?,
+            // Some(msg) => msg?,
+            Some(msg) => {
+                info!("Received msg on Init capabilitiers: {:?}", msg);
+                msg?
+            }
+
             None => return Err(RLPxError::Disconnected()),
         };
         match msg {
@@ -515,7 +537,10 @@ where
 
     // Receive Hello message
     let msg = match receive(stream).await {
-        Some(msg) => msg?,
+        Some(msg) => {
+            info!("Init Capabilities Receive {:?}\n{}", &msg, &state.node.ip);
+            msg?
+        }
         None => return Err(RLPxError::Disconnected()),
     };
 
@@ -567,6 +592,8 @@ where
             }
 
             state.node.version = Some(hello_message.client_id);
+
+            info!("Exchanged Hello Messages");
 
             Ok(())
         }

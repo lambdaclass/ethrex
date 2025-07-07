@@ -9,7 +9,7 @@ use super::{
     },
 };
 use crate::{
-    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
+    kademlia::{KademliaTable, MAX_NODES_PER_BUCKET, PeerData},
     network::P2PContext,
     rlpx::{connection::server::RLPxConnection, utils::node_id},
     types::{Endpoint, Node},
@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
@@ -181,6 +181,7 @@ impl Discv4Server {
                 let Some(peer) = peer else {
                     return Err(DiscoveryError::InvalidMessage("not known node".into()));
                 };
+                info!("Received PONG from {}", &peer.node.ip);
 
                 let Some(ping_hash) = peer.last_ping_hash else {
                     return Err(DiscoveryError::InvalidMessage(
@@ -225,6 +226,7 @@ impl Discv4Server {
                     return Ok(());
                 }
 
+                info!("Spawning as initiator after PONG");
                 RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())
@@ -432,6 +434,7 @@ impl Discv4Server {
                     }
 
                     //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+                    info!("RECORD.ETH {:?}", record.eth);
                     if let Some(eth) = record.eth {
                         //update node_record
                         if self.ctx.set_fork_id().await.is_err() {
@@ -441,6 +444,7 @@ impl Discv4Server {
                         };
                         let pairs = self.ctx.local_node_record.lock().await.decode_pairs();
 
+                        info!("FORK ID {:?}", pairs.eth);
                         if let Some(fork_id) = pairs.eth {
                             let Ok(block_number) = self.ctx.storage.get_latest_block_number().await
                             else {
@@ -480,6 +484,12 @@ impl Discv4Server {
                             }
                             debug!("ENR eth pair validated");
                         }
+                    } else {
+                        info!("No ETH Record present. Rejecting");
+                        table_lock.replace_peer(packet.get_node_id());
+                        return Err(DiscoveryError::InvalidMessage(
+                            "No Eth Record. Rejecting".into(),
+                        ));
                     }
 
                     if let Some(ip) = record.ip {
@@ -502,6 +512,7 @@ impl Discv4Server {
                     table.get_by_node_id(packet.get_node_id()).cloned()
                 };
                 let Some(peer) = peer else {
+                    info!("Rejecting peer because it's not known");
                     return Err(DiscoveryError::InvalidMessage("not known node".into()));
                 };
                 // This will typically be the case when revalidating a node.
@@ -518,6 +529,7 @@ impl Discv4Server {
                     return Ok(());
                 }
 
+                info!("Spawning as initiator after ENRResponse");
                 RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())

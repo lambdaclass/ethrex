@@ -13,6 +13,7 @@ use ethrex_rlp::{
 };
 use k256::PublicKey;
 use serde::Serialize;
+use tracing::info;
 
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
@@ -60,11 +61,18 @@ impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (protocol, rest) = String::decode_unfinished(&rlp[1..])?;
         let (version, rest) = u8::decode_unfinished(rest)?;
+        info!("PROTOCOL AS STRING: {}", protocol.as_str());
         match protocol.as_str() {
             "eth" => Ok((Capability::eth(version), rest)),
             "p2p" => Ok((Capability::p2p(version), rest)),
             "snap" => Ok((Capability::snap(version), rest)),
-            _ => Err(RLPDecodeError::MalformedData),
+            _ => Ok((
+                Capability {
+                    protocol: "other",
+                    version: 137,
+                },
+                rest,
+            )), // _ => Err(RLPDecodeError::MalformedData),
         }
     }
 }
