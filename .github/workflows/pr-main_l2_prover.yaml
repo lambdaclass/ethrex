@@ -82,3 +82,29 @@ jobs:
         run: |
           cd crates/l2/tee/quote-gen
           cargo clippy --all-targets
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Lint" is a required check, don't change the name
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: [lint_exec, lint_tdx, lint_zk]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ always() && needs.lint_exec.result != 'skipped' && needs.linx_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.run-lint_exec.result }}" != "success" ]; then
+            echo "Job Lint exec Check failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.lint_tdx.result }}" != "success" ]; then
+            echo "Job Lint TDX failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.lint_zk.result }}" != "success" ]; then
+            echo "Job Lint ZK failed"
+            exit 1
+          fi
