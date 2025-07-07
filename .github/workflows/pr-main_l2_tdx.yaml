@@ -65,7 +65,7 @@ jobs:
           touch .env
           make init-local-l1;
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          ETHREX_DEPLOYER_TDX=true \
           ETHREX_TDX_DEV_MODE=true \
           make deploy-l1
 

@@ -17,7 +17,7 @@ use tracing::{debug, error, info};
 
 use super::{
     configs::AlignedConfig,
-    utils::{get_latest_sent_batch, random_duration, send_verify_tx},
+    utils::{random_duration, send_verify_tx},
 };
 
 use crate::{
@@ -48,7 +48,7 @@ pub struct L1ProofSenderState {
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
-    aligned_sp1_elf_path: String,
+    aligned_mode: bool,
 }
 
 impl L1ProofSenderState {
@@ -66,7 +66,6 @@ impl L1ProofSenderState {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
-        let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
 
         if cfg.dev_mode {
             return Ok(Self {
@@ -81,7 +80,7 @@ impl L1ProofSenderState {
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
                 fee_estimate,
-                aligned_sp1_elf_path,
+                aligned_mode: aligned_cfg.aligned_mode,
             });
         }
 
@@ -97,7 +96,7 @@ impl L1ProofSenderState {
             l1_chain_id,
             network: aligned_cfg.network.clone(),
             fee_estimate,
-            aligned_sp1_elf_path,
+            aligned_mode: aligned_cfg.aligned_mode,
         })
     }
 }
@@ -170,17 +169,7 @@ impl GenServer for L1ProofSender {
 }
 
 async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSenderError> {
-    let batch_to_send = 1 + get_latest_sent_batch(
-        state.needed_proof_types.clone(),
-        &state.rollup_store,
-        &state.eth_client,
-        state.on_chain_proposer_address,
-    )
-    .await
-    .map_err(|err| {
-        error!("Failed to get next batch to send: {err}");
-        ProofSenderError::InternalError(err.to_string())
-    })?;
+    let batch_to_send = 1 + state.rollup_store.get_latest_sent_batch_proof().await?;
 
     let last_committed_batch = state
         .eth_client
@@ -207,25 +196,28 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
     }
 
     if missing_proof_types.is_empty() {
-        // TODO: we should put in code that if the prover is running with Aligned, then there
-        // shouldn't be any other required types.
-        if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
-            send_proof_to_aligned(state, batch_to_send, aligned_proof).await?;
+        if state.aligned_mode {
+            send_proof_to_aligned(state, batch_to_send, proofs.values()).await?;
         } else {
             send_proof_to_contract(state, batch_to_send, proofs).await?;
         }
+        // if transaction succeeds, then the proof was correctly sent.
         state
             .rollup_store
-            .set_lastest_sent_batch_proof(batch_to_send)
+            .set_latest_sent_batch_proof(batch_to_send)
             .await?;
+
+        // TODO: we should anyways handle the "OnChainProposer: batch already verified" error and
+        // modify the latest sent proof accordingly, otherwise we risk the proof sender getting stuck.
     } else {
         let missing_proof_types: Vec<String> = missing_proof_types
             .iter()
             .map(|proof_type| format!("{proof_type:?}"))
             .collect();
         info!(
-            "Missing {} batch proof(s), will not send",
-            missing_proof_types.join(", ")
+            ?missing_proof_types,
+            ?batch_to_send,
+            "Missing batch proof(s), will not send",
         );
     }
 
@@ -235,20 +227,8 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
 async fn send_proof_to_aligned(
     state: &L1ProofSenderState,
     batch_number: u64,
-    aligned_proof: BatchProof,
+    batch_proofs: impl IntoIterator<Item = &BatchProof>,
 ) -> Result<(), ProofSenderError> {
-    let elf = std::fs::read(state.aligned_sp1_elf_path.clone())
-        .map_err(|e| ProofSenderError::InternalError(format!("Failed to read ELF file: {e}")))?;
-
-    let verification_data = VerificationData {
-        proving_system: ProvingSystemId::SP1,
-        proof: aligned_proof.proof(),
-        proof_generator_addr: state.l1_address.0.into(),
-        vm_program_code: Some(elf),
-        verification_key: None,
-        pub_input: None,
-    };
-
     let fee_estimation = estimate_fee(state).await?;
 
     let nonce = get_nonce_from_batcher(state.network.clone(), state.l1_address.0.into())
@@ -262,21 +242,59 @@ async fn send_proof_to_aligned(
 
     let wallet = wallet.with_chain_id(state.l1_chain_id);
 
-    debug!("Sending proof to Aligned");
+    for batch_proof in batch_proofs {
+        let proving_system = match batch_proof.prover_type() {
+            ProverType::RISC0 => ProvingSystemId::Risc0,
+            ProverType::SP1 => ProvingSystemId::SP1,
+            _ => continue,
+        };
 
-    submit(
-        state.network.clone(),
-        &verification_data,
-        fee_estimation,
-        wallet,
-        nonce,
-    )
-    .await
-    .map_err(|err| {
-        ProofSenderError::AlignedSubmitProofError(format!("Failed to submit proof: {err}"))
-    })?;
+        debug!(
+            prover_type = ?batch_proof.prover_type(),
+            ?batch_number,
+            "Submitting compressed proof to Aligned"
+        );
 
-    info!("Proof for batch {batch_number} sent to Aligned");
+        let Some(proof) = batch_proof.compressed() else {
+            return Err(ProofSenderError::AlignedWrongProofFormat);
+        };
+
+        let elf = batch_proof
+            .prover_type()
+            .elf_path()
+            .ok_or(ProofSenderError::InternalError(
+                "no ELF for this prover type".to_string(),
+            ))
+            .and_then(|path| {
+                std::fs::read(path).map_err(|e| {
+                    ProofSenderError::InternalError(format!("failed to read ELF file: {e}"))
+                })
+            })?;
+
+        let verification_data = VerificationData {
+            proving_system,
+            proof,
+            proof_generator_addr: state.l1_address.0.into(),
+            vm_program_code: Some(elf),
+            verification_key: None,
+            pub_input: None,
+        };
+
+        submit(
+            state.network.clone(),
+            &verification_data,
+            fee_estimation,
+            wallet.clone(),
+            nonce,
+        )
+        .await?;
+
+        info!(
+            prover_type = ?batch_proof.prover_type(),
+            ?batch_number,
+            "Submitted compressed proof to Aligned"
+        );
+    }
 
     Ok(())
 }
