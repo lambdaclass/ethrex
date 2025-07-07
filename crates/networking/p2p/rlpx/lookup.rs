@@ -10,15 +10,17 @@ use crate::{
     network::P2PContext,
     rlpx::{
         connection::server::RLPxConnection,
-        server::{InMessage, RLPxServer},
+        server::{RLPxServer, RLPxServerHandle},
     },
 };
+
+pub type RLPxLookupServerHandle = GenServerHandle<RLPxLookupServer>;
 
 #[derive(Debug, Clone)]
 pub struct RLPxLookupServerState {
     ctx: P2PContext,
     node_iterator: Discv4NodeIterator,
-    consumer: GenServerHandle<RLPxServer>,
+    consumer: RLPxServerHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -36,17 +38,24 @@ impl RLPxLookupServer {
             consumer,
         };
         let mut handle = Self::start(state);
-        handle.cast(FetchPeers).await?;
+        handle.cast(InMessage::FetchPeers).await?;
         Ok(handle)
+    }
+
+    pub async fn stop(handle: &mut RLPxLookupServerHandle) -> Result<(), GenServerError> {
+        handle.cast(InMessage::Stop).await
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct FetchPeers;
+pub enum InMessage {
+    FetchPeers,
+    Stop,
+}
 
 impl GenServer for RLPxLookupServer {
     type CallMsg = Unused;
-    type CastMsg = FetchPeers;
+    type CastMsg = InMessage;
     type OutMsg = Unused;
     type State = RLPxLookupServerState;
     type Error = std::convert::Infallible;
@@ -57,12 +66,15 @@ impl GenServer for RLPxLookupServer {
 
     async fn handle_cast(
         &mut self,
-        _msg: Self::CastMsg,
+        msg: Self::CastMsg,
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
+        if matches!(msg, InMessage::Stop) {
+            return CastResponse::Stop;
+        }
         // Stop on error
-        if handle.clone().cast(FetchPeers).await.is_err() {
+        if handle.clone().cast(InMessage::FetchPeers).await.is_err() {
             error!("RLPxLookupServer: failed to send message to self, stopping lookup");
             return CastResponse::Stop;
         }
@@ -71,7 +83,10 @@ impl GenServer for RLPxLookupServer {
         // Start a connection
         RLPxConnection::spawn_as_initiator(state.ctx.clone(), &node).await;
 
-        if state.consumer.cast(InMessage::NewPeer(node)).await.is_err() {
+        if RLPxServer::add_peer(&mut state.consumer, node)
+            .await
+            .is_err()
+        {
             error!("RLPxLookupServer: failed to send message to consumer, stopping lookup");
             return CastResponse::Stop;
         }

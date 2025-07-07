@@ -14,8 +14,7 @@ use crate::{
 const MAX_PEER_COUNT: usize = 50;
 const MAX_CONCURRENT_LOOKUPS: usize = 4;
 
-#[derive(Debug, thiserror::Error)]
-pub enum RLPxServerError {}
+pub type RLPxServerHandle = GenServerHandle<RLPxServer>;
 
 #[derive(Debug, Clone)]
 pub struct RLPxServerState {
@@ -53,6 +52,10 @@ impl RLPxServer {
         handle.cast(InMessage::BookKeeping).await?;
         Ok(handle)
     }
+
+    pub async fn add_peer(handle: &mut RLPxServerHandle, peer: Node) -> Result<(), GenServerError> {
+        handle.cast(InMessage::NewPeer(peer)).await
+    }
 }
 
 impl GenServer for RLPxServer {
@@ -60,7 +63,7 @@ impl GenServer for RLPxServer {
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = RLPxServerState;
-    type Error = RLPxServerError;
+    type Error = std::convert::Infallible;
 
     fn new() -> Self {
         Self
@@ -75,12 +78,9 @@ impl GenServer for RLPxServer {
         info!("Received cast message");
         match msg {
             InMessage::NewPeer(node) => {
-                info!("Found new peer: {node}");
-                // start_new_connection
                 state.connections.push(node);
             }
             InMessage::BookKeeping => {
-                info!("Performing bookkeeping");
                 bookkeeping(handle, &mut state).await;
             }
         }
@@ -90,10 +90,12 @@ impl GenServer for RLPxServer {
 
 /// Perform periodic tasks
 async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServerState) {
-    if state.connections.len() >= MAX_PEER_COUNT
-        || state.lookup_servers.len() >= MAX_CONCURRENT_LOOKUPS
-    {
-        return;
+    if state.connections.len() >= MAX_PEER_COUNT {
+        for mut server in state.lookup_servers.drain(..) {
+            let _ = RLPxLookupServer::stop(&mut server)
+                .await
+                .inspect_err(|e| error!("Failed to stop lookup server: {e}"));
+        }
     }
     info!("Spawning new lookup servers");
 
