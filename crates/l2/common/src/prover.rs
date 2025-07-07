@@ -105,7 +105,7 @@ impl BatchProof {
     pub fn prover_type(&self) -> ProverType {
         match self {
             BatchProof::ProofCalldata(proof) => proof.prover_type,
-            BatchProof::ProofBytes(_) => todo!(),
+            BatchProof::ProofBytes(proof) => proof.prover_type,
         }
     }
 
@@ -135,6 +135,7 @@ impl BatchProof {
 /// It is used to send the proof to Aligned.
 #[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub struct ProofBytes {
+    pub prover_type: ProverType,
     pub proof: Vec<u8>,
     pub public_values: Vec<u8>,
 }

@@ -65,6 +65,7 @@ pub fn verify(receipt: &risc0_zkvm::Receipt) -> Result<(), Error> {
 pub fn to_batch_proof(proof: risc0_zkvm::Receipt, aligned_mode: bool) -> Result<BatchProof, Error> {
     let batch_proof = if aligned_mode {
         BatchProof::ProofBytes(ProofBytes {
+            prover_type: ProverType::RISC0,
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
         })

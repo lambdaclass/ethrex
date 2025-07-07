@@ -96,6 +96,7 @@ pub fn to_batch_proof(
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     let batch_proof = if aligned_mode {
         BatchProof::ProofBytes(ProofBytes {
+            prover_type: ProverType::SP1,
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
         })
