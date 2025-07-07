@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751744452855,
+  "lastUpdate": 1751906475759,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2785,6 +2785,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210146635681,
             "range": "± 482304169",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7269b9392bd5d2b091bc3c389e1a69bcb6f9363d",
+          "message": "fix(l2): rename field  `from` of `PrivilegeL2Transaction` for serialization (#3487)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nThe field `from` of the struct `PrivilegeL2Transaction` overlaps with\nthe field `from` of\n[`RpcTransaction`](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/rpc/types/transaction.rs#L15)\nduring serialization (because the field `tx` is flattened by `serde`),\nmaking `RpcTransaction` deserializations invalid for\n`PrivilegeL2Transaction`s.\n\n**Description**\n\nRenames the field `from` of `PrivilegeL2Transaction` (only for\nserialization and deserializations) to fix the deserializations of\n`RpcTransaction`s of `PrivilegeL2Transaction`.",
+          "timestamp": "2025-07-07T15:36:46Z",
+          "tree_id": "e34179340ff84d4864b691398227ec1f130791e7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7269b9392bd5d2b091bc3c389e1a69bcb6f9363d"
+        },
+        "date": 1751906465930,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209081240138,
+            "range": "± 841121534",
             "unit": "ns/iter"
           }
         ]
