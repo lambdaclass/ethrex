@@ -95,20 +95,20 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
                 .await
                 .inspect_err(|e| error!("Failed to stop lookup server: {e}"));
         }
-        return;
-    }
-    info!("Spawning new lookup servers");
+    } else {
+        info!("Spawning new lookup servers");
 
-    for _ in 0..MAX_CONCURRENT_LOOKUPS {
-        let node_iterator = state.discovery_server.new_random_iterator();
-        let Ok(new_lookup_server) =
-            RLPxLookupServer::spawn(state.ctx.clone(), node_iterator, handle.clone())
-                .await
-                .inspect_err(|e| error!("Failed to spawn lookup server: {e}"))
-        else {
-            continue;
-        };
-        state.lookup_servers.push(new_lookup_server);
+        for _ in 0..MAX_CONCURRENT_LOOKUPS {
+            let node_iterator = state.discovery_server.new_random_iterator();
+            let Ok(new_lookup_server) =
+                RLPxLookupServer::spawn(state.ctx.clone(), node_iterator, handle.clone())
+                    .await
+                    .inspect_err(|e| error!("Failed to spawn lookup server: {e}"))
+            else {
+                continue;
+            };
+            state.lookup_servers.push(new_lookup_server);
+        }
     }
     send_after(
         Duration::from_secs(5),
