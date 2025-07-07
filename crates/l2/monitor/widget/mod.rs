@@ -3,7 +3,6 @@ pub mod blocks;
 pub mod chain_status;
 pub mod l1_to_l2_messages;
 pub mod l2_to_l1_messages;
-pub mod logo;
 pub mod mempool;
 pub mod node_status;
 
