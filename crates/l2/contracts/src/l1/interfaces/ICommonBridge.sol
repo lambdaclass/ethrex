@@ -8,7 +8,7 @@ pragma solidity =0.8.29;
 interface ICommonBridge {
     /// @notice A privileged transaction to L2 has initiated.
     /// @dev Event emitted when a privileged transaction is initiated.
-    /// @param L1from the address that initiated the transaction.
+    /// @param l1from the address that initiated the transaction.
     /// @param from the address sending the transaction on L2.
     /// @param to the recipient on L2.
     /// @param transactionId Id used to make transactions unique.
