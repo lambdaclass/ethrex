@@ -2,6 +2,9 @@ use crate::Node;
 use std::sync::{Arc, OnceLock};
 
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::ParallelExtend;
+use rayon::iter::ParallelIterator;
 
 use crate::{TrieDB, error::TrieError};
 
@@ -43,9 +46,23 @@ impl NodeRef {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
-                        for node in &mut node.choices {
-                            node.commit(acc);
+                        let children_ite = node
+                            .choices
+                            .par_iter_mut()
+                            .map(|node| {
+                                let mut acc = Vec::new();
+                                node.commit(&mut acc);
+                                acc
+                            })
+                            .collect();
+                        for elem in children_iter {
+                            acc.push(elem);
                         }
+                        //acc.extend(node.choices.par_iter_mut().map(|node| {
+                        //    let acc = Vec::new();
+                        //    node.commit(&mut acc);
+                        //    acc
+                        //}));
                     }
                     Node::Extension(node) => {
                         node.child.commit(acc);
