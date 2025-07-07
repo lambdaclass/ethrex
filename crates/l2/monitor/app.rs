@@ -26,7 +26,7 @@ use crate::{
     SequencerConfig,
     monitor::widget::{
         BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable,
-        L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsSate,
+        L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsState,
     },
     sequencer::errors::MonitorError,
 };
@@ -34,7 +34,7 @@ use crate::{
 pub struct EthrexMonitor {
     pub title: String,
     pub should_quit: bool,
-    pub tabs: TabsSate,
+    pub tabs: TabsState,
     pub tick_rate: u64,
 
     pub logger: TuiWidgetState,
@@ -72,7 +72,7 @@ impl EthrexMonitor {
                 "Ethrex Monitor".to_string()
             },
             should_quit: false,
-            tabs: TabsSate::default(),
+            tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
             global_chain_status: GlobalChainStatusTable::new(
                 &eth_client,
@@ -173,30 +173,34 @@ impl EthrexMonitor {
 
     pub fn on_key_event(&mut self, code: KeyCode) {
         match (&self.tabs, code) {
-            (TabsSate::Logs, KeyCode::Left) => self.logger.transition(TuiWidgetEvent::LeftKey),
-            (TabsSate::Logs, KeyCode::Down) => self.logger.transition(TuiWidgetEvent::DownKey),
-            (TabsSate::Logs, KeyCode::Up) => self.logger.transition(TuiWidgetEvent::UpKey),
-            (TabsSate::Logs, KeyCode::Right) => self.logger.transition(TuiWidgetEvent::RightKey),
-            (TabsSate::Logs, KeyCode::Char('h')) => self.logger.transition(TuiWidgetEvent::HideKey),
-            (TabsSate::Logs, KeyCode::Char('f')) => {
+            (TabsState::Logs, KeyCode::Left) => self.logger.transition(TuiWidgetEvent::LeftKey),
+            (TabsState::Logs, KeyCode::Down) => self.logger.transition(TuiWidgetEvent::DownKey),
+            (TabsState::Logs, KeyCode::Up) => self.logger.transition(TuiWidgetEvent::UpKey),
+            (TabsState::Logs, KeyCode::Right) => self.logger.transition(TuiWidgetEvent::RightKey),
+            (TabsState::Logs, KeyCode::Char('h')) => {
+                self.logger.transition(TuiWidgetEvent::HideKey)
+            }
+            (TabsState::Logs, KeyCode::Char('f')) => {
                 self.logger.transition(TuiWidgetEvent::FocusKey)
             }
-            (TabsSate::Logs, KeyCode::Char('+')) => self.logger.transition(TuiWidgetEvent::PlusKey),
-            (TabsSate::Logs, KeyCode::Char('-')) => {
+            (TabsState::Logs, KeyCode::Char('+')) => {
+                self.logger.transition(TuiWidgetEvent::PlusKey)
+            }
+            (TabsState::Logs, KeyCode::Char('-')) => {
                 self.logger.transition(TuiWidgetEvent::MinusKey)
             }
-            (TabsSate::Overview, KeyCode::Char('Q')) => self.should_quit = true,
-            (TabsSate::Overview | TabsSate::Logs, KeyCode::Tab) => self.tabs.next(),
+            (TabsState::Overview, KeyCode::Char('Q')) => self.should_quit = true,
+            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
             _ => {}
         }
     }
 
     pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
         match (&self.tabs, kind) {
-            (TabsSate::Logs, MouseEventKind::ScrollDown) => {
+            (TabsState::Logs, MouseEventKind::ScrollDown) => {
                 self.logger.transition(TuiWidgetEvent::NextPageKey)
             }
-            (TabsSate::Logs, MouseEventKind::ScrollUp) => {
+            (TabsState::Logs, MouseEventKind::ScrollUp) => {
                 self.logger.transition(TuiWidgetEvent::PrevPageKey)
             }
             _ => {}
@@ -229,7 +233,7 @@ impl Widget for &mut EthrexMonitor {
     {
         let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
         let tabs = Tabs::default()
-            .titles([TabsSate::Overview.to_string(), TabsSate::Logs.to_string()])
+            .titles([TabsState::Overview.to_string(), TabsState::Logs.to_string()])
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(Color::Cyan))
@@ -244,7 +248,7 @@ impl Widget for &mut EthrexMonitor {
         tabs.render(chunks[0], buf);
 
         match self.tabs {
-            TabsSate::Overview => {
+            TabsState::Overview => {
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
                     Constraint::Fill(1),
@@ -310,7 +314,7 @@ impl Widget for &mut EthrexMonitor {
 
                 help.render(chunks[6], buf);
             }
-            TabsSate::Logs => {
+            TabsState::Logs => {
                 let chunks =
                     Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(chunks[1]);
                 let log_widget = TuiLoggerSmartWidget::default()
