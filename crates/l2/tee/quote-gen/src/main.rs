@@ -101,8 +101,9 @@ async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, St
 
 async fn setup(private_key: &SecretKey) -> Result<(), String> {
     let quote = get_quote(private_key)?;
-    println!("Sending quote {}", hex::encode(&quote));
+    println!("Sending setup");
     submit_quote(quote).await?;
+    println!("Setup successful");
     Ok(())
 }
 
@@ -129,11 +130,12 @@ async fn main() {
         exit(0);
     }
 
-    let commit_hash = get_commit_hash();
     while let Err(err) = setup(&private_key).await {
         println!("Error sending quote: {}", err);
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
+
+    let commit_hash = get_commit_hash();
     loop {
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
         match do_loop(&private_key, commit_hash.clone()).await {
