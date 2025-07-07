@@ -93,34 +93,43 @@ impl GenServer for RLPxServer {
 
 /// Perform periodic tasks
 async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServerState) {
-    prune_peers(state).await;
-
-    if state.connections.len() >= MAX_PEER_COUNT {
-        for mut server in state.lookup_servers.drain(..) {
-            let _ = RLPxLookupServer::stop(&mut server)
-                .await
-                .inspect_err(|e| error!("Failed to stop lookup server: {e}"));
-        }
-    } else {
-        info!("Spawning new lookup servers");
-
-        for _ in 0..MAX_CONCURRENT_LOOKUPS {
-            let node_iterator = state.discovery_server.new_random_iterator();
-            let Ok(new_lookup_server) =
-                RLPxLookupServer::spawn(state.ctx.clone(), node_iterator, handle.clone())
-                    .await
-                    .inspect_err(|e| error!("Failed to spawn lookup server: {e}"))
-            else {
-                continue;
-            };
-            state.lookup_servers.push(new_lookup_server);
-        }
-    }
     send_after(
         Duration::from_secs(5),
         handle.clone(),
         InMessage::BookKeeping,
     );
+    prune_peers(state).await;
+
+    // Stop looking for peers if we have enough connections
+    if state.connections.len() >= MAX_PEER_COUNT {
+        stop_lookup_servers(state).await;
+    // Otherwise, spawn the lookup servers
+    } else if state.lookup_servers.is_empty() {
+        info!("Spawning new lookup servers");
+        spawn_lookup_servers(state, handle).await;
+    }
+}
+
+async fn spawn_lookup_servers(state: &mut RLPxServerState, handle: &GenServerHandle<RLPxServer>) {
+    for _ in 0..MAX_CONCURRENT_LOOKUPS {
+        let node_iterator = state.discovery_server.new_random_iterator();
+        let Ok(new_lookup_server) =
+            RLPxLookupServer::spawn(state.ctx.clone(), node_iterator, handle.clone())
+                .await
+                .inspect_err(|e| error!("Failed to spawn lookup server: {e}"))
+        else {
+            continue;
+        };
+        state.lookup_servers.push(new_lookup_server);
+    }
+}
+
+async fn stop_lookup_servers(state: &mut RLPxServerState) {
+    for mut server in state.lookup_servers.drain(..) {
+        let _ = RLPxLookupServer::stop(&mut server)
+            .await
+            .inspect_err(|e| error!("Failed to stop lookup server: {e}"));
+    }
 }
 
 async fn prune_peers(state: &mut RLPxServerState) {
