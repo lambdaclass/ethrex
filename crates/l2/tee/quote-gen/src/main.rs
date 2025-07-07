@@ -1,5 +1,8 @@
+mod cli;
 mod sender;
 
+use clap::Parser;
+use cli::CLI;
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
 use ethrex_l2::sequencer::proof_coordinator::get_commit_hash;
@@ -105,7 +108,25 @@ async fn setup(private_key: &SecretKey) -> Result<(), String> {
 
 #[tokio::main]
 async fn main() {
+    let CLI { show_registers } = CLI::parse();
     let (private_key, _) = generate_keypair(&mut rand::rngs::OsRng);
+
+    if show_registers {
+        let quote = get_quote(&private_key).unwrap();
+        let mrtd = quote.get(184..232).unwrap();
+        let rtmr0 = quote.get(376..424).unwrap();
+        let rtmr1 = quote.get(424..472).unwrap();
+        let rtmr2 = quote.get(472..520).unwrap();
+
+        println!(
+            "MRTD={}\nRTMR0={}\nRTMR1={}\nRTMR2={}",
+            hex::encode(mrtd),
+            hex::encode(rtmr0),
+            hex::encode(rtmr1),
+            hex::encode(rtmr2)
+        )
+    }
+
     let commit_hash = get_commit_hash();
     while let Err(err) = setup(&private_key).await {
         println!("Error sending quote: {}", err);

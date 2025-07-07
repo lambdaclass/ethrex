@@ -4720,6 +4720,7 @@ dependencies = [
 name = "quote-gen"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "configfs-tsm",
  "ethrex-blockchain",
  "ethrex-common",
