@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use ethrex_common::H256;
 use spawned_concurrency::{
     error::GenServerError,
     messages::Unused,
@@ -8,7 +9,10 @@ use spawned_concurrency::{
 use tracing::{error, info};
 
 use crate::{
-    discv4::server::Discv4Server, network::P2PContext, rlpx::lookup::RLPxLookupServer, types::Node,
+    discv4::server::Discv4Server,
+    network::P2PContext,
+    rlpx::{lookup::RLPxLookupServer, p2p::SUPPORTED_SNAP_CAPABILITIES},
+    types::Node,
 };
 
 const MAX_PEER_COUNT: usize = 50;
@@ -21,7 +25,7 @@ pub struct RLPxServerState {
     ctx: P2PContext,
     discovery_server: Discv4Server,
     lookup_servers: Vec<GenServerHandle<RLPxLookupServer>>,
-    connections: Vec<Node>,
+    connections: Vec<H256>,
 }
 
 #[derive(Clone)]
@@ -77,7 +81,7 @@ impl GenServer for RLPxServer {
     ) -> CastResponse<Self> {
         match msg {
             InMessage::NewPeer(node) => {
-                state.connections.push(node);
+                state.connections.push(node.node_id());
             }
             InMessage::BookKeeping => {
                 bookkeeping(handle, &mut state).await;
@@ -89,6 +93,8 @@ impl GenServer for RLPxServer {
 
 /// Perform periodic tasks
 async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServerState) {
+    prune_peers(state).await;
+
     if state.connections.len() >= MAX_PEER_COUNT {
         for mut server in state.lookup_servers.drain(..) {
             let _ = RLPxLookupServer::stop(&mut server)
@@ -115,4 +121,19 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
         handle.clone(),
         InMessage::BookKeeping,
     );
+}
+
+async fn prune_peers(state: &mut RLPxServerState) {
+    let table = state.ctx.table.lock().await;
+    state.connections = state
+        .connections
+        .iter()
+        .flat_map(|node_id| table.get_by_node_id(*node_id))
+        .filter(|peer| {
+            peer.supported_capabilities
+                .iter()
+                .any(|c| SUPPORTED_SNAP_CAPABILITIES.contains(c))
+        })
+        .map(|peer| peer.node.node_id())
+        .collect();
 }
