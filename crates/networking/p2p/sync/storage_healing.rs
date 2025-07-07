@@ -54,7 +54,6 @@ pub(crate) async fn storage_healer(
             let speed = healing_start
                 .elapsed()
                 .as_millis()
-                .checked_div((total_healed / 100) as u128)
                 .checked_div((total_healed / 100) as u128);
             if let Some(speed) = speed {
                 info!(
