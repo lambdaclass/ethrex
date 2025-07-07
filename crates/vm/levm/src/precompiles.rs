@@ -925,6 +925,10 @@ type SliceArguments = ([u64; 8], [u64; 16], [u64; 2]);
 fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     let mut h = [0; 8];
 
+    if calldata.len() < 212 {
+        Err(InternalError::Slicing)?;
+    }
+
     let mut buf = calldata.clone(); // this clone is cheap.
     buf.get_u32_le(); // advance offset by 4.
 
