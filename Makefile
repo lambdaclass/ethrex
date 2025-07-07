@@ -85,7 +85,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_BRANCH ?= master
+HIVE_BRANCH ?= temporary_fix_docker
 
 setup-hive: ## 🐝 Set up Hive testing framework
 	if [ -d "hive" ]; then \
