@@ -18,46 +18,58 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
 
+// Pads the input array to the right with zeros to ensure it is 8 bytes long.
+// Panics if the input is longer than 8 bytes.
+const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
+    assert!(N <= 8, "Input array must be 8 bytes or less");
+
+    let mut padded = [0_u8; 8];
+    let mut i = 0;
+    while i < input.len() {
+        padded[i] = input[i];
+        i += 1;
+    }
+    padded
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capability {
-    pub protocol: &'static str,
+    protocol: [u8; 8],
     pub version: u8,
 }
 
 impl Capability {
     pub const fn eth(version: u8) -> Self {
         Capability {
-            protocol: "eth",
+            protocol: pad_right(b"eth"),
             version,
         }
     }
 
     pub const fn p2p(version: u8) -> Self {
         Capability {
-            protocol: "p2p",
+            protocol: pad_right(b"p2p"),
             version,
         }
     }
 
     pub const fn snap(version: u8) -> Self {
         Capability {
-            protocol: "snap",
+            protocol: pad_right(b"snap"),
             version,
         }
     }
 
-    pub fn other(version: u8) -> Self {
-        Capability {
-            protocol: "other",
-            version,
-        }
+    pub fn protocol(&self) -> &str {
+        let len = self.protocol.iter().position(|c| c == &b'\0').unwrap_or(8);
+        str::from_utf8(&self.protocol[..len]).expect("value parsed as utf8 in RLPDecode")
     }
 }
 
 impl RLPEncode for Capability {
     fn encode(&self, buf: &mut dyn BufMut) {
         Encoder::new(buf)
-            .encode_field(&self.protocol)
+            .encode_field(&self.protocol())
             .encode_field(&self.version)
             .finish();
     }
@@ -65,14 +77,14 @@ impl RLPEncode for Capability {
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (protocol, rest) = String::decode_unfinished(&rlp[1..])?;
-        let (version, rest) = u8::decode_unfinished(rest)?;
-        match protocol.as_str() {
-            "eth" => Ok((Capability::eth(version), rest)),
-            "p2p" => Ok((Capability::p2p(version), rest)),
-            "snap" => Ok((Capability::snap(version), rest)),
-            _ => Ok((Capability::other(version), rest)),
+        let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
+        if protocol_name.len() > 8 {
+            return Err(RLPDecodeError::InvalidLength);
         }
+        let (version, rest) = u8::decode_unfinished(rest)?;
+        let mut protocol = [0; 8];
+        protocol[..protocol_name.len()].copy_from_slice(protocol_name.as_bytes());
+        Ok((Capability { protocol, version }, rest))
     }
 }
 
@@ -81,7 +93,7 @@ impl Serialize for Capability {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&format!("{}/{}", self.protocol, self.version))
+        serializer.serialize_str(&format!("{}/{}", self.protocol(), self.version))
     }
 }
 
@@ -325,5 +337,35 @@ impl RLPxMessage for PongMessage {
         assert_eq!(payload, empty, "Pong payload should be &[]");
         assert_eq!(remaining, empty, "Pong remaining should be &[]");
         Ok(Self {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
+    use crate::rlpx::p2p::Capability;
+
+    #[test]
+    fn test_encode_capability() {
+        let capability = Capability::eth(8);
+        let encoded = capability.encode_to_vec();
+
+        assert_eq!(&encoded, &[197_u8, 131, b'e', b't', b'h', 8]);
+    }
+
+    #[test]
+    fn test_decode_capability() {
+        let encoded_bytes = &[197_u8, 131, b'e', b't', b'h', 8];
+        let decoded = Capability::decode(encoded_bytes).unwrap();
+
+        assert_eq!(decoded, Capability::eth(8));
+    }
+
+    #[test]
+    fn test_protocol() {
+        let capability = Capability::eth(68);
+
+        assert_eq!(capability.protocol(), "eth");
     }
 }
