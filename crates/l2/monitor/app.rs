@@ -323,6 +323,8 @@ impl Widget for &mut EthrexMonitor {
                 help.render(chunks[6], buf);
             }
             TabsSate::Logs => {
+                let chunks =
+                    Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(chunks[1]);
                 let log_widget = TuiLoggerSmartWidget::default()
                     .style_error(Style::default().fg(Color::Red))
                     .style_debug(Style::default().fg(Color::LightBlue))
@@ -338,7 +340,7 @@ impl Widget for &mut EthrexMonitor {
                     .output_line(false)
                     .state(&self.logger);
 
-                log_widget.render(chunks[1], buf);
+                log_widget.render(chunks[0], buf);
 
                 let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
 
