@@ -193,11 +193,16 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
             let newest_fcu_head =
                 retrieve_latest_batch_committed_head(state, latest_batch_committed).await?;
 
-            state
-                .sync_manager
-                .sync_to_head(newest_fcu_head, latest_batch_committed);
-            if !state.sync_manager.is_active() {
-                state.latest_block_fetched = latest_l1_block;
+            let latest_block = state.store.get_latest_block_number().await?;
+            if let Some(latest_block_header) = state.store.get_block_header(latest_block)? {
+                if latest_block_header.hash() != newest_fcu_head {
+                    state
+                        .sync_manager
+                        .sync_to_head(newest_fcu_head, latest_batch_committed);
+                    if !state.sync_manager.is_active() {
+                        state.latest_block_fetched = latest_l1_block;
+                    }
+                }
             }
         }
     }
