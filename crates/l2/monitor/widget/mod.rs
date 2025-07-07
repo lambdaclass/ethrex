@@ -5,6 +5,7 @@ pub mod l1_to_l2_messages;
 pub mod l2_to_l1_messages;
 pub mod mempool;
 pub mod node_status;
+pub mod tabs;
 
 pub use batches::BatchesTable;
 pub use blocks::BlocksTable;

@@ -1,5 +1,3 @@
-#![expect(clippy::expect_used)]
-
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -27,37 +25,15 @@ use crate::{
     SequencerConfig,
     monitor::widget::{
         BatchesTable, BlocksTable, GlobalChainStatusTable, L1ToL2MessagesTable,
-        L2ToL1MessagesTable, MempoolTable, NodeStatusTable,
+        L2ToL1MessagesTable, MempoolTable, NodeStatusTable, tabs::TabsSate,
     },
     sequencer::errors::MonitorError,
 };
 
-pub struct TabsState<'a> {
-    pub titles: Vec<&'a str>,
-    pub index: usize,
-}
-
-impl<'a> TabsState<'a> {
-    pub const fn new(titles: Vec<&'a str>) -> Self {
-        Self { titles, index: 0 }
-    }
-    pub fn next(&mut self) {
-        self.index = (self.index + 1) % self.titles.len();
-    }
-
-    pub fn previous(&mut self) {
-        if self.index > 0 {
-            self.index -= 1;
-        } else {
-            self.index = self.titles.len() - 1;
-        }
-    }
-}
-
-pub struct EthrexMonitor<'a> {
-    pub title: &'a str,
+pub struct EthrexMonitor {
+    pub title: String,
     pub should_quit: bool,
-    pub tabs: TabsState<'a>,
+    pub tabs: TabsSate,
     pub tick_rate: u64,
 
     pub logger: TuiWidgetState,
@@ -75,7 +51,7 @@ pub struct EthrexMonitor<'a> {
     pub rollup_store: StoreRollup,
 }
 
-impl<'a> EthrexMonitor<'a> {
+impl EthrexMonitor {
     pub async fn new(store: Store, rollup_store: StoreRollup, cfg: &SequencerConfig) -> Self {
         let eth_client = EthClient::new(cfg.eth.rpc_url.first().expect("No RPC URLs provided"))
             .expect("Failed to create EthClient");
@@ -85,12 +61,12 @@ impl<'a> EthrexMonitor<'a> {
 
         EthrexMonitor {
             title: if cfg.based.based {
-                "Based Ethrex Monitor"
+                "Based Ethrex Monitor".to_string()
             } else {
-                "Ethrex Monitor"
+                "Ethrex Monitor".to_string()
             },
             should_quit: false,
-            tabs: TabsState::new(vec!["Overview", "Logs"]),
+            tabs: TabsSate::default(),
             tick_rate: cfg.monitor.tick_rate,
             global_chain_status: GlobalChainStatusTable::new(
                 &eth_client,
@@ -191,46 +167,38 @@ impl<'a> EthrexMonitor<'a> {
 
     pub fn on_key_event(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Left => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::LeftKey),
-                _ => {}
+            KeyCode::Left => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::LeftKey),
             },
-            KeyCode::Down => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::DownKey),
-                _ => {}
+            KeyCode::Down => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::DownKey),
             },
-            KeyCode::Up => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::UpKey),
-                _ => {}
+            KeyCode::Up => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::UpKey),
             },
-            KeyCode::Right => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::RightKey),
-                _ => {}
+            KeyCode::Right => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::RightKey),
             },
             KeyCode::Char('Q') => self.should_quit = true,
-            KeyCode::Char('h') => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::HideKey),
-                _ => {}
+            KeyCode::Char('h') => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::HideKey),
             },
-            KeyCode::Char('f') => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::FocusKey),
-                _ => {}
+            KeyCode::Char('f') => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::FocusKey),
             },
-            KeyCode::Char('+') => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::PlusKey),
-                _ => {}
+            KeyCode::Char('+') => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::PlusKey),
             },
-            KeyCode::Char('-') => match self.tabs.index {
-                0 => {}
-                1 => self.logger.transition(TuiWidgetEvent::MinusKey),
-                _ => {}
+            KeyCode::Char('-') => match self.tabs {
+                TabsSate::Overview => {}
+                TabsSate::Logs => self.logger.transition(TuiWidgetEvent::MinusKey),
             },
             KeyCode::Tab => self.tabs.next(),
             _ => {}
@@ -266,33 +234,29 @@ impl<'a> EthrexMonitor<'a> {
     }
 }
 
-impl<'a> Widget for &mut EthrexMonitor<'a> {
+impl Widget for &mut EthrexMonitor {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
     {
         let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
-        let tabs = self
-            .tabs
-            .titles
-            .iter()
-            .map(|t| Line::from(Span::styled(*t, Style::default())))
-            .collect::<Tabs>()
+        let tabs = Tabs::default()
+            .titles([TabsSate::Overview.to_string(), TabsSate::Logs.to_string()])
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(Color::Cyan))
                     .title(Span::styled(
-                        self.title,
+                        self.title.clone(),
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
             )
             .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-            .select(self.tabs.index);
+            .select(self.tabs.clone());
 
         tabs.render(chunks[0], buf);
 
-        match self.tabs.index {
-            0 => {
+        match self.tabs {
+            TabsSate::Overview => {
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
                     Constraint::Fill(1),
@@ -358,7 +322,7 @@ impl<'a> Widget for &mut EthrexMonitor<'a> {
 
                 help.render(chunks[6], buf);
             }
-            1 => {
+            TabsSate::Logs => {
                 let log_widget = TuiLoggerSmartWidget::default()
                     .style_error(Style::default().fg(Color::Red))
                     .style_debug(Style::default().fg(Color::LightBlue))
@@ -380,7 +344,6 @@ impl<'a> Widget for &mut EthrexMonitor<'a> {
 
                 help.render(chunks[1], buf);
             }
-            _ => {}
         };
     }
 }
