@@ -5,6 +5,7 @@ mod constants;
 mod fetcher;
 mod plot_composition;
 mod run;
+mod networks;
 
 #[tokio::main]
 async fn main() {

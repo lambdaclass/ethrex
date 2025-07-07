@@ -17,11 +17,6 @@ pub async fn get_blockdata(
 
     println!("populating rpc db cache");
     let witness = eth_client.get_witness(block_number, None).await?;
-    if witness.chain_config.chain_id != chain_config.chain_id {
-        return Err(eyre::eyre!(
-            "Rpc endpoint returned a different chain id than the one set by --network"
-        ));
-    }
 
     let cache = Cache {
         blocks: vec![block],
