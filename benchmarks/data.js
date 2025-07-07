@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751925964015,
+  "lastUpdate": 1751927412385,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5448,6 +5448,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006575034482758621,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ed8e61f04e5bed2f3b496da710b6c4524f1b661d",
+          "message": "fix(l1): metrics exporter dashboard total peer count panel (#3470)\n\n**Motivation**\n\nEthereum Metrics Exporter dashboard is showing no peers when running a\nsync, as described in the issue #3104.\n\n**Description**\n\nThis pr fixes the rpc call handler for net_peerCount as described\n[here](https://ethereum.org/en/developers/docs/apis/json-rpc/#net_peercount).\n\nIt also introduces a new function for `PeerHandler` to access the\nconnected peers so the rpc call handler can get the amount.\n\nHere you can see how the panel looks like now:\n<img width=\"1425\" alt=\"Screenshot 2025-07-03 at 13 29 57\"\nsrc=\"https://github.com/user-attachments/assets/89c699a8-72bb-4a42-918a-c9e3ea6d3036\"\n/>\n\nTo run this you can go to tooling/sync and run make\nstart_hoodi_metrics_docker, then go to http://localhost:3001/ to see the\npanels.\n\nCloses #3468\n\n---------\n\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-07-07T19:39:22Z",
+          "tree_id": "2664be10e47fd8ab522ad28be25f8e3c412498a1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ed8e61f04e5bed2f3b496da710b6c4524f1b661d"
+        },
+        "date": 1751927411731,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012627549668874172,
             "unit": "Mgas/s"
           }
         ]
