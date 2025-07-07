@@ -532,7 +532,7 @@ async fn extract_block_messages(
         txs.push(tx.clone());
         receipts.push(receipt);
     }
-    Ok(get_block_l1_messages(&txs, &receipts))
+    Ok(get_block_l1_messages(&receipts))
 }
 
 /// checks if a given batch is safe by accessing a mapping in the `OnChainProposer` contract.
