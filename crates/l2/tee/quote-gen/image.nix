@@ -1,19 +1,5 @@
 let
   pkgs = import <nixpkgs> { };
-
-  solc_0_8_29 = pkgs.stdenv.mkDerivation {
-    name = "solc-0.8.29";
-    src = pkgs.fetchurl {
-      url = "https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux";
-      sha256 = "";
-    };
-    phases = [ "installPhase" ];
-    installPhase = ''
-      mkdir -p $out/bin
-      cp $src $out/bin/solc
-      chmod +x $out/bin/solc
-    '';
-  };
 in
 (pkgs.nixos [
   (
@@ -36,10 +22,6 @@ in
 
       system.stateVersion = "25.11";
       environment.systemPackages = lib.mkOverride 99 [];
-      environment.nativeBuildInputs = with pkgs; [
-        git
-        solc_0_8_29
-      ];
       
       boot.kernelModules = [ "tdx_guest" "tsm" ];
       boot.initrd.availableKernelModules  = [ "dm_mod" "dm_verity" "erofs" "sd_mod" "ahci" ];

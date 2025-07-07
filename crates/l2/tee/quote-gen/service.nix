@@ -1,5 +1,6 @@
 let
   pkgs = import <nixpkgs> { };
+
   gitignoreSrc = pkgs.fetchFromGitHub { 
     owner = "hercules-ci";
     repo = "gitignore.nix";
@@ -7,6 +8,20 @@ let
     sha256 = "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs";
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
+
+  solc_0_8_29 = pkgs.stdenv.mkDerivation {
+    name = "solc-0.8.29";
+    src = pkgs.fetchurl {
+      url = "https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux";
+      sha256 = "";
+    };
+    phases = [ "installPhase" ];
+    installPhase = ''
+      mkdir -p $out/bin
+      cp $src $out/bin/solc
+      chmod +x $out/bin/solc
+    '';
+  };
 in
 let
   quoteGen = pkgs.rustPlatform.buildRustPackage rec {
@@ -30,6 +45,8 @@ let
     nativeBuildInputs = [
       pkgs.pkg-config
       pkgs.rustPlatform.cargoSetupHook
+      pkgs.git
+      solc_0_8_29
     ];
     env.OPENSSL_NO_VENDOR = 1;
   };
