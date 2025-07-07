@@ -93,9 +93,7 @@ pub fn blake2b_f(
     word_permutation(rounds, &mut v, m);
 
     // XOR the two halves, put the results in the output slice
-    for (value, (&a, &b)) in h.iter_mut().zip(v[..8].iter().zip(&v[8..])) {
-        *value ^= a ^ b;
-    }
+    *h = std::array::from_fn(|i| h[i] ^ v[i] ^ v[i + 8])
 }
 
 #[cfg(test)]
