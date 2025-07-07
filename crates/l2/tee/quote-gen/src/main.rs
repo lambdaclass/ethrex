@@ -15,7 +15,7 @@ use ethrex_l2_sdk::get_address_from_secret_key;
 use keccak_hash::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
-use std::{process::exit, time::Duration};
+use std::time::Duration;
 use tokio::time::sleep;
 use zkvm_interface::io::ProgramInput;
 
@@ -108,7 +108,7 @@ async fn setup(private_key: &SecretKey) -> Result<(), String> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), String> {
     let CLI {
         show_registers,
         private_key,
@@ -117,11 +117,24 @@ async fn main() {
     let private_key = private_key.unwrap_or(generate_keypair(&mut rand::rngs::OsRng).0);
 
     if show_registers {
-        let quote = get_quote(&private_key).unwrap();
-        let mrtd = quote.get(184..232).unwrap();
-        let rtmr0 = quote.get(376..424).unwrap();
-        let rtmr1 = quote.get(424..472).unwrap();
-        let rtmr2 = quote.get(472..520).unwrap();
+        let quote = match get_quote(&private_key) {
+            Ok(quote) => quote,
+            Err(err) => {
+                return Err(format!("Unable to get quote: {err}"));
+            }
+        };
+        let mrtd = quote
+            .get(184..232)
+            .ok_or("Quote smaller than expected".to_string())?;
+        let rtmr0 = quote
+            .get(376..424)
+            .ok_or("Quote smaller than expected".to_string())?;
+        let rtmr1 = quote
+            .get(424..472)
+            .ok_or("Quote smaller than expected".to_string())?;
+        let rtmr2 = quote
+            .get(472..520)
+            .ok_or("Quote smaller than expected".to_string())?;
 
         println!(
             "MRTD=0x{}\nRTMR0=0x{}\nRTMR1=0x{}\nRTMR2=0x{}",
@@ -131,11 +144,11 @@ async fn main() {
             hex::encode(rtmr2)
         );
 
-        exit(0);
+        return Ok(());
     }
 
     while let Err(err) = setup(&private_key).await {
-        println!("Error sending quote: {}", err);
+        println!("Error sending setup: {}", err);
         sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 
