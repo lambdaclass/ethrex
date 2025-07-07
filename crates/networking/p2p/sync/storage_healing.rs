@@ -55,12 +55,14 @@ pub(crate) async fn storage_healer(
                 .elapsed()
                 .as_millis()
                 .checked_div((total_healed / 100) as u128)
-                .unwrap_or(9999);
-            info!(
-                "Storage Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
-                pending_paths.len(),
-                speed
-            );
+                .checked_div((total_healed / 100) as u128);
+            if let Some(speed) = speed {
+                info!(
+                    "Storage Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
+                    pending_paths.len(),
+                    speed
+                );
+            }
         }
         // If we have few storages in queue, fetch more from the store
         // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle

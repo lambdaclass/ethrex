@@ -57,13 +57,14 @@ pub(crate) async fn heal_state_trie(
             let speed = healing_start
                 .elapsed()
                 .as_millis()
-                .checked_div((total_healed / 100) as u128)
-                .unwrap_or(9999);
-            info!(
-                "State Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
-                paths.len(),
-                speed
-            );
+                .checked_div((total_healed / 100) as u128);
+            if let Some(speed) = speed {
+                info!(
+                    "State Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
+                    paths.len(),
+                    speed
+                );
+            }
         }
         // Spawn multiple parallel requests
         let mut state_tasks = tokio::task::JoinSet::new();
