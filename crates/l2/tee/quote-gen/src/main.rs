@@ -137,7 +137,7 @@ async fn main() -> Result<(), String> {
             .ok_or("Quote smaller than expected".to_string())?;
 
         println!(
-            "MRTD=0x{}\nRTMR0=0x{}\nRTMR1=0x{}\nRTMR2=0x{}",
+            "MRTD={}\nRTMR0={}\nRTMR1={}\nRTMR2={}",
             hex::encode(mrtd),
             hex::encode(rtmr0),
             hex::encode(rtmr1),
