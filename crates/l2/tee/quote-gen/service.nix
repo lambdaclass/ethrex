@@ -23,18 +23,18 @@ let
     '';
   };
 
-  openzeppelin = pkgs.fetchFromGitHub {
-    owner = "OpenZeppelin";
-    repo = "openzeppelin-contracts-upgradeable";
+  openzeppelin = pkgs.fetchgit {
+    url = "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git";
     rev = "v5.3.0";
-    sha256 = "sha256-dbiXUucrWiRD6ci4y5K0uyATqcc7ScEB9/v8l9YFHXs=";
+    sha256 = "";
+    fetchSubmodules = true;
   };
 
-  sp1_contracts = pkgs.fetchFromGitHub {
-    owner = "succinctlabs";
-    repo = "sp1-contracts";
-    rev = "4.0.0";
+  sp1_contracts = pkgs.fetchgit {
+    url = "https://github.com/succinctlabs/sp1-contracts.git"
+    rev = "v4.0.0";
     sha256 = "";
+    fetchSubmodules = true;
   };
 
   contracts = pkgs.runCommand "contracts" {} ''
