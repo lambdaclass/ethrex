@@ -189,7 +189,7 @@ impl EthrexMonitor {
             (TabsState::Logs, KeyCode::Char('-')) => {
                 self.logger.transition(TuiWidgetEvent::MinusKey)
             }
-            (TabsState::Overview, KeyCode::Char('Q')) => self.should_quit = true,
+            (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_quit = true,
             (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
             _ => {}
         }
