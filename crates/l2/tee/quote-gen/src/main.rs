@@ -109,8 +109,12 @@ async fn setup(private_key: &SecretKey) -> Result<(), String> {
 
 #[tokio::main]
 async fn main() {
-    let CLI { show_registers } = CLI::parse();
-    let (private_key, _) = generate_keypair(&mut rand::rngs::OsRng);
+    let CLI {
+        show_registers,
+        private_key,
+    } = CLI::parse();
+
+    let private_key = private_key.unwrap_or(generate_keypair(&mut rand::rngs::OsRng).0);
 
     if show_registers {
         let quote = get_quote(&private_key).unwrap();
