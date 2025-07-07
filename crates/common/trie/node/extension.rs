@@ -264,6 +264,7 @@ mod test {
                 trie.db.as_ref(),
                 Nibbles::from_bytes(&[0x02]),
                 Vec::new().into(),
+                &mut Vec::new(),
             )
             .unwrap();
         let node = match node {
@@ -288,6 +289,7 @@ mod test {
                 trie.db.as_ref(),
                 Nibbles::from_bytes(&[0x10]),
                 vec![0x20].into(),
+                &mut Vec::new(),
             )
             .unwrap();
         let node = match node {
@@ -316,6 +318,7 @@ mod test {
                 trie.db.as_ref(),
                 Nibbles::from_bytes(&[0x10]),
                 vec![0x20].into(),
+                &mut Vec::new(),
             )
             .unwrap();
         let node = match node {
@@ -343,7 +346,12 @@ mod test {
         let value = vec![0x02];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(
+                trie.db.as_ref(),
+                path.clone(),
+                value.clone().into(),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
@@ -364,7 +372,12 @@ mod test {
         let value = vec![0x04];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(
+                trie.db.as_ref(),
+                path.clone(),
+                value.clone().into(),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
@@ -382,7 +395,11 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x02]))
+            .remove(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x02]),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
@@ -400,7 +417,11 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x01]))
+            .remove(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x01]),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -421,7 +442,11 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            .remove(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x00]),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
