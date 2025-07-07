@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751908129306,
+  "lastUpdate": 1751909986990,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2845,6 +2845,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210537404199,
             "range": "± 519479005",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c63bbd7db56b60c495b03a675261db440d1ad7a2",
+          "message": "feat(l1): archive sync (#3161)\n\n**Motivation**\nDownload the full state of a given block from an archive node. This will\nenable us to do full sync on mainnet starting from a post-merge block\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3115",
+          "timestamp": "2025-07-07T16:37:29Z",
+          "tree_id": "6e5c1ac8be1f20fd8a6f87389ab2d52287ed7e2f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c63bbd7db56b60c495b03a675261db440d1ad7a2"
+        },
+        "date": 1751909976761,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209357020765,
+            "range": "± 270475993",
             "unit": "ns/iter"
           }
         ]
