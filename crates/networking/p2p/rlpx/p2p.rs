@@ -45,6 +45,13 @@ impl Capability {
             version,
         }
     }
+
+    pub fn other(version: u8) -> Self {
+        Capability {
+            protocol: "other",
+            version,
+        }
+    }
 }
 
 impl RLPEncode for Capability {
@@ -64,7 +71,7 @@ impl RLPDecode for Capability {
             "eth" => Ok((Capability::eth(version), rest)),
             "p2p" => Ok((Capability::p2p(version), rest)),
             "snap" => Ok((Capability::snap(version), rest)),
-            _ => Err(RLPDecodeError::MalformedData),
+            _ => Ok((Capability::other(version), rest)),
         }
     }
 }
