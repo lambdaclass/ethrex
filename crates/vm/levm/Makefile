@@ -31,7 +31,7 @@ BENCH_FACT_ITERATIONS := 57
 BENCH_FACT_REC_ITERATIONS := 57
 BENCH_FIB_ITERATIONS := 57
 BENCH_FIB_REC_ITERATIONS := 15
-BENCH_HASHES_ITERATIONS := 500
+BENCH_HASHES_ITERATIONS := 57
 BENCH_BUBBLESORT_ITERATIONS := 100 # Size of the array to sort
 BENCH_MINT_ITERATIONS := 500
 BENCH_TRANSFER_ITERATIONS := 500
@@ -124,7 +124,7 @@ flamegraph-levm-bench-generic:
 
 build-revm-comparison:
 	cd bench/revm_comparison && \
-		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=../../target \
+		CARGO_TARGET_DIR=../../target \
 		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
