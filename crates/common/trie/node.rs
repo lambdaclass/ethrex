@@ -51,23 +51,28 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
+    pub fn commit(
+        &mut self,
+        acc: &mut Vec<(NodeHash, Vec<u8>)>,
+        encoding_buffer: &mut Vec<u8>,
+    ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for node in &mut node.choices {
-                            node.commit(acc);
+                            node.commit(acc, encoding_buffer);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(acc);
+                        node.child.commit(acc, encoding_buffer);
                     }
                     Node::Leaf(_) => {}
                 }
 
                 let hash = hash.get_or_init(|| node.compute_hash());
-                acc.push((*hash, node.encode_to_vec()));
+                node.encode(encoding_buffer);
+                acc.push((*hash, encoding_buffer.drain(..).as_slice().to_vec()));
 
                 let hash = *hash;
                 *self = hash.into();
