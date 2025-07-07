@@ -95,6 +95,7 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
                 .await
                 .inspect_err(|e| error!("Failed to stop lookup server: {e}"));
         }
+        return;
     }
     info!("Spawning new lookup servers");
 
