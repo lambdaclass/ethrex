@@ -56,6 +56,10 @@ deploy: solc_out/TDXVerifier.bin
 		$(DCAP_ADDRESS) $(RTMR0) $(RTMR1) $(RTMR2) $(MRTD) $(ETHREX_TDX_DEV_MODE) \
 		> ${DEPLOYMENT_PATH}/TDXVerifier
 
+initialize:
+	$(eval TDX_VERIFIER := $(shell cat ${DEPLOYMENT_PATH}/TDXVerifier))
+	rex send $(TDX_VERIFIER) 0 $(PRIVATE_KEY) -- 'initializeOnChainProposer(address)' $(ON_CHAIN_PROPOSER)
+
 deploy-deps: deploy-dcap setup-pccs-ca
 
 automata-dcap-qpl:
@@ -69,6 +73,7 @@ automata-dcap-qpl:
 deploy-all:
 	make deploy-deps
 	make deploy
+	make initialize
 	make automata-dcap-qpl
 
 clean:
