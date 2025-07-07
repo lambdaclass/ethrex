@@ -89,7 +89,7 @@ impl Serialize for Capability {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&format!("{}/{}", "self.protocol", self.version))
+        serializer.serialize_str(&format!("{}/{}", self.protocol(), self.version))
     }
 }
 
