@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     ca-certificates \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
