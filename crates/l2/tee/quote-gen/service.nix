@@ -26,23 +26,23 @@ let
   openzeppelin = pkgs.fetchgit {
     url = "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git";
     rev = "v5.3.0";
-    sha256 = "";
+    sha256 = "sha256-DliCWCetMsVtU7oNBsbk9shiC6MymX1X+qejkNNWpRE";
     fetchSubmodules = true;
   };
 
   sp1_contracts = pkgs.fetchgit {
-    url = "https://github.com/succinctlabs/sp1-contracts.git"
+    url = "https://github.com/succinctlabs/sp1-contracts.git";
     rev = "v4.0.0";
-    sha256 = "";
+    sha256 = "sha256-QqgIISFoN1bnc2Bz0T6MXiP6hOg7J5+tEDFmOgRh6qM=";
     fetchSubmodules = true;
   };
 
   contracts = pkgs.runCommand "contracts" {} ''
-    mkdir -p $out/lib/openzeppelin-contracts-upgradeable
-    cp -r ${openzeppelin}/* $out/lib/openzeppelin-contracts-upgradeable
+    mkdir -p $out/contracts/lib/openzeppelin-contracts-upgradeable
+    cp -r ${openzeppelin}/* $out/contracts/lib/openzeppelin-contracts-upgradeable
 
-    mkdir -p $out/lib/sp1-contracts
-    cp -r ${sp1_contracts}/* $out/lib/sp1-contracts
+    mkdir -p $out/contracts/lib/sp1-contracts
+    cp -r ${sp1_contracts}/* $out/contracts/lib/sp1-contracts
   '';
 
 in
