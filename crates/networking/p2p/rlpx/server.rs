@@ -16,7 +16,7 @@ use crate::{
 };
 
 const MAX_PEER_COUNT: usize = 50;
-const MAX_CONCURRENT_LOOKUPS: usize = 4;
+const MAX_CONCURRENT_LOOKUPS: usize = 16;
 
 pub type RLPxServerHandle = GenServerHandle<RLPxServer>;
 

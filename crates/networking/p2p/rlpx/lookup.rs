@@ -80,18 +80,20 @@ impl GenServer for RLPxLookupServer {
         }
         let node = state.node_iterator.next().await;
         let node_id = node.node_id();
-        let is_connected = state
-            .ctx
-            .table
-            .lock()
-            .await
-            .get_by_node_id(node_id)
-            .map(|p| p.is_connected)
-            .unwrap_or(false);
+        // Get peer status and mark as connected
+        {
+            let mut table = state.ctx.table.lock().await;
+            table.insert_node_forced(node.clone());
+            let node = table
+                .get_by_node_id_mut(node_id)
+                .expect("we just inserted this node");
 
-        // If we already have a connection to this node, we don't need to start a new one
-        if is_connected {
-            return CastResponse::NoReply(state);
+            // If we already have a connection to this node, we don't need to start a new one
+            if node.is_connected {
+                drop(table);
+                return CastResponse::NoReply(state);
+            }
+            node.is_connected = true;
         }
         // Start a connection
         RLPxConnection::spawn_as_initiator(state.ctx.clone(), &node).await;
