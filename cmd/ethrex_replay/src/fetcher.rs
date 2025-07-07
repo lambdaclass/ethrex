@@ -10,7 +10,7 @@ pub async fn get_blockdata(
     block_number: BlockIdentifier,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{block_number}.json");
-    if let Ok(mut cache) = load_cache(&file_name) {
+    if let Ok(cache) = load_cache(&file_name) {
         return Ok(cache);
     }
     let block = eth_client.get_raw_block(block_number.clone()).await?;
@@ -39,7 +39,7 @@ pub async fn get_rangedata(
     to: usize,
 ) -> eyre::Result<Cache> {
     let file_name = format!("cache_{from}-{to}.json");
-    if let Ok(mut cache) = load_cache(&file_name) {
+    if let Ok(cache) = load_cache(&file_name) {
         return Ok(cache);
     }
     let mut blocks = Vec::with_capacity(to - from);
