@@ -40,6 +40,8 @@ fn get_contract_dependencies(contracts_path: &Path) {
         std::fs::create_dir_all(contracts_path)
             .expect("failed to create contracts output directory");
 
+        print_tree(Path::new(&source_path), 0);
+
         let status = Command::new("cp")
             .args([
                 "-r",
@@ -56,5 +58,36 @@ fn get_contract_dependencies(contracts_path: &Path) {
     } else {
         ethrex_sdk_contract_utils::download_contract_deps(&contracts_path)
             .expect("failed to download contract dependencies");
+    }
+}
+
+pub fn print_tree(path: &Path, indent: usize) {
+    if let Ok(entries) = std::fs::read_dir(path) {
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            let is_dir = path.is_dir();
+
+            // Print current entry with indentation
+            let prefix = "  ".repeat(indent);
+            if is_dir {
+                println!(
+                    "{}📁 {}",
+                    prefix,
+                    path.file_name().unwrap().to_string_lossy()
+                );
+                print_tree(&path, indent + 1); // Recurse into subdirectory
+            } else {
+                println!(
+                    "{}📄 {}",
+                    prefix,
+                    path.file_name().unwrap().to_string_lossy()
+                );
+            }
+        }
+    } else {
+        println!("{}<unreadable>", "  ".repeat(indent));
     }
 }
