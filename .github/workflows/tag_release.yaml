@@ -262,6 +262,31 @@ jobs:
           name: ethrex-riscv32im-risc0-vk
           path: ethrex-riscv32im-risc0-vk
 
+  build-prover-tdx:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
+
+      - name: Build binary
+        run: |
+          export OPENSSL_NO_VENDOR=1
+          cd crates/l2/tee/quote-gen
+          cargo build --release
+          cd ../../../../
+          mv crates/l2/tee/quote-gen/target/release/quote-gen ethrex_prover_tdx-linux_x86-64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex_prover_tdx-linux_x86-64
+          path: ethrex_prover_tdx-linux_x86-64
+
   package-contracts:
     runs-on: ubuntu-latest
     steps:
