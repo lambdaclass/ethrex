@@ -920,54 +920,37 @@ fn blake2f_compress_f(
     Ok(output)
 }
 
-type SliceArguments = ([u64; 8], [u64; 16], [u64; 2]);
-
-fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
-    let mut h = [0; 8];
-
-    if calldata.len() < 212 {
-        Err(InternalError::Slicing)?;
-    }
-
-    let mut buf = calldata.slice(0..212); // this clone is cheap.
-    buf.get_u32_le(); // advance offset by 4.
-
-    h.copy_from_slice(&std::array::from_fn::<u64, 8, _>(|_| buf.get_u64_le()));
-
-    let mut m = [0; 16];
-
-    m.copy_from_slice(&std::array::from_fn::<u64, 16, _>(|_| buf.get_u64_le()));
-
-    let mut t = [0; 2];
-    t.copy_from_slice(&std::array::from_fn::<u64, 2, _>(|_| buf.get_u64_le()));
-
-    Ok((h, m, t))
-}
-
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != 213 {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let rounds = u32::from_be_bytes(
-        calldata
-            .get(0..4)
-            .ok_or(InternalError::Slicing)?
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?,
-    );
+    let mut calldata = calldata.slice(0..213);
+
+    let rounds = calldata.get_u32();
 
     let gas_cost = u64::from(rounds) * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let (h, m, t) = parse_slice_arguments(calldata)?;
+    let mut h = [0; 8];
 
-    let f = calldata.get(212).ok_or(InternalError::Slicing)?;
-    if *f != 0 && *f != 1 {
+    h.copy_from_slice(&std::array::from_fn::<u64, 8, _>(|_| calldata.get_u64_le()));
+
+    let mut m = [0; 16];
+
+    m.copy_from_slice(&std::array::from_fn::<u64, 16, _>(|_| {
+        calldata.get_u64_le()
+    }));
+
+    let mut t = [0; 2];
+    t.copy_from_slice(&std::array::from_fn::<u64, 2, _>(|_| calldata.get_u64_le()));
+
+    let f = calldata.get_u8();
+    if f != 0 && f != 1 {
         return Err(PrecompileError::ParsingInputError.into());
     }
-    let f = *f == 1;
+    let f = f == 1;
 
     #[expect(clippy::as_conversions)] // safe to convert a u32 to usize
     let result = blake2f_compress_f(rounds as usize, h, &m, &t, f)?;
