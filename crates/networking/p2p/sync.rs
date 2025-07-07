@@ -513,6 +513,10 @@ impl Syncer {
                 last_valid_hash,
             }) = failure
             {
+                warn!(
+                    "Failed to add block {:?} with the last valid being {:?}",
+                    failed_block_hash, last_valid_hash
+                );
                 store
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
