@@ -92,6 +92,7 @@ impl Discv4Server {
         Ok(())
     }
 
+    /// Creates an iterator that yields nodes retrieved by doing random lookups.
     pub fn new_random_iterator(&self) -> Discv4NodeIterator {
         Discv4NodeIterator::new(self.ctx.clone(), self.udp_socket.clone())
     }
