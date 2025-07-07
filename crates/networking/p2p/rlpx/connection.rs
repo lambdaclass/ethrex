@@ -1093,12 +1093,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             return Ok(false);
         }
         if self.latest_block_added < msg.batch.last_block {
-            dbg!(
-                "Not processing batch {} because the last block {} is not added yet",
-                msg.batch.number,
-                msg.batch.last_block
-            );
-            return Ok(false);
+            let latest_block_in_storage = self.storage.get_latest_block_number().await?;
+            self.latest_block_added = latest_block_in_storage;
+            if self.latest_block_added < msg.batch.last_block {
+                dbg!(
+                    "Not processing batch {} because the last block {} is not added yet",
+                    msg.batch.number,
+                    msg.batch.last_block
+                );
+                return Ok(false);
+            }
         }
 
         let hash = get_hash_batch_sealed(&msg.batch);
