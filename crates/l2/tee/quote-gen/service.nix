@@ -27,7 +27,7 @@ let
     owner = "OpenZeppelin";
     repo = "openzeppelin-contracts-upgradeable";
     rev = "v5.3.0";
-    sha256 = "";
+    sha256 = "sha256-dbiXUucrWiRD6ci4y5K0uyATqcc7ScEB9/v8l9YFHXs=";
   };
 
   sp1_contracts = pkgs.fetchFromGitHub {
