@@ -441,11 +441,12 @@ contract OnChainProposer is
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
 
+            emit BatchVerified(batchNumber);
+            verifiedBatches[batchCommitments[batchNumber].lastBlockHash] = true;
+         
             lastVerifiedBatch = batchNumber;
             batchNumber++;
         }
-
-        emit BatchVerified(lastVerifiedBatch);
     }
 
     function _verifyPublicData(
