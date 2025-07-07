@@ -198,7 +198,8 @@ impl Store {
             .spawn(move || {
                 loop {
                     thread::sleep(std::time::Duration::from_secs(1));
-                    // store.prune_state_and_storage_log().unwrap(); // TODO: handle error properly
+                    #[allow(clippy::unwrap_used)]
+                    store.prune_state_and_storage_log().unwrap();
                 }
             });
 
@@ -330,6 +331,7 @@ impl Store {
             .map_err(|e| anyhow::anyhow!("error: {e}"))?;
 
         let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+        // Get the block number of the last state trie pruning log entry
         if let Some((
             BlockNumHash {
                 block_number: key_num,
@@ -338,33 +340,39 @@ impl Store {
             _,
         )) = cursor_state_trie_pruning_log.last()?
         {
-            // delete nodes in back order
+            // Delete nodes in back order
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
-            let start_key = key_num.saturating_sub(2); // we keep the last 1024 blocks
-            let mut keyval = cursor_state_trie_pruning_log.seek_closest(start_key)?;
-            while let Some((block_num_hash, nodehash_value)) = keyval {
-                if start_key <= block_num_hash.block_number {
-                    keyval = cursor_state_trie_pruning_log.prev()?;
+            // We keep the last 1024 blocks
+            let start_key = key_num.saturating_sub(2);
+            let mut kv_trie_pruning = cursor_state_trie_pruning_log.seek_closest(start_key)?;
+            while let Some((block, node_hash)) = kv_trie_pruning {
+                // If the block number of the actual pruning log is less than the start key,
+                // we can skip it and continue to the previous entry
+                if start_key <= block.block_number {
+                    kv_trie_pruning = cursor_state_trie_pruning_log.prev()?;
                     continue;
                 }
-                let k_delete = NodeHash::Hashed(nodehash_value.into());
+
+                let k_delete = NodeHash::Hashed(node_hash.into());
+                // If the node hash is found, delete it from the trie and the pruning log
                 if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
                     && key == k_delete
                 {
                     tracing::debug!(
-                        node = hex::encode(nodehash_value.as_ref()),
-                        block_number = block_num_hash.block_number,
-                        block_hash = hex::encode(block_num_hash.block_hash.0.as_ref()),
+                        node = hex::encode(node_hash.as_ref()),
+                        block_number = block.block_number,
+                        block_hash = hex::encode(block.block_hash.0.as_ref()),
                         "[DELETING STATE NODE]"
                     );
                     cursor_state_trie.delete_current()?;
                     cursor_state_trie_pruning_log.delete_current()?;
                 }
-                keyval = cursor_state_trie_pruning_log.prev()?;
+                kv_trie_pruning = cursor_state_trie_pruning_log.prev()?;
             }
         }
 
         let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+        // Get the block number of the last storage trie pruning log entry
         if let Some((
             BlockNumHash {
                 block_number: key_num,
@@ -375,19 +383,25 @@ impl Store {
         {
             // delete nodes in back order
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
-            let start_key = key_num.saturating_sub(2); // we keep the last 1024 blocks
-            let mut keyval = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
-            while let Some((block_num_hash, nodehash_value)) = keyval {
+            // We keep the last 1024 blocks
+            let start_key = key_num.saturating_sub(2);
+            let mut kv_trie_pruning = cursor_storage_trie_pruning_log.seek_closest(start_key)?;
+            while let Some((block_num_hash, storage_trie_pruning_hash)) = kv_trie_pruning {
+                // If the block number of the actual pruning log is less than the start key,
+                // we can skip it and continue to the previous entry
                 if start_key <= block_num_hash.block_number {
-                    keyval = cursor_storage_trie_pruning_log.prev()?;
+                    kv_trie_pruning = cursor_storage_trie_pruning_log.prev()?;
                     continue;
                 }
-                if let Some((key, _)) = cursor_storage_trie.seek_exact(nodehash_value)?
-                    && key == nodehash_value
+
+                // If the storage trie hash is found, delete it from the trie and the pruning log
+                if let Some((storage_trie_hash, _)) =
+                    cursor_storage_trie.seek_exact(storage_trie_pruning_hash)?
+                    && storage_trie_hash == storage_trie_pruning_hash
                 {
                     tracing::debug!(
-                        hashed_address = hex::encode(nodehash_value.0.as_ref()),
-                        node_hash = hex::encode(nodehash_value.1.as_ref()),
+                        hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
+                        node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
                         block_number = block_num_hash.block_number,
                         block_hash = hex::encode(block_num_hash.block_hash.0.as_ref()),
                         "[DELETING STORAGE NODE]"
@@ -395,10 +409,11 @@ impl Store {
                     cursor_storage_trie.delete_current()?;
                     cursor_storage_trie_pruning_log.delete_current()?;
                 }
-                keyval = cursor_storage_trie_pruning_log.prev()?;
+                kv_trie_pruning = cursor_storage_trie_pruning_log.prev()?;
             }
         }
 
+        // Get the stats after the pruning and log the metrics
         let stats_post_state_log = tx
             .table_stat::<StateTriePruningLog>()
             .map_err(|e| anyhow::anyhow!("error: {e}"))?;
@@ -724,6 +739,7 @@ impl StoreEngine for Store {
                 .into();
             let final_block = (last_block.header.number, last_block.hash()).into();
 
+            // Update the account info log table
             let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
             for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
@@ -737,6 +753,7 @@ impl StoreEngine for Store {
                 )?;
             }
 
+            // Update the account storage log table
             let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             for entry in update_batch.storage_log_updates.iter().cloned() {
                 account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
@@ -745,15 +762,17 @@ impl StoreEngine for Store {
             let meta = tx
                 .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
                 .unwrap_or_default();
+            // If we are at the parent block, we need to update the flat tables with the new changes
+            // and update the metadata to the final block
             if meta == parent_block {
-                let mut cursor = tx.cursor::<FlatAccountInfo>()?;
+                let mut info_cursor = tx.cursor::<FlatAccountInfo>()?;
                 let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
 
                 for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
                     let key = addr;
                     let value = (new_info != AccountInfo::default())
                         .then_some(EncodableAccountInfo(new_info));
-                    Self::replace_value_or_delete(&mut cursor, key, value)?;
+                    Self::replace_value_or_delete(&mut info_cursor, key, value)?;
                 }
                 for entry in update_batch.storage_log_updates {
                     let key = (entry.address.into(), entry.slot.into());
@@ -766,7 +785,7 @@ impl StoreEngine for Store {
             let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
             let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
 
-            // for each block in the update batch, we iterate over the account updates (by index)
+            // For each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
             // store account updates
             for (node_hash, mut node_data) in update_batch.account_updates {
@@ -783,7 +802,7 @@ impl StoreEngine for Store {
             }
 
             for node_hash in update_batch.invalidated_state_nodes {
-                // before inserting, we insert the node into the pruning log
+                // Before inserting, we insert the node into the pruning log
                 cursor_state_trie_pruning_log
                     .upsert(final_block, StateTriePruningLogEntry::from(node_hash.0))?;
             }
