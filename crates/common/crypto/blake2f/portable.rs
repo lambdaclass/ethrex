@@ -102,8 +102,13 @@ pub fn blake2f_compress_f(
     let mut output = [0; 8];
 
     // XOR the two halves, put the results in the output slice
-    for (i, pos) in output.iter_mut().enumerate() {
-        *pos = h.get(i).unwrap() ^ v.get(i).unwrap() ^ v.get(i.overflowing_add(8).0).unwrap();
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "index is within constant bounds"
+    )]
+    for i in 0..8 {
+        output[i] = h[i] ^ v[i] ^ v[i + 8];
     }
 
     output
