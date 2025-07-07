@@ -68,11 +68,11 @@ impl ProverType {
     pub fn elf_path(&self) -> Option<PathBuf> {
         let path = match self {
             Self::RISC0 => format!(
-                "{}/../../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-elf",
+                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-elf",
                 env!("CARGO_MANIFEST_DIR")
             ),
             Self::SP1 => format!(
-                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
                 env!("CARGO_MANIFEST_DIR")
             ),
             _ => return None,

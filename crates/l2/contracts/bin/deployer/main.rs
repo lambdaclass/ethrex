@@ -206,6 +206,7 @@ async fn deploy_contracts(
 
     // if it's a required proof type, but no address has been specified, deploy it.
     let sp1_verifier_address = match opts.sp1_verifier_address {
+        _ if opts.aligned => Address::zero(),
         Some(addr) if opts.sp1 => addr,
         None if opts.sp1 => {
             info!("Deploying SP1Verifier");
@@ -226,6 +227,7 @@ async fn deploy_contracts(
 
     // we can't deploy the risc0 contract because of uncompatible licenses
     let risc0_verifier_address = match opts.risc0_verifier_address {
+        _ if opts.aligned => Address::zero(),
         Some(addr) if opts.risc0 => addr,
         None if opts.risc0 => {
             return Err(DeployerError::InternalError(

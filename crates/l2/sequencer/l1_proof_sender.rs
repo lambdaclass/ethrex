@@ -13,7 +13,7 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use super::{
     configs::AlignedConfig,
@@ -229,10 +229,7 @@ async fn send_proof_to_aligned(
     batch_number: u64,
     batch_proofs: impl IntoIterator<Item = &BatchProof>,
 ) -> Result<(), ProofSenderError> {
-    info!(
-        ?batch_number,
-        "Sending batch proof(s) to Aligned Layer"
-    );
+    info!(?batch_number, "Sending batch proof(s) to Aligned Layer");
 
     let fee_estimation = estimate_fee(state).await?;
 
@@ -267,9 +264,10 @@ async fn send_proof_to_aligned(
         let elf = batch_proof
             .prover_type()
             .elf_path()
-            .ok_or(ProofSenderError::InternalError(
-                "no ELF for this prover type".to_string(),
-            ))
+            .ok_or(ProofSenderError::InternalError(format!(
+                "no ELF for prover type {} or file does not exists",
+                batch_proof.prover_type()
+            )))
             .and_then(|path| {
                 std::fs::read(path).map_err(|e| {
                     ProofSenderError::InternalError(format!("failed to read ELF file: {e}"))
