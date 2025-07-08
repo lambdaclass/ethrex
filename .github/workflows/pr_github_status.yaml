@@ -76,6 +76,47 @@ jobs:
               return null;
             }
 
+            async function setProjectItemDateField(projectId, itemId, fieldName, dateValue) {
+              const res = await github.graphql(`
+                query($projectId: ID!) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      fields(first: 100) {
+                        nodes {
+                          ... on ProjectV2Field {
+                            id
+                            name
+                            dataType
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { projectId });
+
+              const field = res.node.fields.nodes.find(f => f.name === fieldName && f.dataType === "DATE");
+              if (!field) throw new Error(`Date field '${fieldName}' not found`);
+
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $dateValue: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { date: $dateValue }
+                  }) {
+                    projectV2Item { id }
+                  }
+                }
+              `, {
+                projectId,
+                itemId,
+                fieldId: field.id,
+                dateValue
+              });
+            }
+
             async function setProjectItemStatus(projectId, itemId, fieldName, optionName) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
@@ -141,9 +182,14 @@ jobs:
               return;
             }
 
+            const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+
+            await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, today);
+            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, today);
+
+            // For some reason if I don't use variables in the "if" the CI breaks.
             let is_draft = pr.draft;
             let ready_for_review = context.payload.action === "ready_for_review";
-
 
             // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
             if (is_draft) {
