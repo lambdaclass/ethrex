@@ -488,6 +488,8 @@ async fn test_erc20_failed_deposit(
     Ok(())
 }
 
+/// Tests that a withdrawal can be triggered by a privileged transaction
+/// This ensures the sequencer can't censor withdrawals without stopping the network
 async fn test_forced_withdrawal(
     l2_client: &EthClient,
     l1_client: &EthClient,
