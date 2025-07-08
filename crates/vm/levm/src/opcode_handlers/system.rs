@@ -3,7 +3,7 @@ use crate::{
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -233,10 +233,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output =
-            memory::load_range(&mut current_call_frame.memory, offset, size)?
-                .to_vec()
-                .into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
 
         Ok(OpcodeResult::Halt)
     }
@@ -510,10 +507,7 @@ impl<'a> VM<'a> {
         current_call_frame
             .increase_consumed_gas(gas_cost::exit_opcode(new_memory_size, current_memory_size)?)?;
 
-        current_call_frame.output =
-            memory::load_range(&mut current_call_frame.memory, offset, size)?
-                .to_vec()
-                .into();
+        current_call_frame.output = current_call_frame.memory.load_range(offset, size)?.into();
 
         Err(VMError::RevertOpcode)
     }
@@ -614,12 +608,9 @@ impl<'a> VM<'a> {
 
         // Load code from memory
         let code = Bytes::from(
-            memory::load_range(
-                &mut self.current_call_frame_mut()?.memory,
-                code_offset_in_memory,
-                code_size_in_memory,
-            )?
-            .to_vec(),
+            self.current_call_frame_mut()?
+                .memory
+                .load_range(code_offset_in_memory, code_size_in_memory)?,
         );
 
         // Get account info of deployer
@@ -683,7 +674,7 @@ impl<'a> VM<'a> {
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
-        let next_memory = self.current_call_frame()?.memoryv2.next_memory();
+        let next_memory = self.current_call_frame()?.memory.next_memory();
 
         let new_call_frame = CallFrame::new(
             deployer,
@@ -758,7 +749,7 @@ impl<'a> VM<'a> {
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
-        let next_memory = self.current_call_frame_mut()?.memoryv2.next_memory();
+        let next_memory = self.current_call_frame_mut()?.memory.next_memory();
 
         let new_call_frame = CallFrame::new(
             msg_sender,
@@ -834,7 +825,7 @@ impl<'a> VM<'a> {
             gas_limit,
             ret_offset,
             ret_size,
-            memoryv2: old_callframe_memory,
+            memory: old_callframe_memory,
             ..
         } = executed_call_frame;
 
@@ -850,12 +841,10 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
-        memory::try_store_range(
-            &mut parent_call_frame.memory,
-            ret_offset,
-            ret_size,
-            &ctx_result.output,
-        )?;
+        parent_call_frame
+            .memory
+            .store_range(ret_offset, ret_size, &ctx_result.output)?;
+
         parent_call_frame.sub_return_data = ctx_result.output.clone();
 
         // What to do, depending on TxResult
@@ -889,7 +878,7 @@ impl<'a> VM<'a> {
             gas_limit,
             to,
             call_frame_backup,
-            memoryv2: old_callframe_memory,
+            memory: old_callframe_memory,
             ..
         } = executed_call_frame;
         let parent_call_frame = self.current_call_frame_mut()?;
@@ -966,7 +955,9 @@ impl<'a> VM<'a> {
 
     fn get_calldata(&mut self, offset: U256, size: usize) -> Result<Bytes, VMError> {
         Ok(Bytes::from(
-            memory::load_range(&mut self.current_call_frame_mut()?.memory, offset, size)?.to_vec(),
+            self.current_call_frame_mut()?
+                .memory
+                .load_range(offset, size)?,
         ))
     }
 

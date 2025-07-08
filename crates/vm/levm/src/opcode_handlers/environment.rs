@@ -1,7 +1,7 @@
 use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self},
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     utils::word_to_address,
     vm::VM,
 };
@@ -152,7 +152,7 @@ impl<'a> VM<'a> {
 
         let mut data = vec![0u8; size];
         if calldata_offset > current_call_frame.calldata.len().into() {
-            memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
+            current_call_frame.memory.store_data(dest_offset, &data)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -171,7 +171,7 @@ impl<'a> VM<'a> {
                 *data_byte = *byte;
             }
         }
-        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
+        current_call_frame.memory.store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -229,7 +229,9 @@ impl<'a> VM<'a> {
             }
         }
 
-        memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
+        current_call_frame
+            .memory
+            .store_data(destination_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -302,11 +304,9 @@ impl<'a> VM<'a> {
             }
         }
 
-        memory::try_store_data(
-            &mut self.current_call_frame_mut()?.memory,
-            dest_offset,
-            &data,
-        )?;
+        self.current_call_frame_mut()?
+            .memory
+            .store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -371,7 +371,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
+        current_call_frame.memory.store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

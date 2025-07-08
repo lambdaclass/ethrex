@@ -6,10 +6,7 @@ use crate::{
 };
 use ExceptionalHalt::OutOfBounds;
 use ExceptionalHalt::OutOfGas;
-use ethrex_common::{
-    U256,
-    utils::{u256_from_big_endian, u256_from_big_endian_const},
-};
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 /// A cheaply clonable callframe-shared memory buffer.
 ///
@@ -18,6 +15,7 @@ use ethrex_common::{
 pub struct MemoryV2 {
     buffer: Rc<RefCell<Vec<u8>>>,
     current_base: usize,
+    len_gas: usize,
 }
 
 impl MemoryV2 {
@@ -26,6 +24,7 @@ impl MemoryV2 {
         Self {
             buffer: Rc::new(RefCell::new(Vec::with_capacity(4096))),
             current_base,
+            len_gas: 0,
         }
     }
 
@@ -40,22 +39,36 @@ impl MemoryV2 {
         self.buffer.borrow_mut().truncate(self.current_base);
     }
 
+    /// Returns the len of the current memory for gas, this differs from the actual allocated length due to optimizations.
+    pub fn len(&self) -> usize {
+        self.len_gas
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Returns the len of the current memory, from the current base.
-    fn len(&self) -> usize {
+    fn current_len(&self) -> usize {
         // will never wrap
         self.buffer.borrow().len().wrapping_sub(self.current_base)
     }
 
     #[inline]
-    pub fn resize(&self, new_memory_size: usize) -> Result<(), VMError> {
+    pub fn resize(&mut self, new_memory_size: usize) -> Result<(), VMError> {
         if new_memory_size == 0 {
             return Ok(());
         }
 
-        let current_len = self.len();
+        let current_len = self.current_len();
 
         if new_memory_size <= current_len {
             return Ok(());
+        }
+
+        #[expect(clippy::arithmetic_side_effects)]
+        {
+            self.len_gas += new_memory_size - current_len;
         }
 
         let mut buffer = self.buffer.borrow_mut();
@@ -69,7 +82,7 @@ impl MemoryV2 {
         Ok(())
     }
 
-    pub fn load_range(&self, offset: U256, size: usize) -> Result<Vec<u8>, VMError> {
+    pub fn load_range(&mut self, offset: U256, size: usize) -> Result<Vec<u8>, VMError> {
         let offset: usize = offset
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -86,7 +99,7 @@ impl MemoryV2 {
             .to_vec())
     }
 
-    pub fn load_range_const<const N: usize>(&self, offset: U256) -> Result<[u8; N], VMError> {
+    pub fn load_range_const<const N: usize>(&mut self, offset: U256) -> Result<[u8; N], VMError> {
         let offset: usize = offset
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -104,7 +117,7 @@ impl MemoryV2 {
             .map_err(|_| OutOfBounds)?)
     }
 
-    pub fn load_word(&self, offset: U256) -> Result<U256, VMError> {
+    pub fn load_word(&mut self, offset: U256) -> Result<U256, VMError> {
         let value: [u8; 32] = self.load_range_const(offset)?;
         Ok(u256_from_big_endian_const(value))
     }
@@ -131,7 +144,7 @@ impl MemoryV2 {
         Ok(())
     }
 
-    pub fn store_data(&self, offset: U256, data: &[u8]) -> Result<(), VMError> {
+    pub fn store_data(&mut self, offset: U256, data: &[u8]) -> Result<(), VMError> {
         let new_size = offset
             .checked_add(data.len().into())
             .ok_or(OutOfBounds)?
@@ -141,7 +154,7 @@ impl MemoryV2 {
         self.store(data, offset, data.len())
     }
 
-    pub fn store_range(&self, offset: U256, size: usize, data: &[u8]) -> Result<(), VMError> {
+    pub fn store_range(&mut self, offset: U256, size: usize, data: &[u8]) -> Result<(), VMError> {
         if size == 0 {
             return Ok(());
         }
@@ -155,7 +168,7 @@ impl MemoryV2 {
         self.store(data, offset, size)
     }
 
-    pub fn store_word(&self, offset: U256, word: U256) -> Result<(), VMError> {
+    pub fn store_word(&mut self, offset: U256, word: U256) -> Result<(), VMError> {
         let new_size: usize = offset
             .checked_add(WORD_SIZE_IN_BYTES_USIZE.into())
             .ok_or(OutOfBounds)?
@@ -167,7 +180,7 @@ impl MemoryV2 {
     }
 
     pub fn copy_within(
-        &self,
+        &mut self,
         from_offset: U256,
         to_offset: U256,
         size: usize,
@@ -223,168 +236,6 @@ impl Default for MemoryV2 {
     fn default() -> Self {
         Self::new(0)
     }
-}
-
-/// Memory of the EVM, a volatile byte array.
-pub type Memory = Vec<u8>;
-
-pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), VMError> {
-    if unchecked_new_size == 0 || unchecked_new_size <= memory.len() {
-        return Ok(());
-    }
-
-    let new_size = unchecked_new_size
-        .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
-        .ok_or(OutOfBounds)?;
-
-    if new_size > memory.len() {
-        let additional_size = new_size
-            .checked_sub(memory.len())
-            .ok_or(InternalError::Underflow)?;
-        memory
-            .try_reserve(additional_size)
-            .map_err(|_err| InternalError::MemorySizeOverflow)?;
-        memory.resize(new_size, 0);
-    }
-
-    Ok(())
-}
-
-pub fn load_word(memory: &mut Memory, offset: U256) -> Result<U256, VMError> {
-    load_range(memory, offset, WORD_SIZE_IN_BYTES_USIZE).map(u256_from_big_endian)
-}
-
-pub fn load_range(memory: &mut Memory, offset: U256, size: usize) -> Result<&[u8], VMError> {
-    if size == 0 {
-        return Ok(&[]);
-    }
-
-    let offset: usize = offset
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
-    try_resize(memory, offset.checked_add(size).ok_or(OutOfBounds)?)?;
-
-    memory
-        .get(offset..offset.checked_add(size).ok_or(OutOfBounds)?)
-        .ok_or(OutOfBounds.into())
-}
-
-pub fn try_store_word(memory: &mut Memory, offset: U256, word: U256) -> Result<(), VMError> {
-    let new_size: usize = offset
-        .checked_add(WORD_SIZE_IN_BYTES_USIZE.into())
-        .ok_or(OutOfBounds)?
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
-    try_resize(memory, new_size)?;
-    try_store(
-        memory,
-        &word.to_big_endian(),
-        offset,
-        WORD_SIZE_IN_BYTES_USIZE,
-    )
-}
-
-pub fn try_store_data(memory: &mut Memory, offset: U256, data: &[u8]) -> Result<(), VMError> {
-    let new_size = offset
-        .checked_add(data.len().into())
-        .ok_or(OutOfBounds)?
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-    try_resize(memory, new_size)?;
-    try_store(memory, data, offset, data.len())
-}
-
-pub fn try_store_range(
-    memory: &mut Memory,
-    offset: U256,
-    size: usize,
-    data: &[u8],
-) -> Result<(), VMError> {
-    if size == 0 {
-        return Ok(());
-    }
-
-    let new_size = offset
-        .checked_add(size.into())
-        .ok_or(OutOfBounds)?
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-    try_resize(memory, new_size)?;
-    try_store(memory, data, offset, size)
-}
-
-fn try_store(
-    memory: &mut Memory,
-    data: &[u8],
-    at_offset: U256,
-    data_size: usize,
-) -> Result<(), VMError> {
-    if data_size == 0 {
-        return Ok(());
-    }
-
-    let at_offset: usize = at_offset
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
-    for (byte_to_store, memory_slot) in data.iter().zip(
-        memory
-            .get_mut(
-                at_offset
-                    ..at_offset
-                        .checked_add(data_size)
-                        .ok_or(InternalError::Overflow)?,
-            )
-            .ok_or(OutOfBounds)?
-            .iter_mut(),
-    ) {
-        *memory_slot = *byte_to_store;
-    }
-    Ok(())
-}
-
-pub fn try_copy_within(
-    memory: &mut Memory,
-    from_offset: U256,
-    to_offset: U256,
-    size: usize,
-) -> Result<(), VMError> {
-    if size == 0 {
-        return Ok(());
-    }
-
-    let from_offset: usize = from_offset
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-    let to_offset: usize = to_offset
-        .try_into()
-        .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-    try_resize(
-        memory,
-        to_offset
-            .max(from_offset)
-            .checked_add(size)
-            .ok_or(InternalError::Overflow)?,
-    )?;
-
-    let mut temporary_buffer = vec![0u8; size];
-    for i in 0..size {
-        if let Some(temporary_buffer_byte) = temporary_buffer.get_mut(i) {
-            *temporary_buffer_byte = *memory
-                .get(from_offset.checked_add(i).ok_or(InternalError::Overflow)?)
-                .unwrap_or(&0u8);
-        }
-    }
-
-    for i in 0..size {
-        if let Some(memory_byte) = memory.get_mut(to_offset.checked_add(i).ok_or(OutOfBounds)?) {
-            *memory_byte = *temporary_buffer.get(i).unwrap_or(&0u8);
-        }
-    }
-
-    Ok(())
 }
 
 /// When a memory expansion is triggered, only the additional bytes of memory

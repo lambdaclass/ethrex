@@ -1,7 +1,7 @@
 use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
-    memory::{Memory, MemoryV2},
+    memory::MemoryV2,
     opcodes::Opcode,
     utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
@@ -157,8 +157,7 @@ pub struct CallFrame {
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
-    pub memory: Memory,
-    pub memoryv2: MemoryV2,
+    pub memory: MemoryV2,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
@@ -258,7 +257,7 @@ impl CallFrame {
             ret_offset,
             ret_size,
             stack,
-            memoryv2: memory,
+            memory,
             ..Default::default()
         }
     }

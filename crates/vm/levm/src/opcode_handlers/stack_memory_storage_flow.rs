@@ -3,7 +3,7 @@ use crate::{
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     opcodes::Opcode,
     vm::VM,
 };
@@ -82,7 +82,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[memory::load_word(&mut current_call_frame.memory, offset)?])?;
+            .push(&[current_call_frame.memory.load_word(offset)?])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -105,11 +105,7 @@ impl<'a> VM<'a> {
             current_call_frame.memory.len(),
         )?)?;
 
-        memory::try_store_data(
-            &mut current_call_frame.memory,
-            offset,
-            &value.to_big_endian(),
-        )?;
+        current_call_frame.memory.store_word(offset, value)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -129,11 +125,9 @@ impl<'a> VM<'a> {
 
         let [value] = current_call_frame.stack.pop()?;
 
-        memory::try_store_data(
-            &mut current_call_frame.memory,
-            offset,
-            &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
-        )?;
+        current_call_frame
+            .memory
+            .store_data(offset, &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -281,12 +275,9 @@ impl<'a> VM<'a> {
             size,
         )?)?;
 
-        memory::try_copy_within(
-            &mut current_call_frame.memory,
-            src_offset,
-            dest_offset,
-            size,
-        )?;
+        current_call_frame
+            .memory
+            .copy_within(src_offset, dest_offset, size)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
