@@ -65,6 +65,7 @@ impl<'a> Decoder<'a> {
         };
         Ok((field, updated_self))
     }
+
     /// Returns the next field without decoding it, i.e. the payload bytes including its prefix.
     pub fn get_encoded_item(self) -> Result<(Vec<u8>, Self), RLPDecodeError> {
         match get_item_with_prefix(self.payload) {
