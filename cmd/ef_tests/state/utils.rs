@@ -39,7 +39,7 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
 
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
 
-    GeneralizedDatabase::new(Arc::new(store), CacheDB::new())
+    GeneralizedDatabase::new(Arc::new(store), CacheDB::default())
 }
 
 // If gas price is not provided, calculate it with current base fee and priority fee

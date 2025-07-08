@@ -64,7 +64,7 @@ pub async fn re_run_failed_ef_test(
                 // We only want to re-run tests that failed in the post-state validation.
                 EFTestRunnerError::FailedToEnsurePostState(transaction_report, _, levm_cache) => {
                     match re_run_failed_ef_test_tx(
-                        levm_cache.clone(),
+                        ahash::HashMap::from_iter(levm_cache.clone().into_iter()),
                         vector,
                         test,
                         transaction_report,
@@ -126,7 +126,7 @@ pub async fn re_run_failed_ef_test(
 }
 
 pub async fn re_run_failed_ef_test_tx(
-    levm_cache: HashMap<Address, Account>,
+    levm_cache: ahash::HashMap<Address, Account>,
     vector: &TestVector,
     test: &EFTest,
     levm_execution_report: &ExecutionReport,
@@ -365,7 +365,7 @@ pub fn compare_levm_revm_execution_results(
 }
 
 pub async fn ensure_post_state(
-    levm_cache: HashMap<Address, Account>,
+    levm_cache: ahash::HashMap<Address, Account>,
     vector: &TestVector,
     revm_state: &mut EvmState,
     test: &EFTest,
@@ -484,7 +484,7 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                         *transaction_report,
                         reason,
                         *vector,
-                        levm_cache,
+                        levm_cache.into_iter().collect(),
                     );
                 }
                 Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
@@ -557,7 +557,7 @@ pub async fn _ensure_post_state_revm(
                         }),
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
-                        HashMap::new(),
+                        Vec::new(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -579,7 +579,7 @@ pub async fn _ensure_post_state_revm(
                             }),
                             //TODO: This is not a TransactionReport because it is REVM
                             "Post-state root mismatch".to_string(),
-                            HashMap::new(),
+                            Vec::new(),
                         ));
                     }
                 }

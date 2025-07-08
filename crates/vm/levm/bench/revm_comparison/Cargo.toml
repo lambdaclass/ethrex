@@ -18,6 +18,7 @@ bytes.workspace = true
 
 revm = "9.0.0"
 sha3 = "0.10.8"
+ahash.workspace = true
 
 [[bin]]
 name = "compile"

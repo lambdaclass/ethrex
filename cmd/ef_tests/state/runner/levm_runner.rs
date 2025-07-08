@@ -59,7 +59,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                         *transaction_report,
                         reason,
                         *vector,
-                        levm_cache,
+                        levm_cache.into_iter().collect(),
                     );
                 }
                 Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
@@ -356,7 +356,7 @@ pub async fn ensure_post_state(
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         Box::new(execution_report.clone()),
                         error_reason,
-                        cache,
+                        cache.into_iter().collect(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -376,7 +376,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             "Post-state root mismatch".to_string(),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
 
@@ -394,7 +394,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             "Logs mismatch".to_string(),
-                            cache,
+                            cache.into_iter().collect(),
                         ));
                     }
                 }

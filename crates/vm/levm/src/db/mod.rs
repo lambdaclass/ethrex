@@ -1,10 +1,10 @@
 use crate::errors::DatabaseError;
+use ahash::HashMap;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{Account, ChainConfig},
 };
-use std::collections::HashMap;
 
 pub mod gen_db;
 

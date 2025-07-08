@@ -185,8 +185,8 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, Account>,
-    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    pub original_accounts_info: ahash::HashMap<Address, Account>,
+    pub original_account_storage_slots: ahash::HashMap<Address, ahash::HashMap<H256, U256>>,
 }
 
 impl CallFrameBackup {
@@ -344,7 +344,7 @@ impl<'a> VM<'a> {
         {
             let parent_storage = parent_backup_storage
                 .entry(*address)
-                .or_insert(HashMap::new());
+                .or_insert(HashMap::default());
             for (key, value) in storage {
                 if parent_storage.get(key).is_none() {
                     parent_storage.insert(*key, *value);

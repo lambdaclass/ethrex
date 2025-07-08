@@ -97,6 +97,7 @@ eyre = "0.6.12"
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
+ahash = "0.8.12"
 # Changing the tag for spawned will break the TDX image build
 # When updating it try to build the TDX image and update service.nix with the new hash
 spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}

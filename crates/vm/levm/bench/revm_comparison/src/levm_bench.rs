@@ -52,7 +52,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
 
-    let cache = HashMap::from([
+    let cache = ahash::HashMap::from_iter([
         (
             Address::from_low_u64_be(CONTRACT_ADDRESS),
             Account::new(U256::MAX, bytecode.clone(), 0, HashMap::new()),
