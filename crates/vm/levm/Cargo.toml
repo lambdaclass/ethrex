@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 lazy_static.workspace = true
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 
