@@ -37,7 +37,6 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
-use tracing::info;
 
 use super::{
     codec::RLPxCodec,
@@ -65,14 +64,8 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
-    let known_node = Node::from_enode_url(
-        "enode://da1568823fdfccdcc37de2f3751987510c055ac24240cb8261aab5e3510b5e6222083d70a99ee29fa971a0646b37565311d31497054d6bdf320f8b3ea20749b6@177.54.155.141:60300",
-    ).unwrap();
     let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node }) => {
-            if node.node_id() == known_node.node_id() {
-                info!("Connecting to known node");
-            }
             let addr = node.tcp_addr();
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,

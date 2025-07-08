@@ -17,7 +17,7 @@ use crate::{
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
     },
-    types::{Node, NodeRecord},
+    types::NodeRecord,
 };
 
 const MAX_PEER_COUNT: usize = 50;
@@ -130,11 +130,6 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
 }
 
 async fn spawn_lookup_servers(state: &mut RLPxServerState, handle: &GenServerHandle<RLPxServer>) {
-    let known_node = Node::from_enode_url(
-        "enode://da1568823fdfccdcc37de2f3751987510c055ac24240cb8261aab5e3510b5e6222083d70a99ee29fa971a0646b37565311d31497054d6bdf320f8b3ea20749b6@177.54.155.141:60300",
-    ).unwrap();
-    RLPxConnection::spawn_as_initiator(state.ctx.clone(), &known_node).await;
-
     for _ in 0..MAX_CONCURRENT_LOOKUPS {
         let node_iterator = state.discovery_server.new_random_iterator();
         let Ok(new_lookup_server) =
