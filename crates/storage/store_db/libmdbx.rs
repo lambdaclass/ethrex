@@ -44,7 +44,7 @@ use std::sync::Arc;
 use std::thread;
 
 /// The number of blocks to keep in the state and storage log tables
-const KEEP_BLOCKS: u64 = 1024;
+const KEEP_BLOCKS: u64 = 128;
 
 // Define tables
 table!(
