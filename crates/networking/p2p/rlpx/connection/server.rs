@@ -275,9 +275,9 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
 {
-    post_handshake_checks(state.table.clone()).await.unwrap();
+    post_handshake_checks(state.table.clone()).await?;
 
-    exchange_hello_messages(state, &mut stream).await.unwrap();
+    exchange_hello_messages(state, &mut stream).await?;
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
@@ -286,7 +286,7 @@ where
     // Updating the state to establish the backend channel
     state.backend_channel = Some(sender);
 
-    init_capabilities(state, &mut stream).await.unwrap();
+    init_capabilities(state, &mut stream).await?;
 
     // NOTE: if the peer came from the discovery server it will already be inserted in the table
     // but that might not always be the case, so we try to add it to the table
@@ -305,7 +305,7 @@ where
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
-    send_new_pooled_tx_hashes(state).await.unwrap();
+    send_new_pooled_tx_hashes(state).await?;
 
     // Periodic broadcast check repeated events.
     send_interval(
