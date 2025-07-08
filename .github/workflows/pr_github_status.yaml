@@ -44,10 +44,9 @@ jobs:
             const projectId = project.id;
 
 
-            // Get all items of the project
+            // Fetch all items of the project, in batches of 100 elements.
             let hasNextPage = true;
             let after = null;
-            let allItems = [];
 
             while (hasNextPage) {
               const result = await github.graphql(`
@@ -78,15 +77,18 @@ jobs:
               });
 
               const items = result.node.items.nodes;
-              allItems = allItems.concat(items);
+              const foundItem = items.find(i => i.content?.number === pr.number);
+              if (foundItem) {
+                item = foundItem;
+                break;
+              }
 
               hasNextPage = result.node.items.pageInfo.hasNextPage;
               after = result.node.items.pageInfo.endCursor;
             }
 
-            let item = allItems.find(i => i.content?.number === pr.number);
-            let itemId;
 
+            let itemId;
             if (item) {
               console.log(`PR #${pr.number} found in project with item ID: ${item.id}`);
               itemId = item.id;
