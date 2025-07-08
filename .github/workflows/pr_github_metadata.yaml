@@ -1,4 +1,4 @@
-name: PR Label
+name: PR Github Metadata
 
 on:
   pull_request:
@@ -14,6 +14,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  assign-author:
+    name: Assign Author
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign PR author
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [context.payload.pull_request.user.login]
+            });
+
   label-pr:
     name: Set Label
     runs-on: ubuntu-latest
