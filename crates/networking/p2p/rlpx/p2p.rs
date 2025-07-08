@@ -38,6 +38,7 @@ const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// A capability is identified by a short ASCII name (max eight characters) and version number
 pub struct Capability {
     protocol: [u8; CAPABILITY_NAME_MAX_LENGTH],
     pub version: u8,
