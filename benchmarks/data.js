@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752000570656,
+  "lastUpdate": 1752001959382,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3055,6 +3055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209830786007,
             "range": "± 763501282",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "53546f4e280e333ad80df31355bd1fc887991d10",
+          "message": "fix(l1): abort `show_state_sync_progress` task  (#3406)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThe `show_state_sync_progress` task used to run until all\n`state_sync_segment` tasks had signaled their conclusion via\n`end_segment` method. This could cause the task to hand indeterminately\nif one of the tasks failed. This PR aims to fix this by removing the\nresponsibility of signaling their end from `state_sync_segment` and\ninstead have `state_sync` method (the one that launched both\n`show_state_sync_progress` & the `state_sync_segment` tasks) be the one\nto end the `show_state_sync_progress` task via an abort\n**Description**\n* Remove method `StateSyncProgress::end_segment` & associated field\n* `show_state_sync_progress` is now an endless task\n* `state_sync` now aborts `show_state_sync_progress` when no longer\nneeded instead of waiting for it to finish\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-07-08T18:11:03Z",
+          "tree_id": "db56a77d681fdf0503b3de056d2867e86bc95061",
+          "url": "https://github.com/lambdaclass/ethrex/commit/53546f4e280e333ad80df31355bd1fc887991d10"
+        },
+        "date": 1752001949707,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211284593952,
+            "range": "± 1287981424",
             "unit": "ns/iter"
           }
         ]
