@@ -22,6 +22,11 @@ impl VMError {
     pub fn should_propagate(&self) -> bool {
         matches!(self, VMError::Internal(_))
     }
+
+    /// Error triggered by revert opcode. This error doesn't consume all gas left in context.
+    pub fn is_revert_opcode(&self) -> bool {
+        matches!(self, VMError::RevertOpcode)
+    }
 }
 
 impl From<DatabaseError> for VMError {
@@ -64,6 +69,8 @@ pub enum ExceptionalHalt {
     Precompile(#[from] PrecompileError),
 }
 
+// Error strings are attached to execution-spec-tests mapping https://github.com/ethereum/execution-spec-tests
+// If any change is made here without changing the mapper it will break some hive tests.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum TxValidationError {
     #[error("Sender account shouldn't be a contract")]
@@ -194,6 +201,19 @@ pub struct ExecutionReport {
 }
 
 impl ExecutionReport {
+    pub fn is_success(&self) -> bool {
+        matches!(self.result, TxResult::Success)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextResult {
+    pub result: TxResult,
+    pub gas_used: u64,
+    pub output: Bytes,
+}
+
+impl ContextResult {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }

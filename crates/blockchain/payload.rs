@@ -7,13 +7,12 @@ use std::{
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::GAS_PER_BLOB,
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, MempoolTransaction, Receipt,
-        Transaction, Withdrawal, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
-        compute_withdrawals_root,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, bloom_from_logs,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -28,10 +27,10 @@ use sha3::{Digest, Keccak256};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxStatus, MetricsTxType};
+use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxType};
 
 use crate::{
-    Blockchain,
+    Blockchain, BlockchainType,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
@@ -175,8 +174,7 @@ pub struct PayloadBuildContext {
     pub payload: Block,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
-    pub requests: Vec<EncodedRequests>,
-    pub requests_hash: Option<H256>,
+    pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
@@ -186,7 +184,12 @@ pub struct PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
-    pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
+    pub fn new(
+        payload: Block,
+        evm_engine: EvmEngine,
+        storage: &Store,
+        blockchain_type: BlockchainType,
+    ) -> Result<Self, EvmError> {
         let config = storage
             .get_chain_config()
             .map_err(|e| EvmError::DB(e.to_string()))?;
@@ -199,13 +202,17 @@ impl PayloadBuildContext {
         );
 
         let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
-        let vm = Evm::new(evm_engine, vm_db);
+        let vm = match blockchain_type {
+            BlockchainType::L1 => Evm::new_for_l1(evm_engine, vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(evm_engine, vm_db)?,
+        };
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             receipts: vec![],
-            requests: vec![],
-            requests_hash: None,
+            requests: config
+                .is_prague_activated(payload.header.timestamp)
+                .then_some(Vec::new()),
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
@@ -261,7 +268,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
         Self {
             blobs_bundle,
             block_value,
-            requests,
+            requests: requests.unwrap_or_default(),
             receipts,
             account_updates,
             payload,
@@ -277,10 +284,12 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
+        let mut context =
+            PayloadBuildContext::new(payload, self.evm_engine, &self.storage, self.r#type.clone())?;
 
-        #[cfg(not(feature = "l2"))]
-        self.apply_system_operations(&mut context)?;
+        if let BlockchainType::L1 = self.r#type {
+            self.apply_system_operations(&mut context)?;
+        }
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;
@@ -430,19 +439,13 @@ impl Blockchain {
                     // Pull transaction from the mempool
                     self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Succeeded,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
+                    metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
                     receipt
                 }
                 // Ignore following txs from sender
                 Err(e) => {
                     error!("Failed to execute transaction: {tx_hash:x}, {e}");
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Failed,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
+                    metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     txs.pop();
                     continue;
                 }
@@ -514,8 +517,7 @@ impl Blockchain {
             .vm
             .extract_requests(&context.receipts, &context.payload.header)?;
 
-        context.requests = requests.iter().map(|r| r.encode()).collect();
-        context.requests_hash = Some(compute_requests_hash(&context.requests));
+        context.requests = Some(requests.iter().map(|r| r.encode()).collect());
 
         Ok(())
     }
@@ -538,9 +540,21 @@ impl Blockchain {
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-        context.payload.header.requests_hash = context.requests_hash;
+        context.payload.header.requests_hash = context
+            .requests
+            .as_ref()
+            .map(|requests| compute_requests_hash(requests));
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
+
+        let mut logs = vec![];
+        for receipt in context.receipts.iter().cloned() {
+            for log in receipt.logs {
+                logs.push(log);
+            }
+        }
+
+        context.payload.header.logs_bloom = bloom_from_logs(&logs);
         Ok(())
     }
 }

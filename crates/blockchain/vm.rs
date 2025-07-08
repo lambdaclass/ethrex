@@ -1,7 +1,8 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountInfo, BlockHash, BlockNumber, ChainConfig, EMPTY_KECCACK_HASH},
+    constants::EMPTY_KECCACK_HASH,
+    types::{AccountInfo, BlockHash, BlockNumber, ChainConfig},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
@@ -79,8 +80,8 @@ impl VmDatabase for StoreVmDatabase {
                     Ordering::Equal => return Ok(hash),
                     Ordering::Less => {
                         return Err(EvmError::DB(format!(
-                            "Block number requested {} is higher than the current block number {}",
-                            block_number, ancestor.number
+                            "Block number requested {block_number} is higher than the current block number {}",
+                            ancestor.number
                         )));
                     }
                 }
@@ -105,8 +106,7 @@ impl VmDatabase for StoreVmDatabase {
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),
             Ok(None) => Err(EvmError::DB(format!(
-                "Code not found for hash: {:?}",
-                code_hash
+                "Code not found for hash: {code_hash:?}",
             ))),
             Err(e) => Err(EvmError::DB(e.to_string())),
         }

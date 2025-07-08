@@ -1,7 +1,7 @@
-use crate::rlpx::based::get_hash_batch_sealed;
+use crate::rlpx::connection::server::{broadcast_message, send};
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
-use crate::rlpx::{connection::RLPxConnection, error::RLPxError};
+use crate::rlpx::{connection::server::Established, error::RLPxError};
 use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
@@ -10,10 +10,10 @@ use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
+use super::messages::batch_hash;
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
 
 #[derive(Debug, Clone)]
@@ -39,6 +39,12 @@ pub enum L2ConnState {
     Unsupported,
     Disconnected(P2PBasedContext),
     Connected(L2ConnectedState),
+}
+
+#[derive(Debug, Clone)]
+pub enum L2Cast {
+    BlockBroadcast,
+    BatchBroadcast
 }
 
 impl L2ConnState {
@@ -77,6 +83,7 @@ impl L2ConnState {
             Self::Connected(_) => Ok(()),
         }
     }
+
 }
 
 fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
@@ -84,263 +91,56 @@ fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
     true
 }
 
-impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
-    pub(crate) async fn handle_based_capability_message(
-        &mut self,
-        msg: L2Message,
-    ) -> Result<(), RLPxError> {
-        self.l2_state.connection_state()?;
-        match msg {
-            L2Message::BatchSealed(ref batch_sealed_msg) => {
-                if self.should_process_batch_sealed(batch_sealed_msg).await? {
-                    self.process_batch_sealed(batch_sealed_msg).await?;
-                    self.broadcast_message(msg.into()).await?
-                }
-            }
-            L2Message::NewBlock(ref new_block_msg) => {
-                if self.should_process_new_block(new_block_msg).await? {
-                    self.process_new_block(new_block_msg).await?;
-                    self.broadcast_message(msg.into()).await?
-                }
+pub(crate) async fn handle_based_capability_message(
+    established: &mut Established,
+    msg: L2Message,
+) -> Result<(), RLPxError> {
+    established.l2_state.connection_state()?;
+    match msg {
+        L2Message::BatchSealed(ref batch_sealed_msg) => {
+            if should_process_batch_sealed(established, batch_sealed_msg).await? {
+                process_batch_sealed(established, batch_sealed_msg).await?;
+                broadcast_message(established, msg.into())?;
             }
         }
-        Ok(())
+        L2Message::NewBlock(ref new_block_msg) => {
+            if should_process_new_block(established, new_block_msg).await? {
+                process_new_block(established, new_block_msg).await?;
+                broadcast_message(established, msg.into())?;
+            }
+        }
     }
-    pub(crate) async fn l2_periodic_tasks(&mut self) -> Result<(), RLPxError> {
-        let next_block_broadcast = self.l2_state.connection_state()?.next_block_broadcast;
-        let next_batch_broadcast = self.l2_state.connection_state()?.next_batch_broadcast;
-        if Instant::now() >= next_block_broadcast {
-            self.send_new_block().await?;
-            self.l2_state.connection_state_mut()?.next_block_broadcast =
-                Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL
-        }
-        if Instant::now() >= next_batch_broadcast {
-            self.send_sealed_batch().await?;
-            self.l2_state.connection_state_mut()?.next_batch_broadcast =
-                Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
-        }
-        Ok(())
-    }
-    async fn send_new_block(&mut self) -> Result<(), RLPxError> {
-        let latest_block_number = self.storage.get_latest_block_number().await?;
-        let latest_block_sent = self.l2_state.connection_state_mut()?.latest_block_sent;
-        for block_number in latest_block_sent + 1..=latest_block_number {
-            let new_block_msg = {
-                let l2_state = self.l2_state.connection_state_mut()?;
-                debug!(
-                    "Broadcasting new block, current: {}, last broadcasted: {}",
-                    block_number, l2_state.latest_block_sent
-                );
+    Ok(())
+}
 
-                let new_block_body = self.storage.get_block_body(block_number).await?.ok_or(
-                    RLPxError::InternalError(
-                        "Block body not found after querying for the block number".to_owned(),
-                    ),
-                )?;
-                let new_block_header = self.storage.get_block_header(block_number)?.ok_or(
-                    RLPxError::InternalError(
-                        "Block header not found after querying for the block number".to_owned(),
-                    ),
-                )?;
-                let new_block = Block {
-                    header: new_block_header,
-                    body: new_block_body,
-                };
-                let (signature, recovery_id) = if let Some(recovered_sig) = l2_state
-                    .store_rollup
-                    .get_signature_by_block(new_block.hash())
-                    .await?
-                {
-                    let mut signature = [0u8; 64];
-                    let mut recovery_id = [0u8; 4];
-                    signature.copy_from_slice(&recovered_sig[..64]);
-                    recovery_id.copy_from_slice(&recovered_sig[64..68]);
-                    (signature, recovery_id)
-                } else {
-                    let (recovery_id, signature) = secp256k1::SECP256K1
-                        .sign_ecdsa_recoverable(
-                            &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
-                            &l2_state.committer_key,
-                        )
-                        .serialize_compact();
-                    let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
-                    (signature, recovery_id)
-                };
-                NewBlock {
-                    block: new_block.into(),
-                    signature,
-                    recovery_id,
-                }
-            };
-
-            self.send(new_block_msg.into()).await?;
-            self.l2_state.connection_state_mut()?.latest_block_sent = block_number;
-        }
-
-        Ok(())
-    }
-
-    async fn should_process_new_block(&mut self, msg: &NewBlock) -> Result<bool, RLPxError> {
-        let l2_state = self.l2_state.connection_state_mut()?;
-        if !self.blockchain.is_synced() {
-            debug!("Not processing new block, blockchain is not synced");
-            return Ok(false);
-        }
-        if l2_state.latest_block_added >= msg.block.header.number
-            || l2_state
-                .blocks_on_queue
-                .contains_key(&msg.block.header.number)
-        {
+pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), RLPxError> {
+    let latest_block_number = established.storage.get_latest_block_number().await?;
+    let latest_block_sent = established.l2_state.connection_state_mut()?.latest_block_sent;
+    for block_number in latest_block_sent + 1..=latest_block_number {
+        let new_block_msg = {
+            let l2_state = established.l2_state.connection_state_mut()?;
             debug!(
-                "Block {} received by peer already stored, ignoring it",
-                msg.block.header.number
+                "Broadcasting new block, current: {}, last broadcasted: {}",
+                block_number, l2_state.latest_block_sent
             );
-            return Ok(false);
-        }
 
-        let block_hash = msg.block.hash();
-
-        let recovered_lead_sequencer = get_pub_key(
-            msg.recovery_id,
-            &msg.signature,
-            *block_hash.as_fixed_bytes(),
-        )
-        .map_err(|e| {
-            log_peer_error(
-                &self.node,
-                &format!("Failed to recover lead sequencer: {e}"),
-            );
-            RLPxError::CryptographyError(e.to_string())
-        })?;
-
-        if !validate_signature(recovered_lead_sequencer) {
-            return Ok(false);
-        }
-        let mut signature = [0u8; 68];
-        signature[..64].copy_from_slice(&msg.signature[..]);
-        signature[64..].copy_from_slice(&msg.recovery_id[..]);
-        l2_state
-            .store_rollup
-            .store_signature_by_block(block_hash, signature)
-            .await?;
-        Ok(true)
-    }
-
-    async fn should_process_batch_sealed(&mut self, msg: &BatchSealed) -> Result<bool, RLPxError> {
-        let l2_state = self.l2_state.connection_state_mut()?;
-        if !self.blockchain.is_synced() {
-            debug!("Not processing new block, blockchain is not synced");
-            return Ok(false);
-        }
-        if l2_state
-            .store_rollup
-            .contains_batch(&msg.batch.number)
-            .await?
-        {
-            debug!("Batch {} already sealed, ignoring it", msg.batch.number);
-            return Ok(false);
-        }
-        if msg.batch.first_block == msg.batch.last_block {
-            // is empty batch
-            return Ok(false);
-        }
-        if l2_state.latest_block_added < msg.batch.last_block {
-            debug!(
-                "Not processing batch {} because the last block {} is not added yet",
-                msg.batch.number, msg.batch.last_block
-            );
-            return Ok(false);
-        }
-
-        let hash = get_hash_batch_sealed(&msg.batch);
-
-        let recovered_lead_sequencer =
-            get_pub_key(msg.recovery_id, &msg.signature, hash).map_err(|e| {
-                log_peer_error(
-                    &self.node,
-                    &format!("Failed to recover lead sequencer: {e}"),
-                );
-                RLPxError::CryptographyError(e.to_string())
-            })?;
-
-        if !validate_signature(recovered_lead_sequencer) {
-            return Ok(false);
-        }
-
-        let mut signature = [0u8; 68];
-        signature[..64].copy_from_slice(&msg.signature[..]);
-        signature[64..].copy_from_slice(&msg.recovery_id[..]);
-        l2_state
-            .store_rollup
-            .store_signature_by_batch(msg.batch.number, signature)
-            .await?;
-        Ok(true)
-    }
-    async fn process_new_block(&mut self, msg: &NewBlock) -> Result<(), RLPxError> {
-        let l2_state = self.l2_state.connection_state_mut()?;
-        l2_state
-            .blocks_on_queue
-            .entry(msg.block.header.number)
-            .or_insert_with(|| msg.block.clone());
-
-        let mut next_block_to_add = l2_state.latest_block_added + 1;
-        while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
-            // This check is necessary if a connection to another peer already applied the block but this connection
-            // did not register that update.
-            if let Ok(Some(_)) = self.storage.get_block_body(next_block_to_add).await {
-                l2_state.latest_block_added = next_block_to_add;
-                next_block_to_add += 1;
-                continue;
-            }
-            self.blockchain.add_block(&block).await.inspect_err(|e| {
-                log_peer_error(
-                    &self.node,
-                    &format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block.header.number,
-                        block.hash()
-                    ),
-                );
-            })?;
-            let block_hash = block.hash();
-
-            apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
-                .await
-                .map_err(|e| {
-                    RLPxError::BlockchainError(ChainError::Custom(format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block.header.number,
-                        block.hash()
-                    )))
-                })?;
-            info!(
-                "Added new block {} with hash {:?}",
-                next_block_to_add, block_hash
-            );
-            l2_state.latest_block_added = next_block_to_add;
-            next_block_to_add += 1;
-        }
-        Ok(())
-    }
-
-    async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
-        let (batch, signature, recovery_id) = {
-            let l2_state = self.l2_state.connection_state_mut()?;
-            let next_batch_to_send = l2_state.latest_batch_sent + 1;
-            if l2_state
-                .store_rollup
-                .contains_batch(&next_batch_to_send)
-                .await?
-            {
-                return Ok(());
-            }
-            let Some(batch) = l2_state.store_rollup.get_batch(next_batch_to_send).await? else {
-                return Ok(());
+            let new_block_body = established.storage.get_block_body(block_number).await?.ok_or(
+                RLPxError::InternalError(
+                    "Block body not found after querying for the block number".to_owned(),
+                ),
+            )?;
+            let new_block_header = established.storage.get_block_header(block_number)?.ok_or(
+                RLPxError::InternalError(
+                    "Block header not found after querying for the block number".to_owned(),
+                ),
+            )?;
+            let new_block = Block {
+                header: new_block_header,
+                body: new_block_body,
             };
-
             let (signature, recovery_id) = if let Some(recovered_sig) = l2_state
                 .store_rollup
-                .get_signature_by_batch(next_batch_to_send)
+                .get_signature_by_block(new_block.hash())
                 .await?
             {
                 let mut signature = [0u8; 64];
@@ -351,43 +151,227 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             } else {
                 let (recovery_id, signature) = secp256k1::SECP256K1
                     .sign_ecdsa_recoverable(
-                        &SecpMessage::from_digest(get_hash_batch_sealed(&batch)),
+                        &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
                         &l2_state.committer_key,
                     )
                     .serialize_compact();
                 let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
                 (signature, recovery_id)
             };
-            (batch, signature, recovery_id)
+            NewBlock {
+                block: new_block.into(),
+                signature,
+                recovery_id,
+            }
         };
 
-        let msg = BatchSealed {
-            batch,
-            signature,
-            recovery_id,
-        };
-
-        self.send(msg.into()).await?;
-        self.l2_state.connection_state_mut()?.latest_batch_sent += 1;
-        Ok(())
+        send(established, new_block_msg.into()).await?;
+        established.l2_state.connection_state_mut()?.latest_block_sent = block_number;
     }
 
-    async fn process_batch_sealed(&mut self, msg: &BatchSealed) -> Result<(), RLPxError> {
-        let l2_state = self.l2_state.connection_state_mut()?;
-        l2_state.store_rollup.seal_batch(msg.batch.clone()).await?;
-        info!(
-            "Sealed batch {} with blocks from {} to {}",
-            msg.batch.number, msg.batch.first_block, msg.batch.last_block
-        );
-        Ok(())
-    }
+    Ok(())
 }
+
+async fn should_process_new_block(established: &mut Established, msg: &NewBlock) -> Result<bool, RLPxError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    if !established.blockchain.is_synced() {
+        debug!("Not processing new block, blockchain is not synced");
+        return Ok(false);
+    }
+    if l2_state.latest_block_added >= msg.block.header.number
+        || l2_state
+            .blocks_on_queue
+            .contains_key(&msg.block.header.number)
+    {
+        debug!(
+            "Block {} received by peer already stored, ignoring it",
+            msg.block.header.number
+        );
+        return Ok(false);
+    }
+
+    let block_hash = msg.block.hash();
+
+    let recovered_lead_sequencer = get_pub_key(
+        msg.recovery_id,
+        &msg.signature,
+        *block_hash.as_fixed_bytes(),
+    )
+    .map_err(|e| {
+        log_peer_error(
+            &established.node,
+            &format!("Failed to recover lead sequencer: {e}"),
+        );
+        RLPxError::CryptographyError(e.to_string())
+    })?;
+
+    if !validate_signature(recovered_lead_sequencer) {
+        return Ok(false);
+    }
+    let mut signature = [0u8; 68];
+    signature[..64].copy_from_slice(&msg.signature[..]);
+    signature[64..].copy_from_slice(&msg.recovery_id[..]);
+    l2_state
+        .store_rollup
+        .store_signature_by_block(block_hash, signature)
+        .await?;
+    Ok(true)
+}
+
+async fn should_process_batch_sealed(established: &mut Established, msg: &BatchSealed) -> Result<bool, RLPxError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    if !established.blockchain.is_synced() {
+        debug!("Not processing new block, blockchain is not synced");
+        return Ok(false);
+    }
+    if l2_state
+        .store_rollup
+        .contains_batch(&msg.batch.number)
+        .await?
+    {
+        debug!("Batch {} already sealed, ignoring it", msg.batch.number);
+        return Ok(false);
+    }
+    if msg.batch.first_block == msg.batch.last_block {
+        // is empty batch
+        return Ok(false);
+    }
+    if l2_state.latest_block_added < msg.batch.last_block {
+        debug!(
+            "Not processing batch {} because the last block {} is not added yet",
+            msg.batch.number, msg.batch.last_block
+        );
+        return Ok(false);
+    }
+
+    let hash = batch_hash(&msg.batch);
+
+    let recovered_lead_sequencer =
+        get_pub_key(msg.recovery_id, &msg.signature, hash.0).map_err(|e| {
+            log_peer_error(
+                &established.node,
+                &format!("Failed to recover lead sequencer: {e}"),
+            );
+            RLPxError::CryptographyError(e.to_string())
+        })?;
+
+    if !validate_signature(recovered_lead_sequencer) {
+        return Ok(false);
+    }
+
+    let mut signature = [0u8; 68];
+    signature[..64].copy_from_slice(&msg.signature[..]);
+    signature[64..].copy_from_slice(&msg.recovery_id[..]);
+    l2_state
+        .store_rollup
+        .store_signature_by_batch(msg.batch.number, signature)
+        .await?;
+    Ok(true)
+}
+
+async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Result<(), RLPxError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    l2_state
+        .blocks_on_queue
+        .entry(msg.block.header.number)
+        .or_insert_with(|| msg.block.clone());
+
+    let mut next_block_to_add = l2_state.latest_block_added + 1;
+    while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
+        // This check is necessary if a connection to another peer already applied the block but this connection
+        // did not register that update.
+        if let Ok(Some(_)) = established.storage.get_block_body(next_block_to_add).await {
+            l2_state.latest_block_added = next_block_to_add;
+            next_block_to_add += 1;
+            continue;
+        }
+        established.blockchain.add_block(&block).await.inspect_err(|e| {
+            log_peer_error(
+                &established.node,
+                &format!(
+                    "Error adding new block {} with hash {:?}, error: {e}",
+                    block.header.number,
+                    block.hash()
+                ),
+            );
+        })?;
+        let block_hash = block.hash();
+
+        apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
+            .await
+            .map_err(|e| {
+                RLPxError::BlockchainError(ChainError::Custom(format!(
+                    "Error adding new block {} with hash {:?}, error: {e}",
+                    block.header.number,
+                    block.hash()
+                )))
+            })?;
+        info!(
+            "Added new block {} with hash {:?}",
+            next_block_to_add, block_hash
+        );
+        l2_state.latest_block_added = next_block_to_add;
+        next_block_to_add += 1;
+    }
+    Ok(())
+}
+
+pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(), RLPxError> {
+    let batch_sealed_msg = {
+        let l2_state = established.l2_state.connection_state_mut()?;
+        let next_batch_to_send = l2_state.latest_batch_sent + 1;
+        if l2_state
+            .store_rollup
+            .contains_batch(&next_batch_to_send)
+            .await?
+        {
+            return Ok(());
+        }
+        let Some(batch) = l2_state.store_rollup.get_batch(next_batch_to_send).await? else {
+            return Ok(());
+        };
+        match l2_state.store_rollup.get_signature_by_batch(next_batch_to_send).await {
+            Ok(Some(recovered_sig)) => {
+                let (signature, recovery_id) = {
+                    let mut signature = [0u8; 64];
+                    let mut recovery_id = [0u8; 4];
+                    signature.copy_from_slice(&recovered_sig[..64]);
+                    recovery_id.copy_from_slice(&recovered_sig[64..68]);
+                    (signature, recovery_id)
+                };
+                BatchSealed::new(batch, signature, recovery_id)
+            }
+            Ok(None) => {
+                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())
+            }
+            Err(err) => {
+                warn!("Fetching signature from store returned an error, defaulting to signing with commiter key: {err}");
+                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())
+            }
+        }
+    };
+
+    send(established, batch_sealed_msg.into()).await?;
+    established.l2_state.connection_state_mut()?.latest_batch_sent += 1;
+    Ok(())
+}
+
+async fn process_batch_sealed(established: &mut Established, msg: &BatchSealed) -> Result<(), RLPxError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    l2_state.store_rollup.seal_batch(msg.batch.clone()).await?;
+    info!(
+        "Sealed batch {} with blocks from {} to {}",
+        msg.batch.number, msg.batch.first_block, msg.batch.last_block
+    );
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::network::public_key_from_signing_key;
-    use crate::rlpx::connection::{LocalState, RemoteState};
+    use crate::rlpx::connection::server::{LocalState, RemoteState};
     use crate::rlpx::frame::RLPxCodec;
     use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
     use crate::rlpx::message::Message;

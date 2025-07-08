@@ -3,7 +3,7 @@ use crate::{
     networks::{self, Network, PublicNetwork},
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -18,30 +18,29 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
-#[cfg(feature = "l2")]
-use crate::l2::L2Options;
-#[cfg(feature = "l2")]
-use ::{
-    ethrex_common::Address,
-    ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-};
-
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
-        .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy();
+        .with_default_directive(
+            // Filters all spawned logs
+            // TODO: revert #3467 when error logs are no longer emitted
+            Directive::from_str("spawned_concurrency::tasks::gen_server=off")
+                .expect("this can't fail"),
+        )
+        .from_env_lossy()
+        .add_directive(Directive::from(opts.log_level));
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
         .finish();
@@ -91,34 +90,18 @@ pub fn open_store(data_dir: &str) -> Store {
     }
 }
 
-#[cfg(feature = "l2")]
-pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_redb")] {
-            let engine_type = EngineTypeRollup::RedB;
-        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-            let engine_type = EngineTypeRollup::Libmdbx;
-        } else {
-            let engine_type = EngineTypeRollup::InMemory;
-        }
-    }
-    let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
-    rollup_store
-        .init()
-        .await
-        .expect("Failed to init rollup store");
-    rollup_store
-}
-
-pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
-    Blockchain::new(evm_engine, store).into()
+pub fn init_blockchain(
+    evm_engine: EvmEngine,
+    store: Store,
+    blockchain_type: BlockchainType,
+) -> Arc<Blockchain> {
+    info!("Initiating blockchain with EVM: {}", evm_engine);
+    Blockchain::new(evm_engine, store, blockchain_type).into()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    #[cfg(feature = "l2")] l2_opts: &L2Options,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -126,7 +109,6 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
-    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -151,12 +133,6 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
-        #[cfg(feature = "l2")]
-        get_valid_delegation_addresses(l2_opts),
-        #[cfg(feature = "l2")]
-        l2_opts.sponsor_private_key,
-        #[cfg(feature = "l2")]
-        rollup_store,
     );
 
     tracker.spawn(rpc_api);
@@ -241,7 +217,12 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
 }
 
 pub fn get_network(opts: &Options) -> Network {
-    opts.network.clone()
+    let default = if opts.dev {
+        Network::LocalDevnet
+    } else {
+        Network::mainnet()
+    };
+    opts.network.clone().unwrap_or(default)
 }
 
 #[allow(dead_code)]
@@ -367,23 +348,4 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
-}
-
-#[cfg(feature = "l2")]
-pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
-    let Some(ref path) = l2_opts.sponsorable_addresses_file_path else {
-        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
-        return Vec::new();
-    };
-    let addresses: Vec<Address> = fs::read_to_string(path)
-        .unwrap_or_else(|_| panic!("Failed to load file {}", path))
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string().parse::<Address>())
-        .filter_map(Result::ok)
-        .collect();
-    if addresses.is_empty() {
-        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
-    }
-    addresses
 }

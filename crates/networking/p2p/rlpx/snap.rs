@@ -5,7 +5,8 @@ use super::{
 use bytes::{BufMut, Bytes};
 use ethrex_common::{
     H256, U256,
-    types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    types::AccountState,
 };
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -16,7 +17,7 @@ use ethrex_rlp::{
 
 // Snap Capability Messages
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GetAccountRange {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     pub id: u64,
@@ -26,7 +27,7 @@ pub(crate) struct GetAccountRange {
     pub response_bytes: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct AccountRange {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     pub id: u64,
@@ -34,7 +35,7 @@ pub(crate) struct AccountRange {
     pub proof: Vec<Bytes>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GetStorageRanges {
     pub id: u64,
     pub root_hash: H256,
@@ -44,27 +45,27 @@ pub(crate) struct GetStorageRanges {
     pub response_bytes: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct StorageRanges {
     pub id: u64,
     pub slots: Vec<Vec<StorageSlot>>,
     pub proof: Vec<Bytes>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GetByteCodes {
     pub id: u64,
     pub hashes: Vec<H256>,
     pub bytes: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ByteCodes {
     pub id: u64,
     pub codes: Vec<Bytes>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GetTrieNodes {
     pub id: u64,
     pub root_hash: H256,
@@ -74,7 +75,7 @@ pub(crate) struct GetTrieNodes {
     pub bytes: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct TrieNodes {
     pub id: u64,
     pub nodes: Vec<Bytes>,
@@ -173,9 +174,11 @@ impl RLPxMessage for GetStorageRanges {
         let (root_hash, decoder) = decoder.decode_field("rootHash")?;
         let (account_hashes, decoder) = decoder.decode_field("accountHashes")?;
         let (starting_hash, decoder): (Bytes, _) = decoder.decode_field("startingHash")?;
-        let starting_hash = (!starting_hash.is_empty())
-            .then(|| H256::from_slice(&starting_hash))
-            .unwrap_or_default();
+        let starting_hash = if !starting_hash.is_empty() {
+            H256::from_slice(&starting_hash)
+        } else {
+            Default::default()
+        };
         let (limit_hash, decoder): (Bytes, _) = decoder.decode_field("limitHash")?;
         let limit_hash = if !limit_hash.is_empty() {
             H256::from_slice(&limit_hash)
@@ -336,13 +339,13 @@ impl RLPxMessage for TrieNodes {
 
 // Intermediate structures
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AccountRangeUnit {
     pub hash: H256,
     pub account: AccountStateSlim,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AccountStateSlim {
     pub nonce: u64,
     pub balance: U256,
@@ -350,7 +353,7 @@ pub struct AccountStateSlim {
     pub code_hash: Bytes,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StorageSlot {
     pub hash: H256,
     pub data: U256,

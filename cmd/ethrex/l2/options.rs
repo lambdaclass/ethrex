@@ -2,14 +2,15 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
+    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
 };
 use ethrex_rpc::clients::eth::{
-    BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
-    get_address_from_secret_key,
+    get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
+    MIN_RETRY_DELAY,
 };
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -129,7 +130,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 validium: opts.validium,
             },
             based: BasedConfig {
-                based: opts.based,
+                enabled: opts.based,
                 state_updater: StateUpdaterConfig {
                     sequencer_registry: opts
                         .based_opts
@@ -146,7 +147,7 @@ impl From<SequencerOptions> for SequencerConfig {
             aligned: AlignedConfig {
                 aligned_mode: opts.aligned_opts.aligned,
                 aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
-                beacon_url: opts.aligned_opts.beacon_url.unwrap_or_default(),
+                beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
@@ -165,7 +166,7 @@ pub struct EthOptions {
         env = "ETHREX_ETH_RPC_URL",
         help = "List of rpc urls to use.",
         help_heading = "Eth options",
-        num_args = 1..10
+        num_args = 1..
     )]
     pub rpc_url: Vec<String>,
     #[arg(
@@ -402,7 +403,7 @@ pub struct ProofCoordinatorOptions {
     pub proof_send_interval_ms: u64,
     #[arg(
         long = "proof-coordinator.dev-mode",
-        default_value = "true",
+        default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_PROOF_COORDINATOR_DEV_MODE",
         help_heading = "Proof coordinator options"
@@ -412,15 +413,16 @@ pub struct ProofCoordinatorOptions {
 
 impl Default for ProofCoordinatorOptions {
     fn default() -> Self {
+        let proof_coordinator_l1_private_key = utils::parse_private_key(
+            "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+        )
+        .unwrap();
         Self {
-            proof_coordinator_l1_private_key:
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-                    .parse()
-                    .unwrap(),
+            proof_coordinator_l1_private_key,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            dev_mode: true,
+            dev_mode: false,
         }
     }
 }
@@ -448,10 +450,11 @@ pub struct AlignedOptions {
         value_name = "BEACON_URL",
         required_if_eq("aligned", "true"),
         env = "ETHREX_ALIGNED_BEACON_URL",
-        help = "Beacon url to use.",
-        help_heading = "Aligned options"
+        help = "List of beacon urls to use.",
+        help_heading = "Aligned options",
+        num_args = 1..,
     )]
-    pub beacon_url: Option<String>,
+    pub beacon_url: Option<Vec<Url>>,
     #[arg(
         long,
         value_name = "ETHREX_ALIGNED_NETWORK",
@@ -488,7 +491,7 @@ impl Default for AlignedOptions {
         Self {
             aligned: false,
             aligned_verifier_interval_ms: 5000,
-            beacon_url: Some("http://127.0.0.1:58801".to_string()),
+            beacon_url: Some(vec![Url::parse("http://127.0.0.1:58801").unwrap()]),
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
             aligned_sp1_elf_path: Some(format!(

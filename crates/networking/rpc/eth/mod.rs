@@ -15,9 +15,10 @@ pub mod test_utils {
     use bytes::Bytes;
     use ethrex_common::{
         Address, Bloom, H256, U256,
+        constants::DEFAULT_REQUESTS_HASH,
         types::{
-            Block, BlockBody, BlockHeader, DEFAULT_REQUESTS_HASH, EIP1559Transaction, Genesis,
-            LegacyTransaction, Transaction, TxKind,
+            Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
+            Transaction, TxKind,
         },
     };
     use ethrex_storage::{EngineType, Store};
@@ -134,7 +135,7 @@ pub mod test_utils {
     }
 
     pub async fn setup_store() -> Store {
-        let genesis: &str = include_str!("../../../../test_data/genesis-l1.json");
+        let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
         let genesis: Genesis =
             serde_json::from_str(genesis).expect("Fatal: test config is invalid");
         let store = Store::new("test-store", EngineType::InMemory)

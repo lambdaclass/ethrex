@@ -1,13 +1,18 @@
 use crate::{
     discv4::messages::FindNodeRequest,
-    rlpx::{message::Message as RLPxMessage, p2p::Capability},
+    rlpx::{
+        connection::server::RLPxConnection,
+        message::Message as RLPxMessage,
+        p2p::Capability,
+    },
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
 use rand::random;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
@@ -487,25 +492,24 @@ pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
 #[derive(Debug, Clone)]
 /// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
 pub struct PeerChannels {
-    pub(crate) sender: mpsc::Sender<RLPxMessage>,
+    pub(crate) connection: GenServerHandle<RLPxConnection>,
     pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
 }
 
 impl PeerChannels {
     /// Sets up the communication channels for the peer
     /// Returns the channel endpoints to send to the active connection's listen loop
-    pub(crate) fn create() -> (Self, mpsc::Sender<RLPxMessage>, mpsc::Receiver<RLPxMessage>) {
-        let (sender, connection_receiver) =
-            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+    pub(crate) fn create(
+        connection: GenServerHandle<RLPxConnection>,
+    ) -> (Self, mpsc::Sender<RLPxMessage>) {
         let (connection_sender, receiver) =
             mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
         (
             Self {
-                sender,
+                connection,
                 receiver: Arc::new(Mutex::new(receiver)),
             },
             connection_sender,
-            connection_receiver,
         )
     }
 }
@@ -751,6 +755,8 @@ mod tests {
             .collect();
         let mut peer_ids = Vec::new();
 
+        let mut table = get_test_table();
+
         for key in &peer_keys {
             let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, *key);
             table.insert_node(node);
@@ -770,7 +776,7 @@ mod tests {
 
         // Test weighted selection distribution
         let mut selection_counts = [0; 3];
-        for _ in 0..300 {
+        for _ in 0..1000 {
             if let Some(selected) = table.get_peer_with_score_filter(&|_| true) {
                 for (i, &peer_id) in peer_ids.iter().enumerate() {
                     if selected.node.node_id() == peer_id {

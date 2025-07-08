@@ -1,5 +1,6 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, U256};
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::IpAddr;
 
@@ -64,7 +65,7 @@ pub struct ProofCoordinatorConfig {
 
 #[derive(Clone, Debug)]
 pub struct BasedConfig {
-    pub based: bool,
+    pub enabled: bool,
     pub state_updater: StateUpdaterConfig,
     pub block_fetcher: BlockFetcherConfig,
 }
@@ -85,7 +86,7 @@ pub struct BlockFetcherConfig {
 pub struct AlignedConfig {
     pub aligned_mode: bool,
     pub aligned_verifier_interval_ms: u64,
-    pub beacon_url: String,
+    pub beacon_urls: Vec<Url>,
     pub network: Network,
     pub fee_estimate: String,
     pub aligned_sp1_elf_path: String,

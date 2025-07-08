@@ -90,7 +90,7 @@ pub mod u64 {
         where
             S: Serializer,
         {
-            serializer.serialize_str(&format!("{:#x}", value))
+            serializer.serialize_str(&format!("{value:#x}"))
         }
     }
     pub mod hex_str_padding {
@@ -107,7 +107,7 @@ pub mod u64 {
         where
             S: Serializer,
         {
-            serializer.serialize_str(&format!("{:#018x}", value))
+            serializer.serialize_str(&format!("{value:#018x}"))
         }
     }
 
@@ -120,7 +120,7 @@ pub mod u64 {
         where
             S: Serializer,
         {
-            Option::<String>::serialize(&value.map(|v| format!("{:#x}", v)), serializer)
+            Option::<String>::serialize(&value.map(|v| format!("{v:#x}")), serializer)
         }
 
         pub fn deserialize<'de, D>(d: D) -> Result<Option<u64>, D::Error>
@@ -145,7 +145,7 @@ pub mod u64 {
         where
             S: Serializer,
         {
-            Option::<String>::serialize(&value.map(|v| format!("{:#018x}", v)), serializer)
+            Option::<String>::serialize(&value.map(|v| format!("{v:#018x}")), serializer)
         }
 
         pub fn deserialize<'de, D>(d: D) -> Result<Option<u64>, D::Error>
@@ -201,7 +201,7 @@ pub mod u128 {
         where
             S: Serializer,
         {
-            serializer.serialize_str(&format!("{:#x}", value))
+            serializer.serialize_str(&format!("{value:#x}"))
         }
     }
 }
@@ -249,7 +249,7 @@ pub mod bytes {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("0x{:x}", value))
+        serializer.serialize_str(&format!("0x{value:x}"))
     }
 
     pub mod vec {
@@ -403,7 +403,7 @@ pub mod duration {
     {
         let value = String::deserialize(d)?;
         parse_duration(value.clone())
-            .ok_or_else(|| D::Error::custom(format!("Failed to parse Duration: {}", value)))
+            .ok_or_else(|| D::Error::custom(format!("Failed to parse Duration: {value}")))
     }
 
     pub mod opt {
@@ -415,7 +415,7 @@ pub mod duration {
         {
             if let Some(value) = Option::<String>::deserialize(d)? {
                 Ok(Some(parse_duration(value.clone()).ok_or_else(|| {
-                    D::Error::custom(format!("Failed to parse Duration: {}", value))
+                    D::Error::custom(format!("Failed to parse Duration: {value}"))
                 })?))
             } else {
                 Ok(None)

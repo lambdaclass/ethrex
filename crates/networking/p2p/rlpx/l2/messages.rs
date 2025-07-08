@@ -3,9 +3,14 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{Block, batch::Batch};
+use ethrex_common::{
+    types::{batch::Batch, Block},
+    H256,
+};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
+use keccak_hash::keccak;
+use secp256k1::{Message as SecpMessage, SecretKey};
 use std::{ops::Deref as _, sync::Arc};
 
 #[derive(Debug, Clone)]
@@ -58,6 +63,37 @@ pub struct BatchSealed {
     pub recovery_id: [u8; 4],
 }
 
+impl BatchSealed {
+    pub fn from_batch_and_key(batch: Batch, secret_key: &SecretKey) -> Self {
+        let hash = batch_hash(&batch);
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&SecpMessage::from_digest(hash.into()), secret_key)
+            .serialize_compact();
+        let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+        Self {
+            batch,
+            recovery_id,
+            signature,
+        }
+    }
+    pub fn new(batch: Batch, signature: [u8; 64], recovery_id: [u8; 4]) -> Self {
+        Self {
+            batch,
+            signature,
+            recovery_id,
+        }
+    }
+}
+
+pub fn batch_hash(sealed_batch: &Batch) -> H256 {
+    let input = [
+        sealed_batch.first_block.to_be_bytes(),
+        sealed_batch.last_block.to_be_bytes(),
+        sealed_batch.number.to_be_bytes(),
+    ];
+    keccak(input.as_flattened())
+}
+
 impl RLPxMessage for BatchSealed {
     const CODE: u8 = 0x1;
 
@@ -68,8 +104,6 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.first_block)
             .encode_field(&self.batch.last_block)
             .encode_field(&self.batch.state_root)
-            .encode_field(&self.batch.deposit_logs_hash)
-            .encode_field(&self.batch.withdrawal_hashes)
             .encode_field(&self.batch.blobs_bundle.blobs)
             .encode_field(&self.batch.blobs_bundle.commitments)
             .encode_field(&self.batch.blobs_bundle.proofs)
@@ -88,32 +122,33 @@ impl RLPxMessage for BatchSealed {
         let (first_block, decoder) = decoder.decode_field("first_block")?;
         let (last_block, decoder) = decoder.decode_field("last_block")?;
         let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (deposit_logs_hash, decoder) = decoder.decode_field("deposit_logs_hash")?;
-        let (withdrawal_hashes, decoder) = decoder.decode_field("withdrawal_hashes")?;
+        let (privileged_transactions_hash, decoder) =
+            decoder.decode_field("priviliged_transactions_hash")?;
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
+        let (commit_tx, decoder) = decoder.decode_optional_field();
+        let (message_hashes, decoder) = decoder.decode_field("messages_hashes")?;
+        let (verify_tx, decoder) = decoder.decode_optional_field();
         decoder.finish()?;
         let batch = Batch {
             number: batch_number,
             first_block,
             last_block,
             state_root,
-            deposit_logs_hash,
-            withdrawal_hashes,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
                 blobs,
                 commitments,
                 proofs,
             },
+            commit_tx,
+            message_hashes,
+            privileged_transactions_hash,
+            verify_tx,
         };
-        Ok(BatchSealed {
-            batch,
-            signature,
-            recovery_id,
-        })
+        Ok(BatchSealed::new(batch, signature, recovery_id))
     }
 }
 #[derive(Debug, Clone)]
