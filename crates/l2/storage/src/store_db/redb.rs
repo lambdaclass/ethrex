@@ -144,15 +144,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|b| b.value()))
     }
 
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.write(BATCHES_BY_BLOCK_NUMBER_TABLE, block_number, batch_number)
-            .await
-    }
-
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
@@ -161,32 +152,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(MESSAGES_BY_BATCH, batch_number)
             .await?
             .map(|w| w.value().to()))
-    }
-
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        messages: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            MESSAGES_BY_BATCH,
-            batch_number,
-            <Vec<H256> as Into<MessageHashesRLP>>::into(messages),
-        )
-        .await
-    }
-
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            BLOCK_NUMBERS_BY_BATCH,
-            batch_number,
-            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
-        )
-        .await
     }
 
     async fn get_block_numbers_by_batch(
@@ -207,19 +172,6 @@ impl StoreEngineRollup for RedBStoreRollup {
         Ok(exists)
     }
 
-    async fn store_privileged_transactions_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            PRIVILEGED_TRANSACTIONS_HASHES,
-            batch_number,
-            privileged_transactions_hash.into(),
-        )
-        .await
-    }
-
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
@@ -230,15 +182,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|rlp| rlp.value().to()))
     }
 
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write(STATE_ROOTS, batch_number, state_root.into())
-            .await
-    }
-
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
@@ -247,15 +190,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(STATE_ROOTS, batch_number)
             .await?
             .map(|rlp| rlp.value().to()))
-    }
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(BLOB_BUNDLES, batch_number, state_diff.into())
-            .await
     }
 
     async fn get_blob_bundle_by_batch_number(
