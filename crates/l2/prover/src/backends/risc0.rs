@@ -53,12 +53,12 @@ pub fn prove(input: ProgramInput, aligned_mode: bool) -> Result<Receipt, Error> 
     let prover = default_prover();
 
     // contains the receipt along with statistics about execution of the guest
-    let prove_info = if aligned_mode {
+    let prover_opts = if aligned_mode {
         ProverOpts::succinct()
     } else {
         ProverOpts::groth16()
     };
-    prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
+    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
 
     info!("Successfully generated execution receipt.");
     Ok(prove_info.receipt)
