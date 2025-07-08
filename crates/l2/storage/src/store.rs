@@ -83,17 +83,6 @@ impl Store {
         self.set_lastest_sent_batch_proof(0).await
     }
 
-    /// Stores the block numbers by a given batch_number
-    pub async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_block_numbers_by_batch(batch_number, block_numbers)
-            .await
-    }
-
     /// Returns the block numbers by a given batch_number
     pub async fn get_block_numbers_by_batch(
         &self,
@@ -108,15 +97,6 @@ impl Store {
     ) -> Result<Option<u64>, RollupStoreError> {
         self.engine.get_batch_number_by_block(block_number).await
     }
-    pub async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_batch_number_by_block(block_number, batch_number)
-            .await
-    }
 
     pub async fn get_message_hashes_by_batch(
         &self,
@@ -125,35 +105,12 @@ impl Store {
         self.engine.get_message_hashes_by_batch(batch_number).await
     }
 
-    pub async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        message_hashes: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_message_hashes_by_batch(batch_number, message_hashes)
-            .await
-    }
-
     pub async fn get_privileged_transactions_hash_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         self.engine
             .get_privileged_transactions_hash_by_batch_number(batch_number)
-            .await
-    }
-
-    pub async fn store_privileged_transactions_hash_by_batch(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_privileged_transactions_hash_by_batch_number(
-                batch_number,
-                privileged_transactions_hash,
-            )
             .await
     }
 
@@ -166,32 +123,12 @@ impl Store {
             .await
     }
 
-    pub async fn store_state_root_by_batch(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_state_root_by_batch_number(batch_number, state_root)
-            .await
-    }
-
     pub async fn get_blobs_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         self.engine
             .get_blob_bundle_by_batch_number(batch_number)
-            .await
-    }
-
-    pub async fn store_blobs_by_batch(
-        &self,
-        batch_number: u64,
-        blobs: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_blob_bundle_by_batch_number(batch_number, blobs)
             .await
     }
 

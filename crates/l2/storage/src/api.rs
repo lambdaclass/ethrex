@@ -20,32 +20,11 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         block_number: BlockNumber,
     ) -> Result<Option<u64>, RollupStoreError>;
 
-    /// Stores the batch number by a given block number.
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError>;
-
     /// Gets the message hashes by a given batch number.
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError>;
-
-    /// Stores the message hashes by a given batch number.
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        message_hashes: Vec<H256>,
-    ) -> Result<(), RollupStoreError>;
-
-    /// Stores the block numbers by a given batch_number
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError>;
 
     /// Returns the block numbers by a given batch_number
     async fn get_block_numbers_by_batch(
@@ -53,33 +32,15 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError>;
 
-    async fn store_privileged_transactions_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError>;
-
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError>;
 
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError>;
-
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError>;
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError>;
 
     async fn get_blob_bundle_by_batch_number(
         &self,
