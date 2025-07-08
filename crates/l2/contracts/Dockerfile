@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     ca-certificates \
     curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
+
 RUN cargo install cargo-chef
 
 WORKDIR /ethrex
@@ -20,6 +20,7 @@ COPY . .
 RUN cargo chef prepare --bin ethrex_l2_l1_deployer --recipe-path recipe.json
 
 FROM chef AS builder
+
 COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json --manifest-path crates/l2/contracts/Cargo.toml --bin ethrex_l2_l1_deployer
@@ -27,6 +28,9 @@ RUN cargo chef cook --release --recipe-path recipe.json --manifest-path crates/l
 # Install solc for build scripts
 RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
     && chmod +x /usr/bin/solc
+
+# Install git for build scripts
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 RUN cargo build --release --manifest-path crates/l2/contracts/Cargo.toml
