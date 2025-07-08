@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752005184135,
+  "lastUpdate": 1752009238205,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5774,6 +5774,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006542803921568628,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "752c20b5552cceab1ed2959488929639a96a8661",
+          "message": "fix(l1,l2): eth client send blobs when calling eth_estimateGas  (#3540)\n\n**Motivation**\n\nWhen calling eth_estimateGas to estimate the gas for the L2 commitment\nthe call was reverting because the blob was not included in the call\n\n**Description**\n\n- Add a function to add the blobs to a GenericTransaction\n- Add the field \"blobs\" to the request if the blobs field is not empty\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-07-08T16:32:38Z",
+          "tree_id": "ca06e38d7ee9df3793f6335ef93231ecdfdd30c3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/752c20b5552cceab1ed2959488929639a96a8661"
+        },
+        "date": 1752009228021,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012335785582255083,
             "unit": "Mgas/s"
           }
         ]
