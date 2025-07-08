@@ -13,9 +13,7 @@ use crate::{
     rlpx::{
         connection::server::RLPxConnection,
         lookup::RLPxLookupServer,
-        p2p::{
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
-        },
+        p2p::{SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
     },
     types::NodeRecord,
 };
@@ -166,10 +164,6 @@ async fn got_enough_peers(state: &RLPxServerState) -> bool {
                     .supported_capabilities
                     .iter()
                     .any(|c| SUPPORTED_ETH_CAPABILITIES.contains(c))
-                && peer
-                    .supported_capabilities
-                    .iter()
-                    .any(|c| SUPPORTED_P2P_CAPABILITIES.contains(c))
         })
         .count();
 
