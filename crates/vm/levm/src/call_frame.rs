@@ -1,7 +1,7 @@
 use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
-    memory::Memory,
+    memory::{Memory, MemoryV2},
     opcodes::Opcode,
     utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
@@ -134,7 +134,7 @@ impl fmt::Debug for Stack {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.
@@ -158,6 +158,7 @@ pub struct CallFrame {
     pub msg_value: U256,
     pub stack: Stack,
     pub memory: Memory,
+    pub memoryv2: MemoryV2,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
@@ -236,6 +237,7 @@ impl CallFrame {
         ret_offset: U256,
         ret_size: usize,
         stack: Stack,
+        memory: MemoryV2,
     ) -> Self {
         let invalid_jump_destinations =
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
@@ -256,6 +258,7 @@ impl CallFrame {
             ret_offset,
             ret_size,
             stack,
+            memoryv2: memory,
             ..Default::default()
         }
     }

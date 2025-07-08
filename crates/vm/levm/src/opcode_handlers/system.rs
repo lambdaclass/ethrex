@@ -683,6 +683,8 @@ impl<'a> VM<'a> {
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
+        let next_memory = self.current_call_frame()?.memoryv2.next_memory();
+
         let new_call_frame = CallFrame::new(
             deployer,
             new_address,
@@ -698,6 +700,7 @@ impl<'a> VM<'a> {
             U256::zero(),
             0,
             stack,
+            next_memory,
         );
         self.call_frames.push(new_call_frame);
 
@@ -755,6 +758,8 @@ impl<'a> VM<'a> {
         let mut stack = self.stack_pool.pop().unwrap_or_default();
         stack.clear();
 
+        let next_memory = self.current_call_frame_mut()?.memoryv2.next_memory();
+
         let new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -770,6 +775,7 @@ impl<'a> VM<'a> {
             ret_offset,
             ret_size,
             stack,
+            next_memory,
         );
         self.call_frames.push(new_call_frame);
 
@@ -828,6 +834,7 @@ impl<'a> VM<'a> {
             gas_limit,
             ret_offset,
             ret_size,
+            memoryv2: old_callframe_memory,
             ..
         } = executed_call_frame;
 
@@ -868,6 +875,8 @@ impl<'a> VM<'a> {
         stack.clear();
         self.stack_pool.push(stack);
 
+        old_callframe_memory.clean_from_base();
+
         Ok(())
     }
 
@@ -880,6 +889,7 @@ impl<'a> VM<'a> {
             gas_limit,
             to,
             call_frame_backup,
+            memoryv2: old_callframe_memory,
             ..
         } = executed_call_frame;
         let parent_call_frame = self.current_call_frame_mut()?;
@@ -914,6 +924,8 @@ impl<'a> VM<'a> {
         let mut stack = executed_call_frame.stack;
         stack.clear();
         self.stack_pool.push(stack);
+
+        old_callframe_memory.clean_from_base();
 
         Ok(())
     }

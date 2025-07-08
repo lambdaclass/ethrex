@@ -9,7 +9,9 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    l2_precompiles, precompiles,
+    l2_precompiles,
+    memory::MemoryV2,
+    precompiles,
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -115,6 +117,7 @@ impl<'a> VM<'a> {
             U256::zero(),
             0,
             Stack::default(),
+            MemoryV2::default(),
         );
 
         self.call_frames.push(initial_call_frame);
