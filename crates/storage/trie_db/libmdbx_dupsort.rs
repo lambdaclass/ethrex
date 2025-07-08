@@ -48,6 +48,7 @@ where
             .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
             .map_err(TrieError::DbError)?;
         if let Some(v) = &mut res {
+            // Remove the last 8 bytes that contain the block number
             v.truncate(v.len() - 8);
         }
         Ok(res)
@@ -56,6 +57,7 @@ where
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, mut value) in key_values {
+            // Add 8 extra bytes to store the block number
             value.extend_from_slice(&[0u8; 8]);
             txn.upsert::<T>(
                 (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
