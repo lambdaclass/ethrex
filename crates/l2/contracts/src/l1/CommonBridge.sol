@@ -264,14 +264,12 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function claimWithdrawal(
-        bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) public {
         _claimWithdrawal(
-            l2WithdrawalTxHash,
             ETH_TOKEN,
             ETH_TOKEN,
             claimedAmount,
@@ -285,7 +283,6 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function claimWithdrawalERC20(
-        bytes32 l2WithdrawalTxHash,
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
@@ -294,7 +291,6 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
         _claimWithdrawal(
-            l2WithdrawalTxHash,
             tokenL1,
             tokenL2,
             claimedAmount,
@@ -310,7 +306,6 @@ contract CommonBridge is
     }
 
     function _claimWithdrawal(
-        bytes32 l2WithdrawalTxHash,
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
@@ -343,7 +338,6 @@ contract CommonBridge is
         emit WithdrawalClaimed(withdrawalMessageId);
         require(
             _verifyMessageProof(
-                l2WithdrawalTxHash,
                 msgHash,
                 withdrawalBatchNumber,
                 withdrawalMessageId,
@@ -354,7 +348,6 @@ contract CommonBridge is
     }
 
     function _verifyMessageProof(
-        bytes32 l2WithdrawalTxHash,
         bytes32 msgHash,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
@@ -362,7 +355,6 @@ contract CommonBridge is
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
             abi.encodePacked(
-                l2WithdrawalTxHash,
                 L2_BRIDGE_ADDRESS,
                 msgHash,
                 withdrawalMessageId
