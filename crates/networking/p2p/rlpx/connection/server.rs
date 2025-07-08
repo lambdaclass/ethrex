@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
@@ -206,6 +206,7 @@ impl GenServer for RLPxConnection {
             .await;
             Err(RLPxError::Disconnected())
         } else {
+            info!("RLPx connection established with peer");
             // New state
             state.0 = InnerState::Established(established_state);
             Ok(state)
@@ -274,9 +275,9 @@ async fn initialize_connection<S>(
 where
     S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
 {
-    post_handshake_checks(state.table.clone()).await?;
+    post_handshake_checks(state.table.clone()).await.unwrap();
 
-    exchange_hello_messages(state, &mut stream).await?;
+    exchange_hello_messages(state, &mut stream).await.unwrap();
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
@@ -288,6 +289,7 @@ where
     // NOTE: if the peer came from the discovery server it will already be inserted in the table
     // but that might not always be the case, so we try to add it to the table
     // Note: we don't ping the node we let the validation service do its job
+    info!("Adding peer to table after exchange");
     {
         let mut table_lock = state.table.lock().await;
         table_lock.insert_node_forced(state.node.clone());
@@ -298,11 +300,11 @@ where
             state.inbound,
         );
     }
-    init_capabilities(state, &mut stream).await?;
+    init_capabilities(state, &mut stream).await.unwrap();
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
-    send_new_pooled_tx_hashes(state).await?;
+    send_new_pooled_tx_hashes(state).await.unwrap();
 
     // Periodic broadcast check repeated events.
     send_interval(

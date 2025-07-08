@@ -169,7 +169,7 @@ impl Discv4Server {
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq && peer.is_proven {
                         debug!("Found outdated enr-seq, sending an enr_request");
-                        self.send_enr_request(&peer.node, self.ctx.table.lock().await)
+                        self.send_enr_request(&peer.node, &mut self.ctx.table.lock().await)
                             .await?;
                     }
                 }
@@ -211,7 +211,7 @@ impl Discv4Server {
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, send an enr_request");
-                        self.send_enr_request(&peer.node, self.ctx.table.lock().await)
+                        self.send_enr_request(&peer.node, &mut self.ctx.table.lock().await)
                             .await?;
                         return Ok(());
                     }
@@ -655,10 +655,10 @@ impl Discv4Server {
         }
     }
 
-    async fn send_enr_request<'a>(
+    pub async fn send_enr_request<'a>(
         &self,
         node: &Node,
-        mut table_lock: MutexGuard<'a, KademliaTable>,
+        table_lock: &mut MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);

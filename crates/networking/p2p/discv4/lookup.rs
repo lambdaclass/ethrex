@@ -141,7 +141,7 @@ impl Discv4LookupHandler {
                 .await
                 .get_closest_nodes(target_node_id);
 
-            peers_to_ask.extend(initial_peers.clone());
+            peers_to_ask.extend(initial_peers.iter().cloned());
 
             seen_peers.insert(self.ctx.local_node.public_key);
             for node in peers_to_ask {

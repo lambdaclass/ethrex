@@ -11,15 +11,17 @@ use crate::{
     discv4::server::Discv4Server,
     network::P2PContext,
     rlpx::{
+        connection::server::RLPxConnection,
         lookup::RLPxLookupServer,
         p2p::{
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
     },
+    types::{Node, NodeRecord},
 };
 
 const MAX_PEER_COUNT: usize = 50;
-const MAX_CONCURRENT_LOOKUPS: usize = 16;
+const MAX_CONCURRENT_LOOKUPS: usize = 1;
 
 pub type RLPxServerHandle = GenServerHandle<RLPxServer>;
 
@@ -89,6 +91,34 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
         InMessage::BookKeeping,
     );
 
+    {
+        let mut table_lock = state.ctx.table.lock().await;
+        let nodes_without_enr: Vec<_> = table_lock
+            .iter_peers()
+            .filter(|p| p.record == NodeRecord::default() && p.enr_request_hash.is_none())
+            .map(|p| p.node.clone())
+            .take(128)
+            .collect();
+        for node in nodes_without_enr {
+            let _ = state
+                .discovery_server
+                .send_enr_request(&node, &mut table_lock)
+                .await;
+        }
+
+        let nodes_without_connection: Vec<_> = table_lock
+            .iter_peers()
+            .filter(|p| {
+                !p.is_connected && p.channels.is_none() && p.record != NodeRecord::default()
+            })
+            .map(|p| p.node.clone())
+            .take(128)
+            .collect();
+        for node in nodes_without_connection {
+            RLPxConnection::spawn_as_initiator(state.ctx.clone(), &node).await;
+        }
+    }
+
     // Stop looking for peers if we have enough connections
     if got_enough_peers(state).await {
         stop_lookup_servers(state).await;
@@ -100,6 +130,11 @@ async fn bookkeeping(handle: &GenServerHandle<RLPxServer>, state: &mut RLPxServe
 }
 
 async fn spawn_lookup_servers(state: &mut RLPxServerState, handle: &GenServerHandle<RLPxServer>) {
+    let known_node = Node::from_enode_url(
+        "enode://da1568823fdfccdcc37de2f3751987510c055ac24240cb8261aab5e3510b5e6222083d70a99ee29fa971a0646b37565311d31497054d6bdf320f8b3ea20749b6@177.54.155.141:60300",
+    ).unwrap();
+    RLPxConnection::spawn_as_initiator(state.ctx.clone(), &known_node).await;
+
     for _ in 0..MAX_CONCURRENT_LOOKUPS {
         let node_iterator = state.discovery_server.new_random_iterator();
         let Ok(new_lookup_server) =
