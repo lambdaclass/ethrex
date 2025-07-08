@@ -496,7 +496,7 @@ impl Blockchain {
                 // for the subsequent ones, the parent is the previous block
                 blocks[i - 1].header.clone()
             };
-
+            info!("Executing block: {}", block.header.number);
             let BlockExecutionResult { receipts, .. } = self
                 .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
                 .map_err(|err| {
