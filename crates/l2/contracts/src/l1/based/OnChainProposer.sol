@@ -447,7 +447,7 @@ contract OnChainProposer is
             lastVerifiedBatch = batchNumber;
             batchNumber++;
         }
-        
+
         emit BatchesVerified(firstBatchNumber, lastVerifiedBatch);
     }
 
