@@ -229,6 +229,9 @@ async fn fetch_logs(
         new_last_l1_fetched_block
     );
 
+    // TODO: we should be able to get all the needed logs from the onChainProposer
+    // related issue #3568
+
     // Fetch logs from the L1 chain for the BatchCommitted event.
     let commit_logs = state
         .eth_client
