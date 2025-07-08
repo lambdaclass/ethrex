@@ -258,3 +258,19 @@ jobs:
             } else if (ready_for_review) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
             }
+
+            for (let i = 0; i < 30; i++) {
+              const result = await github.graphql(`
+                query($id: ID!) {
+                  node(id: $id) {
+                    ... on PullRequest {
+                      mergeable
+                      mergeableState: mergeable_state
+                    }
+                  }
+                }
+              `, { id: pr.node_id });
+
+              console.log(`Iteration ${i + 1}: mergeable = ${result.node.mergeable}, mergeableState = ${result.node.mergeableState}`);
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
