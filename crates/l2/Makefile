@@ -206,7 +206,7 @@ integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --build --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
