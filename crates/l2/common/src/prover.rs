@@ -65,34 +65,48 @@ impl ProverType {
         }
     }
 
-    pub fn elf_path(&self) -> Option<PathBuf> {
+    pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
+        // TODO: these should be compile-time consts
         let path = match self {
-            Self::RISC0 => format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            Self::SP1 => format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            _ => return None,
-        };
-        std::fs::canonicalize(path).ok()
-    }
-
-    pub fn vk_path(&self) -> Option<PathBuf> {
-        let path = match self {
+            // for risc0, Aligned requires the image id
             Self::RISC0 => format!(
                 "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
+            // for sp1, Aligned requires the ELF file
             Self::SP1 => format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
                 env!("CARGO_MANIFEST_DIR")
             ),
-            _ => return None,
+            // other types are not supported by Aligned
+            _ => return Ok(None),
         };
-        std::fs::canonicalize(path).ok()
+        let path = std::fs::canonicalize(path)?;
+        std::fs::read(path).map(|content| Some(content))
+    }
+
+    pub fn vk(&self, aligned: bool) -> std::io::Result<Option<Vec<u8>>> {
+        // TODO: these should be compile-time consts
+        let path = match &self {
+            Self::RISC0 => format!(
+                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
+            // the hash as a bn254 F_r element.
+            Self::SP1 if aligned => format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            Self::SP1 if !aligned => format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            // other types don't have a verification key
+            _ => return Ok(None),
+        };
+        let path = std::fs::canonicalize(path)?;
+        std::fs::read(path).map(|content| Some(content))
     }
 }
 

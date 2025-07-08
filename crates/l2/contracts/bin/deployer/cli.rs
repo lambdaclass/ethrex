@@ -254,22 +254,20 @@ pub struct DeployerOptions {
     pub on_chain_proposer_owner_pk: Option<SecretKey>,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
         help = "Path to the SP1 verification key. This is used for proof verification."
     )]
-    pub sp1_vk_path: String,
+    pub sp1_vk_path: Option<String>,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
         help = "Path to the Risc0 image id / verification key. This is used for proof verification."
     )]
-    pub risc0_vk_path: String,
+    pub risc0_vk_path: Option<String>,
     #[arg(
         long,
         default_value = "false",
@@ -348,14 +346,8 @@ impl Default for DeployerOptions {
                 0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
             ]),
             on_chain_proposer_owner_pk: None,
-            sp1_vk_path: format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            risc0_vk_path: format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
+            sp1_vk_path: None,
+            risc0_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
         }

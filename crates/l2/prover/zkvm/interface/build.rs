@@ -72,15 +72,8 @@ fn build_sp1_program() {
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
 
-    let aligned_mode = std::env::var("PROVER_CLIENT_ALIGNED").unwrap_or("false".to_string());
-
-    if aligned_mode == "true" {
-        let vk = vk.vk.hash_bytes();
-        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", vk)
-            .expect("could not write SP1 vk to file");
-    } else {
-        let vk = vk.vk.bytes32_raw();
-        std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", vk)
-            .expect("could not write SP1 vk to file");
-    };
+    std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk-bn254", vk.vk.bytes32_raw())
+        .expect("could not write SP1 vk-bn254 to file");
+    std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk-u32", vk.vk.hash_bytes())
+        .expect("could not write SP1 vk-u32 to file");
 }

@@ -18,7 +18,7 @@ services:
       - ../../fixtures/genesis/l1-dev.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l1-dev.json
       - ../../fixtures/genesis/l2.json:${CI_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - ../../fixtures/keys/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/fixtures/keys/private_keys_l1.txt
-      - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
+      - ./prover/zkvm/interface/sp1/out/:${CI_ETHREX_WORKDIR}/sp1_out
       - ./prover/zkvm/interface/risc0/out/riscv32im-risc0-vk:${CI_ETHREX_WORKDIR}/riscv32im-risc0-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
@@ -39,7 +39,7 @@ services:
       - ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER}
       - ETHREX_DEPLOYER_ALIGNED=${ETHREX_DEPLOYER_ALIGNED:-false}
       - ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=${ETHREX_DEPLOYER_ALIGNED_CONTRACT_VERIFIER}
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${CI_ETHREX_WORKDIR}/sp1_out/riscv32im-succinct-zkvm-vk
       - ETHREX_RISC0_VERIFICATION_KEY_PATH=${CI_ETHREX_WORKDIR}/riscv32im-risc0-vk
       - ETHREX_TDX_DEV_MODE=${ETHREX_TDX_DEV_MODE:-false}
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x03d0a0aee676cc45bf7032649e0871927c947c8e

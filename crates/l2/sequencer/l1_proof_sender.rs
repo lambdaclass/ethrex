@@ -262,21 +262,12 @@ async fn send_proof_to_aligned(
             return Err(ProofSenderError::AlignedWrongProofFormat);
         };
 
-        let vm_program_code = {
-            let path = match prover_type {
-                prover_type @ ProverType::RISC0 => prover_type.vk_path(),
-                prover_type @ ProverType::SP1 => prover_type.elf_path(),
-                _ => continue,
-            }
-            .ok_or(ProofSenderError::InternalError(format!(
-                "no ELF/VK for prover type {prover_type} or file does not exists, did you build the zkvm program for that prover type?",
-            )))?;
-            Some(std::fs::read(path).map_err(|e| {
-                ProofSenderError::InternalError(format!(
+        let vm_program_code =
+            prover_type
+                .aligned_vm_program_code()?
+                .ok_or(ProofSenderError::InternalError(format!(
                     "failed to read ELF/VK file for prover type {prover_type}: {e}",
-                ))
-            })?)
-        };
+                )));
 
         let verification_data = VerificationData {
             proving_system,

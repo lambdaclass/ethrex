@@ -12,7 +12,7 @@ use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
-use ethrex_l2_common::calldata::Value;
+use ethrex_l2_common::{calldata::Value, prover::ProverType};
 use ethrex_l2_sdk::{
     calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
     get_address_from_secret_key, initialize_contract,
@@ -320,6 +320,26 @@ fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
         .map_err(DeployerError::from)
 }
 
+fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
+    let (required_type, vk_path) = match prover_type {
+        ProverType::SP1 => (opts.sp1, opts.sp1_vk_path),
+        ProverType::RISC0 => (opts.risc0, opts.risc0_vk_path),
+        _ => unimplemented!(prover_type),
+    };
+
+    if !required_type {
+        Bytes::new()
+    } else {
+        vk_path.map(read_vk).unwrap_or_else(|| {
+            prover_type
+                .vk(opts.aligned)?
+                .ok_or(DeployerError::InternalError(format!(
+                    "missing {prover_type} vk"
+                )))
+        })
+    }
+}
+
 async fn initialize_contracts(
     contract_addresses: ContractAddresses,
     eth_client: &EthClient,
@@ -335,16 +355,8 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = if opts.sp1 {
-        read_vk(&opts.sp1_vk_path)?
-    } else {
-        Bytes::new()
-    };
-    let risc0_vk = if opts.risc0 {
-        read_vk(&opts.risc0_vk_path)?
-    } else {
-        Bytes::new()
-    };
+    let sp1_vk = get_vk(ProverType::SP1, &opts)?;
+    let risc0_vk = get_vk(ProverType::RISC0, &opts)?;
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
