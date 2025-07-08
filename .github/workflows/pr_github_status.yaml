@@ -76,7 +76,7 @@ jobs:
               return null;
             }
 
-            async function getStatusFieldAndOption(projectId, fieldName, optionName) {
+            async function setProjectItemStatus(projectId, itemId, fieldName, optionName) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
                   node(id: $projectId) {
@@ -104,10 +104,6 @@ jobs:
               const option = field.options.find(opt => opt.name === optionName);
               if (!option) throw new Error(`Option '${optionName}' not found in field '${fieldName}'`);
 
-              return { fieldId: field.id, optionId: option.id };
-            }
-
-            async function updateProjectItemField(projectId, itemId, fieldId, optionId) {
               await github.graphql(`
                 mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
                   updateProjectV2ItemFieldValue(input: {
@@ -116,12 +112,15 @@ jobs:
                     fieldId: $fieldId,
                     value: { singleSelectOptionId: $optionId }
                   }) {
-                    projectV2Item {
-                      id
-                    }
+                    projectV2Item { id }
                   }
                 }
-              `, { projectId, itemId, fieldId, optionId });
+              `, {
+                projectId,
+                itemId,
+                fieldId: field.id,
+                optionId: option.id
+              });
             }
 
 
@@ -142,7 +141,10 @@ jobs:
               return;
             }
 
-            const { fieldId, optionId } = await getStatusFieldAndOption(projectId, statusFieldName, newStatus);
-            await updateProjectItemField(projectId, item.id, fieldId, optionId);
+            // pr.draft (true or false)
+            // pr.state ("open" or "closed")
+            // pr.created_at: kinda like "2021-06-26T17:13:55Z",
+
+            await setProjectItemStatus(projectId, item.id, statusFieldName, newStatus);
 
             console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to '${newStatus}'.`);
