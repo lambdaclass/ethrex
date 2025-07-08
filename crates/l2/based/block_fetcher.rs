@@ -1,5 +1,6 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
+use ethers::core::k256::pkcs8::der::EncodeValue;
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -88,10 +89,27 @@ impl BlockFetcherState {
         sequencer_state: SequencerState,
     ) -> Result<Self, BlockFetcherError> {
         let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
-        let last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
-            .await?
-            .into();
+
+        let (_latest_safe_batch, last_l1_block_fetched) =
+            match rollup_store.get_latest_safe_batch().await? {
+                Some(latest_safe_batch) => {
+                    let last_l1_block_fetched = latest_safe_batch.last_block;
+
+                    let latest_store_block = store.get_latest_block_number().await?;
+
+                    for block_number in last_l1_block_fetched + 1..=latest_store_block {
+                        store.remove_block(block_number).await?;
+                    }
+                    (latest_safe_batch.number, last_l1_block_fetched)
+                }
+                None => (
+                    0,
+                    eth_client
+                        .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
+                        .await?,
+                ),
+            };
+
         Ok(Self {
             eth_client,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
@@ -100,7 +118,7 @@ impl BlockFetcherState {
             blockchain,
             sequencer_state,
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
-            last_l1_block_fetched,
+            last_l1_block_fetched: last_l1_block_fetched.into(),
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
         })
     }
