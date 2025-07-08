@@ -38,10 +38,6 @@ impl Network {
 }
 
 impl Network {
-    pub fn mainnet() -> Self {
-        Network::PublicNetwork(PublicNetwork::Mainnet)
-    }
-
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         match self {
             Network::PublicNetwork(public_network) => {
