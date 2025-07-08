@@ -27,6 +27,10 @@ impl<'a> VM<'a> {
             .pop::<N_TOPICS>()?
             .map(|topic| H256(U256::to_big_endian(&topic)));
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let new_memory_size = calculate_memory_size(offset, size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::log(

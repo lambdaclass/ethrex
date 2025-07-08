@@ -73,6 +73,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [offset] = *current_call_frame.stack.pop()?;
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::mload(
@@ -96,6 +100,10 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let current_call_frame = self.current_call_frame_mut()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -115,6 +123,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [offset] = *current_call_frame.stack.pop()?;
+
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
@@ -264,6 +276,14 @@ impl<'a> VM<'a> {
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
+        let dest_offset: usize = dest_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
+        let src_offset: usize = src_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
 

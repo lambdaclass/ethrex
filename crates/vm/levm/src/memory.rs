@@ -23,12 +23,17 @@ impl MemoryV2 {
     #[inline]
     pub fn new(current_base: usize) -> Self {
         Self {
-            buffer: Rc::new(RefCell::new(Vec::with_capacity(4096))),
+            buffer: Rc::new(RefCell::new({
+                let mut v = Vec::new();
+                v.reserve_exact(4096);
+                v
+            })),
             current_base,
             len_gas: 0,
         }
     }
 
+    #[inline]
     pub fn next_memory(&self) -> MemoryV2 {
         let mut mem = self.clone();
         mem.current_base = mem.buffer.borrow().len();
@@ -42,6 +47,7 @@ impl MemoryV2 {
     }
 
     /// Returns the len of the current memory for gas, this differs from the actual allocated length due to optimizations.
+    #[inline]
     pub fn len(&self) -> usize {
         self.len_gas
     }
@@ -51,6 +57,7 @@ impl MemoryV2 {
     }
 
     /// Returns the len of the current memory, from the current base.
+    #[inline]
     fn current_len(&self) -> usize {
         // will never wrap
         self.buffer.borrow().len().wrapping_sub(self.current_base)
@@ -83,16 +90,13 @@ impl MemoryV2 {
         // when resizing, resize by allocating entire pages instead of small memory sizes.
         let new_size =
             (buffer.len() + new_memory_size) + (4096 - ((buffer.len() + new_memory_size) % 4096));
+        buffer.reserve_exact(new_size);
         buffer.resize(new_size, 0);
 
         Ok(())
     }
 
-    pub fn load_range(&mut self, offset: U256, size: usize) -> Result<Vec<u8>, VMError> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
+    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
         let new_size = offset.checked_add(size).unwrap();
         self.resize(new_size)?;
 
@@ -105,11 +109,7 @@ impl MemoryV2 {
             .to_vec())
     }
 
-    pub fn load_range_const<const N: usize>(&mut self, offset: U256) -> Result<[u8; N], VMError> {
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
+    pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
         let new_size = offset.checked_add(N).unwrap();
         self.resize(new_size)?;
 
@@ -123,19 +123,16 @@ impl MemoryV2 {
             .unwrap())
     }
 
-    pub fn load_word(&mut self, offset: U256) -> Result<U256, VMError> {
+    #[inline]
+    pub fn load_word(&mut self, offset: usize) -> Result<U256, VMError> {
         let value: [u8; 32] = self.load_range_const(offset)?;
         Ok(u256_from_big_endian_const(value))
     }
 
-    pub fn store(&self, data: &[u8], at_offset: U256, data_size: usize) -> Result<(), VMError> {
+    pub fn store(&self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
         if data_size == 0 {
             return Ok(());
         }
-
-        let at_offset: usize = at_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let real_offset = self
             .current_base
@@ -158,36 +155,27 @@ impl MemoryV2 {
         Ok(())
     }
 
-    pub fn store_data(&mut self, offset: U256, data: &[u8]) -> Result<(), VMError> {
-        let new_size = offset
-            .checked_add(data.len().into())
-            .ok_or(OutOfBounds)?
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+    #[inline]
+    pub fn store_data(&mut self, offset: usize, data: &[u8]) -> Result<(), VMError> {
+        let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
         self.store(data, offset, data.len())
     }
 
-    pub fn store_range(&mut self, offset: U256, size: usize, data: &[u8]) -> Result<(), VMError> {
+    pub fn store_range(&mut self, offset: usize, size: usize, data: &[u8]) -> Result<(), VMError> {
         if size == 0 {
             return Ok(());
         }
 
-        let new_size = offset
-            .checked_add(size.into())
-            .ok_or(OutOfBounds)?
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
         self.store(data, offset, size)
     }
 
-    pub fn store_word(&mut self, offset: U256, word: U256) -> Result<(), VMError> {
+    pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {
         let new_size: usize = offset
-            .checked_add(WORD_SIZE_IN_BYTES_USIZE.into())
-            .ok_or(OutOfBounds)?
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .checked_add(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
         self.store(&word.to_big_endian(), offset, WORD_SIZE_IN_BYTES_USIZE)
@@ -195,20 +183,13 @@ impl MemoryV2 {
 
     pub fn copy_within(
         &mut self,
-        from_offset: U256,
-        to_offset: U256,
+        from_offset: usize,
+        to_offset: usize,
         size: usize,
     ) -> Result<(), VMError> {
         if size == 0 {
             return Ok(());
         }
-
-        let from_offset: usize = from_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-        let to_offset: usize = to_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         self.resize(
             to_offset
@@ -254,6 +235,7 @@ impl Default for MemoryV2 {
 
 /// When a memory expansion is triggered, only the additional bytes of memory
 /// must be paid for.
+#[inline]
 pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
     let cost = if new_memory_size <= current_memory_size {
         0
@@ -285,12 +267,11 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
         .map_err(|_| ExceptionalHalt::VeryLargeNumber.into())
 }
 
-pub fn calculate_memory_size(offset: U256, size: usize) -> Result<usize, VMError> {
+#[inline]
+pub fn calculate_memory_size(offset: usize, size: usize) -> Result<usize, VMError> {
     if size == 0 {
         return Ok(0);
     }
-
-    let offset: usize = offset.try_into().map_err(|_err| OutOfGas)?;
 
     offset
         .checked_add(size)

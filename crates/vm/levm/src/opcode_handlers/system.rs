@@ -227,6 +227,10 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Halt);
         }
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
 
@@ -439,6 +443,9 @@ impl<'a> VM<'a> {
         let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let code_offset_in_memory: usize = code_offset_in_memory
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -470,6 +477,9 @@ impl<'a> VM<'a> {
         let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let code_offset_in_memory: usize = code_offset_in_memory
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -497,6 +507,11 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [offset, size] = *current_call_frame.stack.pop()?;
+
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
@@ -583,7 +598,7 @@ impl<'a> VM<'a> {
     pub fn generic_create(
         &mut self,
         value: U256,
-        code_offset_in_memory: U256,
+        code_offset_in_memory: usize,
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
@@ -829,6 +844,10 @@ impl<'a> VM<'a> {
             ..
         } = executed_call_frame;
 
+        let ret_offset: usize = ret_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let parent_call_frame = self.current_call_frame_mut()?;
 
         // Return gas left from subcontext
@@ -933,6 +952,14 @@ impl<'a> VM<'a> {
         let address_was_cold = self.substate.accessed_addresses.insert(address);
         let account_is_empty = self.db.get_account(address)?.is_empty();
 
+        let args_start_offset: usize = args_start_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
+        let return_data_start_offset: usize = return_data_start_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         // Calculated here for memory expansion gas cost
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
@@ -954,6 +981,10 @@ impl<'a> VM<'a> {
     }
 
     fn get_calldata(&mut self, offset: U256, size: usize) -> Result<Bytes, VMError> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         Ok(Bytes::from(
             self.current_call_frame_mut()?
                 .memory

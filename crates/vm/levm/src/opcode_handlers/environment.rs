@@ -138,6 +138,10 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
+        let dest_offset: usize = dest_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::calldatacopy(
@@ -193,6 +197,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
+
+        let destination_offset: usize = destination_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let size: usize = size
             .try_into()
@@ -274,6 +282,10 @@ impl<'a> VM<'a> {
 
         let address_was_cold = self.substate.accessed_addresses.insert(address);
 
+        let dest_offset: usize = dest_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         self.current_call_frame_mut()?
@@ -333,6 +345,10 @@ impl<'a> VM<'a> {
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
+        let dest_offset: usize = dest_offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
