@@ -142,7 +142,7 @@ jobs:
               return;
             }
 
-            console.log(`PR #${pr.number} found in project with item ID: ${item.id}`);
-
             const { fieldId, optionId } = await getStatusFieldAndOption(projectId, statusFieldName, newStatus);
             await updateProjectItemField(projectId, item.id, fieldId, optionId);
+
+            console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to '${newStatus}'.`);
