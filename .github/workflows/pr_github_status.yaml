@@ -22,7 +22,7 @@ jobs:
             const newStatus = "In Progress";
             const orgLogin = "lambdaclass";
 
-            // Fetch all projects in the organization
+            // Fetch first 100 projects in the organization
             const projects = await github.graphql(`
               query($org: String!) {
                 organization(login: $org) {
@@ -43,28 +43,48 @@ jobs:
             }
             const projectId = project.id;
 
-            // Try to find the PR item in the project
-            const itemsResult = await github.graphql(`
-              query($projectId: ID!) {
-                node(id: $projectId) {
-                  ... on ProjectV2 {
-                    items(first: 100) {
-                      nodes {
-                        id
-                        content {
-                          ... on PullRequest {
-                            id
-                            number
+
+            // Get all items of the project
+            let hasNextPage = true;
+            let after = null;
+            let allItems = [];
+
+            while (hasNextPage) {
+              const result = await github.graphql(`
+                query($projectId: ID!, $after: String) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      items(first: 100, after: $after) {
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                        nodes {
+                          id
+                          content {
+                            ... on PullRequest {
+                              id
+                              number
+                            }
                           }
                         }
                       }
                     }
                   }
                 }
-              }
-            `, { projectId });
+              `, {
+                projectId,
+                after
+              });
 
-            let item = itemsResult.node.items.nodes.find(i => i.content?.number === pr.number);
+              const items = result.node.items.nodes;
+              allItems = allItems.concat(items);
+
+              hasNextPage = result.node.items.pageInfo.hasNextPage;
+              after = result.node.items.pageInfo.endCursor;
+            }
+
+            let item = allItems.find(i => i.content?.number === pr.number);
             let itemId;
 
             if (item) {
