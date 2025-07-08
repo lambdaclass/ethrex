@@ -884,15 +884,16 @@ impl StoreEngine for RedBStore {
                 txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
             let mut state_trie_table = txn.open_table(STATE_TRIE_NODES_TABLE)?;
 
-            let keep_from_block = {
+            let last_block = {
                 let iter = state_trie_pruning_log_table.range::<BlockNumHashRLP>(..)?;
                 if let Some(Ok((block_guard, _))) = iter.last() {
-                    let block: BlockNumHash = block_guard.value().to()?;
-                    block.block_number.saturating_sub(KEEP_BLOCKS)
+                    block_guard.value().to()?
                 } else {
                     return Ok(());
                 }
             };
+
+            let keep_from_block = last_block.block_number.saturating_sub(KEEP_BLOCKS);
 
             tracing::debug!(
                 keep_from = keep_from_block,
@@ -905,35 +906,41 @@ impl StoreEngine for RedBStore {
             }
             .into();
 
-            let mut to_prune = Vec::new();
-            for entry in state_trie_pruning_log_table.range(..=cutoff_key)? {
-                let (block_guard, node_hashes) = entry?;
-                let block = block_guard.value().to()?;
-                for node_hash in node_hashes {
-                    let hash_arr: [u8; 32] = node_hash?.value();
-                    to_prune.push((block, hash_arr));
-                }
-            }
+            let blocks_to_prune: Vec<BlockNumHash> = {
+                let cursor = state_trie_pruning_log_table.range(..=cutoff_key)?;
+                cursor
+                    .map(|entry| entry.map(|(block, _)| block.value().to()))
+                    .collect::<Result<Result<Vec<_>, _>, _>>()??
+            };
 
-            for (block, hash_arr) in to_prune {
-                state_trie_table.remove(hash_arr.as_ref())?;
-                state_trie_pruning_log_table
-                    .remove_all(<BlockNumHash as Into<BlockNumHashRLP>>::into(block))?;
+            for block in blocks_to_prune {
+                let block_key: BlockNumHashRLP = block.into();
+                let mut removed = state_trie_pruning_log_table.remove_all(block_key)?;
+                while let Some(hash_guard) = removed.next().transpose()? {
+                    let hash = hash_guard.value();
+                    state_trie_table.remove(hash.as_ref())?;
+                }
             }
 
             let mut storage_trie_pruning_log_table =
                 txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
             let mut storage_trie_table = txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
 
-            let keep_from_block = {
+            let last_block = {
                 let iter = storage_trie_pruning_log_table.range::<BlockNumHashRLP>(..)?;
                 if let Some(Ok((block_guard, _))) = iter.last() {
-                    let block: BlockNumHash = block_guard.value().to()?;
-                    block.block_number.saturating_sub(KEEP_BLOCKS)
+                    block_guard.value().to()?
                 } else {
                     return Ok(());
                 }
             };
+
+            let keep_from_block = last_block.block_number.saturating_sub(KEEP_BLOCKS);
+
+            tracing::debug!(
+                keep_from = keep_from_block,
+                "[KEEPING STORAGE TRIE PRUNING LOG]"
+            );
 
             let cutoff_key: BlockNumHashRLP = BlockNumHash {
                 block_number: keep_from_block,
@@ -941,22 +948,20 @@ impl StoreEngine for RedBStore {
             }
             .into();
 
-            let mut to_prune = Vec::new();
-            for entry in storage_trie_pruning_log_table.range(..=cutoff_key)? {
-                let (block_guard, node_hashes) = entry?;
-                let block = block_guard.value().to()?;
-                for node_hash in node_hashes {
-                    let hash_arr: ([u8; 32], [u8; 33]) = node_hash?.value();
-                    to_prune.push((block, hash_arr));
-                }
-            }
+            let storage_blocks_to_prune: Vec<BlockNumHash> = {
+                let cursor = storage_trie_pruning_log_table.range(..=cutoff_key)?;
+                cursor
+                    .map(|entry| entry.map(|(block, _)| block.value().to()))
+                    .collect::<Result<Result<Vec<_>, _>, _>>()??
+            };
 
-            for (block, hash_arr) in to_prune {
-                storage_trie_table.remove_all(hash_arr)?;
-                storage_trie_pruning_log_table.remove(
-                    <BlockNumHash as Into<BlockNumHashRLP>>::into(block),
-                    hash_arr,
-                )?;
+            for block in storage_blocks_to_prune {
+                let block_key: BlockNumHashRLP = block.into();
+                let mut removed = storage_trie_pruning_log_table.remove_all(block_key)?;
+                while let Some(hash_guard) = removed.next().transpose()? {
+                    let (addr_hash, node_hash): ([u8; 32], [u8; 33]) = hash_guard.value();
+                    storage_trie_table.remove_all((addr_hash, node_hash))?;
+                }
             }
         }
 
