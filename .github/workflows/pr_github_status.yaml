@@ -246,7 +246,6 @@ jobs:
               return;
             }
 
-            // For some reason if I don't use variables in the "if" the CI breaks.
             let is_draft = pr.draft;
             let ready_for_review = context.payload.action === "ready_for_review";
 
