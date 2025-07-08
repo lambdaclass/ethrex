@@ -241,7 +241,7 @@ impl RpcHandler for SponsoredTx {
                 tx.nonce = nonce;
                 tx.sign_inplace(&signer)
                     .await
-                    .map_err(|_| RpcErr::SignerError)?;
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
             }
             SendRawTransactionRequest::EIP1559(ref mut tx) => {
                 tx.gas_limit = gas_limit;
@@ -250,7 +250,7 @@ impl RpcHandler for SponsoredTx {
                 tx.nonce = nonce;
                 tx.sign_inplace(&signer)
                     .await
-                    .map_err(|_| RpcErr::SignerError)?;
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
             }
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(
