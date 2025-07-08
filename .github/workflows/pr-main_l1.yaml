@@ -91,12 +91,12 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 4a1ed079ce5ebb46240e4ef9141d72e7236bca36
+      HIVE_COMMIT_HASH: 999ce51283406876f54d8fa6ebbbf2e3394b7f98
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
         run: |
-          git clone --single-branch --branch master https://github.com/lambdaclass/hive
+          git clone --single-branch --branch temporary_fix_docker https://github.com/lambdaclass/hive
           cd hive
           git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
           go build .
@@ -159,7 +159,7 @@ jobs:
             test_pattern: ""
           - name: "Devp2p tests"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs 
+            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
             #|BlobViolations
             # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
           - name: "Engine Auth and EC tests"
@@ -203,7 +203,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 
+        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
         # We use 8 here instead of 16 due to performance issues in some tests
         # Notably the tests "Invalid Missing Ancestor Syncing ReOrG" in engine cancun
 
