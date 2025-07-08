@@ -290,34 +290,7 @@ impl Store {
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
-
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block(*block_number, batch.number)
-                .await?;
-        }
-        self.store_block_numbers_by_batch(batch.number, blocks)
-            .await?;
-        self.store_message_hashes_by_batch(batch.number, batch.message_hashes)
-            .await?;
-        self.store_privileged_transactions_hash_by_batch(
-            batch.number,
-            batch.privileged_transactions_hash,
-        )
-        .await?;
-        self.store_blobs_by_batch(batch.number, batch.blobs_bundle.blobs)
-            .await?;
-        self.store_state_root_by_batch(batch.number, batch.state_root)
-            .await?;
-        if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch(batch.number, commit_tx)
-                .await?;
-        }
-        if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch(batch.number, verify_tx)
-                .await?;
-        }
-        Ok(())
+        self.engine.seal_batch(batch).await
     }
 
     pub async fn update_operations_count(

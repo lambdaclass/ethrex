@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
@@ -96,6 +96,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
         commit_tx: H256,
     ) -> Result<(), RollupStoreError>;
+
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError>;
 
     async fn get_verify_tx_by_batch(
         &self,

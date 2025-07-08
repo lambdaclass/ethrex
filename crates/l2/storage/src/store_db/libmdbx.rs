@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
@@ -380,6 +380,10 @@ impl StoreEngineRollup for Store {
         delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
         txn.commit().map_err(RollupStoreError::LibmdbxError)?;
         Ok(())
+    }
+
+    async fn seal_batch(&self, _batch: Batch) -> Result<(), RollupStoreError> {
+        todo!()
     }
 }
 
