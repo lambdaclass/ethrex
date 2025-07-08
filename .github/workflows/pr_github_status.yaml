@@ -259,7 +259,7 @@ jobs:
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
             }
 
-            for (let i = 0; i < 30000; i++) {
+            for (let i = 0; i < 10000; i++) {
               const result = await github.graphql(`
                 query($id: ID!) {
                   node(id: $id) {
