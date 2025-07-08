@@ -164,6 +164,51 @@ jobs:
               console.log(`Set status to '${optionName}' in field '${fieldName}'.`);
             }
 
+            async function getProjectItemFieldValue(projectId, itemId, fieldName) {
+              const res = await github.graphql(`
+                query($projectId: ID!, $itemId: ID!) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      fields(first: 100) {
+                        nodes {
+                          ... on ProjectV2SingleSelectField {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                  item: node(id: $itemId) {
+                    ... on ProjectV2Item {
+                      fieldValues(first: 100) {
+                        nodes {
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            field {
+                              ... on ProjectV2SingleSelectField {
+                                id
+                                name
+                              }
+                            }
+                            optionId
+                            optionName: name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { projectId, itemId });
+
+              const field = res.node.fields.nodes.find(f => f.name === fieldName);
+              if (!field) throw new Error(`Field '${fieldName}' not found`);
+
+              const fieldValue = res.item.fieldValues.nodes.find(fv => fv.field?.name === fieldName);
+              if (!fieldValue) throw new Error(`No value set for field '${fieldName}'`);
+
+              return fieldValue.optionName;
+            }
+
 
             // ========== MAIN LOGIC ==========
             const pr = context.payload.pull_request;
@@ -182,12 +227,24 @@ jobs:
               return;
             }
 
-            let opened = context.payload.action === "opened";
+            // Set Start date
+            let opened = context.payload.action === "opened"; // This only happens once in each PR
             if (opened) {
               await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
             }
 
+            // Set date of Last update
             await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
+
+            let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
+            console.log(`Current status: ${current_status}`);
+
+            if current_status === "Approved" || current_status === "Requested Changes" {
+              // If PR is approved we don't want to change it's state
+              // If changes were requested we can't automatically tell if they are ready for review once again. This has to be manual.
+              console.log(`Exiting workflow because of current PR status.`);
+              return;
+            }
 
             // For some reason if I don't use variables in the "if" the CI breaks.
             let is_draft = pr.draft;
