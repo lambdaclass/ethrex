@@ -265,12 +265,12 @@ jobs:
                   node(id: $id) {
                     ... on PullRequest {
                       mergeable
-                      mergeableState: mergeable_state
+                      mergeStateStatus                  
                     }
                   }
                 }
               `, { id: pr.node_id });
 
-              console.log(`Iteration ${i + 1}: mergeable = ${result.node.mergeable}, mergeableState = ${result.node.mergeableState}`);
+              console.log(`Iteration ${i + 1}: mergeable = ${result.node.mergeable}, mergeStateStatus = ${result.node.mergeStateStatus}`);
               await new Promise(resolve => setTimeout(resolve, 2000));
             }
