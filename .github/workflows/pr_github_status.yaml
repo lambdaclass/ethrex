@@ -19,7 +19,7 @@ jobs:
             const pr = context.payload.pull_request;
             const projectNumber = 31;
             const statusFieldName = "Status";
-            const newStatus = "In Progress";
+            const newStatus = "In Review";
             const orgLogin = "lambdaclass";
 
             // Fetch first 100 projects in the organization
@@ -96,32 +96,7 @@ jobs:
               console.log(`PR #${pr.number} not found in project.`);
             }
 
-            /*
-            // Add PR to project if not already in
-            if (!item) {
-              console.log(`PR #${pr.number} not found in project. Adding it...`);
-              const addResult = await github.graphql(`
-                mutation($projectId: ID!, $contentId: ID!) {
-                  addProjectV2ItemById(input: {
-                    projectId: $projectId,
-                    contentId: $contentId
-                  }) {
-                    item {
-                      id
-                    }
-                  }
-                }
-              `, {
-                projectId,
-                contentId: pr.node_id
-              });
-              itemId = addResult.addProjectV2ItemById.item.id;
-              console.log(`PR added to project with item ID: ${itemId}`);
-            } else {
-              itemId = item.id;
-            }
-
-            // Fetch project fields and options
+            // Validate that project has the correct field and options and get them.
             const fieldsResult = await github.graphql(`
               query($projectId: ID!) {
                 node(id: $projectId) {
@@ -150,7 +125,7 @@ jobs:
 
             const option = statusField.options.find(opt => opt.name === newStatus);
             if (!option) {
-              throw new Error(`Option '${newStatus}' not found`);
+              throw new Error(`Option '${newStatus}' not found in field '${statusFieldName}'`);
             }
 
             // Update the Status field
@@ -175,4 +150,3 @@ jobs:
               fieldId: statusField.id,
               optionId: option.id
             });
-            */
