@@ -8,16 +8,18 @@ pragma solidity =0.8.29;
 interface ICommonBridge {
     /// @notice A privileged transaction to L2 has initiated.
     /// @dev Event emitted when a privileged transaction is initiated.
-    /// @param from the address that initiated the transaction.
-    /// @param to the recipient on L2
-    /// @param transactionId Id used to make transactions unique
-    /// @param value the value of the transaction
+    /// @param l1From the address that initiated the transaction.
+    /// @param from the address sending the transaction on L2.
+    /// @param to the recipient on L2.
+    /// @param transactionId Id used to make transactions unique.
+    /// @param value the value of the transaction.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
     event PrivilegedTxSent (
-        address indexed from,
-        address indexed to,
-        uint256 indexed transactionId,
+        address indexed l1From,
+        address from,
+        address to,
+        uint256 transactionId,
         uint256 value,
         uint256 gasLimit,
         bytes data
