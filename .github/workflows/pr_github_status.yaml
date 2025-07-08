@@ -142,6 +142,7 @@ jobs:
             }
 
             // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
+            /*
             if (pr.draft) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
               console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to In Progress.`);
@@ -149,3 +150,4 @@ jobs:
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
               console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to In Review.`);
             }
+            */
