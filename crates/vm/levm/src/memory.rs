@@ -1,3 +1,5 @@
+use std::cmp::{max, min};
+
 use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, VMError},
@@ -23,7 +25,7 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
             .checked_sub(memory.len())
             .ok_or(InternalError::Underflow)?;
         memory
-            .try_reserve(additional_size)
+            .try_reserve(max(additional_size, 4096))
             .map_err(|_err| InternalError::MemorySizeOverflow)?;
         memory.resize(new_size, 0);
     }

@@ -256,6 +256,7 @@ impl CallFrame {
             ret_offset,
             ret_size,
             stack,
+            memory: Vec::with_capacity(4096),
             ..Default::default()
         }
     }
