@@ -322,17 +322,18 @@ fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
 
 fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
     let (required_type, vk_path) = match prover_type {
-        ProverType::SP1 => (opts.sp1, opts.sp1_vk_path),
-        ProverType::RISC0 => (opts.risc0, opts.risc0_vk_path),
-        _ => unimplemented!(prover_type),
+        ProverType::SP1 => (opts.sp1, &opts.sp1_vk_path),
+        ProverType::RISC0 => (opts.risc0, &opts.risc0_vk_path),
+        _ => unimplemented!("{prover_type}"),
     };
 
     if !required_type {
-        Bytes::new()
+        Ok(Bytes::new())
     } else {
-        vk_path.map(read_vk).unwrap_or_else(|| {
+        vk_path.as_deref().map(read_vk).unwrap_or_else(|| {
             prover_type
                 .vk(opts.aligned)?
+                .map(Bytes::from)
                 .ok_or(DeployerError::InternalError(format!(
                     "missing {prover_type} vk"
                 )))
@@ -355,8 +356,8 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = get_vk(ProverType::SP1, &opts)?;
-    let risc0_vk = get_vk(ProverType::RISC0, &opts)?;
+    let sp1_vk = get_vk(ProverType::SP1, opts)?;
+    let risc0_vk = get_vk(ProverType::RISC0, opts)?;
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 

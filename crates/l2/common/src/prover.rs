@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
-    path::PathBuf,
 };
 
 use crate::calldata::Value;
@@ -82,7 +81,7 @@ impl ProverType {
             _ => return Ok(None),
         };
         let path = std::fs::canonicalize(path)?;
-        std::fs::read(path).map(|content| Some(content))
+        std::fs::read(path).map(Some)
     }
 
     pub fn vk(&self, aligned: bool) -> std::io::Result<Option<Vec<u8>>> {
@@ -106,7 +105,7 @@ impl ProverType {
             _ => return Ok(None),
         };
         let path = std::fs::canonicalize(path)?;
-        std::fs::read(path).map(|content| Some(content))
+        std::fs::read(path).map(Some)
     }
 }
 

@@ -262,18 +262,15 @@ async fn send_proof_to_aligned(
             return Err(ProofSenderError::AlignedWrongProofFormat);
         };
 
-        let vm_program_code =
-            prover_type
-                .aligned_vm_program_code()?
-                .ok_or(ProofSenderError::InternalError(format!(
-                    "failed to read ELF/VK file for prover type {prover_type}: {e}",
-                )));
+        let Some(vm_program_code) = prover_type.aligned_vm_program_code()? else {
+            return Err(ProofSenderError::InternalError(format!("no vm_program_code for {prover_type}")));
+        };
 
         let verification_data = VerificationData {
             proving_system,
             proof,
             proof_generator_addr: state.l1_address.0.into(),
-            vm_program_code,
+            vm_program_code: Some(vm_program_code),
             verification_key: None,
             pub_input: None,
         };
