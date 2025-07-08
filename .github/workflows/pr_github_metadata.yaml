@@ -56,11 +56,18 @@ jobs:
         run: |
           labels=()
 
+          # Add performance if title starts with 'perf'
           if [[ "$TITLE" =~ ^perf ]]; then
-            labels=("performance")
-          elif [[ "$TITLE" =~ \(.*l2.*\) ]]; then
-            labels=("L2")
-          else
+            labels+=("performance")
+          fi
+
+          # Add L2 if scope is l2 or core
+          if [[ "$TITLE" =~ \(.*l2.*\) ]] || [[ "$TITLE" =~ \(.*core.*\) ]]; then
+            labels+=("L2")
+          fi
+
+          # Only add L1 and levm if it's neither perf or core. For project preferences.
+          if [[ ${#labels[@]} -eq 0 ]]; then
             if [[ "$TITLE" =~ \(.*l1.*\) ]]; then
               labels+=("L1")
             fi

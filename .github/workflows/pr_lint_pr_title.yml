@@ -40,6 +40,7 @@ jobs:
           # Configure which scopes are allowed (newline-delimited).
           # These are regex patterns auto-wrapped in `^ $`.
           scopes: |
+            core
             l1
             l2
             levm
