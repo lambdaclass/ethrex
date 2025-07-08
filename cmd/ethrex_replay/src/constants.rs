@@ -2,11 +2,11 @@
 
 use std::str::FromStr;
 
+use crate::networks::Network;
 use ethrex_common::{
     H160,
     types::{BlobSchedule, ChainConfig},
 };
-use crate::networks::Network;
 
 pub fn make_chainconfig(chain_id: u64) -> ChainConfig {
     ChainConfig {
@@ -42,15 +42,13 @@ pub fn make_chainconfig(chain_id: u64) -> ChainConfig {
 
 pub fn get_chain_config(name: &str) -> eyre::Result<ChainConfig> {
     Ok(match name.parse::<u64>() {
-        Ok(num) => {
-            make_chainconfig(num)
-        },
+        Ok(num) => make_chainconfig(num),
         Err(_) => {
             Network::from_network_name(name)
                 .map_err(|_| eyre::Error::msg("Network isn't known and isn't a chain number"))?
                 .get_genesis()
                 .map_err(|_| eyre::Error::msg("Network file not found"))?
                 .config
-        },
+        }
     })
 }

@@ -3,9 +3,9 @@ mod cache;
 mod cli;
 mod constants;
 mod fetcher;
+mod networks;
 mod plot_composition;
 mod run;
-mod networks;
 
 #[tokio::main]
 async fn main() {

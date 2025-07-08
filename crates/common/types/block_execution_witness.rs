@@ -96,7 +96,7 @@ pub fn rebuild_trie(
     let mut initial_node = None;
     for node in state.iter() {
         // If the node is empty we skip it
-        if node == &vec![128_u8] { 
+        if node == &vec![128_u8] {
             continue;
         }
         let x = Node::decode_raw(node).map_err(|_| {

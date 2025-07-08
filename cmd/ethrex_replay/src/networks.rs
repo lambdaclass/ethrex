@@ -1,10 +1,12 @@
 use ethrex_common::types::{Genesis, GenesisError};
 
-pub const HOLESKY_GENESIS_CONTENTS: &str = include_str!("../../ethrex/networks/holesky/genesis.json");
-pub const SEPOLIA_GENESIS_CONTENTS: &str = include_str!("../../ethrex/networks/sepolia/genesis.json");
+pub const HOLESKY_GENESIS_CONTENTS: &str =
+    include_str!("../../ethrex/networks/holesky/genesis.json");
+pub const SEPOLIA_GENESIS_CONTENTS: &str =
+    include_str!("../../ethrex/networks/sepolia/genesis.json");
 pub const HOODI_GENESIS_CONTENTS: &str = include_str!("../../ethrex/networks/hoodi/genesis.json");
-pub const MAINNET_GENESIS_CONTENTS: &str = include_str!("../../ethrex/networks/mainnet/genesis.json");
-
+pub const MAINNET_GENESIS_CONTENTS: &str =
+    include_str!("../../ethrex/networks/mainnet/genesis.json");
 
 #[derive(Debug, Clone)]
 pub enum Network {
@@ -20,13 +22,14 @@ pub enum PublicNetwork {
 }
 
 impl Network {
-    pub fn from_network_name(value: &str) -> eyre::Result<Self> { // TODO: consider removing the () for a proper error
+    pub fn from_network_name(value: &str) -> eyre::Result<Self> {
+        // TODO: consider removing the () for a proper error
         match value {
             "hoodi" => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
             "holesky" => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
             "mainnet" => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
             "sepolia" => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
-            &_ => Err(eyre::Error::msg("Network not known"))
+            &_ => Err(eyre::Error::msg("Network not known")),
         }
     }
 }
