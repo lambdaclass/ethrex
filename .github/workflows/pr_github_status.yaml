@@ -169,8 +169,8 @@ jobs:
             const pr = context.payload.pull_request;
             const projectNumber = 31;
             const statusFieldName = "Status";
-            const lastUpdatedFieldName = "Last Updated";
-            const startDateFieldName = "Start Date";
+            const lastUpdatedFieldName = "Last updated";
+            const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
 
             // Get project and item representing Pull Request.
