@@ -332,7 +332,7 @@ impl StoreEngineRollup for Store {
 
             for block in blocks.iter() {
                 transaction
-                    .upsert::<BatchesByBlockNumber>(batch.number, *block)
+                    .upsert::<BatchesByBlockNumber>(*block, batch.number)
                     .map_err(RollupStoreError::LibmdbxError)?;
             }
 

@@ -36,21 +36,20 @@ impl RpcHandler for GetL1MessageProof {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.l1_ctx.storage;
-        dbg!(
+        info!(
             "Requested l1message proof for transaction {:#x}",
             self.transaction_hash,
         );
 
         // Gets the transaction from the storage
-        let (tx_block_number, _, tx_index) = match dbg!(
-            storage
-                .get_transaction_location(self.transaction_hash)
-                .await
-        )? {
+        let (tx_block_number, _, tx_index) = match storage
+            .get_transaction_location(self.transaction_hash)
+            .await?
+        {
             Some(location) => location,
             _ => return Ok(Value::Null),
         };
-        let tx_receipt = match dbg!(storage.get_receipt(tx_block_number, tx_index).await?) {
+        let tx_receipt = match storage.get_receipt(tx_block_number, tx_index).await? {
             Some(receipt) => receipt,
             _ => return Ok(Value::Null),
         };
@@ -63,23 +62,21 @@ impl RpcHandler for GetL1MessageProof {
             .collect::<HashMap<_, _>>();
 
         // Gets the batch number for the block
-        let batch_number = match dbg!(
-            context
-                .rollup_store
-                .get_batch_number_by_block(tx_block_number)
-                .await
-        )? {
+        let batch_number = match context
+            .rollup_store
+            .get_batch_number_by_block(tx_block_number)
+            .await?
+        {
             Some(location) => location,
             _ => return Ok(Value::Null),
         };
 
         // Gets the message hashes for the batch
-        let batch_message_hashes = match dbg!(
-            context
-                .rollup_store
-                .get_message_hashes_by_batch(batch_number)
-                .await
-        )? {
+        let batch_message_hashes = match context
+            .rollup_store
+            .get_message_hashes_by_batch(batch_number)
+            .await?
+        {
             Some(messages) => messages,
             _ => return Ok(Value::Null),
         };

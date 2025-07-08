@@ -370,7 +370,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             {
                 let mut table = transaction.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
                 for block in blocks.iter() {
-                    table.insert(batch.number, *block)?;
+                    table.insert(*block, batch.number)?;
                 }
             }
 
