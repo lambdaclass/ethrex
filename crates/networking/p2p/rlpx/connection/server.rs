@@ -850,6 +850,11 @@ async fn handle_broadcast(
                 });
                 send(state, new_msg).await?;
             }
+            l2_msg @ Message::L2(_) => {
+                // TODO: Only broadcast L2 messages that are intended to be broadcasted.
+                // In the future, some of the messages don't need to be broadcasted.
+                send(state, l2_msg.clone()).await?;
+            }
             msg => {
                 let error_message = format!("Non-supported message broadcasted: {msg}");
                 log_peer_error(&state.node, &error_message);
