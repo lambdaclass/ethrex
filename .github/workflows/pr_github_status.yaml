@@ -141,6 +141,12 @@ jobs:
               return;
             }
 
+            console.log(context.payload.pull_request.state);
+
+            console.log(pr.state);
+
+            console.log(pr.draft);
+
             // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
             /*
             if (pr.draft) {
