@@ -53,69 +53,6 @@ impl Store {
             .lock()
             .map_err(|_| RollupStoreError::Custom("Failed to lock the store".to_string()))
     }
-
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        messages: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .message_hashes_by_batch
-            .insert(batch_number, messages);
-        Ok(())
-    }
-
-    /// Returns the block numbers for a given batch_number
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .block_numbers_by_batch
-            .insert(batch_number, block_numbers);
-        Ok(())
-    }
-
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .batches_by_block
-            .insert(block_number, batch_number);
-        Ok(())
-    }
-
-    async fn store_privileged_transactions_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .privileged_transactions_hashes
-            .insert(batch_number, privileged_transactions_hash);
-        Ok(())
-    }
-
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.state_roots.insert(batch_number, state_root);
-        Ok(())
-    }
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.blobs.insert(batch_number, state_diff);
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
@@ -310,32 +247,32 @@ impl StoreEngineRollup for Store {
     }
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let mut inner = self.inner()?;
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
         for block_number in blocks.iter() {
-            self.store_batch_number_by_block(*block_number, batch.number)
-                .await?;
+            inner.batches_by_block.insert(*block_number, batch.number);
         }
-        self.store_block_numbers_by_batch(batch.number, blocks)
-            .await?;
-        self.store_message_hashes_by_batch(batch.number, batch.message_hashes)
-            .await?;
-        self.store_privileged_transactions_hash_by_batch_number(
-            batch.number,
-            batch.privileged_transactions_hash,
-        )
-        .await?;
-        self.store_blob_bundle_by_batch_number(batch.number, batch.blobs_bundle.blobs)
-            .await?;
-        self.store_state_root_by_batch_number(batch.number, batch.state_root)
-            .await?;
+
+        inner.block_numbers_by_batch.insert(batch.number, blocks);
+
+        inner
+            .message_hashes_by_batch
+            .insert(batch.number, batch.message_hashes);
+
+        inner
+            .privileged_transactions_hashes
+            .insert(batch.number, batch.privileged_transactions_hash);
+
+        inner.blobs.insert(batch.number, batch.blobs_bundle.blobs);
+
+        inner.state_roots.insert(batch.number, batch.state_root);
+
         if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch(batch.number, commit_tx)
-                .await?;
+            inner.commit_txs.insert(batch.number, commit_tx);
         }
         if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch(batch.number, verify_tx)
-                .await?;
+            inner.verify_txs.insert(batch.number, verify_tx);
         }
         Ok(())
     }
