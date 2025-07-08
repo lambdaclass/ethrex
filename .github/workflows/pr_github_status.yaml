@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }} # Your PAT stored in secrets
+          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
           script: |
             const pr = context.payload.pull_request;
             const projectNumber = 31;
@@ -22,7 +22,7 @@ jobs:
             const newStatus = "In Progress";
             const orgLogin = "lambdaclass";
 
-            // Get all ProjectsV2 for the organization
+            // Fetch all projects in the organization
             const projects = await github.graphql(`
               query($org: String!) {
                 organization(login: $org) {
@@ -43,7 +43,7 @@ jobs:
             }
             const projectId = project.id;
 
-            // Get PR's associated project item
+            // Try to find the PR item in the project
             const itemsResult = await github.graphql(`
               query($projectId: ID!) {
                 node(id: $projectId) {
@@ -64,13 +64,34 @@ jobs:
               }
             `, { projectId });
 
-            const item = itemsResult.node.items.nodes.find(i => i.content?.number === pr.number);
-            if (!item) {
-              throw new Error(`PR #${pr.number} not found in project`);
-            }
-            const itemId = item.id;
+            let item = itemsResult.node.items.nodes.find(i => i.content?.number === pr.number);
+            let itemId;
 
-            // Get project fields and options
+            // Add PR to project if not already in
+            if (!item) {
+              console.log(`PR #${pr.number} not found in project. Adding it...`);
+              const addResult = await github.graphql(`
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: {
+                    projectId: $projectId,
+                    contentId: $contentId
+                  }) {
+                    item {
+                      id
+                    }
+                  }
+                }
+              `, {
+                projectId,
+                contentId: pr.node_id
+              });
+              itemId = addResult.addProjectV2ItemById.item.id;
+              console.log(`PR added to project with item ID: ${itemId}`);
+            } else {
+              itemId = item.id;
+            }
+
+            // Fetch project fields and options
             const fieldsResult = await github.graphql(`
               query($projectId: ID!) {
                 node(id: $projectId) {
@@ -102,7 +123,7 @@ jobs:
               throw new Error(`Option '${newStatus}' not found`);
             }
 
-            // Update the project's Status field
+            // Update the Status field
             await github.graphql(`
               mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
                 updateProjectV2ItemFieldValue(input: {
