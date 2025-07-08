@@ -8,7 +8,7 @@ use zkvm_interface::io::{JSONProgramInput, ProgramInput};
 
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 
 static PROGRAM_ELF: &[u8] =
@@ -65,18 +65,16 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn prove(
     input: ProgramInput,
-    aligned_mode: bool,
+    format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&JSONProgramInput(input));
 
     let setup = &*PROVER_SETUP;
 
-    // contains the receipt along with statistics about execution of the guest
-    let proof = if aligned_mode {
-        setup.client.prove(&setup.pk, &stdin).compressed().run()?
-    } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+    let proof = match format {
+        ProofFormat::Compressed => setup.client.prove(&setup.pk, &stdin).compressed().run()?,
+        ProofFormat::Groth16 => setup.client.prove(&setup.pk, &stdin).groth16().run()?,
     };
 
     info!("Successfully generated SP1Proof.");
@@ -92,16 +90,15 @@ pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn to_batch_proof(
     proof: ProveOutput,
-    aligned_mode: bool,
+    format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    let batch_proof = if aligned_mode {
-        BatchProof::ProofBytes(ProofBytes {
+    let batch_proof = match format {
+        ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
             prover_type: ProverType::SP1,
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
-        })
-    } else {
-        BatchProof::ProofCalldata(to_calldata(proof))
+        }),
+        ProofFormat::Groth16 => BatchProof::ProofCalldata(to_calldata(proof)),
     };
 
     Ok(batch_proof)

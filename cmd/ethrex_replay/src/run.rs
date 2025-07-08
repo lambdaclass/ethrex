@@ -55,7 +55,7 @@ pub async fn prove(cache: Cache) -> eyre::Result<()> {
             // inclusion of this crate in the workspace.
             ..Default::default()
         },
-        false,
+        Default::default(),
     )
     .map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())

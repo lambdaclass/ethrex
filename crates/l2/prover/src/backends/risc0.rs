@@ -1,6 +1,6 @@
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
@@ -42,7 +42,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput, aligned_mode: bool) -> Result<Receipt, Error> {
+pub fn prove(input: ProgramInput, format: ProofFormat) -> Result<Receipt, Error> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -52,11 +52,9 @@ pub fn prove(input: ProgramInput, aligned_mode: bool) -> Result<Receipt, Error> 
 
     let prover = default_prover();
 
-    // contains the receipt along with statistics about execution of the guest
-    let prover_opts = if aligned_mode {
-        ProverOpts::succinct()
-    } else {
-        ProverOpts::groth16()
+    let prover_opts = match format {
+        ProofFormat::Compressed => ProverOpts::succinct(),
+        ProofFormat::Groth16 => ProverOpts::groth16(),
     };
     let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
 
@@ -69,15 +67,14 @@ pub fn verify(receipt: &Receipt) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn to_batch_proof(receipt: Receipt, aligned_mode: bool) -> Result<BatchProof, Error> {
-    let batch_proof = if aligned_mode {
-        BatchProof::ProofBytes(ProofBytes {
+pub fn to_batch_proof(receipt: Receipt, format: ProofFormat) -> Result<BatchProof, Error> {
+    let batch_proof = match format {
+        ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
             prover_type: ProverType::RISC0,
             proof: bincode::serialize(&receipt.inner)?,
             public_values: receipt.journal.bytes,
-        })
-    } else {
-        BatchProof::ProofCalldata(to_calldata(receipt)?)
+        }),
+        ProofFormat::Groth16 => BatchProof::ProofCalldata(to_calldata(receipt)?),
     };
 
     Ok(batch_proof)

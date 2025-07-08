@@ -1,8 +1,6 @@
+use crate::SequencerConfig;
 use crate::sequencer::errors::{ConnectionHandlerError, ProofCoordinatorError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-use crate::{
-    BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
@@ -11,7 +9,7 @@ use ethrex_common::{
     Address,
     types::{Block, blobs_bundle},
 };
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -76,6 +74,7 @@ pub enum ProofData {
     BatchResponse {
         batch_number: Option<u64>,
         input: Option<ProverInputData>,
+        format: Option<ProofFormat>,
     },
 
     /// 6.
@@ -115,10 +114,11 @@ impl ProofData {
     }
 
     /// Builder function for creating a BatchResponse
-    pub fn batch_response(batch_number: u64, input: ProverInputData) -> Self {
+    pub fn batch_response(batch_number: u64, input: ProverInputData, format: ProofFormat) -> Self {
         ProofData::BatchResponse {
             batch_number: Some(batch_number),
             input: Some(input),
+            format: Some(format),
         }
     }
 
@@ -126,6 +126,7 @@ impl ProofData {
         ProofData::BatchResponse {
             batch_number: None,
             input: None,
+            format: None,
         }
     }
 
@@ -161,31 +162,29 @@ pub struct ProofCoordinatorState {
     blockchain: Arc<Blockchain>,
     validium: bool,
     commit_hash: String,
+    aligned: bool,
 }
 
 impl ProofCoordinatorState {
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        config: &ProofCoordinatorConfig,
-        committer_config: &CommitterConfig,
-        eth_config: &EthConfig,
-        proposer_config: &BlockProducerConfig,
+        config: &SequencerConfig,
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
     ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
-            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
-            eth_config.max_number_of_retries,
-            eth_config.backoff_factor,
-            eth_config.min_retry_delay,
-            eth_config.max_retry_delay,
-            Some(eth_config.maximum_allowed_max_fee_per_gas),
-            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
+            config.eth.rpc_url.iter().map(AsRef::as_ref).collect(),
+            config.eth.max_number_of_retries,
+            config.eth.backoff_factor,
+            config.eth.min_retry_delay,
+            config.eth.max_retry_delay,
+            Some(config.eth.maximum_allowed_max_fee_per_gas),
+            Some(config.eth.maximum_allowed_max_fee_per_blob_gas),
         )?;
-        let on_chain_proposer_address = committer_config.on_chain_proposer_address;
+        let on_chain_proposer_address = config.l1_committer.on_chain_proposer_address;
 
-        let rpc_url = eth_config
+        let rpc_url = config
+            .eth
             .rpc_url
             .first()
             .ok_or(ProofCoordinatorError::Custom(
@@ -194,18 +193,19 @@ impl ProofCoordinatorState {
             .to_string();
 
         Ok(Self {
-            listen_ip: config.listen_ip,
-            port: config.listen_port,
+            listen_ip: config.proof_coordinator.listen_ip,
+            port: config.proof_coordinator.listen_port,
             store,
             eth_client,
             on_chain_proposer_address,
-            elasticity_multiplier: proposer_config.elasticity_multiplier,
+            elasticity_multiplier: config.block_producer.elasticity_multiplier,
             rollup_store,
             rpc_url,
-            l1_private_key: config.l1_private_key,
+            l1_private_key: config.proof_coordinator.l1_private_key,
             blockchain,
-            validium: config.validium,
+            validium: config.proof_coordinator.validium,
             commit_hash: get_commit_hash(),
+            aligned: config.aligned.aligned_mode,
         })
     }
 }
@@ -229,16 +229,7 @@ impl ProofCoordinator {
         cfg: SequencerConfig,
         blockchain: Arc<Blockchain>,
     ) -> Result<(), ProofCoordinatorError> {
-        let state = ProofCoordinatorState::new(
-            &cfg.proof_coordinator,
-            &cfg.l1_committer,
-            &cfg.eth,
-            &cfg.block_producer,
-            store,
-            rollup_store,
-            blockchain,
-        )
-        .await?;
+        let state = ProofCoordinatorState::new(&cfg, store, rollup_store, blockchain).await?;
         let listener =
             Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
         let mut proof_coordinator = ProofCoordinator::start(state);
@@ -435,8 +426,13 @@ async fn handle_request(
         ProofData::empty_batch_response()
     } else {
         let input = create_prover_input(state, batch_to_prove).await?;
+        let format = if state.aligned {
+            ProofFormat::Compressed
+        } else {
+            ProofFormat::Groth16
+        };
         debug!("Sending BatchResponse for block_number: {batch_to_prove}");
-        ProofData::batch_response(batch_to_prove, input)
+        ProofData::batch_response(batch_to_prove, input, format)
     };
 
     send_response(stream, &response).await?;

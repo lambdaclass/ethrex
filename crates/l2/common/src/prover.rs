@@ -161,3 +161,13 @@ pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,
 }
+
+/// Indicates the prover which proof *format* to generate
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+pub enum ProofFormat {
+    #[default]
+    /// A compressed proof wrapped over groth16. EVM friendly.
+    Groth16,
+    /// Fixed size STARK execution proof.
+    Compressed,
+}
