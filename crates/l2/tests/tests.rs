@@ -2,11 +2,11 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
+use ethrex_common::H160;
 use ethrex_common::types::{
     BlockNumber,
     signer::{LocalSigner, Signer},
 };
-use ethrex_common::{H160, types::BlockNumber};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
@@ -16,7 +16,6 @@ use ethrex_l2_sdk::{
     l1_to_l2_tx_data::L1ToL2TransactionData,
     wait_for_transaction_receipt,
 };
-use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};
 use ethrex_rpc::{
     clients::eth::{EthClient, eth_sender::Overrides, from_hex_string_to_u256},
     types::{
@@ -278,8 +277,8 @@ async fn test_erc20_roundtrip(
     let token_amount: U256 = U256::from(100);
 
     let rich_wallet_private_key = l1_rich_wallet_private_key();
-    let rich_address = ethrex_l2_sdk::get_address_from_secret_key(&rich_wallet_private_key)
-        .expect("Failed to get address");
+    let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
+    let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
         "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
@@ -323,7 +322,7 @@ async fn test_erc20_roundtrip(
         token_l2,
         token_amount,
         rich_address,
-        rich_wallet_private_key,
+        &rich_wallet_signer,
         l1_client,
     )
     .await
@@ -387,7 +386,7 @@ async fn test_erc20_roundtrip(
         token_l1,
         token_l2,
         token_amount,
-        rich_wallet_private_key,
+        &rich_wallet_signer,
         l1_client,
         &proof,
     )
@@ -422,12 +421,11 @@ async fn test_send(
     signature: &str,
     data: &[Value],
 ) -> RpcReceipt {
-    let caller_address =
-        ethrex_l2_sdk::get_address_from_secret_key(private_key).expect("Failed to get address");
+    let signer: Signer = LocalSigner::new(*private_key).into();
     let tx = client
         .build_eip1559_transaction(
             to,
-            caller_address,
+            signer.address(),
             ethrex_l2_sdk::calldata::encode_calldata(signature, data)
                 .unwrap()
                 .into(),
@@ -435,10 +433,7 @@ async fn test_send(
         )
         .await
         .unwrap();
-    let tx_hash = client
-        .send_eip1559_transaction(&tx, private_key)
-        .await
-        .unwrap();
+    let tx_hash = client.send_eip1559_transaction(&tx, &signer).await.unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
         .unwrap()
@@ -1104,12 +1099,11 @@ async fn test_deploy_l1(
 ) -> Result<Address, Box<dyn std::error::Error>> {
     println!("Deploying contract on L1");
 
-    let deployer_address = ethrex_l2_sdk::get_address_from_secret_key(private_key)?;
+    let deployer_signer: Signer = LocalSigner::new(*private_key).into();
 
     let (deploy_tx_hash, contract_address) = client
         .deploy(
-            deployer_address,
-            *private_key,
+            &deployer_signer,
             init_code.to_vec().into(),
             Overrides::default(),
         )
