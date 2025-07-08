@@ -2,13 +2,9 @@ name: L2 TDX build
 on:
   push:
     branches: ["main"]
+  merge_group:
   pull_request:
     branches: ["**"]
-    paths:
-      - "**.nix"
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - ".github/workflows/pr-main_l2_tdx_build.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
