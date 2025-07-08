@@ -397,7 +397,6 @@ contract OnChainProposer is
         );
 
         uint256 batchNumber = firstBatchNumber;
-        uint256[] memory batchIds = new uint256[](alignedPublicInputsList.length);
         
         for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
             require(
