@@ -144,16 +144,12 @@ jobs:
             let is_draft = pr.draft;
             let ready_for_review = context.payload.action === "ready_for_review";
 
-            console.log(is_draft);
-            console.log(ready_for_review);
 
             // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
-            /*
-            if (pr.draft) {
+            if (is_draft) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
               console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to In Progress.`);
-            } else if context.payload.action === "ready_for_review" {
+            } else if (ready_for_review) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
               console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to In Review.`);
             }
-            */
