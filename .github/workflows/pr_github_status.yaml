@@ -111,6 +111,8 @@ jobs:
                   }
                 }
               `);
+
+              console.log(`Set date field '${fieldName}' to '${date}'.`);
             }
 
             async function setProjectItemStatus(projectId, itemId, fieldName, optionName) {
@@ -158,6 +160,8 @@ jobs:
                 fieldId: field.id,
                 optionId: option.id
               });
+
+              console.log(`Set status to '${optionName}' in field '${fieldName}'.`);
             }
 
 
@@ -178,10 +182,11 @@ jobs:
               return;
             }
 
-            // const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
-            let updated = pr.updated_at;
+            let opened = context.payload.action === "opened";
+            if (opened) {
+              await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
+            }
 
-            await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.updated_at);
             await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
 
             // For some reason if I don't use variables in the "if" the CI breaks.
@@ -191,8 +196,6 @@ jobs:
             // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
             if (is_draft) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
-              console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to In Progress.`);
             } else if (ready_for_review) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
-              console.log(`Project PR #${pr.number} status field '${statusFieldName}' is now set to In Review.`);
             }
