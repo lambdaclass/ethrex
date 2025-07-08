@@ -196,16 +196,16 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
         .eth_client
         .get_last_verified_batch(state.on_chain_proposer_address)
         .await?;
-    if state.latest_safe_batch < last_safe_batch_number {
-        info!("Node is not up to date. Syncing via L1");
-        while state.latest_safe_batch < last_safe_batch_number {
-            fetch_pending_batches(state).await?;
 
-            store_safe_batches(state).await?;
-        }
-    } else {
-        info!("Node is up to date");
+    while state.latest_safe_batch < last_safe_batch_number {
+        debug!("Node is not up to date. Syncing via L1");
+
+        fetch_pending_batches(state).await?;
+
+        store_safe_batches(state).await?;
     }
+
+    debug!("Node is up to date");
 
     Ok(())
 }
