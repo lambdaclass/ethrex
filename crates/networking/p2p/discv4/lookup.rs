@@ -149,7 +149,7 @@ impl Discv4LookupHandler {
             }
             return (initial_peers, true);
         }
-        let (nodes_found, queries) = self.lookup(target, asked_peers, &peers_to_ask).await;
+        let (nodes_found, queries) = self.lookup(target, asked_peers, peers_to_ask).await;
 
         for node in &nodes_found {
             if !seen_peers.contains(&node.public_key) {
@@ -158,7 +158,7 @@ impl Discv4LookupHandler {
             }
         }
 
-        return (nodes_found, queries > 0);
+        (nodes_found, queries > 0)
     }
 
     /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
