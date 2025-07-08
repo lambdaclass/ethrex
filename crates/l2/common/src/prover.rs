@@ -79,6 +79,21 @@ impl ProverType {
         };
         std::fs::canonicalize(path).ok()
     }
+
+    pub fn vk_path(&self) -> Option<PathBuf> {
+        let path = match self {
+            Self::RISC0 => format!(
+                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            Self::SP1 => format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            _ => return None,
+        };
+        std::fs::canonicalize(path).ok()
+    }
 }
 
 impl Display for ProverType {

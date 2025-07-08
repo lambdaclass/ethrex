@@ -337,8 +337,7 @@ impl REVM {
                 };
                 account_update.info = Some(account_info);
                 // Update code in db
-                if account.is_contract_changed()
-                {
+                if account.is_contract_changed() {
                     let Some(code) = new_acc_info.code else {
                         panic!()
                     };

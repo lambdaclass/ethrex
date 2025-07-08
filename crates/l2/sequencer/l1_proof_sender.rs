@@ -245,7 +245,8 @@ async fn send_proof_to_aligned(
     let wallet = wallet.with_chain_id(state.l1_chain_id);
 
     for batch_proof in batch_proofs {
-        let proving_system = match batch_proof.prover_type() {
+        let prover_type = batch_proof.prover_type();
+        let proving_system = match prover_type {
             ProverType::RISC0 => ProvingSystemId::Risc0,
             ProverType::SP1 => ProvingSystemId::SP1,
             _ => continue,
@@ -261,24 +262,27 @@ async fn send_proof_to_aligned(
             return Err(ProofSenderError::AlignedWrongProofFormat);
         };
 
-        let elf = batch_proof
-            .prover_type()
-            .elf_path()
+        let vm_program_code = {
+            let path = match prover_type {
+                prover_type @ ProverType::RISC0 => prover_type.vk_path(),
+                prover_type @ ProverType::SP1 => prover_type.elf_path(),
+                _ => continue,
+            }
             .ok_or(ProofSenderError::InternalError(format!(
-                "no ELF for prover type {} or file does not exists",
-                batch_proof.prover_type()
-            )))
-            .and_then(|path| {
-                std::fs::read(path).map_err(|e| {
-                    ProofSenderError::InternalError(format!("failed to read ELF file: {e}"))
-                })
-            })?;
+                "no ELF/VK for prover type {prover_type} or file does not exists, did you build the zkvm program for that prover type?",
+            )))?;
+            Some(std::fs::read(path).map_err(|e| {
+                ProofSenderError::InternalError(format!(
+                    "failed to read ELF/VK file for prover type {prover_type}: {e}",
+                ))
+            })?)
+        };
 
         let verification_data = VerificationData {
             proving_system,
             proof,
             proof_generator_addr: state.l1_address.0.into(),
-            vm_program_code: Some(elf),
+            vm_program_code,
             verification_key: None,
             pub_input: None,
         };

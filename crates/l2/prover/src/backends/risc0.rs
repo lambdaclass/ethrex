@@ -1,10 +1,10 @@
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
-    ExecutorEnv, InnerReceipt, ProverOpts, default_executor, default_prover,
+    ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
     serde::Error as Risc0SerdeError,
 };
 use tracing::info;
@@ -25,6 +25,8 @@ pub enum Error {
     Risc0SerdeError(#[from] Risc0SerdeError),
     #[error("zkvm dynamic error: {0}")]
     ZkvmDyn(#[from] anyhow::Error),
+    #[error("bincode error: {0}")]
+    Bincode(#[from] Box<bincode::ErrorKind>),
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Error> {
@@ -40,7 +42,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput, aligned_mode: bool) -> Result<risc0_zkvm::Receipt, Error> {
+pub fn prove(input: ProgramInput, aligned_mode: bool) -> Result<Receipt, Error> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -51,32 +53,37 @@ pub fn prove(input: ProgramInput, aligned_mode: bool) -> Result<risc0_zkvm::Rece
     let prover = default_prover();
 
     // contains the receipt along with statistics about execution of the guest
-    let prove_info = prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &ProverOpts::groth16())?;
+    let prove_info = if aligned_mode {
+        ProverOpts::succinct()
+    } else {
+        ProverOpts::groth16()
+    };
+    prover.prove_with_opts(env, ZKVM_RISC0_PROGRAM_ELF, &prover_opts)?;
 
     info!("Successfully generated execution receipt.");
     Ok(prove_info.receipt)
 }
 
-pub fn verify(receipt: &risc0_zkvm::Receipt) -> Result<(), Error> {
+pub fn verify(receipt: &Receipt) -> Result<(), Error> {
     receipt.verify(ZKVM_RISC0_PROGRAM_ID)?;
     Ok(())
 }
 
-pub fn to_batch_proof(proof: risc0_zkvm::Receipt, aligned_mode: bool) -> Result<BatchProof, Error> {
+pub fn to_batch_proof(receipt: Receipt, aligned_mode: bool) -> Result<BatchProof, Error> {
     let batch_proof = if aligned_mode {
         BatchProof::ProofBytes(ProofBytes {
             prover_type: ProverType::RISC0,
-            proof: bincode::serialize(&proof.proof)?,
-            public_values: proof.proof.public_values.to_vec(),
+            proof: bincode::serialize(&receipt.inner)?,
+            public_values: receipt.journal.bytes,
         })
     } else {
-        BatchProof::ProofCalldata(to_calldata(proof))
+        BatchProof::ProofCalldata(to_calldata(receipt)?)
     };
 
-    to_calldata(proof).map(BatchProof::ProofCalldata)
+    Ok(batch_proof)
 }
 
-fn to_calldata(receipt: risc0_zkvm::Receipt) -> Result<ProofCalldata, Error> {
+fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
     let seal = encode_seal(&receipt)?;
     let journal = receipt.journal.bytes;
 
@@ -94,7 +101,7 @@ fn to_calldata(receipt: risc0_zkvm::Receipt) -> Result<ProofCalldata, Error> {
 // ref: https://github.com/risc0/risc0-ethereum/blob/046bb34ea4605f9d8420c7db89baf8e1064fa6f5/contracts/src/lib.rs#L88
 // this was reimplemented because risc0-ethereum-contracts brings a different version of c-kzg into the workspace (2.1.0),
 // which is incompatible with our current version (1.0.3).
-fn encode_seal(receipt: &risc0_zkvm::Receipt) -> Result<Vec<u8>, Error> {
+fn encode_seal(receipt: &Receipt) -> Result<Vec<u8>, Error> {
     let InnerReceipt::Groth16(receipt) = receipt.inner.clone() else {
         return Err(Error::EncodeNonGroth16Seal);
     };
