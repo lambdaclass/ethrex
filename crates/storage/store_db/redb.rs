@@ -872,12 +872,11 @@ impl StoreEngine for RedBStore {
             write_txn.commit().map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))??;
-        self.prune_state_and_storage_log()
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
-        const KEEP_BLOCKS: u64 = 128;
+        const KEEP_BLOCKS: u64 = 1024;
         let txn = self.db.begin_write().map_err(Box::new)?;
         {
             let mut state_trie_pruning_log_table =
@@ -918,7 +917,9 @@ impl StoreEngine for RedBStore {
                 let mut removed = state_trie_pruning_log_table.remove_all(block_key)?;
                 while let Some(hash_guard) = removed.next().transpose()? {
                     let hash = hash_guard.value();
-                    state_trie_table.remove(hash.as_ref())?;
+                    if state_trie_table.get(hash.as_ref())?.is_some() {
+                        state_trie_table.remove(hash.as_ref())?;
+                    }
                 }
             }
 
@@ -960,7 +961,13 @@ impl StoreEngine for RedBStore {
                 let mut removed = storage_trie_pruning_log_table.remove_all(block_key)?;
                 while let Some(hash_guard) = removed.next().transpose()? {
                     let (addr_hash, node_hash): ([u8; 32], [u8; 33]) = hash_guard.value();
-                    storage_trie_table.remove_all((addr_hash, node_hash))?;
+                    if storage_trie_table
+                        .get(&(addr_hash, node_hash))?
+                        .next()
+                        .is_some()
+                    {
+                        storage_trie_table.remove_all((addr_hash, node_hash))?;
+                    }
                 }
             }
         }

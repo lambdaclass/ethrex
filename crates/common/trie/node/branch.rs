@@ -80,8 +80,15 @@ impl BranchNode {
                 (choice_ref, ValueOrHash::Value(value)) => {
                     let child_node = choice_ref
                         .get_node(db)?
-                        .ok_or(TrieError::InconsistentTree)
-                        .unwrap();
+                        .ok_or_else(|| {
+                            tracing::error!(
+                                choice = choice,
+                                child_ref_hash = format!("{:?}", choice_ref.compute_hash()),
+                                path = format!("{:?}", path),
+                                "[BRANCH NODE] Failed to get child node - InconsistentTree about to occur"
+                            );
+                            TrieError::InconsistentTree
+                        })?;
 
                     *choice_ref = child_node
                         .insert(db, path, value, invalidated_nodes)?

@@ -450,7 +450,7 @@ impl StoreEngine for Store {
     }
 
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
-        const KEEP_BLOCKS: u64 = 128;
+        const KEEP_BLOCKS: u64 = 1024;
         let mut store = self.inner()?;
 
         // Get the block number of the last state trie pruning log entry
@@ -477,7 +477,9 @@ impl StoreEngine for Store {
                 for (_, node_hashes) in entries_to_prune {
                     for node_hash_array in node_hashes {
                         let node_hash = NodeHash::Hashed(H256(node_hash_array));
-                        state_trie_nodes.remove(&node_hash);
+                        if state_trie_nodes.get(&node_hash).is_some() {
+                            state_trie_nodes.remove(&node_hash);
+                        }
                     }
                 }
             }
@@ -503,7 +505,9 @@ impl StoreEngine for Store {
                     if let Some(addr_store) = store.storage_trie_nodes.get(&H256(hashed_address)) {
                         if let Ok(mut addr_store) = addr_store.lock() {
                             let node_hash = NodeHash::from_encoded_raw(&node_hash_fixed);
-                            addr_store.remove(&node_hash);
+                            if addr_store.get(&node_hash).is_some() {
+                                addr_store.remove(&node_hash);
+                            }
                         }
                     }
                 }

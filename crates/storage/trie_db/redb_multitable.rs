@@ -30,6 +30,7 @@ impl TrieDB for RedBMultiTableTrieDB {
             node_hash = hex::encode(node_hash_to_fixed_size(key)),
             "[QUERYING STORAGE TRIE NODE]",
         );
+
         let read_txn = self
             .db
             .begin_read()
@@ -52,8 +53,37 @@ impl TrieDB for RedBMultiTableTrieDB {
             return Ok(None);
         }
 
+        // 🔍 LOG CRÍTICO: Verificar longitud antes de truncate
+        tracing::debug!(
+            hashed_address = hex::encode(self.fixed_key),
+            node_hash = hex::encode(node_hash_to_fixed_size(key)),
+            data_length = data.len(),
+            data_hex = hex::encode(&data),
+            "[REDB MULTITABLE GET] Raw node data before truncate"
+        );
+
+        if data.len() < 8 {
+            tracing::error!(
+                hashed_address = hex::encode(self.fixed_key),
+                node_hash = hex::encode(node_hash_to_fixed_size(key)),
+                data_length = data.len(),
+                data_hex = hex::encode(&data),
+                "[REDB MULTITABLE GET] Node data too short! Expected at least 8 bytes"
+            );
+            return Ok(None); // Devolver None en lugar de crashear
+        }
+
         // Remove the last 8 bytes that contain the block number
         data.truncate(data.len() - 8);
+
+        tracing::debug!(
+            hashed_address = hex::encode(self.fixed_key),
+            node_hash = hex::encode(node_hash_to_fixed_size(key)),
+            final_length = data.len(),
+            final_hex = hex::encode(&data),
+            "[REDB MULTITABLE GET] Final node data after truncate"
+        );
+
         Ok(Some(data))
     }
 

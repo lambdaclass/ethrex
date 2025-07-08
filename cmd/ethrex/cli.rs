@@ -109,7 +109,7 @@ pub struct Options {
     pub evm: EvmEngine,
     #[arg(
         long = "log.level",
-        default_value_t = Level::INFO,
+        default_value_t = Level::DEBUG,
         value_name = "LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
@@ -196,7 +196,7 @@ impl Default for Options {
         Self {
             http_addr: Default::default(),
             http_port: Default::default(),
-            log_level: Level::INFO,
+            log_level: Level::DEBUG,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
