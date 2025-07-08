@@ -150,6 +150,14 @@ impl Trie {
 
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
+    /// Also commits changes to the DB
+    pub async fn hash_async(&mut self) -> Result<H256, TrieError> {
+        self.commit_async().await?;
+        Ok(self.hash_no_commit())
+    }
+
+    /// Return the hash of the trie's root node.
+    /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
         if self.root.is_valid() {
             self.root.compute_hash().finalize()
@@ -180,6 +188,19 @@ impl Trie {
             self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
+        Ok(())
+    }
+
+    /// Compute the hash of the root node and flush any changes into the database.
+    ///
+    /// This method will also compute the hash of all internal nodes indirectly. It will not clear
+    /// the cached nodes.
+    pub async fn commit_async(&mut self) -> Result<(), TrieError> {
+        if self.root.is_valid() {
+            let mut acc = Vec::new();
+            self.root.commit(&mut acc);
+            self.db.put_batch_async(acc).await?;
+        }
         Ok(())
     }
 
