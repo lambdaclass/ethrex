@@ -11,7 +11,7 @@ use secp256k1::SecretKey;
 
 const ETH_RPC_URL: &str = "http://localhost:1729";
 
-use std::fs;
+use std::{fs, str::FromStr};
 
 // This test verifies the correct reconstruction of the L2 state from data blobs.
 
@@ -68,10 +68,10 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
         if index < rich_accounts as usize {
             assert_eq!(
                 balance,
-                U256::from_dec_str("500000000000000000000000000").unwrap()
+                U256::from_str("500000000000000000000000000").unwrap()
             );
         } else {
-            assert_eq!(balance, U256::zero());
+            assert_eq!(balance, U256::ZERO);
         }
     }
 }

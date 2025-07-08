@@ -185,7 +185,7 @@ pub fn prepare_vm_for_tx<'a>(
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
             difficulty: test.env.current_difficulty,
-            chain_id: U256::from(1),
+            chain_id: U256::from(1u32),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
@@ -229,7 +229,7 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
         )?;
         for (k, v) in &pre_value.storage {
             let storage_slot = world_state
-                .get_storage_value(*address, H256::from_slice(&k.to_big_endian()))
+                .get_storage_value(*address, H256(k.to_be_bytes()))
                 .unwrap();
             ensure_pre_state_condition(
                 &storage_slot == v,

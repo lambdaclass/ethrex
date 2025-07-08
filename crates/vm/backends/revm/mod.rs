@@ -12,7 +12,7 @@ use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
 use ethrex_common::types::{AccountInfo, AccountUpdate};
-use ethrex_common::{BigEndianHash, H256, U256};
+use ethrex_common::{H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 
 use revm::db::AccountStatus;
@@ -302,7 +302,7 @@ impl REVM {
                         removed: false,
                         info: Some(AccountInfo {
                             code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
-                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                            balance: U256::from_le_bytes(new_acc_info.balance.to_le_bytes()),
                             nonce: new_acc_info.nonce,
                         }),
                         code: new_acc_info.code.map(|c| c.original_bytes().0),
@@ -311,8 +311,8 @@ impl REVM {
                             .iter()
                             .map(|(key, slot)| {
                                 (
-                                    H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                                    U256::from_little_endian(slot.present_value().as_le_slice()),
+                                    H256(U256::from_le_bytes(key.to_le_bytes()).to_be_bytes()),
+                                    U256::from_le_bytes(slot.present_value().to_le_bytes()),
                                 )
                             })
                             .collect(),
@@ -330,7 +330,7 @@ impl REVM {
                     let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
                     let account_info = AccountInfo {
                         code_hash,
-                        balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                        balance: U256::from_le_bytes(new_acc_info.balance.to_le_bytes()),
                         nonce: new_acc_info.nonce,
                     };
                     account_update.info = Some(account_info);
@@ -350,8 +350,8 @@ impl REVM {
                     //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
                     // }
                     account_update.added_storage.insert(
-                        H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                        U256::from_little_endian(slot.present_value().as_le_slice()),
+                        H256(U256::from_le_bytes(key.to_le_bytes()).to_be_bytes()),
+                        U256::from_le_bytes(slot.present_value().to_le_bytes()),
                     );
                 }
             }
@@ -421,7 +421,7 @@ pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
         timestamp: RevmU256::from(header.timestamp),
         gas_limit: RevmU256::from(header.gas_limit),
         basefee: RevmU256::from(header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE)),
-        difficulty: RevmU256::from_limbs(header.difficulty.0),
+        difficulty: RevmU256::from_le_bytes(header.difficulty.to_le_bytes()),
         prevrandao: Some(header.prev_randao.as_fixed_bytes().into()),
         blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
             header.excess_blob_gas.unwrap_or_default(),
@@ -435,7 +435,7 @@ pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
 pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
     let max_fee_per_blob_gas = tx
         .max_fee_per_blob_gas()
-        .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
+        .map(|x| RevmU256::from_be_bytes(x.to_be_bytes()));
     TxEnv {
         caller: RevmAddress(sender.0.into()),
         gas_limit: tx.gas_limit(),
@@ -444,7 +444,7 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
             TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
             TxKind::Create => RevmTxKind::Create,
         },
-        value: RevmU256::from_limbs(tx.value().0),
+        value: RevmU256::from_le_bytes(tx.value().to_le_bytes()),
         data: match tx {
             Transaction::PrivilegedL2Transaction(_tx) => DEPOSIT_MAGIC_DATA.into(),
             _ => tx.data().clone().into(),
@@ -485,13 +485,13 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
-                            chain_id: RevmU256::from_limbs(auth_t.chain_id.0),
+                            chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_le_bytes()),
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
                         auth_t.y_parity.as_u32() as u8,
-                        RevmU256::from_le_bytes(auth_t.r_signature.to_little_endian()),
-                        RevmU256::from_le_bytes(auth_t.s_signature.to_little_endian()),
+                        RevmU256::from_le_bytes(auth_t.r_signature.to_le_bytes()),
+                        RevmU256::from_le_bytes(auth_t.s_signature.to_le_bytes()),
                     )
                 })
                 .collect::<Vec<SignedAuthorization>>()
@@ -511,7 +511,7 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
             TxKind::Call(address) => RevmTxKind::Call(address.0.into()),
             TxKind::Create => RevmTxKind::Create,
         },
-        value: RevmU256::from_limbs(tx.value.0),
+        value: RevmU256::from_le_bytes(tx.value.to_le_bytes()),
         data: tx.input.clone().into(),
         nonce: tx.nonce,
         chain_id: tx.chain_id,
@@ -538,7 +538,9 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
             .iter()
             .map(|hash| B256::from(hash.0))
             .collect(),
-        max_fee_per_blob_gas: tx.max_fee_per_blob_gas.map(|x| RevmU256::from_limbs(x.0)),
+        max_fee_per_blob_gas: tx
+            .max_fee_per_blob_gas
+            .map(|x| RevmU256::from_le_bytes(x.to_le_bytes())),
         // EIP7702
         // https://eips.ethereum.org/EIPS/eip-7702
         // The latest version of revm(19.3.0) is needed to run with the latest changes.
@@ -550,13 +552,13 @@ pub(crate) fn tx_env_from_generic(tx: &GenericTransaction, basefee: u64) -> TxEn
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
-                            chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_little_endian()),
+                            chain_id: RevmU256::from_le_bytes(auth_t.chain_id.to_le_bytes()),
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
                         auth_t.y_parity.as_u32() as u8,
-                        RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
-                        RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
+                        RevmU256::from_le_bytes(auth_t.r.to_le_bytes()),
+                        RevmU256::from_le_bytes(auth_t.s.to_le_bytes()),
                     )
                 })
                 .collect::<Vec<SignedAuthorization>>()

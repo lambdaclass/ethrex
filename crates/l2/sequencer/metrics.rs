@@ -155,16 +155,8 @@ async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsG
         MetricsBlockType::LastVerifiedBatch,
         last_verified_batch,
     )?;
-    METRICS.set_l1_gas_price(
-        l1_gas_price
-            .try_into()
-            .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
-    );
-    METRICS.set_l2_gas_price(
-        l2_gas_price
-            .try_into()
-            .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
-    );
+    METRICS.set_l1_gas_price(l1_gas_price.as_i64());
+    METRICS.set_l2_gas_price(l2_gas_price.as_i64());
 
     debug!("L2 Metrics Gathered");
     Ok(())

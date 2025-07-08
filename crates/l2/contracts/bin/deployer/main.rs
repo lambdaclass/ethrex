@@ -547,8 +547,8 @@ async fn make_deposits(
             .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
         let value_to_deposit = get_balance
-            .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
-            .unwrap_or(U256::zero());
+            .checked_div(U256::from_str("2").unwrap_or(U256::ZERO))
+            .unwrap_or(U256::ZERO);
 
         let overrides = Overrides {
             value: Some(value_to_deposit),

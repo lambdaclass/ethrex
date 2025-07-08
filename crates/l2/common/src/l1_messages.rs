@@ -27,7 +27,7 @@ impl L1Message {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.from.to_fixed_bytes());
         bytes.extend_from_slice(&self.data_hash.0);
-        bytes.extend_from_slice(&self.message_id.to_big_endian());
+        bytes.extend_from_slice(&self.message_id.to_be_bytes());
         bytes
     }
 }
@@ -61,7 +61,7 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
                     Some(L1Message {
                         from: Address::from_slice(&log.topics.get(1)?.0[12..32]),
                         data_hash: *log.topics.get(2)?,
-                        message_id: U256::from_big_endian(&log.topics.get(3)?.to_fixed_bytes()),
+                        message_id: U256::from_be_bytes(log.topics.get(3)?.to_fixed_bytes()),
                     })
                 })
         })

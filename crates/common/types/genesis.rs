@@ -1,5 +1,6 @@
 use bytes::Bytes;
-use ethereum_types::{Address, Bloom, H256, U256};
+use ethereum_types::{Address, Bloom, H256};
+use ethnum::U256;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
@@ -473,7 +474,7 @@ mod tests {
         assert_eq!(&genesis.config, &expected_chain_config);
         // Genesis header fields
         assert_eq!(genesis.coinbase, Address::from([0; 20]));
-        assert_eq!(genesis.difficulty, U256::from(1));
+        assert_eq!(genesis.difficulty, U256::ONE);
         assert!(genesis.extra_data.is_empty());
         assert_eq!(genesis.gas_limit, 0x17d7840);
         assert_eq!(genesis.nonce, 0x1234);
@@ -485,7 +486,7 @@ mod tests {
         assert!(genesis.alloc.contains_key(&addr_a));
         let expected_account_a = GenesisAccount {
         code: Bytes::from(hex::decode("3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500").unwrap()),
-        balance: 0.into(),
+        balance: U256::ZERO,
         nonce: 1,
         storage: Default::default(),
     };
@@ -496,13 +497,13 @@ mod tests {
         let addr_b_storage = &genesis.alloc[&addr_b].storage;
         assert_eq!(
             addr_b_storage.get(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0x0000000000000000000000000000000000000000000000000000000000000022"
                 )
                 .unwrap()
             ),
             Some(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0xf5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
                 )
                 .unwrap()
@@ -510,13 +511,13 @@ mod tests {
         );
         assert_eq!(
             addr_b_storage.get(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0x0000000000000000000000000000000000000000000000000000000000000038"
                 )
                 .unwrap()
             ),
             Some(
-                &U256::from_str(
+                &U256::from_str_prefixed(
                     "0xe71f0aa83cc32edfbefa9f4d3e0174ca85182eec9f3a09f6a6c0df6377a510d7"
                 )
                 .unwrap()
@@ -546,7 +547,7 @@ mod tests {
         assert_eq!(header.transactions_root, compute_transactions_root(&[]));
         assert_eq!(header.receipts_root, compute_receipts_root(&[]));
         assert_eq!(header.logs_bloom, Bloom::default());
-        assert_eq!(header.difficulty, U256::from(1));
+        assert_eq!(header.difficulty, U256::ONE);
         assert_eq!(header.gas_limit, 25_000_000);
         assert_eq!(header.gas_used, 0);
         assert_eq!(header.timestamp, 1_718_040_081);

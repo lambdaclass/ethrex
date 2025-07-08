@@ -3,8 +3,10 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq};
 
 pub mod u256 {
+    use std::str::FromStr;
+
     use super::*;
-    use ethereum_types::U256;
+    use ethnum::U256;
     use serde_json::Number;
 
     pub fn deser_number<'de, D>(d: D) -> Result<U256, D::Error>
@@ -12,7 +14,7 @@ pub mod u256 {
         D: Deserializer<'de>,
     {
         let value = Number::deserialize(d)?.to_string();
-        U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
+        U256::from_str(&value).map_err(|e| D::Error::custom(e.to_string()))
     }
 
     pub fn deser_number_opt<'de, D>(d: D) -> Result<Option<U256>, D::Error>
@@ -25,7 +27,7 @@ pub mod u256 {
             Some(number) => {
                 // Convert number to string and parse to U256
                 let value = number.to_string();
-                U256::from_dec_str(&value)
+                U256::from_str(&value)
                     .map(Some)
                     .map_err(|e| D::Error::custom(e.to_string()))
             }
@@ -38,7 +40,7 @@ pub mod u256 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
+        U256::from_str(&value).map_err(|e| D::Error::custom(e.to_string()))
     }
 
     pub fn deser_hex_str<'de, D>(d: D) -> Result<U256, D::Error>
@@ -46,8 +48,7 @@ pub mod u256 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        U256::from_str_radix(value.trim_start_matches("0x"), 16)
-            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+        U256::from_str_hex(&value).map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
     }
 
     pub fn deser_hex_or_dec_str<'de, D>(d: D) -> Result<U256, D::Error>
@@ -55,12 +56,8 @@ pub mod u256 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        if value.starts_with("0x") {
-            U256::from_str_radix(value.trim_start_matches("0x"), 16)
-                .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
-        } else {
-            U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
-        }
+        U256::from_str_prefixed(&value)
+            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
     }
 
     pub fn serialize_number<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
