@@ -16,6 +16,7 @@ members = [
   "crates/l2/prover/zkvm/interface",
   "crates/l2/sdk",
   "crates/l2/storage",
+  "crates/l2/networking/rpc",
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
@@ -26,6 +27,7 @@ members = [
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
+  "tooling/archive_sync"
 ]
 resolver = "2"
 
@@ -45,7 +47,7 @@ ethrex-common = { path = "./crates/common" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage" }
-ethrex-vm = { path = "./crates/vm" }
+ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
@@ -54,6 +56,8 @@ ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
+ethrex = { path = "./cmd/ethrex" }
+ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -64,7 +68,7 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { version = "=0.5.3", features = ["orm"] }
 bytes = { version = "1.6.0", features = ["serde"] }
-tokio = { version = "1.41.1"}
+tokio = { version = "1.41.1" }
 thiserror = "2.0.9"
 hex = "0.4.3"
 hex-literal = "0.4.1"
@@ -72,7 +76,7 @@ crc32fast = "1.4.2"
 lazy_static = "1.5.0"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tokio-util = { version = "0.7.12", features = ["rt"] }
+tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
 cfg-if = "1.0.0"
@@ -90,8 +94,14 @@ axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
+kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
+# Changing the tag for spawned will break the TDX image build
+# When updating it try to build the TDX image and update service.nix with the new hash
+spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
+spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
+lambdaworks-crypto = "0.11.0"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }

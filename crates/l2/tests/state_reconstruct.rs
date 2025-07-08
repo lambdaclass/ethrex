@@ -5,7 +5,7 @@
 
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 
 use secp256k1::SecretKey;
 
@@ -16,7 +16,7 @@ use std::fs;
 // This test verifies the correct reconstruction of the L2 state from data blobs.
 
 // Test Data:
-// - The test uses 5 pre-generated data blobs located under test_data/blobs/
+// - The test uses 5 pre-generated data blobs located under /fixtures/blobs/
 // - Each blob contains a batch of blocks with specific deposit transactions:
 //
 // Blob Contents:
@@ -30,7 +30,7 @@ use std::fs;
 #[tokio::test]
 async fn test_state_reconstruct() {
     let pks_path = std::env::var("PRIVATE_KEYS_PATH")
-        .unwrap_or("../../test_data/private_keys_l1.txt".to_string());
+        .unwrap_or("../../fixtures/keys/private_keys_l1.txt".to_string());
     let pks = fs::read_to_string(&pks_path).unwrap();
     let private_keys: Vec<String> = pks
         .lines()
@@ -62,7 +62,7 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
 
     for (index, address) in addresses.iter().enumerate() {
         let balance = client
-            .get_balance(*address, block_number.into())
+            .get_balance(*address, BlockIdentifier::Number(block_number))
             .await
             .expect("Error getting balance");
         if index < rich_accounts as usize {

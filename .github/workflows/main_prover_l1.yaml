@@ -1,4 +1,4 @@
-name: RPC Prover (SP1 Backend)
+name: Replay proving
 on:
   push:
     branches: ["main"]
@@ -9,7 +9,6 @@ concurrency:
 
 env:
   CI_ETHREX_WORKDIR: /usr/local/bin
-  PROVER: sp1
 
 permissions:
   # deployments permission to deploy GitHub pages website
@@ -19,8 +18,12 @@ permissions:
 
 jobs:
   test:
-    name: L1 block proving test
+    name: Prove an L1 block with ${{ matrix.backend }} backend
     runs-on: gpu
+    strategy:
+      fail-fast: true
+      matrix:
+        backend: ["sp1", "risc0"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -35,26 +38,35 @@ jobs:
         with:
           cache-on-failure: "true"
 
-      - name: RISC-V SP1 toolchain install
+      - name: RISC-V Risc0 toolchain install
+        if: matrix.backend == 'risc0'
+        # should be able to specify a version for `rzup install rust` (toolchain version)
+        # but it throws a "error decoding response body" in that case
         run: |
-          . "$HOME/.cargo/env"
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install rust
+      - name: RISC-V SP1 toolchain install
+        if: matrix.backend == 'sp1'
+        run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.0
 
       - name: Build
         run: |
           cd cmd/ethrex_replay
-          cargo b -r --features "sp1,gpu"
+          export PATH=$PATH:/usr/local/cuda-12.8/bin
+          cargo b -r --features "${{ matrix.backend }},gpu"
 
       - name: Run
         env:
           # TODO(): use RPC
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
-          RPC_URL: "dummy"
+          RPC_URL: "http://dummy"
         run: |
-          cp test_data/rpc_prover/cache_3990967.json cmd/ethrex_replay
+          cp fixtures/cache/rpc_prover/cache_690403.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-sp1-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
+          make prove-${{ matrix.backend }}-gpu-ci BLOCK_NUMBER=690403 NETWORK=hoodi
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
@@ -72,11 +84,11 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-      - name: Report Status
-        if: always()
-        uses: ravsamhq/notify-slack-action@v2
-        with:
-          status: ${{ job.status }}
-          notify_when: 'failure'
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      # - name: Report Status
+      #   if: always()
+      #   uses: ravsamhq/notify-slack-action@v2
+      #   with:
+      #     status: ${{ job.status }}
+      #     notify_when: 'failure'
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
