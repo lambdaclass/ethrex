@@ -297,16 +297,6 @@ impl StoreEngineRollup for SQLStore {
         Ok(None)
     }
 
-    /// Stores the batch number by a given block number.
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.store_batch_number_by_block_in_tx(block_number, batch_number, None)
-            .await
-    }
-
     /// Gets the message hashes by a given batch number.
     async fn get_message_hashes_by_batch(
         &self,
@@ -330,29 +320,6 @@ impl StoreEngineRollup for SQLStore {
         }
     }
 
-    /// Stores the withdrawal hashes by a given batch number.
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        message_hashes: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.store_message_hashes_by_batch_in_tx(batch_number, message_hashes, None)
-            .await
-    }
-
-    /// Stores the block numbers by a given batch_number
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        let conn = self.db.connect()?;
-        let tx = conn.transaction().await?;
-        self.store_block_numbers_by_batch_in_tx(batch_number, block_numbers, Some(&tx))
-            .await?;
-        tx.commit().await.map_err(RollupStoreError::from)
-    }
-
     /// Returns the block numbers by a given batch_number
     async fn get_block_numbers_by_batch(
         &self,
@@ -373,19 +340,6 @@ impl StoreEngineRollup for SQLStore {
         }
     }
 
-    async fn store_privileged_transactions_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.store_privileged_transactions_hash_by_batch_number_in_tx(
-            batch_number,
-            privileged_transactions_hash,
-            None,
-        )
-        .await
-    }
-
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
@@ -403,15 +357,6 @@ impl StoreEngineRollup for SQLStore {
         Ok(None)
     }
 
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.store_state_root_by_batch_number_in_tx(batch_number, state_root, None)
-            .await
-    }
-
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
@@ -427,15 +372,6 @@ impl StoreEngineRollup for SQLStore {
             return Ok(Some(H256::from_slice(&vec)));
         }
         Ok(None)
-    }
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.store_blob_bundle_by_batch_number_in_tx(batch_number, state_diff, None)
-            .await
     }
 
     async fn get_blob_bundle_by_batch_number(
