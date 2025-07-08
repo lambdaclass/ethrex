@@ -18,6 +18,7 @@ pub struct MemoryV2 {
     len_gas: usize,
 }
 
+#[allow(clippy::unwrap_used)]
 impl MemoryV2 {
     #[inline]
     pub fn new(current_base: usize) -> Self {
@@ -87,14 +88,14 @@ impl MemoryV2 {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        let new_size = offset.checked_add(size).unwrap();
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
+        let true_offset = offset.checked_add(self.current_base).unwrap();
 
         let buf = self.buffer.borrow();
         Ok(buf
-            .get(true_offset..(true_offset.checked_add(new_size).ok_or(OutOfBounds)?))
+            .get(true_offset..(true_offset.checked_add(size).unwrap()))
             .ok_or(OutOfBounds)?
             .to_vec())
     }
@@ -104,17 +105,17 @@ impl MemoryV2 {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
+        let new_size = offset.checked_add(N).unwrap();
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
+        let true_offset = offset.checked_add(self.current_base).unwrap();
 
         let buf = self.buffer.borrow();
         Ok(buf
-            .get(true_offset..(true_offset.checked_add(new_size).ok_or(OutOfBounds)?))
-            .ok_or(OutOfBounds)?
+            .get(true_offset..(true_offset.checked_add(N).unwrap()))
+            .unwrap()
             .try_into()
-            .map_err(|_| OutOfBounds)?)
+            .unwrap())
     }
 
     pub fn load_word(&mut self, offset: U256) -> Result<U256, VMError> {
