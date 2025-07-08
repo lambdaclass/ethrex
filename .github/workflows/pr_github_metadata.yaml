@@ -62,7 +62,7 @@ jobs:
           fi
 
           # Add L2 if scope is l2 or core
-          if [[ "$TITLE" =~ \(.*l2.*\) ]] || [[ "$TITLE" =~ \(.*core.*\) ]]; then
+          if [[ "$TITLE" =~ \(.*l2.*\) ]]; then
             labels+=("L2")
           fi
 
