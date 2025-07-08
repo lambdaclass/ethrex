@@ -19,6 +19,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use rayon::prelude::*;
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -368,75 +369,90 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
     ) -> Result<AccountUpdatesList, StoreError> {
-        let mut ret_storage_updates = Vec::new();
-        let mut account_updates = account_updates.into_iter();
+        let mut hashed_addresses = Vec::with_capacity(account_updates.len());
+        account_updates
+            .par_iter()
+            .map(|update| hash_address_fixed(&update.address))
+            .collect_into_vec(&mut hashed_addresses);
 
         // contracts bytecode to update
-        let code_updates = account_updates
-            .iter()
-            .filter_map(|update| update.code)
+        let code_updates: Vec<_> = account_updates
+            .par_iter()
+            .filter_map(|update| {
+                update
+                    .info
+                    .clone()
+                    .map(|info| info.code_hash)
+                    .zip(update.code.clone())
+            })
             .collect();
 
-        for update in account_updates {
-            ver_for();
-            // llamar al for
+        let mut account_states: Vec<AccountState> = hashed_addresses
+            .par_iter()
+            .map(|address| -> Result<_, StoreError> {
+                Ok(state_trie
+                    .get(&address.0.to_vec())?
+                    .map(|encoded_state| AccountState::decode(&encoded_state))
+                    .transpose()?
+                    .unwrap_or_default())
+            })
+            .collect::<Result<_, StoreError>>()?;
+
+        let storage_updates: Vec<_> = hashed_addresses
+            .par_iter()
+            .zip_eq(account_states.par_iter_mut())
+            .zip_eq(account_updates.par_iter())
+            .map(|((address, state), update)| -> Result<_, StoreError> {
+                if update.added_storage.is_empty() {
+                    return Ok((*address, Vec::new()));
+                }
+                let mut storage_trie = self
+                    .engine
+                    .open_storage_trie(*address, state.storage_root)?;
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+                    if storage_value.is_zero() {
+                        storage_trie.remove(hashed_key)?;
+                    } else {
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    }
+                }
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
+                state.storage_root = storage_hash;
+                Ok((*address, storage_updates))
+            })
+            .collect::<Result<_, StoreError>>()?;
+
+        account_states
+            .par_iter_mut()
+            .zip_eq(account_updates.par_iter())
+            .for_each(|(state, update)| {
+                if let Some(info) = &update.info {
+                    state.nonce = info.nonce;
+                    state.code_hash = info.code_hash;
+                    state.balance = info.balance;
+                }
+                if update.removed {
+                    *state = AccountState::default();
+                }
+            });
+        for (address, state) in hashed_addresses.iter().zip(account_states.iter()) {
+            if *state == AccountState::default() {
+                state_trie.remove(address.0.to_vec())?;
+            } else {
+                state_trie.insert(address.0.to_vec(), state.encode_to_vec())?;
+            }
         }
-        state_trie.insert(hashed_address, account_state.encode_to_vec())?;
 
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
             state_trie_hash,
             state_updates,
-            storage_updates: ret_storage_updates,
+            storage_updates,
             code_updates,
         })
-    }
-
-    fn ver_for(
-        &self,
-        update: &AccountUpdate,
-        state_trie: &mut Trie,
-    ) -> Result<(PathRLP, ValueRLP, StorageUpdates), StoreError> {
-        let hashed_address = hash_address(&update.address);
-        if update.removed {
-            // Remove account from trie
-            //state_trie.remove(hashed_address)?;
-            return Ok((Vec::new(), Vec::new(), Vec::new()));
-        }
-        // Add or update AccountState in the trie
-        // Fetch current state or create a new state to be inserted
-        let mut account_state = match state_trie.get(&hashed_address)? {
-            Some(encoded_state) => AccountState::decode(&encoded_state)?,
-            None => AccountState::default(),
-        };
-        if let Some(info) = &update.info {
-            account_state.nonce = info.nonce;
-            account_state.balance = info.balance;
-            account_state.code_hash = info.code_hash;
-            // Store updated code in DB
-            if let Some(code) = &update.code {
-                code_updates.push((info.code_hash, code.clone()));
-            }
-        }
-        // Store the added storage in the account's storage trie and compute its new root
-        if !update.added_storage.is_empty() {
-            let mut storage_trie = self.engine.open_storage_trie(
-                H256::from_slice(&hashed_address),
-                account_state.storage_root,
-            )?;
-            for (storage_key, storage_value) in &update.added_storage {
-                let hashed_key = hash_key(storage_key);
-                if storage_value.is_zero() {
-                    storage_trie.remove(hashed_key)?;
-                } else {
-                    storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                }
-            }
-            let (storage_hash, storage_updates) = storage_trie.collect_changes_since_last_hash();
-            account_state.storage_root = storage_hash;
-            ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
-        }
     }
 
     /// Performs the same actions as apply_account_updates_from_trie
