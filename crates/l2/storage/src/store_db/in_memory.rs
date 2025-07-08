@@ -53,38 +53,6 @@ impl Store {
             .lock()
             .map_err(|_| RollupStoreError::Custom("Failed to lock the store".to_string()))
     }
-}
-
-#[async_trait::async_trait]
-impl StoreEngineRollup for Store {
-    async fn get_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<Option<u64>, RollupStoreError> {
-        Ok(self.inner()?.batches_by_block.get(&block_number).copied())
-    }
-
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .batches_by_block
-            .insert(block_number, batch_number);
-        Ok(())
-    }
-
-    async fn get_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
-        Ok(self
-            .inner()?
-            .message_hashes_by_batch
-            .get(&batch_number)
-            .cloned())
-    }
 
     async fn store_message_hashes_by_batch(
         &self,
@@ -109,17 +77,15 @@ impl StoreEngineRollup for Store {
         Ok(())
     }
 
-    /// Returns the block numbers for a given batch_number
-    async fn get_block_numbers_by_batch(
+    async fn store_batch_number_by_block(
         &self,
+        block_number: BlockNumber,
         batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError> {
-        let block_numbers = self
-            .inner()?
-            .block_numbers_by_batch
-            .get(&batch_number)
-            .cloned();
-        Ok(block_numbers)
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .batches_by_block
+            .insert(block_number, batch_number);
+        Ok(())
     }
 
     async fn store_privileged_transactions_hash_by_batch_number(
@@ -133,6 +99,58 @@ impl StoreEngineRollup for Store {
         Ok(())
     }
 
+    async fn store_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_root: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.state_roots.insert(batch_number, state_root);
+        Ok(())
+    }
+
+    async fn store_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_diff: Vec<Blob>,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.blobs.insert(batch_number, state_diff);
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl StoreEngineRollup for Store {
+    async fn get_batch_number_by_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self.inner()?.batches_by_block.get(&block_number).copied())
+    }
+
+    async fn get_message_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .message_hashes_by_batch
+            .get(&batch_number)
+            .cloned())
+    }
+
+    /// Returns the block numbers for a given batch_number
+    async fn get_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError> {
+        let block_numbers = self
+            .inner()?
+            .block_numbers_by_batch
+            .get(&batch_number)
+            .cloned();
+        Ok(block_numbers)
+    }
+
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
@@ -144,29 +162,11 @@ impl StoreEngineRollup for Store {
             .cloned())
     }
 
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.state_roots.insert(batch_number, state_root);
-        Ok(())
-    }
-
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self.inner()?.state_roots.get(&batch_number).cloned())
-    }
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.blobs.insert(batch_number, state_diff);
-        Ok(())
     }
 
     async fn get_blob_bundle_by_batch_number(
