@@ -397,11 +397,10 @@ pub async fn fetch_pending_batches(state: &mut BlockFetcherState) -> Result<(), 
 
         let batch_blocks = decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 
-        let Some(last_block) = batch_blocks.last() else {
-            return Err(BlockFetcherError::InternalError(
-                "Batch block shouldn't be empty.".into(),
-            ));
-        };
+        let last_block = batch_blocks.last().ok_or(BlockFetcherError::InternalError(
+            "Batch block shouldn't be empty.".into(),
+        ))?;
+
         state.pending_batches.push_back(PendingBatch {
             number: *batch_number,
             last_block_hash: last_block.header.hash(),
