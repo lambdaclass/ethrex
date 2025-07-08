@@ -1,3 +1,4 @@
+use std::thread;
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::error::StoreError;
@@ -101,9 +102,20 @@ pub struct RedBStore {
 impl RefUnwindSafe for RedBStore {}
 impl RedBStore {
     pub fn new() -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Arc::new(init_db()?),
-        })
+        let db = Arc::new(init_db()?);
+        let store = RedBStore { db: db.clone() };
+
+        // we prune the database in a separate thread to avoid blocking the main thread
+        let _join = thread::Builder::new()
+            .name("trie_pruner🗑️".to_string())
+            .spawn(move || {
+                loop {
+                    thread::sleep(std::time::Duration::from_secs(1));
+                    #[allow(clippy::unwrap_used)]
+                    store.prune_state_and_storage_log().unwrap();
+                }
+            });
+        Ok(Self { db })
     }
 
     // Helper method to write into a redb table
@@ -1652,6 +1664,7 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_state_trie_key_checkpoint(&self) -> Result<Option<[H256; 2]>, StoreError> {
+        tracing::info!("Getting state trie key checkpoint");
         self.read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieKeyCheckpoint)
             .await?
             .map(|rlp| {
@@ -1820,6 +1833,7 @@ impl StoreEngine for RedBStore {
         else {
             return Ok(None);
         };
+        tracing::info!("Got state trie rebuild checkpoint");
         Ok(Some((
             root,
             checkpoints
