@@ -1,10 +1,16 @@
 # Summary
 
-- [Getting started]()
+- [Getting started](./getting-started/README.md)
   - [Installing ethrex]()
     - [Build from source]()
   - [Running a node]()
   - [Migrating from another client]()
+
+- [Roadmap](./getting-started/roadmap.md)
+
+- [Layer 1](./l1/README.md)
+  - [Quick start L1](./l1/quick-start-l1.md)
+  - [Developer setup L1](./l1/dev-setup-l1.md)
 
 - [Fundamentals]()
   - [Metrics]()
@@ -21,6 +27,7 @@
     - [Withdrawing assets](./l2/guides/withdrawing.md)
   - [General overview](./l2/overview.md)
     - [State diffs](./l2/state_diffs.md)
+    - [Deposits](./l2/deposits.md)
     - [Withdrawals](./l2/withdrawals.md)
   - [Smart contracts](./l2/contracts.md)
     - [OnChainOperator]()
@@ -35,12 +42,15 @@
 
 - [Developers](./developers/README.md)
   - [Quickstart](./developers/quickstart.md)
-  - [L2 load-tests](./developers/l2_load_tests.md)
+  - [L2](./developers/l2/README.md)
+    - [load-tests](./developers/l2/load_tests.md)
 
 - [CLI reference]()
 - [Troubleshooting]()
 
 # Other resources
+
+- [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
 
 - [Performance reports](./perf_reports/README.md)
   - [2025-04-03](./perf_reports/2025-04-03.md)

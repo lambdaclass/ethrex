@@ -1,6 +1,7 @@
-use crate::calldata::{self, Value};
+use crate::calldata::{self};
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::signer::LocalSigner};
+use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
@@ -11,8 +12,8 @@ use secp256k1::SecretKey;
 #[derive(Debug)]
 pub struct L1ToL2TransactionData {
     pub to: Address,
-    pub recipient: Address,
     pub gas_limit: u64,
+    pub value: U256,
     pub calldata: Bytes,
 }
 
@@ -22,35 +23,15 @@ impl L1ToL2TransactionData {
     /// # Arguments
     ///
     /// * `to` - The address of the contract to call on L2.
-    /// * `recipient` - The address of the recipient on L2 that will receive the
-    ///   L1 transaction value.
     /// * `gas_limit` - The gas limit for the transaction on L2.
+    /// * `value` - The value of the transaction on L2.
     /// * `calldata` - The calldata to send to the contract on L2.
-    pub fn new(to: Address, recipient: Address, gas_limit: u64, calldata: Bytes) -> Self {
+    pub fn new(to: Address, gas_limit: u64, value: U256, calldata: Bytes) -> Self {
         Self {
             to,
-            recipient,
             gas_limit,
+            value,
             calldata,
-        }
-    }
-
-    /// Creates a new `L1ToL2TransactionData` instance for a deposit transaction.
-    ///
-    /// In deposit transactions, the `to` and the `recipient` are the same, and
-    /// the `calldata` is empty.
-    ///
-    /// # Arguments
-    ///
-    /// * `recipient` - The address of the recipient on L2 that will receive the
-    ///   L1 transaction value (the deposit).
-    /// * `gas_limit` - The gas limit for the transaction on L2.
-    pub fn new_deposit_data(recipient: Address, gas_limit: u64) -> Self {
-        Self {
-            to: recipient,
-            recipient,
-            gas_limit,
-            calldata: Bytes::from_static(b""),
         }
     }
 
@@ -58,11 +39,11 @@ impl L1ToL2TransactionData {
     pub fn to_calldata(&self) -> Result<Vec<u8>, CalldataEncodeError> {
         let values = vec![Value::Tuple(vec![
             Value::Address(self.to),
-            Value::Address(self.recipient),
             Value::Uint(U256::from(self.gas_limit)),
+            Value::Uint(self.value),
             Value::Bytes(self.calldata.clone()),
         ])];
-        calldata::encode_calldata("deposit((address,address,uint256,bytes))", &values)
+        calldata::encode_calldata("sendToL2((address,uint256,uint256,bytes))", &values)
     }
 }
 

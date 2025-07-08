@@ -1,5 +1,6 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, U256, types::signer::Signer};
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::IpAddr;
 
@@ -84,7 +85,7 @@ pub struct BlockFetcherConfig {
 pub struct AlignedConfig {
     pub aligned_mode: bool,
     pub aligned_verifier_interval_ms: u64,
-    pub beacon_url: String,
+    pub beacon_urls: Vec<Url>,
     pub network: Network,
     pub fee_estimate: String,
     pub aligned_sp1_elf_path: String,

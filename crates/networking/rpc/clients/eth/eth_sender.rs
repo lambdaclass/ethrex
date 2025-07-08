@@ -3,6 +3,7 @@ use crate::{
         EthClient, RpcResponse,
         errors::{CallError, EthClientError},
     },
+    types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{RpcRequest, RpcRequestId},
 };
 use bytes::Bytes;
@@ -12,8 +13,6 @@ use ethrex_common::{Address, U256};
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use serde_json::json;
-
-use super::BlockByNumber;
 
 #[derive(Default, Clone, Debug)]
 pub struct Overrides {
@@ -27,7 +26,7 @@ pub struct Overrides {
     pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
     pub gas_price_per_blob: Option<U256>,
-    pub block: Option<BlockByNumber>,
+    pub block: Option<BlockIdentifier>,
 }
 
 impl EthClient {
@@ -91,7 +90,7 @@ impl EthClient {
     ) -> Result<(H256, Address), EthClientError> {
         let mut deploy_overrides = overrides;
         deploy_overrides.to = Some(TxKind::Create);
-
+        
         let deploy_tx = self
             .build_eip1559_transaction(
                 Address::zero(),
@@ -102,8 +101,9 @@ impl EthClient {
             .await?;
         let deploy_tx_hash = self.send_eip1559_transaction(&deploy_tx, deployer).await?;
 
+
         let nonce = self
-            .get_nonce(deployer.address(), BlockByNumber::Latest)
+            .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
         let mut encode = vec![];
         (deployer.address(), nonce).encode(&mut encode);

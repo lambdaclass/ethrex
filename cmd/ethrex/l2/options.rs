@@ -187,7 +187,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             aligned: AlignedConfig {
                 aligned_mode: opts.aligned_opts.aligned,
                 aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
-                beacon_url: opts.aligned_opts.beacon_url.unwrap_or_default(),
+                beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
@@ -206,7 +206,7 @@ pub struct EthOptions {
         env = "ETHREX_ETH_RPC_URL",
         help = "List of rpc urls to use.",
         help_heading = "Eth options",
-        num_args = 1..10
+        num_args = 1..
     )]
     pub rpc_url: Vec<String>,
     #[arg(
@@ -508,13 +508,14 @@ pub struct ProofCoordinatorOptions {
 
 impl Default for ProofCoordinatorOptions {
     fn default() -> Self {
+        let proof_coordinator_l1_private_key = utils::parse_private_key(
+            "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+        )
+        .ok();
         Self {
-            proof_coordinator_l1_private_key: parse_private_key(
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
-            )
-            .ok(),
             remote_signer_url: None,
             remote_signer_public_key: None,
+            proof_coordinator_l1_private_key,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
@@ -550,10 +551,11 @@ pub struct AlignedOptions {
         value_name = "BEACON_URL",
         required_if_eq("aligned", "true"),
         env = "ETHREX_ALIGNED_BEACON_URL",
-        help = "Beacon url to use.",
-        help_heading = "Aligned options"
+        help = "List of beacon urls to use.",
+        help_heading = "Aligned options",
+        num_args = 1..,
     )]
-    pub beacon_url: Option<String>,
+    pub beacon_url: Option<Vec<Url>>,
     #[arg(
         long,
         value_name = "ETHREX_ALIGNED_NETWORK",
@@ -590,7 +592,7 @@ impl Default for AlignedOptions {
         Self {
             aligned: false,
             aligned_verifier_interval_ms: 5000,
-            beacon_url: Some("http://127.0.0.1:58801".to_string()),
+            beacon_url: Some(vec![Url::parse("http://127.0.0.1:58801").unwrap()]),
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
             aligned_sp1_elf_path: Some(format!(

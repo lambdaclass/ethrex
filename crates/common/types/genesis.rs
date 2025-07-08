@@ -4,7 +4,12 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::{BufReader, Error},
+    path::Path,
+};
+use tracing::warn;
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
@@ -42,6 +47,42 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GenesisError {
+    #[error("Failed to decode genesis file: {0}")]
+    Decode(#[from] serde_json::Error),
+    #[error("Fork not supported. Only post-merge networks are supported.")]
+    InvalidFork(),
+    #[error("Failed to open genesis file: {0}")]
+    File(#[from] Error),
+}
+
+impl TryFrom<&Path> for Genesis {
+    type Error = GenesisError;
+
+    fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
+        let genesis_file = std::fs::File::open(genesis_file_path)?;
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
+
+        // Try to derive if the genesis file is PoS
+        // Different genesis files have different configurations
+        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
+        if genesis.config.terminal_total_difficulty != Some(0)
+            && genesis.config.merge_netsplit_block != Some(0)
+            && genesis.config.shanghai_time != Some(0)
+            && genesis.config.cancun_time != Some(0)
+            && genesis.config.prague_time != Some(0)
+        {
+            // Hive has a minimalistic genesis file, which is not supported
+            // return Err(GenesisError::InvalidFork());
+            warn!("Invalid fork, only post-merge networks are supported.");
+        }
+
+        Ok(genesis)
+    }
 }
 
 #[allow(unused)]
@@ -387,7 +428,7 @@ mod tests {
     #[test]
     fn deserialize_genesis_file() {
         // Deserialize genesis file
-        let file = File::open("../../test_data/genesis-kurtosis.json")
+        let file = File::open("../../fixtures/genesis/kurtosis.json")
             .expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let genesis: Genesis =
@@ -486,7 +527,7 @@ mod tests {
     #[test]
     fn genesis_block() {
         // Deserialize genesis file
-        let file = File::open("../../test_data/genesis-kurtosis.json")
+        let file = File::open("../../fixtures/genesis/kurtosis.json")
             .expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let genesis: Genesis =
@@ -528,7 +569,7 @@ mod tests {
     #[test]
     // Parses genesis received by kurtosis and checks that the hash matches the next block's parent hash
     fn read_and_compute_kurtosis_hash() {
-        let file = File::open("../../test_data/genesis-kurtosis.json")
+        let file = File::open("../../fixtures/genesis/kurtosis.json")
             .expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let genesis: Genesis =
@@ -544,7 +585,7 @@ mod tests {
     #[test]
     fn parse_hive_genesis_file() {
         let file =
-            File::open("../../test_data/genesis-hive.json").expect("Failed to open genesis file");
+            File::open("../../fixtures/genesis/hive.json").expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let _genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
@@ -553,7 +594,7 @@ mod tests {
     #[test]
     fn read_and_compute_hive_hash() {
         let file =
-            File::open("../../test_data/genesis-hive.json").expect("Failed to open genesis file");
+            File::open("../../fixtures/genesis/hive.json").expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");

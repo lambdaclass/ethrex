@@ -3,51 +3,134 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    utils::{get_valid_jump_destinations, restore_cache_state},
+    utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
-use std::collections::{HashMap, HashSet};
+use std::{collections::HashMap, fmt};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
+///
+/// The specification says the stack is limited to 1024 items, aka. 32KiB, which is reasonable
+/// enough for allocating it all at once to make sense. Every time an item is pushed into the stack,
+/// its bounds have to be checked; by making the stack grow downwards, the underflow detection of
+/// the offset update operation can also be reused to check for stack overflow.
+///
+/// A few opcodes require pushing and/or popping multiple elements. The [`push`](Self::push) and
+/// [`pop`](Self::pop) methods support working with multiple elements instead of a single one,
+/// reducing the number of checks performed on the stack.
 pub struct Stack {
-    pub stack: Vec<U256>,
+    pub values: Box<[U256; STACK_LIMIT]>,
+    pub offset: usize,
 }
 
 impl Stack {
-    pub fn pop(&mut self) -> Result<U256, ExceptionalHalt> {
-        self.stack.pop().ok_or(ExceptionalHalt::StackUnderflow)
+    pub fn pop<const N: usize>(&mut self) -> Result<&[U256; N], ExceptionalHalt> {
+        // Compile-time check for stack underflow.
+        if N > STACK_LIMIT {
+            return Err(ExceptionalHalt::StackUnderflow);
+        }
+
+        // The following operation can never overflow as both `self.offset` and N are within
+        // STACK_LIMIT (1024).
+        #[expect(clippy::arithmetic_side_effects)]
+        let next_offset = self.offset + N;
+
+        // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
+        // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
+        // check it again.
+        #[expect(clippy::indexing_slicing)]
+        let values = self.values[self.offset..]
+            .first_chunk::<N>()
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        self.offset = next_offset;
+
+        Ok(values)
     }
 
-    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
-        if self.stack.len() >= STACK_LIMIT {
-            return Err(ExceptionalHalt::StackOverflow);
-        }
-        self.stack.push(value);
+    pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
+        // Since the stack grows downwards, when an offset underflow is detected the stack is
+        // overflowing.
+        let next_offset = self
+            .offset
+            .checked_sub(N)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // The following index cannot fail because `next_offset` has already been checked and
+        // `self.offset` is known to be within `STACK_LIMIT`.
+        #[expect(clippy::indexing_slicing)]
+        self.values[next_offset..self.offset].copy_from_slice(values);
+        self.offset = next_offset;
+
         Ok(())
     }
 
     pub fn len(&self) -> usize {
-        self.stack.len()
+        // The following operation cannot underflow because `self.offset` is known to be less than
+        // or equal to `self.values.len()` (aka. `STACK_LIMIT`).
+        #[expect(clippy::arithmetic_side_effects)]
+        {
+            self.values.len() - self.offset
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.stack.is_empty()
+        self.offset == self.values.len()
     }
 
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
-        self.stack.get(index).ok_or(ExceptionalHalt::StackUnderflow)
+        // The following index cannot fail because `self.offset` is known to be within
+        // `STACK_LIMIT`.
+        #[expect(clippy::indexing_slicing)]
+        self.values[self.offset..]
+            .get(index)
+            .ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), ExceptionalHalt> {
-        if a >= self.stack.len() || b >= self.stack.len() {
+    pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
+        let index = self
+            .offset
+            .checked_add(index)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        if index >= self.values.len() {
             return Err(ExceptionalHalt::StackUnderflow);
         }
-        self.stack.swap(a, b);
+
+        self.values.swap(self.offset, index);
         Ok(())
+    }
+
+    pub fn clear(&mut self) {
+        self.offset = STACK_LIMIT;
+    }
+}
+
+impl Default for Stack {
+    fn default() -> Self {
+        Self {
+            values: Box::new([U256::zero(); STACK_LIMIT]),
+            offset: STACK_LIMIT,
+        }
+    }
+}
+
+impl fmt::Debug for Stack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct StackValues<'a>(&'a [U256]);
+
+        impl fmt::Debug for StackValues<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list().entries(self.0.iter().rev()).finish()
+            }
+        }
+
+        #[expect(clippy::indexing_slicing)]
+        f.debug_tuple("Stack")
+            .field(&StackValues(&self.values[self.offset..]))
+            .finish()
     }
 }
 
@@ -59,8 +142,8 @@ impl Stack {
 pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
-    /// Keeps track of the gas that's been used in current context
-    pub gas_used: u64,
+    /// Keeps track of the remaining gas in the current context.
+    pub gas_remaining: u64,
     /// Program Counter
     pub pc: usize,
     /// Address of the account that sent the message
@@ -85,8 +168,9 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Set of valid jump destinations (where a JUMP or JUMPI can jump to)
-    pub valid_jump_destinations: HashSet<usize>,
+    /// Sorted blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// push instructions).
+    pub invalid_jump_destinations: Box<[usize]>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -106,6 +190,22 @@ pub struct CallFrameBackup {
 }
 
 impl CallFrameBackup {
+    pub fn backup_account_info(
+        &mut self,
+        address: Address,
+        account: &Account,
+    ) -> Result<(), InternalError> {
+        self.original_accounts_info
+            .entry(address)
+            .or_insert_with(|| Account {
+                info: account.info.clone(),
+                code: account.code.clone(),
+                storage: HashMap::new(),
+            });
+
+        Ok(())
+    }
+
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
@@ -135,10 +235,13 @@ impl CallFrame {
         is_create: bool,
         ret_offset: U256,
         ret_size: usize,
+        stack: Stack,
     ) -> Self {
-        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
+        let invalid_jump_destinations =
+            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
             gas_limit,
+            gas_remaining: gas_limit,
             msg_sender,
             to,
             code_address,
@@ -147,20 +250,22 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            valid_jump_destinations,
+            invalid_jump_destinations,
             should_transfer_value,
             is_create,
             ret_offset,
             ret_size,
+            stack,
             ..Default::default()
         }
     }
 
     pub fn next_opcode(&self) -> Opcode {
-        match self.bytecode.get(self.pc).copied().map(Opcode::from) {
-            Some(opcode) => opcode,
-            None => Opcode::STOP,
-        }
+        self.bytecode
+            .get(self.pc)
+            .copied()
+            .map(Opcode::from)
+            .unwrap_or(Opcode::STOP)
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
@@ -174,20 +279,15 @@ impl CallFrame {
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
-        self.gas_used = self
-            .gas_used
-            .checked_add(gas)
+        self.gas_remaining = self
+            .gas_remaining
+            .checked_sub(gas)
             .ok_or(ExceptionalHalt::OutOfGas)?;
-
-        if self.gas_used > self.gas_limit {
-            return Err(ExceptionalHalt::OutOfGas);
-        }
-
         Ok(())
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.valid_jump_destinations = get_valid_jump_destinations(&code)?;
+        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
         self.bytecode = code;
         Ok(())
     }

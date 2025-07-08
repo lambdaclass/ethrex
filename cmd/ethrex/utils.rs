@@ -1,7 +1,7 @@
 use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::Block;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     sync::SyncMode,
@@ -10,14 +10,13 @@ use ethrex_p2p::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
-#[cfg(feature = "l2")]
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
     io,
     net::{SocketAddr, ToSocketAddrs},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -76,14 +75,9 @@ pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
 
 pub fn read_block_file(block_file_path: &str) -> Block {
     let encoded_block = std::fs::read(block_file_path)
-        .unwrap_or_else(|_| panic!("Failed to read block file with path {}", block_file_path));
+        .unwrap_or_else(|_| panic!("Failed to read block file with path {block_file_path}"));
     Block::decode(&encoded_block)
-        .unwrap_or_else(|_| panic!("Failed to decode block file {}", block_file_path))
-}
-
-pub fn read_genesis_file(genesis_file_path: &Path) -> Genesis {
-    let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
-    decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
+        .unwrap_or_else(|_| panic!("Failed to decode block file {block_file_path}"))
 }
 
 pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
@@ -124,13 +118,13 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {
-            error!("Could not store config in file: {:?}", e);
+            error!("Could not store config in file: {e:?}");
             return;
         }
     };
 
     if let Err(e) = std::fs::write(file_path, json) {
-        error!("Could not store config in file: {:?}", e);
+        error!("Could not store config in file: {e:?}");
     };
 }
 
@@ -138,18 +132,16 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
 pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
     match std::fs::File::open(file_path) {
         Ok(file) => {
-            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {}", e))
+            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {e}"))
         }
-        Err(e) => Err(format!("No config file found: {}", e)),
+        Err(e) => Err(format!("No config file found: {e}")),
     }
 }
 
-#[cfg(feature = "l2")]
 pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
 }
 
-#[cfg(feature = "l2")]
 pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
     Ok(PublicKey::from_slice(&parse_hex(s)?)?)
 }
@@ -163,10 +155,11 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
 
 pub fn get_client_version() -> String {
     format!(
-        "{}/v{}-develop-{}/{}/rustc-v{}",
+        "{}/v{}-{}-{}/{}/rustc-v{}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
-        &env!("VERGEN_RUSTC_COMMIT_HASH")[0..6],
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_GIT_SHA"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )

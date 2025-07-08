@@ -25,7 +25,7 @@ impl From<u8> for ChainDataIndex {
             x if x == ChainDataIndex::PendingBlockNumber as u8 => {
                 ChainDataIndex::PendingBlockNumber
             }
-            _ => panic!("Invalid value when casting to ChainDataIndex: {}", value),
+            _ => panic!("Invalid value when casting to ChainDataIndex: {value}"),
         }
     }
 }
@@ -55,7 +55,7 @@ impl From<u8> for SnapStateIndex {
             2 => SnapStateIndex::StateHealPaths,
             3 => SnapStateIndex::StateTrieRebuildCheckpoint,
             4 => SnapStateIndex::StorageTrieRebuildPending,
-            _ => panic!("Invalid value when casting to SnapDataIndex: {}", value),
+            _ => panic!("Invalid value when casting to SnapDataIndex: {value}"),
         }
     }
 }

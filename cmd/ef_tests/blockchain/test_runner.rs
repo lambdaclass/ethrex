@@ -1,11 +1,12 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
+    deserialize::{PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX, SENDER_NOT_EOA_REGEX},
     network::Network,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainType,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
@@ -19,28 +20,46 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
+use regex::Regex;
 use zkvm_interface::io::ProgramInput;
 
-pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
+pub fn parse_and_execute(
+    path: &Path,
+    evm: EvmEngine,
+    skipped_tests: Option<&[&str]>,
+) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_test_file(path);
+    let tests = parse_tests(path);
+
+    let mut failures = Vec::new();
 
     for (test_key, test) in tests {
         let should_skip_test = test.network < Network::Merge
             || skipped_tests
-                .map(|skipped| skipped.contains(&test_key.as_str()))
+                .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
 
         if should_skip_test {
-            // Discard this test
             continue;
         }
 
-        rt.block_on(run_ef_test(&test_key, &test, evm));
+        let result = rt.block_on(run_ef_test(&test_key, &test, evm));
+
+        if let Err(e) = result {
+            eprintln!("Test {test_key} failed: {e:?}");
+            failures.push(format!("{test_key}: {e:?}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        // \n doesn't print new lines on terminal, so this alternative is for making it readable
+        Err(failures.join("     -------     ").into())
     }
 }
 
-pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
+pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
     let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
@@ -52,12 +71,15 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::new(evm, store.clone());
+    // Blockchain EF tests are meant for L1.
+    let blockchain_type = BlockchainType::L1;
+
+    let blockchain = Blockchain::new(evm, store.clone(), blockchain_type);
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
         if exception_in_rlp_decoding(block_fixture) {
-            return;
+            return Ok(());
         }
 
         // Won't panic because test has been validated
@@ -68,27 +90,26 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
         let chain_result = blockchain.add_block(block).await;
         match chain_result {
             Err(error) => {
-                assert!(
-                    expects_exception,
-                    "Transaction execution unexpectedly failed on test: {}, with error {:?}",
-                    test_key, error
-                );
+                if !expects_exception {
+                    return Err(format!(
+                        "Transaction execution unexpectedly failed on test: {test_key}, with error {error:?}",
+                    ));
+                }
                 let expected_exception = block_fixture.expect_exception.clone().unwrap();
-                assert!(
-                    exception_is_expected(expected_exception.clone(), &error),
-                    "Returned exception {:?} does not match expected {:?}",
-                    error,
-                    expected_exception,
-                );
+                if !exception_is_expected(expected_exception.clone(), &error) {
+                    return Err(format!(
+                        "Returned exception {error:?} does not match expected {expected_exception:?}",
+                    ));
+                }
                 break;
             }
             Ok(_) => {
-                assert!(
-                    !expects_exception,
-                    "Expected transaction execution to fail in test: {} with error: {:?}",
-                    test_key,
-                    block_fixture.expect_exception.clone()
-                );
+                if expects_exception {
+                    return Err(format!(
+                        "Expected transaction execution to fail in test: {test_key} with error: {:?}",
+                        block_fixture.expect_exception.clone()
+                    ));
+                }
                 apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
@@ -97,6 +118,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     if evm == EvmEngine::LEVM {
         re_run_stateless(blockchain, test, test_key).await;
     }
+    Ok(())
 }
 
 fn exception_is_expected(
@@ -110,7 +132,8 @@ fn exception_is_expected(
         ) = (exception, returned_error)
         {
             return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
-                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase());
+                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase())
+                || match_expected_regex(expected_error_msg, error_msg);
         }
         matches!(
             (exception, &returned_error),
@@ -164,7 +187,7 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
         (msg, expected_msg.as_str()),
         (
             "reject transactions from senders with deployed code",
-            "Sender account shouldn't be a contract"
+            SENDER_NOT_EOA_REGEX
         ) | (
             "call gas cost exceeds the gas limit",
             "Intrinsic gas too low"
@@ -185,11 +208,19 @@ fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> boo
             )
             | (
                 "priority fee is greater than max fee",
-                "Priority fee is greater than max fee per gas"
+                PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX
             )
             | ("create initcode size limit", "Initcode size exceeded")
     ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
 }
+
+fn match_expected_regex(expected_error_regex: &str, error_msg: &str) -> bool {
+    let Ok(regex) = Regex::new(expected_error_regex) else {
+        return false;
+    };
+    regex.is_match(error_msg)
+}
+
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
     // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
@@ -232,10 +263,34 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
     }
 }
 
-pub fn parse_test_file(path: &Path) -> HashMap<String, TestUnit> {
-    let s: String = std::fs::read_to_string(path).expect("Unable to read file");
-    let tests: HashMap<String, TestUnit> = serde_json::from_str(&s).expect("Unable to parse JSON");
-    tests
+pub fn parse_tests(path: &Path) -> HashMap<String, TestUnit> {
+    let mut all_tests = HashMap::new();
+
+    if path.is_file() {
+        let file_tests = parse_json_file(path);
+        all_tests.extend(file_tests);
+    } else if path.is_dir() {
+        for entry in std::fs::read_dir(path).expect("Failed to read directory") {
+            let entry = entry.expect("Failed to get DirEntry");
+            let path = entry.path();
+            if path.is_dir() {
+                let sub_tests = parse_tests(&path); // recursion
+                all_tests.extend(sub_tests);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                let file_tests = parse_json_file(&path);
+                all_tests.extend(file_tests);
+            }
+        }
+    } else {
+        panic!("Invalid path: not a file or directory");
+    }
+
+    all_tests
+}
+
+fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
+    let s = std::fs::read_to_string(path).expect("Unable to read file");
+    serde_json::from_str(&s).expect("Unable to parse JSON")
 }
 
 /// Creats a new in-memory store and adds the genesis state

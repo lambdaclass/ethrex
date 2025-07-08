@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
+use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
-use crate::{based::sequencer_state::SequencerState, utils::prover::proving_systems::ProverType};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
+use ethrex_l2_common::prover::ProverType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
 use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
+#[cfg(feature = "metrics")]
+use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use tokio::task::JoinSet;
 use tracing::{error, info};
@@ -20,12 +22,10 @@ pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
 pub mod l1_proof_verifier;
-mod l1_watcher;
+pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-
-pub mod execution_cache;
 
 pub mod configs;
 pub mod errors;
@@ -48,8 +48,6 @@ pub async fn start_l2(
     info!("Starting Sequencer in {initial_status} mode");
 
     let shared_state = SequencerState::from(initial_status);
-
-    let execution_cache = Arc::new(ExecutionCache::default());
 
     let Ok(needed_proof_types) = get_needed_proof_types(
         cfg.proof_coordinator.dev_mode,
@@ -80,8 +78,8 @@ pub async fn start_l2(
     });
     let _ = L1Committer::spawn(
         store.clone(),
+        blockchain.clone(),
         rollup_store.clone(),
-        execution_cache.clone(),
         cfg.clone(),
         shared_state.clone(),
     )
@@ -113,8 +111,8 @@ pub async fn start_l2(
     });
     let _ = BlockProducer::spawn(
         store.clone(),
+        rollup_store.clone(),
         blockchain.clone(),
-        execution_cache.clone(),
         cfg.clone(),
         shared_state.clone(),
     )
@@ -123,9 +121,19 @@ pub async fn start_l2(
         error!("Error starting Block Producer: {err}");
     });
 
+    #[cfg(feature = "metrics")]
+    let _ = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Producer: {err}");
+        });
+
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
+        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
+            cfg.clone(),
+            rollup_store.clone(),
+        ));
     }
     if cfg.based.based {
         let _ = StateUpdater::spawn(
@@ -139,20 +147,12 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(
-            &cfg,
-            store.clone(),
-            rollup_store.clone(),
-            blockchain.clone(),
-            shared_state.clone(),
-        )
-        .await
-        .inspect_err(|err| {
-            error!("Error starting Block Fetcher: {err}");
-        });
+        let _ = BlockFetcher::spawn(&cfg, store, rollup_store, blockchain, shared_state)
+            .await
+            .inspect_err(|err| {
+                error!("Error starting Block Fetcher: {err}");
+            });
     }
-    #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 
     while let Some(res) = task_set.join_next().await {
         match res {

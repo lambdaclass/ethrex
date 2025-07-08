@@ -14,10 +14,11 @@ ethrex-p2p.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
-ethrex-storage-rollup = { workspace = true, optional = true }
-ethrex-l2 = { workspace = true, optional = true }
-ethrex-l2-common = { workspace = true, optional = true }
-ethrex-sdk = { workspace = true, optional = true }
+ethrex-storage-rollup.workspace = true
+ethrex-l2.workspace = true
+ethrex-l2-common.workspace = true
+ethrex-sdk.workspace = true
+ethrex-l2-rpc.workspace = true
 
 bytes.workspace = true
 hex.workspace = true
@@ -40,7 +41,7 @@ lazy_static.workspace = true
 secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
-thiserror = { workspace = true, optional = true }
+thiserror.workspace = true
 itertools = "0.14.0"
 
 cfg-if = "1.0.0"
@@ -67,25 +68,20 @@ c-kzg = [
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
-libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup?/libmdbx"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
+libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
-l2 = [
-  "dep:ethrex-l2",
-  "dep:ethrex-l2-common",
-  "dep:ethrex-sdk",
-  "ethrex-vm/l2",
-  "ethrex-blockchain/l2",
-  "ethrex-rpc/l2",
-  "ethrex-storage-rollup",
-  "dep:thiserror",
-]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
+rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = []
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports", "async_futures", "async_tokio"] }
+criterion = { version = "0.5.1", features = [
+  "html_reports",
+  "async_futures",
+  "async_tokio",
+] }
 ethrex-sdk.workspace = true
 secp256k1.workspace = true
 k256.workspace = true
@@ -102,5 +98,4 @@ name = "build_block_benchmark"
 harness = false
 
 [build-dependencies]
-vergen = { version = "9.0.0", features = ["rustc"] }
-
+vergen-git2 = { version = "1.0.7", features = ["rustc"] }
