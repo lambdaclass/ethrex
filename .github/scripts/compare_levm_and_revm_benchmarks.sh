@@ -3,7 +3,7 @@
 # This script builds tables with a benchmark comparisson for levm and revm on PR branch and on Main branch
 # only for the cases where the difference on mean time is higher than 10%.
 
-error_margin=0.05
+error_margin=0.01
           for f in ../../../benchmark_comparison_results/*; do
             file_name="${f##../../../benchmark_comparison_results/}"
             file="${file_name%.md}"
