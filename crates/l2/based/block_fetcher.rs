@@ -218,48 +218,40 @@ async fn fetch_logs(
 ) -> Result<(Vec<RpcLog>, Vec<RpcLog>), BlockFetcherError> {
     let last_l1_block_number = state.eth_client.get_block_number().await?;
 
-    let mut commit_logs = vec![];
-    let mut verify_logs = vec![];
+    let new_last_l1_fetched_block = min(
+        state.last_l1_block_fetched + state.fetch_block_step,
+        last_l1_block_number,
+    );
 
-    while state.last_l1_block_fetched < last_l1_block_number {
-        let new_last_l1_fetched_block = min(
-            state.last_l1_block_fetched + state.fetch_block_step,
-            last_l1_block_number,
-        );
+    debug!(
+        "Fetching logs from block {} to {}",
+        state.last_l1_block_fetched + 1,
+        new_last_l1_fetched_block
+    );
 
-        debug!(
-            "Fetching logs from block {} to {}",
+    // Fetch logs from the L1 chain for the BatchCommitted event.
+    let commit_logs = state
+        .eth_client
+        .get_logs(
             state.last_l1_block_fetched + 1,
-            new_last_l1_fetched_block
-        );
+            new_last_l1_fetched_block,
+            state.on_chain_proposer_address,
+            keccak(b"BatchCommitted(uint256,bytes32)"),
+        )
+        .await?;
 
-        // Fetch logs from the L1 chain for the BatchCommitted event.
-        let new_commit_logs = state
-            .eth_client
-            .get_logs(
-                state.last_l1_block_fetched + 1,
-                new_last_l1_fetched_block,
-                state.on_chain_proposer_address,
-                keccak(b"BatchCommitted(uint256,bytes32)"),
-            )
-            .await?;
+    let verify_logs = state
+        .eth_client
+        .get_logs(
+            state.last_l1_block_fetched + 1,
+            new_last_l1_fetched_block,
+            state.on_chain_proposer_address,
+            keccak(b"BatchesVerified(uint256,uint256)"),
+        )
+        .await?;
 
-        let new_verify_logs = state
-            .eth_client
-            .get_logs(
-                state.last_l1_block_fetched + 1,
-                new_last_l1_fetched_block,
-                state.on_chain_proposer_address,
-                keccak(b"BatchesVerified(uint256,uint256)"),
-            )
-            .await?;
-
-        commit_logs.extend(new_commit_logs);
-        verify_logs.extend(new_verify_logs);
-
-        // Update the last L1 block fetched.
-        state.last_l1_block_fetched = new_last_l1_fetched_block;
-    }
+    // Update the last L1 block fetched.
+    state.last_l1_block_fetched = new_last_l1_fetched_block;
 
     Ok((commit_logs, verify_logs))
 }
