@@ -16,13 +16,7 @@ jobs:
         with:
           github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
           script: |
-            const pr = context.payload.pull_request;
-            const projectNumber = 31;
-            const statusFieldName = "Status";
-            const newStatus = "In Review";
-            const orgLogin = "lambdaclass";
-
-            // ========== Functions ==========
+            // ========== FUNCTIONS ==========
 
             async function getProject(org, number) {
               const res = await github.graphql(`
@@ -129,6 +123,14 @@ jobs:
                 }
               `, { projectId, itemId, fieldId, optionId });
             }
+
+
+            // ========== MAIN LOGIC ==========
+            const pr = context.payload.pull_request;
+            const projectNumber = 31;
+            const statusFieldName = "Status";
+            const newStatus = "In Review";
+            const orgLogin = "lambdaclass";
 
 
             const project = await getProject(orgLogin, projectNumber);
