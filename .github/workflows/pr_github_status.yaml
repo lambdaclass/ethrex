@@ -1,3 +1,4 @@
+# .github/workflows/set-pr-status.yml
 name: Set PR Status to In Progress
 
 on:
@@ -5,23 +6,23 @@ on:
     types: [opened, reopened, synchronize]
 
 jobs:
-  update-status:
+  update-project-status:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-      issues: write
     steps:
       - uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
+          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }} # Your PAT stored in secrets
           script: |
             const pr = context.payload.pull_request;
-            const projectNumber = 31; // Replace with your project number
+            const projectNumber = 31;
             const statusFieldName = "Status";
             const newStatus = "In Progress";
 
-            const { data: projects } = await github.graphql(`
+            // Get all ProjectsV2 for the viewer (your PAT user)
+            const projects = await github.graphql(`
               query {
                 viewer {
                   projectsV2(first: 100) {
@@ -39,11 +40,10 @@ jobs:
             if (!project) {
               throw new Error(`Project #${projectNumber} not found`);
             }
-
             const projectId = project.id;
 
-            // Get PR's project item
-            const { data: items } = await github.graphql(`
+            // Get PR's associated project item
+            const itemsResult = await github.graphql(`
               query($projectId: ID!) {
                 node(id: $projectId) {
                   ... on ProjectV2 {
@@ -63,23 +63,26 @@ jobs:
               }
             `, { projectId });
 
-            const item = items.node.items.nodes.find(i => i.content?.number === pr.number);
+            const item = itemsResult.node.items.nodes.find(i => i.content?.number === pr.number);
             if (!item) {
               throw new Error(`PR #${pr.number} not found in project`);
             }
-
             const itemId = item.id;
 
-            // Get fields for the project
-            const { data: fields } = await github.graphql(`
+            // Get project fields
+            const fieldsResult = await github.graphql(`
               query($projectId: ID!) {
                 node(id: $projectId) {
                   ... on ProjectV2 {
                     fields(first: 100) {
                       nodes {
-                        ... on ProjectV2Field {
+                        ... on ProjectV2SingleSelectField {
                           id
                           name
+                          options {
+                            id
+                            name
+                          }
                         }
                       }
                     }
@@ -88,35 +91,17 @@ jobs:
               }
             `, { projectId });
 
-            const statusField = fields.node.fields.nodes.find(f => f.name === statusFieldName);
+            const statusField = fieldsResult.node.fields.nodes.find(f => f.name === statusFieldName);
             if (!statusField) {
               throw new Error(`Field '${statusFieldName}' not found`);
             }
 
-            const statusFieldId = statusField.id;
-
-            // Get possible field options
-            const { data: fieldOptions } = await github.graphql(`
-              query($fieldId: ID!) {
-                node(id: $fieldId) {
-                  ... on ProjectV2SingleSelectField {
-                    options {
-                      id
-                      name
-                    }
-                  }
-                }
-              }
-            `, { fieldId: statusFieldId });
-
-            const option = fieldOptions.node.options.find(opt => opt.name === newStatus);
+            const option = statusField.options.find(opt => opt.name === newStatus);
             if (!option) {
               throw new Error(`Option '${newStatus}' not found`);
             }
 
-            const optionId = option.id;
-
-            // Set field value
+            // Update project field value
             await github.graphql(`
               mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
                 updateProjectV2ItemFieldValue(input: {
@@ -135,6 +120,6 @@ jobs:
             `, {
               projectId,
               itemId,
-              fieldId: statusFieldId,
-              optionId
+              fieldId: statusField.id,
+              optionId: option.id
             });
