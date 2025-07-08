@@ -73,7 +73,7 @@ let
 
     env = {
       OPENSSL_NO_VENDOR = 1;
-      CONTRACTS_PATH = contracts;
+      CONTRACTS_PATH = "${contracts}/lib";
     };
   };
 in
