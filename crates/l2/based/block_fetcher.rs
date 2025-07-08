@@ -93,7 +93,7 @@ pub struct BlockFetcherState {
     pending_batches: VecDeque<PendingBatch>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct PendingBatch {
     number: u64,
     last_block_hash: H256,
@@ -376,15 +376,7 @@ pub async fn fetch_pending_batches(state: &mut BlockFetcherState) -> Result<(), 
     process_commit_logs(state, commit_logs)?;
     process_verify_logs(state, verify_logs)?;
 
-    for (batch_number, batch_committed_log) in &state.pending_commit_logs.clone() {
-        if state
-            .pending_batches
-            .iter()
-            .any(|batch| batch.number == *batch_number)
-        {
-            // check if the batch has already been added
-            continue;
-        }
+    for (batch_number, batch_committed_log) in state.pending_commit_logs.iter() {
         let batch_commit_tx_calldata = state
             .eth_client
             .get_transaction_by_hash(batch_committed_log.transaction_hash)
@@ -401,10 +393,14 @@ pub async fn fetch_pending_batches(state: &mut BlockFetcherState) -> Result<(), 
             "Batch block shouldn't be empty.".into(),
         ))?;
 
-        state.pending_batches.push_back(PendingBatch {
+        let pending_batch = PendingBatch {
             number: *batch_number,
             last_block_hash: last_block.header.hash(),
-        });
+        };
+
+        if !state.pending_batches.contains(&pending_batch) {
+            state.pending_batches.push_back(pending_batch);
+        }
     }
     Ok(())
 }
