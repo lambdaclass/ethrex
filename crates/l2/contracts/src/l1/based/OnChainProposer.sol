@@ -397,7 +397,7 @@ contract OnChainProposer is
         );
 
         uint256 batchNumber = firstBatchNumber;
-        
+
         for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
             require(
                 batchCommitments[batchNumber].newStateRoot != bytes32(0),
