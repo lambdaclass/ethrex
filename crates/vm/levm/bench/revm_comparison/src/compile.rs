@@ -19,7 +19,15 @@ fn walk_and_compile(dir: &Path) {
             walk_and_compile(&path);
         } else if let Some(ext) = path.extension() {
             if ext == "sol" {
-                compile_contract(&path);
+                compile_contract(
+                    &path,
+                    !path
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .contains("no_opt"),
+                );
             }
         }
     }
@@ -27,16 +35,20 @@ fn walk_and_compile(dir: &Path) {
 
 /// Compiles a single Solidity contract file using `solc`.
 /// The compiled binary will be placed in the `contracts/bin` directory.
-fn compile_contract(sol_path: &Path) {
+fn compile_contract(sol_path: &Path, opt: bool) {
     let outpath = format!("{}/contracts/bin", env!("CARGO_MANIFEST_DIR"));
-    let args = [
+
+    let mut args = vec![
         "--bin-runtime",
-        "--optimize",
         "--overwrite",
         sol_path.to_str().unwrap(),
         "--output-dir",
         &outpath,
     ];
+
+    if opt {
+        args.push("--optimize");
+    }
     println!("compiling {}", sol_path.display());
     run_solc(&args);
 }
