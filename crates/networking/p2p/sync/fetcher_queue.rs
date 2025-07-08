@@ -47,7 +47,7 @@ where
 
 /// Reads incoming requests from the receiver, adds them to the queue, and returns the requests' incoming status
 /// Will only wait out for incoming requests if the queue is currently empty
-async fn read_incoming_requests<T>(receiver: &mut Receiver<Vec<T>>, queue: &mut Vec<T>) -> bool {
+pub(crate) async fn read_incoming_requests<T>(receiver: &mut Receiver<Vec<T>>, queue: &mut Vec<T>) -> bool {
     if !receiver.is_empty() || queue.is_empty() {
         let mut msg_buffer = vec![];
         receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await;
@@ -61,7 +61,7 @@ async fn read_incoming_requests<T>(receiver: &mut Receiver<Vec<T>>, queue: &mut 
 
 /// Spawns fetch tasks for the queued items, adds the remaining ones back to the queue and returns the pivot's stale status
 /// Will only fetch full batches (according to `batch_size`) unless `full_batches` is set to false
-async fn spawn_fetch_tasks<T, F, Fut>(
+pub(crate) async fn spawn_fetch_tasks<T, F, Fut>(
     queue: &mut Vec<T>,
     full_batches: bool,
     fetch_batch: &F,

@@ -7,7 +7,7 @@ mod storage_healing;
 mod trie_rebuild;
 
 use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
-use bytecode_fetcher::bytecode_fetcher;
+use bytecode_fetcher::BytecodeFetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     BigEndianHash, H256, U256, U512,
@@ -84,6 +84,7 @@ pub struct Syncer {
     /// TODO: Reorgs
     last_snap_pivot: u64,
     trie_rebuilder: Option<TrieRebuilder>,
+    bytecode_fetcher: Option<BytecodeFetcher>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
@@ -101,6 +102,7 @@ impl Syncer {
             peers,
             last_snap_pivot: 0,
             trie_rebuilder: None,
+            bytecode_fetcher: None,
             cancel_token,
             blockchain,
         }
@@ -114,6 +116,7 @@ impl Syncer {
             peers: PeerHandler::dummy(),
             last_snap_pivot: 0,
             trie_rebuilder: None,
+            bytecode_fetcher: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
@@ -590,6 +593,18 @@ impl Syncer {
             self.trie_rebuilder = Some(TrieRebuilder::startup(
                 self.cancel_token.clone(),
                 store.clone(),
+            ));
+        };
+        // Begin the background bytecode fetcher process if it is not active yet or if it crashed
+        if !self
+            .bytecode_fetcher
+            .as_ref()
+            .is_some_and(|fetcher| fetcher.alive())
+        {
+            self.bytecode_fetcher = Some(BytecodeFetcher::startup(
+                self.cancel_token.clone(),
+                store.clone(),
+                self.peers.clone(),
             ));
         };
         // Spawn storage healer earlier so we can start healing stale storages

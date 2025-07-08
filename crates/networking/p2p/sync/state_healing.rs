@@ -14,14 +14,14 @@ use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
-use tokio::sync::mpsc::{Sender, channel};
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE,
-        SHOW_PROGRESS_INTERVAL_DURATION, bytecode_fetcher, node_missing_children,
+        MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE,
+        SHOW_PROGRESS_INTERVAL_DURATION, node_missing_children,
     },
 };
 
@@ -33,15 +33,15 @@ pub(crate) async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
+    bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
-    // Spawn a bytecode fetcher for this block
-    let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-        bytecode_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
+    info!(
+        "Starting state healing, pre-existing paths: {}",
+        paths.len()
+    );
+    let healing_start = Instant::now();
+    let mut total_healed: usize = 0;
     // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
     let mut last_update = Instant::now();
@@ -84,9 +84,6 @@ pub(crate) async fn heal_state_trie(
         debug!("Caching {} paths for the next cycle", paths.len());
         store.set_state_heal_paths(paths.clone()).await?;
     }
-    // Send empty batch to signal that no more batches are incoming
-    bytecode_sender.send(vec![]).await?;
-    bytecode_fetcher_handle.await??;
     Ok(paths.is_empty())
 }
 

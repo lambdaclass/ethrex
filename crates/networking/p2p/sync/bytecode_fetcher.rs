@@ -6,18 +6,59 @@
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::peer_handler::PeerHandler;
 
-use super::{BYTECODE_BATCH_SIZE, SyncError, fetcher_queue::run_queue};
+use super::{fetcher_queue::{read_incoming_requests, spawn_fetch_tasks}, SyncError, BYTECODE_BATCH_SIZE, MAX_CHANNEL_MESSAGES};
+
+/// Represents the permanently ongoing background trie rebuild process
+/// This process will be started whenever a state sync is initiated and will be
+/// kept alive throughout sync cycles, only stopping once the tries are fully rebuilt or the node is stopped
+#[derive(Debug)]
+pub(crate) struct BytecodeFetcher {
+    task: tokio::task::JoinHandle<Result<(), SyncError>>,
+    pub(crate) sender: Sender<Vec<H256>>,
+}
+
+impl BytecodeFetcher {
+    /// Returns true is the trie rebuild porcess is alive and well
+    pub fn alive(&self) -> bool {
+        !(self.task.is_finished()
+            || self.sender.is_closed())
+    }
+    /// Waits for the rebuild process to complete and returns the resulting mismatched accounts
+    pub async fn complete(self) -> Result<(), SyncError> {
+        // Signal storage rebuilder to finish
+        self.sender.send(vec![]).await?;
+        self.task.await?
+    }
+
+    /// starts the background trie rebuild process
+    pub fn startup(cancel_token: CancellationToken, store: Store, peers: PeerHandler) -> Self {
+        let (sender, receiver) =
+            channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+        let task = tokio::task::spawn(bytecode_fetcher(
+            receiver,
+            peers,
+            store.clone(),
+            cancel_token.clone(),
+        ));
+        Self {
+            task,
+            sender
+        }
+    }
+}
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
-pub(crate) async fn bytecode_fetcher(
+async fn bytecode_fetcher(
     mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
+    cancel_token: CancellationToken
 ) -> Result<(), SyncError> {
     let mut pending_bytecodes: Vec<H256> = vec![];
     let fetch_batch = move |batch: Vec<H256>, peers: PeerHandler, store: Store| async {
@@ -26,15 +67,26 @@ pub(crate) async fn bytecode_fetcher(
             .await
             .map(|res| (res, false))
     };
-    run_queue(
-        &mut receiver,
-        &mut pending_bytecodes,
-        &fetch_batch,
-        peers,
-        store,
-        BYTECODE_BATCH_SIZE,
-    )
-    .await?;
+    // The pivot may become stale while the fetcher is active, we will still keep the process
+    // alive until the end signal so we don't lose incoming messages
+    let mut incoming = true;
+    while incoming || !pending_bytecodes.is_empty() {
+        if cancel_token.is_cancelled() {
+            // TODO: store them in DB
+            tracing::warn!("Bytecode fetcher cancelled with {} in queue", pending_bytecodes.len());
+        }
+        // Read incoming messages and add them to the queue
+        incoming = read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
+        spawn_fetch_tasks(
+                &mut pending_bytecodes,
+                incoming,
+                &fetch_batch,
+                peers.clone(),
+                store.clone(),
+                BYTECODE_BATCH_SIZE,
+            )
+            .await?;
+    }
     Ok(())
 }
 
