@@ -409,6 +409,9 @@ async fn test_forced_withdrawal(
     let l1_initial_balance = l1_client
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
+    let l2_initial_balance = l2_client
+        .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
     let transfer_value = U256::from(100);
     let mut l1_gas_costs = 0;
 
@@ -443,6 +446,10 @@ async fn test_forced_withdrawal(
         l2_client,
     )
     .await?;
+
+    let l2_final_balance = l2_client
+        .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .await?;
 
     let proof = l2_client
         .wait_for_message_proof(res.tx_info.transaction_hash, 1000)
@@ -483,6 +490,7 @@ async fn test_forced_withdrawal(
         l1_initial_balance + transfer_value - l1_gas_costs,
         l1_final_balance
     );
+    assert_eq!(l2_initial_balance - transfer_value, l2_final_balance);
     Ok(())
 }
 
