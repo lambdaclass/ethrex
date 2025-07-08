@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_PROJECT_PERSONAL_ACCESS_TOKEN }}
           script: |
             const pr = context.payload.pull_request;
             const projectNumber = 31; // Replace with your project number
