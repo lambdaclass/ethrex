@@ -32,6 +32,7 @@ impl MemoryV2 {
     pub fn next_memory(&self) -> MemoryV2 {
         let mut mem = self.clone();
         mem.current_base = mem.buffer.borrow().len();
+        mem.len_gas = 0;
         mem
     }
 
@@ -63,13 +64,17 @@ impl MemoryV2 {
 
         let current_len = self.current_len();
 
-        if new_memory_size <= current_len {
-            return Ok(());
+        #[allow(clippy::arithmetic_side_effects)]
+        {
+            if new_memory_size > self.len_gas {
+                self.len_gas = new_memory_size
+                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+                    .ok_or(OutOfBounds)?;
+            }
         }
 
-        #[expect(clippy::arithmetic_side_effects)]
-        {
-            self.len_gas += new_memory_size - current_len;
+        if new_memory_size <= current_len {
+            return Ok(());
         }
 
         let mut buffer = self.buffer.borrow_mut();
@@ -139,8 +144,16 @@ impl MemoryV2 {
 
         let mut buffer = self.buffer.borrow_mut();
 
+        let real_data_size = data_size.min(data.len());
+
         #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-        buffer[real_offset..(real_offset + data_size)].copy_from_slice(&data[..data_size]);
+        buffer[real_offset..(real_offset + real_data_size)]
+            .copy_from_slice(&data[..real_data_size]);
+
+        #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        if real_data_size < data_size {
+            buffer[(real_offset + real_data_size)..(real_offset + data_size)].fill(0);
+        }
 
         Ok(())
     }
