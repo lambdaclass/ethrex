@@ -361,8 +361,63 @@ impl StoreEngineRollup for RedBStoreRollup {
         Ok(())
     }
 
-    async fn seal_batch(&self, _batch: Batch) -> Result<(), RollupStoreError> {
-        todo!()
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let transaction = db.begin_write().map_err(Box::new)?;
+
+            {
+                let mut table = transaction.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
+                for block in blocks.iter() {
+                    table.insert(batch.number, *block)?;
+                }
+            }
+
+            transaction.open_table(BLOCK_NUMBERS_BY_BATCH)?.insert(
+                batch.number,
+                BlockNumbersRLP::from_bytes(blocks.encode_to_vec()),
+            )?;
+
+            transaction.open_table(MESSAGES_BY_BATCH)?.insert(
+                batch.number,
+                <Vec<H256> as Into<MessageHashesRLP>>::into(batch.message_hashes),
+            )?;
+
+            transaction
+                .open_table(PRIVILEGED_TRANSACTIONS_HASHES)?
+                .insert(
+                    batch.number,
+                    <H256 as Into<Rlp<H256>>>::into(batch.privileged_transactions_hash),
+                )?;
+
+            transaction.open_table(BLOB_BUNDLES)?.insert(
+                batch.number,
+                <Vec<Blob> as Into<Rlp<Vec<Blob>>>>::into(batch.blobs_bundle.blobs),
+            )?;
+
+            transaction.open_table(STATE_ROOTS)?.insert(
+                batch.number,
+                <H256 as Into<Rlp<H256>>>::into(batch.state_root),
+            )?;
+
+            if let Some(commit_tx) = batch.commit_tx {
+                transaction
+                    .open_table(COMMIT_TX_BY_BATCH)?
+                    .insert(batch.number, <H256 as Into<Rlp<H256>>>::into(commit_tx))?;
+            }
+
+            if let Some(verify_tx) = batch.verify_tx {
+                transaction
+                    .open_table(VERIFY_TX_BY_BATCH)?
+                    .insert(batch.number, <H256 as Into<Rlp<H256>>>::into(verify_tx))?;
+            }
+
+            transaction.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
