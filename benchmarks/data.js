@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751927412385,
+  "lastUpdate": 1751990184541,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5477,6 +5477,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012627549668874172,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e141e1004a011bffd5d2f754c8d64c9efd770c8d",
+          "message": "chore(l2): add ERC20 failed deposit integration test (#3547)\n\n**Motivation**\n\nWe want to ensure if a deposit fails, the funds won't be lost.\n\n**Description**\n\nAdds an integration test for ERC20 failed deposit turning into a\nwithdrawal.\n\nCloses #3990",
+          "timestamp": "2025-07-08T15:28:54Z",
+          "tree_id": "268aed2a136e9b2adf6d415b9a552fbcc01491bd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e141e1004a011bffd5d2f754c8d64c9efd770c8d"
+        },
+        "date": 1751990183801,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006575034482758621,
             "unit": "Mgas/s"
           }
         ]
