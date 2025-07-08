@@ -90,7 +90,7 @@ impl EthClient {
     ) -> Result<(H256, Address), EthClientError> {
         let mut deploy_overrides = overrides;
         deploy_overrides.to = Some(TxKind::Create);
-        
+
         let deploy_tx = self
             .build_eip1559_transaction(
                 Address::zero(),
@@ -100,7 +100,6 @@ impl EthClient {
             )
             .await?;
         let deploy_tx_hash = self.send_eip1559_transaction(&deploy_tx, deployer).await?;
-
 
         let nonce = self
             .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))

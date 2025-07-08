@@ -1,9 +1,9 @@
 use bytes::Bytes;
 use ethereum_types::Signature;
 use reqwest::{Client, Url};
-use url::ParseError;
 use rustc_hex::FromHexError;
 use secp256k1::PublicKey;
+use url::ParseError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebsignError {

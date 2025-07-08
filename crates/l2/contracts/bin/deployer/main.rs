@@ -17,13 +17,13 @@ use ethrex_common::{
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    calldata::encode_calldata,
-    compile_contract, deploy_contract, deploy_with_proxy, initialize_contract,
+    calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
+    initialize_contract,
 };
 use ethrex_rpc::{
-    clients::{
-        eth::{get_address_from_secret_key, BlockByNumber}, Overrides
-    }, types::block_identifier::{BlockIdentifier, BlockTag}, EthClient
+    EthClient,
+    clients::{Overrides, eth::get_address_from_secret_key},
+    types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
 use tracing::{Level, debug, error, info, trace, warn};

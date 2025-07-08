@@ -2,11 +2,11 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
-use ethrex_common::{H160, types::BlockNumber};
 use ethrex_common::types::{
     BlockNumber,
     signer::{LocalSigner, Signer},
 };
+use ethrex_common::{H160, types::BlockNumber};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
@@ -1049,7 +1049,7 @@ async fn test_deploy(
     let deployer: Signer = LocalSigner::new(*deployer_private_key).into();
 
     let deployer_balance_before_deploy = proposer_client
-        .get_balance(deployer.address(),  BlockIdentifier::Tag(BlockTag::Latest))
+        .get_balance(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let fee_vault_balance_before_deploy = proposer_client

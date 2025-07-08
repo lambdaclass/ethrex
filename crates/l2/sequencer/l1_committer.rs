@@ -34,7 +34,6 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 

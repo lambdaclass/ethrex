@@ -8,7 +8,6 @@ use ethrex_l2_common::{
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
-use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},

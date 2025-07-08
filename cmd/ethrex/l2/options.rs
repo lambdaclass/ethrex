@@ -1,6 +1,6 @@
 use crate::{
     cli::Options as NodeOptions,
-    utils::{self, parse_private_key},
+    utils::{self},
 };
 use clap::Parser;
 use ethrex_common::{

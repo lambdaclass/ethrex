@@ -23,11 +23,14 @@ use ethrex_common::{
     types::{
         BlobsBundle, Block, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction, batch::Batch,
-        block_execution_witness::ExecutionWitnessResult, signer::Signer
+        block_execution_witness::ExecutionWitnessResult, signer::Signer,
     },
     utils::decode_hex,
 };
-use ethrex_rlp::{decode::RLPDecode, encode::{RLPEncode, PayloadRLPEncode}};
+use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::{PayloadRLPEncode, RLPEncode},
+};
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::SecretKey;
