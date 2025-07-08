@@ -462,16 +462,19 @@ pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), Blo
                 .contains_key(&pending_batch.number)
         {
             info!("Safe batch sealed {}.", pending_batch.number);
-            let Some(commit_log) = state.pending_commit_logs.remove(&pending_batch.number) else {
-                return Err(BlockFetcherError::InternalError(
+            let commit_log = state
+                .pending_commit_logs
+                .remove(&pending_batch.number)
+                .ok_or(BlockFetcherError::InternalError(
                     "Commit log should be in the list.".into(),
-                ));
-            };
-            let Some(verify_log) = state.pending_verify_logs.remove(&pending_batch.number) else {
-                return Err(BlockFetcherError::InternalError(
+                ))?;
+
+            let verify_log = state
+                .pending_verify_logs
+                .remove(&pending_batch.number)
+                .ok_or(BlockFetcherError::InternalError(
                     "Verify log should be in the list.".into(),
-                ));
-            };
+                ))?;
 
             let batch_commit_tx_calldata = state
                 .eth_client
