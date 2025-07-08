@@ -56,24 +56,18 @@ jobs:
         run: |
           labels=()
 
-          if [[ "$TITLE" =~ \(.*l1.*\) ]]; then
-            labels+=("L1")
-          fi
-
-          if [[ "$TITLE" =~ \(.*levm.*\) ]]; then
-            labels+=("levm")
-          fi
-
-          if [[ "$TITLE" =~ \(.*l2.*\) ]]; then
-            labels+=("L2")
-          fi
-
-          if [[ "$TITLE" =~ \(.*core.*\) ]]; then
-            labels+=("L1" "L2")
-          fi
-
           if [[ "$TITLE" =~ ^perf ]]; then
-            labels+=("performance")
+            labels=("performance")
+          elif [[ "$TITLE" =~ \(.*l2.*\) ]]; then
+            labels=("L2")
+          else
+            if [[ "$TITLE" =~ \(.*l1.*\) ]]; then
+              labels+=("L1")
+            fi
+
+            if [[ "$TITLE" =~ \(.*levm.*\) ]]; then
+              labels+=("levm")
+            fi
           fi
 
           # Remove duplicates
