@@ -155,7 +155,7 @@ impl EthClient {
         for url in self.urls.iter() {
             response = self.send_request_to_url(url, &request).await;
             if response.is_ok() {
-                // Some RPC servers don't implement all the endpoints or don't implement them completly/correctly
+                // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
                 // so if the server returns Ok(RpcResponse::Error) we retry with the others
                 if let Ok(RpcResponse::Success(ref _a)) = response {
                     return response;
