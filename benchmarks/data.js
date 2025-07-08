@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752013959450,
+  "lastUpdate": 1752018335269,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5920,6 +5920,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006479281553398058,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "715c2bbe2c6d139bb938ea87c6aa1a07ade060d6",
+          "message": "refactor(levm): change returned error types to `InternalError` (#3322)\n\n**Motivation**\nFrom [#3063](https://github.com/lambdaclass/ethrex/issues/3063)\n\n> There are various cases in which we return an error with the\nExceptionalHalt type but they actually are InternalErrors, things that\nshouldn't ever happen and if they happen they should break.\nThis is not a critical issue since if the VM is working fine then it\nwon't ever enter to those cases, but it would be more precise if we\ncatalogued those errors as internals instead of saying that they revert\nexecution when they don't.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nIntroduces the following changes:\n* Replaces `PrecompileError` with `InternalError` in those cases in\nwhich an error is returned even though is not possible for the\ninstruction to fail, typically when slicing bytes whose size have been\nalready checked.\n* Removes the error types `EvaluationError` and `DefaultError` (which\nwere quite generic) from `PrecompileError` and adds specific and more\ndescriptive error types instead (`InvalidPoint`, `PointNotInTheCurve`,\netc).\n* Removes the `PrecompileError::GasConsumedOverflow` error type.\n\n\n\nCloses #3063\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-07-08T17:26:31Z",
+          "tree_id": "6b8f7bd82899863be607fc39c39df00c6ebac941",
+          "url": "https://github.com/lambdaclass/ethrex/commit/715c2bbe2c6d139bb938ea87c6aa1a07ade060d6"
+        },
+        "date": 1752018324519,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012556274694261525,
             "unit": "Mgas/s"
           }
         ]
