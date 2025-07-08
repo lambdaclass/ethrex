@@ -285,6 +285,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, RollupStoreError> {
+        dbg!("get_batch_number_by_block");
         let mut rows = self
             .query(
                 "SELECT * from blocks WHERE block_number = ?1",
@@ -292,7 +293,7 @@ impl StoreEngineRollup for SQLStore {
             )
             .await?;
         if let Some(row) = rows.next().await? {
-            return Ok(Some(read_from_row_int(&row, 1)?));
+            return Ok(Some(dbg!(read_from_row_int(&row, 1))?));
         }
         Ok(None)
     }
@@ -302,6 +303,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
+        dbg!("get_message_hashes_by_batch");
         let mut hashes = vec![];
         let mut rows = self
             .query(
@@ -310,14 +312,14 @@ impl StoreEngineRollup for SQLStore {
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 2)?;
-            hashes.push(H256::from_slice(&vec));
+            let vec = dbg!(read_from_row_blob(&row, 2))?;
+            hashes.push(dbg!(H256::from_slice(&vec)));
         }
-        if hashes.is_empty() {
+        dbg!(if hashes.is_empty() {
             Ok(None)
         } else {
             Ok(Some(hashes))
-        }
+        })
     }
 
     /// Returns the block numbers by a given batch_number
