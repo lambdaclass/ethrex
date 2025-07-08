@@ -86,7 +86,6 @@ jobs:
                           ... on ProjectV2Field {
                             id
                             name
-                            dataType
                           }
                         }
                       }
@@ -95,26 +94,23 @@ jobs:
                 }
               `, { projectId });
 
-              const field = res.node.fields.nodes.find(f => f.name === fieldName && f.dataType === "DATE");
-              if (!field) throw new Error(`Date field '${fieldName}' not found`);
+              const field = res.node.fields.nodes.find(f => f.name === fieldName);
+              if (!field) throw new Error(`Field '${fieldName}' not found`);
+
+              const date = dateValue.split("T")[0]; // "YYYY-MM-DD"
 
               await github.graphql(`
-                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $dateValue: String!) {
+                mutation {
                   updateProjectV2ItemFieldValue(input: {
-                    projectId: $projectId,
-                    itemId: $itemId,
-                    fieldId: $fieldId,
-                    value: { date: $dateValue }
+                    projectId: "${projectId}",
+                    itemId: "${itemId}",
+                    fieldId: "${field.id}",
+                    value: { date: "${date}" }
                   }) {
                     projectV2Item { id }
                   }
                 }
-              `, {
-                projectId,
-                itemId,
-                fieldId: field.id,
-                dateValue
-              });
+              `);
             }
 
             async function setProjectItemStatus(projectId, itemId, fieldName, optionName) {
@@ -182,10 +178,11 @@ jobs:
               return;
             }
 
-            const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+            // const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+            let updated = pr.updated_at;
 
-            await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, today);
-            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, today);
+            await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.updated_at);
+            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
 
             // For some reason if I don't use variables in the "if" the CI breaks.
             let is_draft = pr.draft;
