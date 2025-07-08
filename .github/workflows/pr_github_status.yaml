@@ -20,11 +20,12 @@ jobs:
             const projectNumber = 31;
             const statusFieldName = "Status";
             const newStatus = "In Progress";
+            const orgLogin = "lambdaclass";
 
-            // Get all ProjectsV2 for the viewer (your PAT user)
+            // Get all ProjectsV2 for the organization
             const projects = await github.graphql(`
-              query {
-                viewer {
+              query($org: String!) {
+                organization(login: $org) {
                   projectsV2(first: 100) {
                     nodes {
                       id
@@ -34,11 +35,11 @@ jobs:
                   }
                 }
               }
-            `);
+            `, { org: orgLogin });
 
-            const project = projects.viewer.projectsV2.nodes.find(p => p.number === projectNumber);
+            const project = projects.organization.projectsV2.nodes.find(p => p.number === projectNumber);
             if (!project) {
-              throw new Error(`Project #${projectNumber} not found`);
+              throw new Error(`Project #${projectNumber} not found in org ${orgLogin}`);
             }
             const projectId = project.id;
 
@@ -69,7 +70,7 @@ jobs:
             }
             const itemId = item.id;
 
-            // Get project fields
+            // Get project fields and options
             const fieldsResult = await github.graphql(`
               query($projectId: ID!) {
                 node(id: $projectId) {
@@ -101,7 +102,7 @@ jobs:
               throw new Error(`Option '${newStatus}' not found`);
             }
 
-            // Update project field value
+            // Update the project's Status field
             await github.graphql(`
               mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
                 updateProjectV2ItemFieldValue(input: {
