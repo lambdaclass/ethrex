@@ -18,12 +18,17 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
 
+const CAPABILITY_NAME_MAX_LENGTH: usize = 8;
+
 // Pads the input array to the right with zeros to ensure it is 8 bytes long.
 // Panics if the input is longer than 8 bytes.
 const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
-    assert!(N <= 8, "Input array must be 8 bytes or less");
+    assert!(
+        N <= CAPABILITY_NAME_MAX_LENGTH,
+        "Input array must be 8 bytes or less"
+    );
 
-    let mut padded = [0_u8; 8];
+    let mut padded = [0_u8; CAPABILITY_NAME_MAX_LENGTH];
     let mut i = 0;
     while i < input.len() {
         padded[i] = input[i];
@@ -33,8 +38,9 @@ const fn pad_right<const N: usize>(input: &[u8; N]) -> [u8; 8] {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// A capability is identified by a short ASCII name (max eight characters) and version number
 pub struct Capability {
-    protocol: [u8; 8],
+    protocol: [u8; CAPABILITY_NAME_MAX_LENGTH],
     pub version: u8,
 }
 
@@ -61,7 +67,11 @@ impl Capability {
     }
 
     pub fn protocol(&self) -> &str {
-        let len = self.protocol.iter().position(|c| c == &b'\0').unwrap_or(8);
+        let len = self
+            .protocol
+            .iter()
+            .position(|c| c == &b'\0')
+            .unwrap_or(CAPABILITY_NAME_MAX_LENGTH);
         str::from_utf8(&self.protocol[..len]).expect("value parsed as utf8 in RLPDecode")
     }
 }
@@ -78,11 +88,11 @@ impl RLPEncode for Capability {
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
-        if protocol_name.len() > 8 {
+        if protocol_name.len() > CAPABILITY_NAME_MAX_LENGTH {
             return Err(RLPDecodeError::InvalidLength);
         }
         let (version, rest) = u8::decode_unfinished(rest)?;
-        let mut protocol = [0; 8];
+        let mut protocol = [0; CAPABILITY_NAME_MAX_LENGTH];
         protocol[..protocol_name.len()].copy_from_slice(protocol_name.as_bytes());
         Ok((Capability { protocol, version }, rest))
     }
