@@ -70,6 +70,14 @@ struct StoreInner {
     /// that is, the state to which this log should be applied and the state we get back after
     /// rewinding these logs.
     account_storage_logs: HashMap<BlockNumHash, Vec<(BlockNumHash, AccountStorageLogEntry)>>,
+    // ✨ NUEVAS TABLAS PARA PRUNING ✨
+    /// State trie pruning log: BlockNumHash -> Vec<[u8; 32]> (node hashes)
+    /// Registra qué nodos del state trie fueron invalidados en cada bloque
+    state_trie_pruning_log: HashMap<BlockNumHash, Vec<[u8; 32]>>,
+
+    /// Storage trie pruning log: BlockNumHash -> Vec<([u8; 32], [u8; 33])> (address, node_hash)
+    /// Registra qué nodos de storage tries fueron invalidados en cada bloque
+    storage_trie_pruning_log: HashMap<BlockNumHash, Vec<([u8; 32], [u8; 33])>>,
 }
 
 #[derive(Default, Debug)]
@@ -391,7 +399,86 @@ impl StoreEngine for Store {
     }
 
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
-        todo!()
+        const KEEP_BLOCKS: u64 = 128;
+        let mut store = self.inner()?;
+
+        // Get the block number of the last state trie pruning log entry
+        if let Some(max_block_num) = store
+            .state_trie_pruning_log
+            .keys()
+            .map(|block| block.block_number)
+            .max()
+        {
+            let keep_from = max_block_num.saturating_sub(KEEP_BLOCKS);
+
+            let mut blocks_to_prune = Vec::new();
+            let mut nodes_to_delete = Vec::new();
+
+            // Iterate over the entries of the pruning log and save the nodes to delete
+            // until we reach the keep from block number
+            for (&block, node_hashes) in &store.state_trie_pruning_log {
+                if block.block_number < keep_from {
+                    blocks_to_prune.push(block);
+                    nodes_to_delete.extend_from_slice(node_hashes);
+                }
+            }
+
+            // Delete the nodes from the state trie
+            {
+                let mut state_trie_nodes = store
+                    .state_trie_nodes
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
+
+                for node_hash_array in &nodes_to_delete {
+                    let node_hash = NodeHash::Hashed(H256(*node_hash_array));
+                    state_trie_nodes.remove(&node_hash);
+                }
+            }
+
+            // Remove the entries from the pruning log
+            for block in blocks_to_prune {
+                store.state_trie_pruning_log.remove(&block);
+            }
+        }
+
+        // Get the block number of the last storage trie pruning log entry
+        if let Some(max_block_num) = store
+            .storage_trie_pruning_log
+            .keys()
+            .map(|block| block.block_number)
+            .max()
+        {
+            let keep_from_storage = max_block_num.saturating_sub(KEEP_BLOCKS);
+
+            let mut blocks_to_prune = Vec::new();
+            let mut storage_entries_to_delete = Vec::new();
+
+            // Iterate over the entries of the pruning log and save the nodes to delete
+            // until we reach the keep from block number
+            for (&block, storage_entries) in &store.storage_trie_pruning_log {
+                if block.block_number < keep_from_storage {
+                    blocks_to_prune.push(block);
+                    storage_entries_to_delete.extend_from_slice(storage_entries);
+                }
+            }
+
+            // Delete the nodes from the storage trie
+            for (hashed_address, node_hash_fixed) in &storage_entries_to_delete {
+                if let Some(addr_store) = store.storage_trie_nodes.get(&H256(*hashed_address)) {
+                    let mut addr_store = addr_store.lock().map_err(|_| StoreError::LockError)?;
+
+                    let node_hash = NodeHash::from_encoded_raw(node_hash_fixed);
+                    addr_store.remove(&node_hash);
+                }
+            }
+
+            // Remove the entries from the pruning log
+            for block in blocks_to_prune {
+                store.storage_trie_pruning_log.remove(&block);
+            }
+        }
+        Ok(())
     }
 
     fn get_current_account_info(
