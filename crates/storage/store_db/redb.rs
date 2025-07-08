@@ -86,6 +86,12 @@ const ACCOUNTS_STORAGE_WRITE_LOG_TABLE: MultimapTableDefinition<
     BlockNumHashRLP,
     (BlockNumHashRLP, AccountStorageLogEntryRLP),
 > = MultimapTableDefinition::new("AccountsStorageWriteLog");
+const STATE_TRIE_PRUNING_LOG_TABLE: MultimapTableDefinition<BlockNumHashRLP, [u8; 32]> =
+    MultimapTableDefinition::new("StateTriePruningLog");
+const STORAGE_TRIE_PRUNING_LOG_TABLE: MultimapTableDefinition<
+    BlockNumHashRLP,
+    ([u8; 32], [u8; 33]),
+> = MultimapTableDefinition::new("StorageTriePruningLog");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -798,7 +804,91 @@ impl StoreEngine for RedBStore {
     }
 
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
-        todo!()
+        const KEEP_BLOCKS: u64 = 128;
+        let txn = self.db.begin_write().map_err(Box::new)?;
+        {
+            let mut state_trie_pruning_log_table =
+                txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
+            let mut state_trie_table = txn.open_table(STATE_TRIE_NODES_TABLE)?;
+
+            let keep_from_block = {
+                let iter = state_trie_pruning_log_table.range::<BlockNumHashRLP>(..)?;
+                if let Some(Ok((block_guard, _))) = iter.last() {
+                    let block: BlockNumHash = block_guard.value().to()?;
+                    block.block_number.saturating_sub(KEEP_BLOCKS)
+                } else {
+                    return Ok(());
+                }
+            };
+
+            tracing::debug!(
+                keep_from = keep_from_block,
+                "[KEEPING STATE TRIE PRUNING LOG]"
+            );
+
+            let cutoff_key: BlockNumHashRLP = BlockNumHash {
+                block_number: keep_from_block,
+                block_hash: Default::default(),
+            }
+            .into();
+
+            let mut to_prune = Vec::new();
+            for entry in state_trie_pruning_log_table.range(..=cutoff_key)? {
+                let (block_guard, node_hashes) = entry?;
+                let block = block_guard.value().to()?;
+                for node_hash in node_hashes {
+                    let hash_arr: [u8; 32] = node_hash?.value();
+                    to_prune.push((block, hash_arr));
+                }
+            }
+
+            for (block, hash_arr) in to_prune {
+                state_trie_table.remove(hash_arr.as_ref())?;
+                state_trie_pruning_log_table
+                    .remove_all(<BlockNumHash as Into<BlockNumHashRLP>>::into(block))?;
+            }
+
+            let mut storage_trie_pruning_log_table =
+                txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
+            let mut storage_trie_table = txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+
+            let keep_from_block = {
+                let iter = storage_trie_pruning_log_table.range::<BlockNumHashRLP>(..)?;
+                if let Some(Ok((block_guard, _))) = iter.last() {
+                    let block: BlockNumHash = block_guard.value().to()?;
+                    block.block_number.saturating_sub(KEEP_BLOCKS)
+                } else {
+                    return Ok(());
+                }
+            };
+
+            let cutoff_key: BlockNumHashRLP = BlockNumHash {
+                block_number: keep_from_block,
+                block_hash: Default::default(),
+            }
+            .into();
+
+            let mut to_prune = Vec::new();
+            for entry in storage_trie_pruning_log_table.range(..=cutoff_key)? {
+                let (block_guard, node_hashes) = entry?;
+                let block = block_guard.value().to()?;
+                for node_hash in node_hashes {
+                    let hash_arr: ([u8; 32], [u8; 33]) = node_hash?.value();
+                    to_prune.push((block, hash_arr));
+                }
+            }
+
+            for (block, hash_arr) in to_prune {
+                storage_trie_table.remove_all(hash_arr)?;
+                storage_trie_pruning_log_table.remove(
+                    <BlockNumHash as Into<BlockNumHashRLP>>::into(block),
+                    hash_arr,
+                )?;
+            }
+        }
+
+        txn.commit()?;
+        Ok(())
     }
 
     async fn add_block_header(
