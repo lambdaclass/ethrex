@@ -4,6 +4,7 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
+    opcodes::Opcode,
     vm::VM,
 };
 use ethrex_common::{H256, U256, types::Fork};
@@ -91,7 +92,7 @@ impl<'a> VM<'a> {
         let [offset, value] = *self.current_call_frame_mut()?.stack.pop()?;
 
         // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
-        if self.debug_mode.handle_debug(offset, value)? {
+        if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -301,12 +302,20 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
-    /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
-    /// function.
-    /// This function returns whether the `jump_address` is a valid JUMPDEST
-    /// for the specified `call_frame` or not.
-    fn is_valid_jump_addr(call_frame: &CallFrame, jump_address: usize) -> bool {
-        call_frame.valid_jump_destinations.contains(&jump_address)
+    /// Check if the jump destination is valid by:
+    ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
+    ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
+    ///     constant associated with a push instruction.
+    fn target_address_is_valid(call_frame: &CallFrame, jump_address: usize) -> bool {
+        #[expect(clippy::as_conversions)]
+        call_frame.bytecode.get(jump_address).is_some_and(|&value| {
+            // It's a constant, therefore the conversion cannot fail.
+            value == Opcode::JUMPDEST as u8
+                && call_frame
+                    .invalid_jump_destinations
+                    .binary_search(&jump_address)
+                    .is_err()
+        })
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
@@ -319,7 +328,7 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        if Self::is_valid_jump_addr(call_frame, jump_address_usize) {
+        if Self::target_address_is_valid(call_frame, jump_address_usize) {
             call_frame.pc = jump_address_usize;
             Ok(())
         } else {

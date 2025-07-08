@@ -3,16 +3,13 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    utils::{get_valid_jump_destinations, restore_cache_state},
+    utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-};
+use std::{collections::HashMap, fmt};
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -105,6 +102,10 @@ impl Stack {
         self.values.swap(self.offset, index);
         Ok(())
     }
+
+    pub fn clear(&mut self) {
+        self.offset = STACK_LIMIT;
+    }
 }
 
 impl Default for Stack {
@@ -167,8 +168,9 @@ pub struct CallFrame {
     pub is_static: bool,
     /// Call stack current depth
     pub depth: usize,
-    /// Set of valid jump destinations (where a JUMP or JUMPI can jump to)
-    pub valid_jump_destinations: HashSet<usize>,
+    /// Sorted blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
+    /// push instructions).
+    pub invalid_jump_destinations: Box<[usize]>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -188,6 +190,22 @@ pub struct CallFrameBackup {
 }
 
 impl CallFrameBackup {
+    pub fn backup_account_info(
+        &mut self,
+        address: Address,
+        account: &Account,
+    ) -> Result<(), InternalError> {
+        self.original_accounts_info
+            .entry(address)
+            .or_insert_with(|| Account {
+                info: account.info.clone(),
+                code: account.code.clone(),
+                storage: HashMap::new(),
+            });
+
+        Ok(())
+    }
+
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
@@ -217,8 +235,10 @@ impl CallFrame {
         is_create: bool,
         ret_offset: U256,
         ret_size: usize,
+        stack: Stack,
     ) -> Self {
-        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
+        let invalid_jump_destinations =
+            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
             gas_limit,
             gas_remaining: gas_limit,
@@ -230,11 +250,12 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            valid_jump_destinations,
+            invalid_jump_destinations,
             should_transfer_value,
             is_create,
             ret_offset,
             ret_size,
+            stack,
             ..Default::default()
         }
     }
@@ -266,7 +287,7 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.valid_jump_destinations = get_valid_jump_destinations(&code)?;
+        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
         self.bytecode = code;
         Ok(())
     }
