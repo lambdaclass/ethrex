@@ -88,7 +88,7 @@ impl ProverType {
         // TODO: these should be compile-time consts
         let path = match &self {
             Self::RISC0 => format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-vk",
+                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
