@@ -410,8 +410,8 @@ async fn test_erc20_failed_deposit(
     let token_amount: U256 = U256::from(100);
 
     let rich_wallet_private_key = l1_rich_wallet_private_key();
-    let rich_address = ethrex_l2_sdk::get_address_from_secret_key(&rich_wallet_private_key)
-        .expect("Failed to get address");
+    let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
+    let rich_address = rich_wallet_signer.address();
 
     let init_code_l1 = hex::decode(std::fs::read(
         "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
@@ -441,7 +441,7 @@ async fn test_erc20_failed_deposit(
         token_l2,
         token_amount,
         rich_address,
-        rich_wallet_private_key,
+        &rich_wallet_signer,
         l1_client,
     )
     .await
@@ -477,7 +477,7 @@ async fn test_erc20_failed_deposit(
         token_l1,
         token_l2,
         token_amount,
-        rich_wallet_private_key,
+        &rich_wallet_signer,
         l1_client,
         &proof,
     )
