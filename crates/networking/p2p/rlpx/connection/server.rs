@@ -286,6 +286,8 @@ where
     // Updating the state to establish the backend channel
     state.backend_channel = Some(sender);
 
+    init_capabilities(state, &mut stream).await.unwrap();
+
     // NOTE: if the peer came from the discovery server it will already be inserted in the table
     // but that might not always be the case, so we try to add it to the table
     // Note: we don't ping the node we let the validation service do its job
@@ -300,7 +302,6 @@ where
             state.inbound,
         );
     }
-    init_capabilities(state, &mut stream).await.unwrap();
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
