@@ -441,7 +441,6 @@ contract OnChainProposer is
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
 
-            batchIds[i] = batchNumber;
             verifiedBatches[batchCommitments[batchNumber].lastBlockHash] = true;
          
             lastVerifiedBatch = batchNumber;
