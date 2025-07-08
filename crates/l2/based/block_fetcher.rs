@@ -524,12 +524,17 @@ pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), Blo
                 );
             }
 
-            let mut batch =
-                build_batch_from_blocks(state, &batch_blocks, pending_batch.number).await?;
-            batch.commit_tx = Some(commit_log.transaction_hash);
-            batch.verify_tx = Some(verify_log.transaction_hash);
-            state.latest_safe_batch = batch.number;
+            let batch = build_safe_batch(
+                state,
+                &batch_blocks,
+                pending_batch.number,
+                commit_log.transaction_hash,
+                verify_log.transaction_hash,
+            )
+            .await?;
+
             state.rollup_store.seal_batch(batch).await?;
+            state.latest_safe_batch = pending_batch.number;
         } else {
             // if the batch isn't verified yet, add it again to the queue
             state.pending_batches.push_front(pending_batch);
@@ -618,10 +623,12 @@ async fn batch_is_safe(
     Ok(*last_byte > 0)
 }
 
-async fn build_batch_from_blocks(
+async fn build_safe_batch(
     state: &mut BlockFetcherState,
     batch: &[Block],
     batch_number: u64,
+    commit_tx: H256,
+    verify_tx: H256,
 ) -> Result<Batch, BlockFetcherError> {
     let privileged_transactions: Vec<PrivilegedL2Transaction> = batch
         .iter()
@@ -709,7 +716,7 @@ async fn build_batch_from_blocks(
         privileged_transactions_hash,
         message_hashes: get_batch_message_hashes(state, batch).await?,
         blobs_bundle,
-        commit_tx: None,
-        verify_tx: None,
+        commit_tx: Some(commit_tx),
+        verify_tx: Some(verify_tx),
     })
 }
