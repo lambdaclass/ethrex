@@ -13,7 +13,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CI_ETHREX_WORKDIR: /usr/local/bin
@@ -142,7 +142,7 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
-          
+
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
         with:
