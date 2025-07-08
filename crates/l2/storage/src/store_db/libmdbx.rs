@@ -322,8 +322,65 @@ impl StoreEngineRollup for Store {
         Ok(())
     }
 
-    async fn seal_batch(&self, _batch: Batch) -> Result<(), RollupStoreError> {
-        todo!()
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let transaction = db
+                .begin_readwrite()
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            for block in blocks.iter() {
+                transaction
+                    .upsert::<BatchesByBlockNumber>(batch.number, *block)
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            transaction
+                .upsert::<BlockNumbersByBatch>(
+                    batch.number,
+                    BlockNumbersRLP::from_bytes(blocks.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<MessageHashesByBatch>(batch.number, batch.message_hashes.into())
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<PrivilegedTransactionsHash>(
+                    batch.number,
+                    Rlp::from_bytes(batch.privileged_transactions_hash.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<BlobsBundles>(batch.number, batch.blobs_bundle.blobs.into())
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<StateRoots>(
+                    batch.number,
+                    Rlp::from_bytes(batch.state_root.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            if let Some(commit_tx) = batch.commit_tx {
+                transaction
+                    .upsert::<CommitTxByBatch>(batch.number, commit_tx.into())
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            if let Some(verify_tx) = batch.verify_tx {
+                transaction
+                    .upsert::<VerifyTxByBatch>(batch.number, verify_tx.into())
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            transaction.commit().map_err(RollupStoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
