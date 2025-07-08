@@ -523,14 +523,14 @@ impl EFTestReportForkResult {
         transaction_report: ExecutionReport,
         reason: String,
         failed_vector: TestVector,
-        levm_cache: HashMap<Address, Account>,
+        levm_cache: ahash::HashMap<Address, Account>,
     ) {
         self.failed_vectors.insert(
             failed_vector,
             EFTestRunnerError::FailedToEnsurePostState(
                 Box::new(transaction_report),
                 reason,
-                levm_cache,
+                levm_cache.into_iter().collect(),
             ),
         );
     }

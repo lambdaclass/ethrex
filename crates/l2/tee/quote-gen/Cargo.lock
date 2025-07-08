@@ -50,6 +50,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
+dependencies = [
+ "cfg-if 1.0.1",
+ "getrandom 0.3.3",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2206,6 +2219,7 @@ dependencies = [
  "hex",
  "k256",
  "keccak-hash",
+ "kzg-rs",
  "lazy_static",
  "once_cell",
  "rayon",
@@ -2306,6 +2320,7 @@ dependencies = [
 name = "ethrex-levm"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "bls12_381",
  "bytes",
  "datatest-stable",
@@ -2314,7 +2329,6 @@ dependencies = [
  "ethrex-rlp",
  "k256",
  "keccak-hash",
- "kzg-rs",
  "lambdaworks-math 0.11.0",
  "lazy_static",
  "num-bigint 0.4.6",
@@ -4732,7 +4746,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "keccak-hash",
- "kzg-rs",
  "secp256k1",
  "serde",
  "serde_json",
@@ -7396,8 +7409,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "keccak-hash",
- "kzg-rs",
  "serde",
  "serde_json",
  "serde_with",

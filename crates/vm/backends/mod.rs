@@ -84,7 +84,7 @@ impl Evm {
                 state: evm_state(wrapped_db),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
+                db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::default()),
                 vm_type: VMType::L1,
             },
         }
@@ -100,7 +100,7 @@ impl Evm {
         let wrapped_db: DynVmDatabase = Box::new(db);
 
         let evm = Evm::LEVM {
-            db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::default()),
             vm_type: VMType::L2,
         };
 
@@ -117,7 +117,7 @@ impl Evm {
 
     fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
         Evm::LEVM {
-            db: GeneralizedDatabase::new(store, CacheDB::new()),
+            db: GeneralizedDatabase::new(store, CacheDB::default()),
             vm_type,
         }
     }

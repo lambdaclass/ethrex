@@ -32,6 +32,7 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose
   "alloc",
   "experimental",
 ] }
+ahash.workspace = true
 
 [dev-dependencies]
 hex.workspace = true

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use ahash::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -312,7 +312,7 @@ impl<'a> VM<'a> {
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)
-            .or_insert(HashMap::new());
+            .or_insert(HashMap::default());
 
         account_storage_backup.entry(key).or_insert(value);
 
