@@ -54,7 +54,6 @@ impl RpcHandler for Syncing {
                 highest_block: context
                     .syncer
                     .get_last_fcu_head()
-                    .try_lock()
                     .map_err(|error| RpcErr::Internal(error.to_string()))?
                     .to_low_u64_be(),
             };

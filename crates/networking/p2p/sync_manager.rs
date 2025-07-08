@@ -156,7 +156,7 @@ impl SyncManager {
         });
     }
 
-    pub fn get_last_fcu_head(&self) -> Arc<Mutex<H256>> {
-        self.last_fcu_head.clone()
+    pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
+        Ok(*self.last_fcu_head.try_lock()?)
     }
 }
