@@ -48,7 +48,7 @@ pub type TrieNode = (NodeHash, NodeRLP);
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
-    root: NodeRef,
+    root: Node,
 }
 
 impl Default for Trie {
@@ -160,8 +160,17 @@ impl Trie {
     ///
     /// A tuple containing the hash and the list of changes.
     pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
-        let updates = self.commit_without_storing();
-        let ret_hash = self.hash_no_commit();
+        let mut ret_hash = H256::default();
+        let mut updates = Vec::new();
+        rayon::scope(|s| {
+            s.spawn(|_| {
+                updates = self.commit_without_storing();
+                ret_hash = self.hash_no_commit();
+            });
+        });
+
+        //let updates = self.commit_without_storing();
+        //let ret_hash = self.hash_no_commit();
         (ret_hash, updates)
     }
 
@@ -184,6 +193,7 @@ impl Trie {
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
+            // compute the hash of the root node and all internal nodes
             self.root.commit(&mut acc);
         }
 

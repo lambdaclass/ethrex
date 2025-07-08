@@ -32,6 +32,9 @@ pub enum Node {
     Branch(Box<BranchNode>),
     Extension(ExtensionNode),
     Leaf(LeafNode),
+    /// hash of the node already computed
+    /// used for stored nodes in the database
+    Hash(NodeHash),
 }
 
 impl From<Box<BranchNode>> for Node {
@@ -93,6 +96,11 @@ impl Node {
             Node::Branch(n) => n.remove(db, path),
             Node::Extension(n) => n.remove(db, path),
             Node::Leaf(n) => n.remove(path),
+            Node::Hash(h) => {
+                // get the node from the database
+                let node = db.get(h)?;
+                todo!();
+            }
         }
     }
 
@@ -109,6 +117,15 @@ impl Node {
             Node::Branch(n) => n.get_path(db, path, node_path),
             Node::Extension(n) => n.get_path(db, path, node_path),
             Node::Leaf(n) => n.get_path(node_path),
+            Node::Hash(h) => {
+                // get the node from the database
+                let node = db.get(h)?;
+                if let Some(node) = node {
+                    node.get_path(db, path, node_path)?;
+                } else {
+                    return Err(TrieError::NodeNotFound(h));
+                }
+            }
         }
     }
 
@@ -118,6 +135,9 @@ impl Node {
             Node::Branch(n) => n.encode_raw(),
             Node::Extension(n) => n.encode_raw(),
             Node::Leaf(n) => n.encode_raw(),
+            // If we have only the hash, we return an empty vector
+            // as we don't have the node's data to encode
+            Node::Hash(_h) => vec![],
         }
     }
 
@@ -182,6 +202,7 @@ impl Node {
             Node::Branch(n) => n.compute_hash(),
             Node::Extension(n) => n.compute_hash(),
             Node::Leaf(n) => n.compute_hash(),
+            Node::Hash(h) => *h,
         }
     }
 }
