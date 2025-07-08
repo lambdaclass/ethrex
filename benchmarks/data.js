@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752013414779,
+  "lastUpdate": 1752013959450,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3145,6 +3145,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209060859420,
             "range": "± 509584808",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f07af68346980f2762f0a71cf0de7ba87c49642b",
+          "message": "fix(l2): use github token to avoid rate limit (#3570)\n\n**Motivation**\n\nOur CI is failing at the `Install solc` step in almost all jobs due to a\n`rate limit` error.\n\n**Description**\n\nAuthenticates using a GitHub token to bypass the rate limit.\n\nCloses None",
+          "timestamp": "2025-07-08T21:31:57Z",
+          "tree_id": "9d743d53d18ef3e1cedc95540f53d0513e1d1176",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f07af68346980f2762f0a71cf0de7ba87c49642b"
+        },
+        "date": 1752013948690,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209254002792,
+            "range": "± 621219268",
             "unit": "ns/iter"
           }
         ]
