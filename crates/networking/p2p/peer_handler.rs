@@ -826,6 +826,13 @@ impl PeerHandler {
         )
     }
 
+    pub async fn add_trusted_peer(&self, node: crate::types::Node) {
+        debug!("Adding peer with id {:?}", node.node_id());
+        let mut table = self.peer_table.lock().await;
+        // TODO: we should treat them specially
+        table.insert_node_forced(node);
+    }
+
     pub async fn count_total_peers(&self) -> usize {
         self.peer_table.lock().await.iter_peers().count()
     }

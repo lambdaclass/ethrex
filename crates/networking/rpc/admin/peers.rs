@@ -1,7 +1,11 @@
-use crate::{rpc::RpcApiContext, utils::RpcErr};
+use crate::{
+    RpcHandler,
+    rpc::RpcApiContext,
+    utils::{RpcErr, RpcRequest},
+};
 use core::net::SocketAddr;
 use ethrex_common::H256;
-use ethrex_p2p::{kademlia::PeerData, rlpx::p2p::Capability};
+use ethrex_p2p::{kademlia::PeerData, rlpx::p2p::Capability, types::Node};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -92,6 +96,45 @@ pub fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
         .map(RpcPeer::from)
         .collect::<Vec<_>>();
     Ok(serde_json::to_value(peers)?)
+}
+
+pub struct AddTrustedPeerRequest {
+    pub url: Node,
+}
+
+impl From<AddTrustedPeerRequest> for RpcRequest {
+    fn from(val: AddTrustedPeerRequest) -> Self {
+        RpcRequest {
+            method: "admin_addTrustedPeer".to_string(),
+            params: Some(vec![serde_json::json!(val.url.enode_url())]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for AddTrustedPeerRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        let url = params[0]
+            .as_str()
+            .unwrap()
+            .parse()
+            .map_err(|err| RpcErr::BadParams(err))?;
+        Ok(Self { url })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        context
+            .peer_handler
+            .add_trusted_peer(self.url.clone())
+            .await;
+        Ok(serde_json::to_value(true)?)
+    }
 }
 
 #[cfg(test)]
