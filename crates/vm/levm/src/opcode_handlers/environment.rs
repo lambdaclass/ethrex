@@ -100,12 +100,21 @@ impl<'a> VM<'a> {
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        data.copy_from_slice(
-            current_call_frame
-                .calldata
-                .get(offset..(offset.checked_add(32).ok_or(InternalError::Overflow)?))
-                .ok_or(InternalError::Slicing)?,
-        );
+
+        let offset_end = offset
+            .checked_add(32)
+            .ok_or(InternalError::Overflow)?
+            .min(current_call_frame.calldata.len());
+
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        {
+            let copied_size = offset_end - offset;
+
+            // the slice is verified previously to be correct. (copied_size <= 32)
+            if let Some(src_data) = current_call_frame.calldata.get(offset..offset_end) {
+                data[..copied_size].copy_from_slice(src_data);
+            }
+        }
 
         let result = u256_from_big_endian_const(data);
 
@@ -156,17 +165,20 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| InternalError::TypeConversion)?;
 
-        data.copy_from_slice(
-            current_call_frame
-                .calldata
-                .get(
-                    calldata_offset
-                        ..(calldata_offset
-                            .checked_add(size)
-                            .ok_or(InternalError::Overflow)?),
-                )
-                .ok_or(InternalError::Slicing)?,
-        );
+        let offset_end = calldata_offset
+            .checked_add(size)
+            .ok_or(InternalError::Overflow)?
+            .min(current_call_frame.calldata.len());
+
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        {
+            let copied_size = offset_end - calldata_offset;
+
+            // the slice is verified previously to be correct. (copied_size <= size)
+            if let Some(src_data) = current_call_frame.calldata.get(calldata_offset..offset_end) {
+                data[..copied_size].copy_from_slice(src_data);
+            }
+        }
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
@@ -293,11 +305,20 @@ impl<'a> VM<'a> {
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?;
 
-            data.copy_from_slice(
-                bytecode
-                    .get(offset..(offset.checked_add(size).ok_or(InternalError::Overflow)?))
-                    .ok_or(InternalError::Slicing)?,
-            );
+            let offset_end = offset
+                .checked_add(size)
+                .ok_or(InternalError::Overflow)?
+                .min(bytecode.len());
+
+            #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+            {
+                let copied_size = offset_end - offset;
+
+                // the slice is verified previously to be correct. (copied_size <= size)
+                if let Some(src_data) = bytecode.get(offset..offset_end) {
+                    data[..copied_size].copy_from_slice(src_data);
+                }
+            }
         }
 
         memory::try_store_data(
@@ -358,17 +379,23 @@ impl<'a> VM<'a> {
         // I would've used copy_from_slice but it can panic.
         let mut data = vec![0u8; size];
 
-        data.copy_from_slice(
-            current_call_frame
+        let offset_end = returndata_offset
+            .checked_add(size)
+            .ok_or(InternalError::Overflow)?
+            .min(current_call_frame.sub_return_data.len());
+
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        {
+            let copied_size = offset_end - returndata_offset;
+
+            // the slice is verified previously to be correct. (copied_size <= size)
+            if let Some(src_data) = current_call_frame
                 .sub_return_data
-                .get(
-                    returndata_offset
-                        ..(returndata_offset
-                            .checked_add(size)
-                            .ok_or(InternalError::Overflow)?),
-                )
-                .ok_or(InternalError::Slicing)?,
-        );
+                .get(returndata_offset..offset_end)
+            {
+                data[..copied_size].copy_from_slice(src_data);
+            }
+        }
 
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
