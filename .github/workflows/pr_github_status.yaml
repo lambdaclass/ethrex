@@ -22,6 +22,8 @@ jobs:
             const newStatus = "In Review";
             const orgLogin = "lambdaclass";
 
+            // ========== Functions ==========
+
             async function getProject(org, number) {
               const res = await github.graphql(`
                 query($org: String!) {
@@ -128,20 +130,17 @@ jobs:
               `, { projectId, itemId, fieldId, optionId });
             }
 
-            async function main() {
-              const project = await getProject(orgLogin, projectNumber);
-              const projectId = project.id;
 
-              const item = await findProjectItem(projectId, pr.number);
-              if (!item) {
-                console.log(`PR #${pr.number} not found in project.`);
-                return;
-              }
+            const project = await getProject(orgLogin, projectNumber);
+            const projectId = project.id;
 
-              console.log(`PR #${pr.number} found in project with item ID: ${item.id}`);
-
-              const { fieldId, optionId } = await getStatusFieldAndOption(projectId, statusFieldName, newStatus);
-              await updateProjectItemField(projectId, item.id, fieldId, optionId);
+            const item = await findProjectItem(projectId, pr.number);
+            if (!item) {
+              console.log(`PR #${pr.number} not found in project.`);
+              return;
             }
 
-            await main();
+            console.log(`PR #${pr.number} found in project with item ID: ${item.id}`);
+
+            const { fieldId, optionId } = await getStatusFieldAndOption(projectId, statusFieldName, newStatus);
+            await updateProjectItemField(projectId, item.id, fieldId, optionId);
