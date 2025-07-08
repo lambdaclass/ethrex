@@ -315,6 +315,7 @@ fn read_tdx_deployment_address(name: &str) -> Address {
 }
 
 fn read_vk(path: &str) -> Result<Bytes, DeployerError> {
+    info!(?path, "Reading vk");
     std::fs::read(path)
         .map(|bytes| bytes.into())
         .map_err(DeployerError::from)
@@ -331,6 +332,7 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
         Ok(Bytes::new())
     } else {
         vk_path.as_deref().map(read_vk).unwrap_or_else(|| {
+            info!(?prover_type, "Using vk from local repo");
             prover_type
                 .vk(opts.aligned)?
                 .map(Bytes::from)
