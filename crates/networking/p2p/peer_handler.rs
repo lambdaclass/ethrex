@@ -833,6 +833,10 @@ impl PeerHandler {
         table.insert_node_forced(node);
     }
 
+    pub async fn count_total_peers(&self) -> usize {
+        self.peer_table.lock().await.iter_peers().count()
+    }
+
     pub async fn remove_peer(&self, peer_id: H256) {
         debug!("Removing peer with id {:?}", peer_id);
         let mut table = self.peer_table.lock().await;
