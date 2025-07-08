@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752011732001,
+  "lastUpdate": 1752012580989,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5832,6 +5832,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012639507575757576,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d1ceb86cb32f8949ecd3fc279084f6921c3e757f",
+          "message": "fix(l1): ignore unknown protocols in capability exchange (#3543)\n\n**Motivation**\n\nFailing due to a peer having extra capabilities can make us lose\nexceptional peers. Hence, we want to ignore any extra capabilities they\nhave.\n\n**Description**\n\nThis PR changes `Capability.protocol` to be an 8-byte array instead of a\nstring, allowing us to store any string we receive.",
+          "timestamp": "2025-07-08T17:12:21Z",
+          "tree_id": "b73d081e492be3f36630c76381bba95066e5b585",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d1ceb86cb32f8949ecd3fc279084f6921c3e757f"
+        },
+        "date": 1752012569899,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006479281553398058,
             "unit": "Mgas/s"
           }
         ]
