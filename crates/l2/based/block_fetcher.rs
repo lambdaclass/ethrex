@@ -195,6 +195,10 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
         fetch_pending_logs(state).await?;
 
         store_safe_batches(state).await?;
+
+        store_verify_tx_in_safe_batches(state).await?;
+
+        remove_past_logs(state).await?;
     }
 
     debug!("Node is up to date");
@@ -696,4 +700,30 @@ async fn build_safe_batch(
         commit_tx,
         verify_tx,
     })
+}
+
+async fn store_verify_tx_in_safe_batches(
+    state: &mut BlockFetcherState,
+) -> Result<(), BlockFetcherError> {
+    for (batch_number, verify_log) in &state.pending_verify_logs {
+        if state.rollup_store.contains_batch(&batch_number).await? {
+            state
+                .rollup_store
+                .store_verify_tx_by_batch(*batch_number, verify_log.transaction_hash)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn remove_past_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
+    state
+        .pending_commit_logs
+        .retain(|&key, _| key > state.latest_safe_batch);
+
+    state
+        .pending_verify_logs
+        .retain(|&key, _| key > state.latest_safe_batch);
+
+    Ok(())
 }
