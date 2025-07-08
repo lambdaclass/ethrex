@@ -54,7 +54,7 @@ fn get_contract_dependencies(contracts_path: &Path) {
             std::process::exit(1);
         }
     } else {
-        ethrex_sdk_contract_utils::download_contract_deps(&contracts_path)
+        ethrex_sdk_contract_utils::download_contract_deps(contracts_path)
             .expect("failed to download contract dependencies");
     }
 }
