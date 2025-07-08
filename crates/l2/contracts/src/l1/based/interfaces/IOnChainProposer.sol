@@ -20,9 +20,9 @@ interface IOnChainProposer {
     event BatchCommitted(uint256 indexed number, bytes32 indexed newStateRoot);
 
     /// @notice Emitted when a range of batches is verified.
-    /// @param initialBatchId The ID of the first batch in the verified range.
-    /// @param finalBatchId The ID of the last batch in the verified range.
-    event BatchesVerified(uint256 indexed initialBatchId, uint256 indexed finalBatchId);
+    /// @param initialBatchNumber The ID of the first batch in the verified range.
+    /// @param finalBatchNumber The ID of the last batch in the verified range.
+    event BatchesVerified(uint256 indexed initialBatchNumber, uint256 indexed finalBatchNumber);
 
     /// @notice Set the bridge address for the first time.
     /// @dev This method is separated from initialize because both the CommonBridge
