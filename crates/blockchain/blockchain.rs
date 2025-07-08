@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::info;
+use ::tracing::{info, warn};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -500,6 +500,7 @@ impl Blockchain {
             let BlockExecutionResult { receipts, .. } = self
                 .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
                 .map_err(|err| {
+                    warn!("Failed to execute block: {}", block.header.number);
                     (
                         err,
                         Some(BatchBlockProcessingFailure {
