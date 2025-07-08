@@ -8,12 +8,12 @@ use ethrex_common::{
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use libsql::{
-    Builder, Connection, Row, Rows, Transaction, Value,
+    Builder, Database, Row, Rows, Transaction, Value,
     params::{IntoParams, Params},
 };
 
 pub struct SQLStore {
-    conn: Connection,
+    db: Database,
 }
 
 impl Debug for SQLStore {
@@ -42,18 +42,19 @@ impl SQLStore {
     pub fn new(path: &str) -> Result<Self, RollupStoreError> {
         futures::executor::block_on(async {
             let db = Builder::new_local(path).build().await?;
-            let conn = db.connect()?;
-            let store = SQLStore { conn };
+            let store = SQLStore { db };
             store.init_db().await?;
             Ok(store)
         })
     }
     async fn execute<T: IntoParams>(&self, sql: &str, params: T) -> Result<(), RollupStoreError> {
-        self.conn.execute(sql, params).await?;
+        let conn = self.db.connect()?;
+        conn.execute(sql, params).await?;
         Ok(())
     }
     async fn query<T: IntoParams>(&self, sql: &str, params: T) -> Result<Rows, RollupStoreError> {
-        Ok(self.conn.query(sql, params).await?)
+        let conn = self.db.connect()?;
+        Ok(conn.query(sql, params).await?)
     }
     async fn init_db(&self) -> Result<(), RollupStoreError> {
         let mut rows = self
@@ -86,7 +87,8 @@ impl SQLStore {
                 existing_tx.execute(query, params).await?;
             }
         } else {
-            let tx = self.conn.transaction().await?;
+            let connection = self.db.connect()?;
+            let tx = connection.transaction().await?;
             for (query, params) in queries {
                 tx.execute(query, params).await?;
             }
@@ -344,7 +346,8 @@ impl StoreEngineRollup for SQLStore {
         batch_number: u64,
         block_numbers: Vec<BlockNumber>,
     ) -> Result<(), RollupStoreError> {
-        let tx = self.conn.transaction().await?;
+        let conn = self.db.connect()?;
+        let tx = conn.transaction().await?;
         self.store_block_numbers_by_batch_in_tx(batch_number, block_numbers, Some(&tx))
             .await?;
         tx.commit().await.map_err(RollupStoreError::from)
@@ -668,7 +671,8 @@ impl StoreEngineRollup for SQLStore {
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
-        let transaction = self.conn.transaction().await?;
+        let conn = self.db.connect()?;
+        let transaction = conn.transaction().await?;
 
         for block_number in blocks.iter() {
             self.store_batch_number_by_block_in_tx(*block_number, batch.number, Some(&transaction))
