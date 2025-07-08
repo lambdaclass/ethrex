@@ -7,6 +7,7 @@ use crate::{
         account_info_log_entry::AccountInfoLogEntry,
         account_storage_log_entry::AccountStorageLogEntry, block_num_hash::BlockNumHash,
     },
+    trie_db::utils::node_hash_to_fixed_size,
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -20,6 +21,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
+    thread,
 };
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
@@ -105,8 +107,23 @@ pub struct SnapState {
 
 impl Store {
     pub fn new() -> Self {
-        Self::default()
+        let store = Self::default();
+
+        let store_for_pruning = store.clone();
+
+        let _join = thread::Builder::new()
+            .name("trie_pruner🗑️".to_string())
+            .spawn(move || {
+                loop {
+                    thread::sleep(std::time::Duration::from_secs(1));
+                    #[allow(clippy::unwrap_used)]
+                    store_for_pruning.prune_state_and_storage_log().unwrap();
+                }
+            });
+
+        store
     }
+
     fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
         self.0.lock().map_err(|_| StoreError::LockError)
     }
@@ -119,64 +136,64 @@ impl StoreEngine for Store {
 
         // We only need to update the flat tables if the update batch contains blocks
         // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
-        if let (Some(first_block), Some(last_block)) =
+        let (Some(first_block), Some(last_block)) =
             (update_batch.blocks.first(), update_batch.blocks.last())
-        {
-            let parent_block = (
-                first_block.header.number - 1,
-                first_block.header.parent_hash,
-            )
-                .into();
+        else {
+            return Ok(());
+        };
 
-            let final_block = (last_block.header.number, last_block.hash()).into();
-            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
+        let parent_block = (
+            first_block.header.number - 1,
+            first_block.header.parent_hash,
+        )
+            .into();
+
+        let final_block = (last_block.header.number, last_block.hash()).into();
+        for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned() {
+            let log = AccountInfoLogEntry {
+                address: addr.0,
+                info: new_info,
+                previous_info: old_info,
+            };
+            store
+                .account_state_logs
+                .entry(final_block)
+                .or_default()
+                .push((parent_block, log));
+        }
+
+        for storage_log in update_batch.storage_log_updates.iter().cloned() {
+            store
+                .account_storage_logs
+                .entry(final_block)
+                .or_default()
+                .push((parent_block, storage_log));
+        }
+
+        let current_snapshot = store.current_snapshot_block.unwrap_or_default();
+
+        // If the current snapshot is the parent block, we can update the account and storage
+        if current_snapshot == parent_block {
+            for (addr, _old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
-                let log = AccountInfoLogEntry {
-                    address: addr.0,
-                    info: new_info,
-                    previous_info: old_info,
-                };
-                store
-                    .account_state_logs
-                    .entry(final_block)
-                    .or_default()
-                    .push((parent_block, log));
-            }
-
-            for storage_log in update_batch.storage_log_updates.iter().cloned() {
-                store
-                    .account_storage_logs
-                    .entry(final_block)
-                    .or_default()
-                    .push((parent_block, storage_log));
-            }
-
-            let current_snapshot = store.current_snapshot_block.unwrap_or_default();
-
-            // If the current snapshot is the parent block, we can update the account and storage
-            if current_snapshot == parent_block {
-                for (addr, _old_info, new_info) in
-                    update_batch.account_info_log_updates.iter().cloned()
-                {
-                    if new_info == AccountInfo::default() {
-                        store.account_info.remove(&addr.0);
-                    } else {
-                        store.account_info.insert(addr.0, new_info);
-                    }
+                if new_info == AccountInfo::default() {
+                    store.account_info.remove(&addr.0);
+                } else {
+                    store.account_info.insert(addr.0, new_info);
                 }
-
-                for entry in update_batch.storage_log_updates.iter().cloned() {
-                    if entry.new_value.is_zero() {
-                        store.account_storage.remove(&(entry.address, entry.slot));
-                    } else {
-                        store
-                            .account_storage
-                            .insert((entry.address, entry.slot), entry.new_value);
-                    }
-                }
-
-                store.current_snapshot_block = Some(final_block);
             }
+
+            for entry in update_batch.storage_log_updates.iter().cloned() {
+                if entry.new_value.is_zero() {
+                    store.account_storage.remove(&(entry.address, entry.slot));
+                } else {
+                    store
+                        .account_storage
+                        .insert((entry.address, entry.slot), entry.new_value);
+                }
+            }
+
+            store.current_snapshot_block = Some(final_block);
         }
 
         {
@@ -185,9 +202,26 @@ impl StoreEngine for Store {
                 .state_trie_nodes
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in update_batch.account_updates {
+            for (node_hash, mut node_data) in update_batch.account_updates {
+                tracing::debug!(
+                    node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                    parent_block_number = parent_block.block_number,
+                    parent_block_hash = hex::encode(parent_block.block_hash),
+                    final_block_number = final_block.block_number,
+                    final_block_hash = hex::encode(final_block.block_hash),
+                    "[WRITING STATE TRIE NODE]",
+                );
+                node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                 state_trie_store.insert(node_hash, node_data);
             }
+        }
+
+        for node_hash in update_batch.invalidated_state_nodes {
+            store
+                .state_trie_pruning_log
+                .entry(final_block)
+                .or_default()
+                .push(node_hash.0);
         }
 
         // store code updates
@@ -195,15 +229,36 @@ impl StoreEngine for Store {
             store.account_codes.insert(hashed_address, code);
         }
 
-        for (hashed_address, nodes, _) in update_batch.storage_updates {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(hashed_address)
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
+        for (hashed_address, nodes, invalid_nodes) in update_batch.storage_updates {
+            let key_address: [u8; 32] = hashed_address.into();
+
+            for (node_hash, mut node_data) in nodes {
+                tracing::debug!(
+                    hashed_address = hex::encode(hashed_address.0),
+                    node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                    parent_block_number = parent_block.block_number,
+                    parent_block_hash = hex::encode(parent_block.block_hash),
+                    final_block_number = final_block.block_number,
+                    final_block_hash = hex::encode(final_block.block_hash),
+                    "[WRITING STORAGE TRIE NODE]",
+                );
+
+                node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+                store
+                    .storage_trie_nodes
+                    .entry(hashed_address)
+                    .or_default()
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?
+                    .insert(node_hash, node_data);
+            }
+            for node_hash in invalid_nodes {
+                let key_hash = node_hash_to_fixed_size(node_hash.into());
+                store
+                    .storage_trie_pruning_log
+                    .entry(final_block)
+                    .or_default()
+                    .push((key_address, key_hash));
             }
         }
 
@@ -234,7 +289,7 @@ impl StoreEngine for Store {
             }
         }
 
-        Ok(())
+        self.prune_state_and_storage_log()
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
