@@ -174,14 +174,18 @@ impl InternalError {
 pub enum PrecompileError {
     #[error("Error while parsing the calldata")]
     ParsingInputError,
-    #[error("Error while increasing consumed gas")]
-    GasConsumedOverflow,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
-    #[error("There was an error evaluating the point")]
-    EvaluationError,
-    #[error("This is a default error")]
-    DefaultError,
+    #[error("Kzg error: {0}")]
+    KzgError(String),
+    #[error("Invalid point")]
+    InvalidPoint,
+    #[error("The point is not in the curve")]
+    PointNotInTheCurve,
+    #[error("The point is not in the subgroup")]
+    PointNotInSubgroup,
+    #[error("BN254 ate pairing error")]
+    BN254AtePairingError,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
