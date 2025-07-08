@@ -1864,7 +1864,7 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
             )?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
-            struct_serializer.serialize_field("from", &self.from)?;
+            struct_serializer.serialize_field("sender", &self.from)?;
             struct_serializer.end()
         }
     }
@@ -2165,7 +2165,7 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                from: deserialize_field::<Address, D>(&mut map, "from")?,
+                from: deserialize_field::<Address, D>(&mut map, "sender")?,
             })
         }
     }
