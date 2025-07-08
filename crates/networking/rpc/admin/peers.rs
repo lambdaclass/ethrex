@@ -50,11 +50,6 @@ impl From<PeerData> for RpcPeer {
         // Fill protocol data
         for cap in &peer.supported_capabilities {
             match cap.protocol() {
-                "p2p" => {
-                    protocols.p2p = Some(ProtocolData {
-                        version: cap.version,
-                    })
-                }
                 "eth" => {
                     protocols.eth = Some(ProtocolData {
                         version: cap.version,
