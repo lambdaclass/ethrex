@@ -22,48 +22,77 @@ jobs:
             const newStatus = "In Review";
             const orgLogin = "lambdaclass";
 
-            // Fetch first 100 projects in the organization
-            const projects = await github.graphql(`
-              query($org: String!) {
-                organization(login: $org) {
-                  projectsV2(first: 100) {
-                    nodes {
-                      id
-                      title
-                      number
+            async function getProject(org, number) {
+              const res = await github.graphql(`
+                query($org: String!) {
+                  organization(login: $org) {
+                    projectsV2(first: 100) {
+                      nodes {
+                        id
+                        title
+                        number
+                      }
                     }
                   }
                 }
-              }
-            `, { org: orgLogin });
-
-            const project = projects.organization.projectsV2.nodes.find(p => p.number === projectNumber);
-            if (!project) {
-              throw new Error(`Project #${projectNumber} not found in org ${orgLogin}`);
+              `, { org });
+              const project = res.organization.projectsV2.nodes.find(p => p.number === number);
+              if (!project) throw new Error(`Project #${number} not found in org ${org}`);
+              return project;
             }
-            const projectId = project.id;
 
+            async function findProjectItem(projectId, prNumber) {
+              let hasNextPage = true;
+              let after = null;
 
-            // Fetch all items of the project, in batches of 100 elements.
-            let hasNextPage = true;
-            let after = null;
+              while (hasNextPage) {
+                const res = await github.graphql(`
+                  query($projectId: ID!, $after: String) {
+                    node(id: $projectId) {
+                      ... on ProjectV2 {
+                        items(first: 100, after: $after) {
+                          pageInfo {
+                            hasNextPage
+                            endCursor
+                          }
+                          nodes {
+                            id
+                            content {
+                              ... on PullRequest {
+                                number
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `, { projectId, after });
 
-            while (hasNextPage) {
-              const result = await github.graphql(`
-                query($projectId: ID!, $after: String) {
+                const items = res.node.items.nodes;
+                const found = items.find(i => i.content?.number === prNumber);
+                if (found) return found;
+
+                hasNextPage = res.node.items.pageInfo.hasNextPage;
+                after = res.node.items.pageInfo.endCursor;
+              }
+
+              return null;
+            }
+
+            async function getStatusFieldAndOption(projectId, fieldName, optionName) {
+              const res = await github.graphql(`
+                query($projectId: ID!) {
                   node(id: $projectId) {
                     ... on ProjectV2 {
-                      items(first: 100, after: $after) {
-                        pageInfo {
-                          hasNextPage
-                          endCursor
-                        }
+                      fields(first: 100) {
                         nodes {
-                          id
-                          content {
-                            ... on PullRequest {
+                          ... on ProjectV2SingleSelectField {
+                            id
+                            name
+                            options {
                               id
-                              number
+                              name
                             }
                           }
                         }
@@ -71,82 +100,48 @@ jobs:
                     }
                   }
                 }
-              `, {
-                projectId,
-                after
-              });
+              `, { projectId });
 
-              const items = result.node.items.nodes;
-              const foundItem = items.find(i => i.content?.number === pr.number);
-              if (foundItem) {
-                item = foundItem;
-                break;
-              }
+              const field = res.node.fields.nodes.find(f => f.name === fieldName);
+              if (!field) throw new Error(`Field '${fieldName}' not found`);
 
-              hasNextPage = result.node.items.pageInfo.hasNextPage;
-              after = result.node.items.pageInfo.endCursor;
+              const option = field.options.find(opt => opt.name === optionName);
+              if (!option) throw new Error(`Option '${optionName}' not found in field '${fieldName}'`);
+
+              return { fieldId: field.id, optionId: option.id };
             }
 
-
-            let itemId;
-            if (item) {
-              console.log(`PR #${pr.number} found in project with item ID: ${item.id}`);
-              itemId = item.id;
-            } else {
-              console.log(`PR #${pr.number} not found in project.`);
-            }
-
-            // Validate that project has the correct field and options and get them.
-            const fieldsResult = await github.graphql(`
-              query($projectId: ID!) {
-                node(id: $projectId) {
-                  ... on ProjectV2 {
-                    fields(first: 100) {
-                      nodes {
-                        ... on ProjectV2SingleSelectField {
-                          id
-                          name
-                          options {
-                            id
-                            name
-                          }
-                        }
-                      }
+            async function updateProjectItemField(projectId, itemId, fieldId, optionId) {
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { singleSelectOptionId: $optionId }
+                  }) {
+                    projectV2Item {
+                      id
                     }
                   }
                 }
-              }
-            `, { projectId });
-
-            const statusField = fieldsResult.node.fields.nodes.find(f => f.name === statusFieldName);
-            if (!statusField) {
-              throw new Error(`Field '${statusFieldName}' not found`);
+              `, { projectId, itemId, fieldId, optionId });
             }
 
-            const option = statusField.options.find(opt => opt.name === newStatus);
-            if (!option) {
-              throw new Error(`Option '${newStatus}' not found in field '${statusFieldName}'`);
+            async function main() {
+              const project = await getProject(orgLogin, projectNumber);
+              const projectId = project.id;
+
+              const item = await findProjectItem(projectId, pr.number);
+              if (!item) {
+                console.log(`PR #${pr.number} not found in project.`);
+                return;
+              }
+
+              console.log(`PR #${pr.number} found in project with item ID: ${item.id}`);
+
+              const { fieldId, optionId } = await getStatusFieldAndOption(projectId, statusFieldName, newStatus);
+              await updateProjectItemField(projectId, item.id, fieldId, optionId);
             }
 
-            // Update the Status field
-            await github.graphql(`
-              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-                updateProjectV2ItemFieldValue(input: {
-                  projectId: $projectId,
-                  itemId: $itemId,
-                  fieldId: $fieldId,
-                  value: {
-                    singleSelectOptionId: $optionId
-                  }
-                }) {
-                  projectV2Item {
-                    id
-                  }
-                }
-              }
-            `, {
-              projectId,
-              itemId,
-              fieldId: statusField.id,
-              optionId: option.id
-            });
+            await main();
