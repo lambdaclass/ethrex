@@ -67,6 +67,14 @@ jobs:
             let item = itemsResult.node.items.nodes.find(i => i.content?.number === pr.number);
             let itemId;
 
+            if (item) {
+              console.log(`PR #${pr.number} found in project with item ID: ${item.id}`);
+              itemId = item.id;
+            } else {
+              console.log(`PR #${pr.number} not found in project.`);
+            }
+
+            /*
             // Add PR to project if not already in
             if (!item) {
               console.log(`PR #${pr.number} not found in project. Adding it...`);
@@ -145,3 +153,4 @@ jobs:
               fieldId: statusField.id,
               optionId: option.id
             });
+            */
