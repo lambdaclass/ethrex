@@ -1,10 +1,4 @@
-use std::{
-    fmt::{self},
-    path::{Path, PathBuf},
-};
-
 use ethrex_common::types::{Genesis, GenesisError};
-use lazy_static::lazy_static;
 
 pub const HOLESKY_GENESIS_CONTENTS: &str = include_str!("../../ethrex/networks/holesky/genesis.json");
 pub const SEPOLIA_GENESIS_CONTENTS: &str = include_str!("../../ethrex/networks/sepolia/genesis.json");
