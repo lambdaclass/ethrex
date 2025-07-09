@@ -144,7 +144,7 @@ impl SubcommandExecute {
                 )
                 .await?;
 
-                let (receipt, transitions) = run_tx(cache, tx_hash, l2).await?;
+                let (receipt, transitions) = run_tx(cache, tx_hash, l2, Default::default()).await?;
                 print_receipt(receipt);
                 for transition in transitions {
                     print_transition(transition);

@@ -15,7 +15,7 @@ use ethrex_common::types::{
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
-use ethrex_levm::vm::VMType;
+use ethrex_levm::vm::{LevmCache, VMType};
 use levm::LEVM;
 use revm::REVM;
 use revm::db::EvmState;
@@ -60,6 +60,7 @@ pub enum Evm {
     LEVM {
         db: GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     },
 }
 
@@ -86,6 +87,7 @@ impl Evm {
             EvmEngine::LEVM => Evm::LEVM {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
                 vm_type: VMType::L1,
+                cache: Default::default(),
             },
         }
     }
@@ -102,6 +104,7 @@ impl Evm {
         let evm = Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
             vm_type: VMType::L2,
+            cache: Default::default(),
         };
 
         Ok(evm)
@@ -119,13 +122,16 @@ impl Evm {
         Evm::LEVM {
             db: GeneralizedDatabase::new(store, CacheDB::new()),
             vm_type,
+            cache: Default::default(),
         }
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
-            Evm::LEVM { db, vm_type } => LEVM::execute_block(block, db, vm_type.clone()),
+            Evm::LEVM { db, vm_type, cache } => {
+                LEVM::execute_block(block, db, vm_type.clone(), cache.clone())
+            }
         }
     }
 
@@ -161,9 +167,9 @@ impl Evm {
 
                 Ok((receipt, execution_result.gas_used()))
             }
-            Evm::LEVM { db, vm_type } => {
+            Evm::LEVM { db, vm_type, cache } => {
                 let execution_report =
-                    LEVM::execute_tx(tx, sender, block_header, db, vm_type.clone())?;
+                    LEVM::execute_tx(tx, sender, block_header, db, vm_type.clone(), cache.clone())?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
@@ -206,16 +212,26 @@ impl Evm {
 
                 Ok(())
             }
-            Evm::LEVM { db, vm_type } => {
+            Evm::LEVM { db, vm_type, cache } => {
                 let chain_config = db.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    LEVM::beacon_root_contract_call(block_header, db, vm_type.clone())?;
+                    LEVM::beacon_root_contract_call(
+                        block_header,
+                        db,
+                        vm_type.clone(),
+                        cache.clone(),
+                    )?;
                 }
 
                 if fork >= Fork::Prague {
-                    LEVM::process_block_hash_history(block_header, db, vm_type.clone())?;
+                    LEVM::process_block_hash_history(
+                        block_header,
+                        db,
+                        vm_type.clone(),
+                        cache.clone(),
+                    )?;
                 }
 
                 Ok(())
@@ -253,9 +269,13 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
         match self {
-            Evm::LEVM { db, vm_type } => {
-                levm::extract_all_requests_levm(receipts, db, header, vm_type.clone())
-            }
+            Evm::LEVM { db, vm_type, cache } => levm::extract_all_requests_levm(
+                receipts,
+                db,
+                header,
+                vm_type.clone(),
+                cache.clone(),
+            ),
             Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
         }
     }
@@ -271,8 +291,8 @@ impl Evm {
                 let spec_id = fork_to_spec_id(fork);
                 self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
             }
-            Evm::LEVM { db, vm_type } => {
-                LEVM::simulate_tx_from_generic(tx, header, db, vm_type.clone())
+            Evm::LEVM { db, vm_type, cache } => {
+                LEVM::simulate_tx_from_generic(tx, header, db, vm_type.clone(), cache.clone())
             }
         }
     }
@@ -289,8 +309,8 @@ impl Evm {
                 self::revm::helpers::create_access_list(tx, header, state, spec_id)?
             }
 
-            Evm::LEVM { db, vm_type } => {
-                LEVM::create_access_list(tx.clone(), header, db, vm_type.clone())?
+            Evm::LEVM { db, vm_type, cache } => {
+                LEVM::create_access_list(tx.clone(), header, db, vm_type.clone(), cache.clone())?
             }
         };
         match result {
