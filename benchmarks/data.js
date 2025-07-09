@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752032622286,
+  "lastUpdate": 1752033449928,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6095,6 +6095,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012651488151658769,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5a14d806d0c84aef0266de503cbd451cab599d8b",
+          "message": "feat(l2): add L1From field to privileged transaction events (#3477)\n\n**Motivation**\n\nAs described on #3452, it is convenient for client applications to be\nable to search their sent privileged transactions.\n\n**Description**\n\nThis PR drops indexing from all PrivilegedTxSent fields and adds an\nindexed L1From member.\n \nCloses #3452\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-07-08T19:04:41Z",
+          "tree_id": "54d832d221764ef90884589a6bd5db81bd0fed13",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a14d806d0c84aef0266de503cbd451cab599d8b"
+        },
+        "date": 1752033449239,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006542803921568628,
             "unit": "Mgas/s"
           }
         ]
