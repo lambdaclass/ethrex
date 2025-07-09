@@ -79,7 +79,7 @@ async fn main() -> eyre::Result<()> {
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
+    let blockchain = init_blockchain(opts.evm.clone(), store.clone(), BlockchainType::L1);
 
     let signer = get_signer(&data_dir);
 

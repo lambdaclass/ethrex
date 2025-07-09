@@ -262,7 +262,9 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(
-                        EvmEngine::LEVM,
+                        EvmEngine::LEVM {
+                            cache: Default::default(),
+                        },
                         store_with_genesis.clone(),
                         BlockchainType::L1, // TODO: Should we support L2?
                     );

@@ -806,8 +806,8 @@ impl Blockchain {
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
         let evm = match self.r#type {
-            BlockchainType::L1 => Evm::new_for_l1(self.evm_engine, vm_db),
-            BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
+            BlockchainType::L1 => Evm::new_for_l1(self.evm_engine.clone(), vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(self.evm_engine.clone(), vm_db)?,
         };
         Ok(evm)
     }

@@ -284,8 +284,12 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context =
-            PayloadBuildContext::new(payload, self.evm_engine, &self.storage, self.r#type.clone())?;
+        let mut context = PayloadBuildContext::new(
+            payload,
+            self.evm_engine.clone(),
+            &self.storage,
+            self.r#type.clone(),
+        )?;
 
         if let BlockchainType::L1 = self.r#type {
             self.apply_system_operations(&mut context)?;

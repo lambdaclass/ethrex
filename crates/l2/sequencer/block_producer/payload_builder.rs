@@ -44,7 +44,7 @@ pub async fn build_payload(
     debug!("Building payload");
     let mut context = PayloadBuildContext::new(
         payload,
-        blockchain.evm_engine,
+        blockchain.evm_engine.clone(),
         store,
         blockchain.r#type.clone(),
     )?;

@@ -493,7 +493,28 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
 
     // Assign code and code_address to callframe
     vm.current_call_frame_mut()?.code_address = code_address;
-    vm.current_call_frame_mut()?.set_code(bytecode)?;
+
+    let invalid_jumps = if let Some(invalid_jumps) = vm
+        .cache
+        .invalid_jump_dests
+        .read()
+        .map_err(|_| VMError::Internal(InternalError::Custom("levm cache error".to_string())))?
+        .get(&code_address)
+    {
+        invalid_jumps.clone()
+    } else {
+        let invalid_jumps = get_invalid_jump_destinations(&bytecode)?;
+
+        vm.cache
+            .invalid_jump_dests
+            .write()
+            .map_err(|_| VMError::Internal(InternalError::Custom("levm cache error".to_string())))?
+            .insert(code_address, invalid_jumps.clone());
+
+        invalid_jumps
+    };
+    vm.current_call_frame_mut()?
+        .set_code(bytecode, Some(invalid_jumps))?;
 
     Ok(())
 }

@@ -21,7 +21,7 @@ use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::vm::VMType;
+use ethrex_levm::vm::{LevmCache, VMType};
 use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
@@ -45,8 +45,9 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<BlockExecutionResult, EvmError> {
-        Self::prepare_block(block, db, vm_type.clone())?;
+        Self::prepare_block(block, db, vm_type.clone(), cache.clone())?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -54,7 +55,14 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
+            let report = Self::execute_tx(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type.clone(),
+                cache.clone(),
+            )?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -75,7 +83,7 @@ impl LEVM {
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, cache)?,
             VMType::L2 => Default::default(),
         };
 
@@ -132,9 +140,10 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, cache);
 
         vm.execute().map_err(VMError::into)
     }
@@ -151,6 +160,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
@@ -158,7 +168,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type, cache)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -282,6 +292,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<(), EvmError> {
         if let VMType::L2 = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -300,6 +311,7 @@ impl LEVM {
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
             vm_type,
+            cache,
         )?;
         Ok(())
     }
@@ -308,6 +320,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<(), EvmError> {
         if let VMType::L2 = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -322,6 +335,7 @@ impl LEVM {
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
             vm_type,
+            cache,
         )?;
         Ok(())
     }
@@ -329,6 +343,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2 = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -343,6 +358,7 @@ impl LEVM {
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
             vm_type,
+            cache,
         )?;
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
@@ -368,6 +384,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2 = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -382,6 +399,7 @@ impl LEVM {
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
             vm_type,
+            cache,
         )?;
 
         // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
@@ -408,19 +426,20 @@ impl LEVM {
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, db)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type.clone())?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type.clone(), cache.clone())?;
 
         vm.stateless_execute()?;
         let access_list = build_access_list(&vm.substate);
 
         // Execute the tx again, now with the created access list.
         tx.access_list = access_list.iter().map(|item| item.into()).collect();
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, cache)?;
 
         let report = vm.stateless_execute()?;
 
@@ -431,6 +450,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
@@ -442,12 +462,12 @@ impl LEVM {
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            Self::beacon_root_contract_call(block_header, db, vm_type.clone())?;
+            Self::beacon_root_contract_call(block_header, db, vm_type.clone(), cache.clone())?;
         }
 
         if fork >= Fork::Prague {
             //eip 2935: stores parent block hash in system contract
-            Self::process_block_hash_history(block_header, db, vm_type)?;
+            Self::process_block_hash_history(block_header, db, vm_type, cache)?;
         }
         Ok(())
     }
@@ -460,6 +480,7 @@ pub fn generic_system_contract_levm(
     contract_address: Address,
     system_address: Address,
     vm_type: VMType,
+    cache: LevmCache,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -492,7 +513,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, cache);
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -522,6 +543,7 @@ pub fn extract_all_requests_levm(
     db: &mut GeneralizedDatabase,
     header: &BlockHeader,
     vm_type: VMType,
+    cache: LevmCache,
 ) -> Result<Vec<Requests>, EvmError> {
     if let VMType::L2 = vm_type {
         return Err(EvmError::InvalidEVM(
@@ -536,11 +558,12 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type.clone())?
-        .output
-        .into();
+    let withdrawals_data: Vec<u8> =
+        LEVM::read_withdrawal_requests(header, db, vm_type.clone(), cache.clone())?
+            .output
+            .into();
     let consolidation_data: Vec<u8> =
-        LEVM::dequeue_consolidation_requests(header, db, vm_type.clone())?
+        LEVM::dequeue_consolidation_requests(header, db, vm_type.clone(), cache)?
             .output
             .into();
 
@@ -630,6 +653,7 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
+    cache: LevmCache,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -664,5 +688,12 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type))
+    Ok(VM::new(
+        env,
+        db,
+        &tx,
+        LevmCallTracer::disabled(),
+        vm_type,
+        cache,
+    ))
 }

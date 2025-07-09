@@ -90,7 +90,7 @@ impl Hook for L2Hook {
             // To prevent it from taking effect, we force it to revert
             vm.current_call_frame_mut()?.msg_value = U256::zero();
             vm.current_call_frame_mut()?
-                .set_code(vec![Opcode::INVALID.into()].into())?;
+                .set_code(vec![Opcode::INVALID.into()].into(), None)?;
             return Ok(());
         }
 
