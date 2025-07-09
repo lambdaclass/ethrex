@@ -51,6 +51,7 @@ impl Stack {
         Ok(values)
     }
 
+    #[inline(always)]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.

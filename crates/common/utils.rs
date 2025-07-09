@@ -2,6 +2,7 @@ use ethereum_types::U256;
 use hex::FromHexError;
 
 /// Converts a big endian slice to a u256, faster than `u256::from_big_endian`.
+#[inline]
 pub fn u256_from_big_endian(slice: &[u8]) -> U256 {
     let mut padded = [0u8; 32];
     padded[32 - slice.len()..32].copy_from_slice(slice);
@@ -20,6 +21,7 @@ pub fn u256_from_big_endian(slice: &[u8]) -> U256 {
 /// Converts a constant big endian slice to a u256, faster than `u256::from_big_endian` and `u256_from_big_endian`.
 ///
 /// Note: N should not exceed 32.
+#[inline]
 pub fn u256_from_big_endian_const<const N: usize>(slice: [u8; N]) -> U256 {
     const { assert!(N <= 32, "N must be less or equal to 32") };
 
