@@ -62,18 +62,20 @@ impl MemoryV2 {
 
     #[inline]
     pub fn resize(&mut self, new_memory_size: usize) -> Result<(), VMError> {
-        if new_memory_size == 0 {
+        if new_memory_size == 0 || new_memory_size <= self.len_gas {
             return Ok(());
         }
+
+        let new_memory_size = new_memory_size
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
 
         let current_len = self.current_len();
 
         #[allow(clippy::arithmetic_side_effects)]
         {
             if new_memory_size > self.len_gas {
-                self.len_gas = new_memory_size
-                    .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
-                    .ok_or(OutOfBounds)?;
+                self.len_gas = new_memory_size;
             }
         }
 
@@ -95,6 +97,10 @@ impl MemoryV2 {
 
     #[inline]
     pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
+        if size == 0 {
+            return Ok(Vec::new());
+        }
+
         let new_size = offset.checked_add(size).unwrap();
         self.resize(new_size)?;
 
@@ -145,11 +151,6 @@ impl MemoryV2 {
         #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
         buffer[real_offset..(real_offset + real_data_size)]
             .copy_from_slice(&data[..real_data_size]);
-
-        #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-        if real_data_size < data_size {
-            buffer[(real_offset + real_data_size)..(real_offset + data_size)].fill(0);
-        }
 
         Ok(())
     }
