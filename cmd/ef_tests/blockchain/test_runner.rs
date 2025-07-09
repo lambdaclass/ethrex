@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::Path,
-};
+use std::{collections::HashMap, path::Path};
 
 use crate::{
     deserialize::{PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX, SENDER_NOT_EOA_REGEX},
@@ -32,7 +29,7 @@ pub fn parse_and_execute(
     skipped_tests: Option<&[&str]>,
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_tests(path).into_iter().collect::<BTreeMap<_, _>>();
+    let tests = parse_tests(path).into_iter().collect::<HashMap<_, _>>();
 
     let mut failures = Vec::new();
 
