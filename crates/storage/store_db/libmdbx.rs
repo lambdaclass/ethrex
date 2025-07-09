@@ -28,6 +28,7 @@ use libmdbx::{
     orm::{Database, table},
     table_info,
 };
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
@@ -131,76 +132,199 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
-            // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            // store code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            for (hashed_address, nodes) in update_batch.storage_updates {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-            for block in update_batch.blocks {
-                // store block
-                let number = block.header.number;
-                let hash = block.hash();
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
-                        (number, hash, index as u64).into(),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
-                }
-
-                tx.upsert::<Bodies>(
-                    hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                )
+            let (err_send, err_recv) = std::sync::mpsc::sync_channel(1);
+            let mut state_trie_cursor = tx
+                .cursor::<StateTrieNodes>()
                 .map_err(StoreError::LibmdbxError)?;
-
-                tx.upsert::<Headers>(
-                    hash.into(),
-                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
-                )
+            // let mut storage_tries_cursor = tx
+            //     .cursor::<StorageTriesNodes>()
+            //     .map_err(StoreError::LibmdbxError)?;
+            let mut account_codes_cursor = tx
+                .cursor::<AccountCodes>()
                 .map_err(StoreError::LibmdbxError)?;
+            let mut receipts_cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+            let mut locations_cursor = tx
+                .cursor::<TransactionLocations>()
+                .map_err(StoreError::LibmdbxError)?;
+            let mut bodies_cursor = tx.cursor::<Bodies>().map_err(StoreError::LibmdbxError)?;
+            let mut headers_cursor = tx.cursor::<Headers>().map_err(StoreError::LibmdbxError)?;
+            let mut block_numbers_cursor = tx
+                .cursor::<BlockNumbers>()
+                .map_err(StoreError::LibmdbxError)?;
+            // FIXME: maybe use panics for error handling here
+            rayon::scope(|s| {
+                // store account updates
+                s.spawn(|_| {
+                    for (node_hash, node_data) in update_batch.account_updates {
+                        if let Err(e) = state_trie_cursor
+                            .upsert(node_hash, node_data)
+                            .map_err(StoreError::LibmdbxError)
+                        {
+                            // OK if full, we'll catch whichever other error happened first
+                            _ = err_send.try_send(e);
+                            return;
+                        }
+                    }
+                });
 
-                tx.upsert::<BlockNumbers>(hash.into(), number)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-            for (block_hash, receipts) in update_batch.receipts {
-                // store receipts
-                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
-                for mut entries in
-                    receipts
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, receipt)| {
-                            let key = (block_hash, index as u64).into();
-                            let receipt_rlp = receipt.encode_to_vec();
-                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                // store code updates
+                s.spawn(|_| {
+                    for (hashed_address, code) in update_batch.code_updates {
+                        if let Err(e) = account_codes_cursor
+                            .upsert(hashed_address.into(), code.into())
+                            .map_err(StoreError::LibmdbxError)
+                        {
+                            // OK if full, we'll catch whichever other error happened first
+                            _ = err_send.try_send(e);
+                            return;
+                        }
+                    }
+                });
+                s.spawn(|_| {
+                    for block in update_batch.blocks.iter() {
+                        // store block
+                        let number = block.header.number;
+                        let hash = block.hash();
+
+                        for (index, transaction) in block.body.transactions.iter().enumerate() {
+                            if let Err(e) = locations_cursor
+                                .upsert(
+                                    transaction.compute_hash().into(),
+                                    (number, hash, index as u64).into(),
+                                )
+                                .map_err(StoreError::LibmdbxError)
+                            {
+                                // OK if full, we'll catch whichever other error happened first
+                                _ = err_send.try_send(e);
+                                return;
+                            }
+                        }
+                    }
+                });
+
+                s.spawn(|_| {
+                    for block in update_batch.blocks.iter() {
+                        let hash = block.hash();
+                        if let Err(e) = bodies_cursor
+                            .upsert(
+                                hash.into(),
+                                BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                            )
+                            .map_err(StoreError::LibmdbxError)
+                        {
+                            // OK if full, we'll catch whichever other error happened first
+                            _ = err_send.try_send(e);
+                            return;
+                        }
+                    }
+                });
+
+                s.spawn(|_| {
+                    for block in update_batch.blocks.iter() {
+                        let hash = block.hash();
+                        if let Err(e) = headers_cursor
+                            .upsert(
+                                hash.into(),
+                                BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                            )
+                            .map_err(StoreError::LibmdbxError)
+                        {
+                            // OK if full, we'll catch whichever other error happened first
+                            _ = err_send.try_send(e);
+                            return;
+                        }
+                    }
+                });
+
+                s.spawn(|_| {
+                    for block in update_batch.blocks.iter() {
+                        let hash = block.hash();
+                        let number = block.header.number;
+                        if let Err(e) = block_numbers_cursor
+                            .upsert(hash.into(), number)
+                            .map_err(StoreError::LibmdbxError)
+                        {
+                            // OK if full, we'll catch whichever other error happened first
+                            _ = err_send.try_send(e);
+                            return;
+                        }
+                    }
+                });
+                s.spawn(|_| {
+                    for (block_hash, receipts) in update_batch.receipts {
+                        // store receipts
+                        let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+                        for mut entries in
+                            receipts
+                                .into_iter()
+                                .enumerate()
+                                .filter_map(|(index, receipt)| {
+                                    let key = (block_hash, index as u64).into();
+                                    let receipt_rlp = receipt.encode_to_vec();
+                                    IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                                })
+                        {
+                            key_values.append(&mut entries);
+                        }
+                        for (key, value) in key_values {
+                            if let Err(e) = receipts_cursor
+                                .upsert(key, value)
+                                .map_err(StoreError::LibmdbxError)
+                            {
+                                // OK if full, we'll catch whichever other error happened first
+                                _ = err_send.try_send(e);
+                                return;
+                            }
+                        }
+                    }
+                });
+
+                // NOTE: typically storage updates take the longest to write, and the `scope`
+                // scheduler prioritizes in LIFO order, so make sure this is the last task spawned.
+                s.spawn(|| {
+                    if let Err(e) = update_batch
+                        .storage_updates
+                        .into_par_iter()
+                        .flat_map(|(hashed_address, nodes)| {
+                            let hashed_address = hashed_address.clone();
+                            nodes.into_par_iter().map(move |(node_hash, node_data)| {
+                                (
+                                    (hashed_address.into(), node_hash_to_fixed_size(node_hash)),
+                                    node_data,
+                                )
+                            })
                         })
-                {
-                    key_values.append(&mut entries);
-                }
-                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-                for (key, value) in key_values {
-                    cursor
-                        .upsert(key, value)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
+                        .try_for_each_init(
+                            || tx.cursor::<StorageTriesNodes>().unwrap(),
+                            |cursor, (key, data)| cursor.upsert(key, data),
+                        )
+                        .map_err(StoreError::LibmdbxError)
+                    {
+                        // OK if full, we'll catch whichever other error happened first
+                        _ = err_send.try_send(e);
+                        return;
+                    }
+                    // for (hashed_address, nodes) in update_batch.storage_updates {
+                    //     for (node_hash, node_data) in nodes {
+                    //         let key_1: [u8; 32] = hashed_address.into();
+                    //         let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    //         if let Err(e) = storage_tries_cursor
+                    //             .upsert((key_1, key_2), node_data)
+                    //             .map_err(StoreError::LibmdbxError)
+                    //         {
+                    //             // OK if full, we'll catch whichever other error happened first
+                    //             _ = err_send.try_send(e);
+                    //             return;
+                    //         }
+                    //     }
+                    // }
+                });
+            });
+
+            // All tasks finished, no message means success
+            if let Ok(e) = err_recv.try_recv() {
+                return Err(e);
             }
 
             tx.commit().map_err(StoreError::LibmdbxError)
