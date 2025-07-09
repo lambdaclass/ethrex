@@ -19,12 +19,13 @@ impl<'a> VM<'a> {
         }
 
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let offset = offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let offset = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
         let topics = current_call_frame
             .stack
             .pop::<N_TOPICS>()?
