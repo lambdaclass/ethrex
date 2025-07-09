@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752038381949,
+  "lastUpdate": 1752039193382,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6182,6 +6182,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001256809792843691,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f07af68346980f2762f0a71cf0de7ba87c49642b",
+          "message": "fix(l2): use github token to avoid rate limit (#3570)\n\n**Motivation**\n\nOur CI is failing at the `Install solc` step in almost all jobs due to a\n`rate limit` error.\n\n**Description**\n\nAuthenticates using a GitHub token to bypass the rate limit.\n\nCloses None",
+          "timestamp": "2025-07-08T21:31:57Z",
+          "tree_id": "9d743d53d18ef3e1cedc95540f53d0513e1d1176",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f07af68346980f2762f0a71cf0de7ba87c49642b"
+        },
+        "date": 1752039192707,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006607584158415842,
             "unit": "Mgas/s"
           }
         ]
