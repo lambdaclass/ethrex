@@ -280,24 +280,17 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
-        // If size is 0 but offsets are out of bounds, consume gas and continue.
-        if size == 0 && (dest_offset > OUT_OF_BOUNDS || src_offset > OUT_OF_BOUNDS) {
-            current_call_frame.increase_consumed_gas(gas_cost::mcopy(
-                0,
-                current_call_frame.memory.len(),
-                size,
-            )?)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
-
-        let dest_offset: usize = dest_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
-
-        let src_offset: usize = src_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+        let src_offset: usize = match src_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
 

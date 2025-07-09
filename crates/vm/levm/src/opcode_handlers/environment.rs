@@ -2,7 +2,6 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::calculate_memory_size,
-    opcode_handlers::stack_memory_storage_flow::OUT_OF_BOUNDS,
     utils::word_to_address,
     vm::VM,
 };
@@ -139,9 +138,11 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        let dest_offset: usize = dest_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -200,13 +201,15 @@ impl<'a> VM<'a> {
 
         let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
 
-        let destination_offset: usize = destination_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
-
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
+        let destination_offset: usize = match destination_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
@@ -284,9 +287,11 @@ impl<'a> VM<'a> {
 
         let address_was_cold = self.substate.accessed_addresses.insert(address);
 
-        let dest_offset: usize = dest_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -348,9 +353,11 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
-        let dest_offset: usize = dest_offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
