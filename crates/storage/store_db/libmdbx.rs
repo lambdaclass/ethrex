@@ -281,7 +281,7 @@ impl StoreEngine for Store {
 
                 // NOTE: typically storage updates take the longest to write, and the `scope`
                 // scheduler prioritizes in LIFO order, so make sure this is the last task spawned.
-                s.spawn(|| {
+                s.spawn(|_| {
                     if let Err(e) = update_batch
                         .storage_updates
                         .into_par_iter()
