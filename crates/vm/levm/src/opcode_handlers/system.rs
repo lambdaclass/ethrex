@@ -229,7 +229,7 @@ impl<'a> VM<'a> {
 
         let offset: usize = offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
@@ -445,7 +445,7 @@ impl<'a> VM<'a> {
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let code_offset_in_memory: usize = code_offset_in_memory
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -479,7 +479,7 @@ impl<'a> VM<'a> {
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let code_offset_in_memory: usize = code_offset_in_memory
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -510,7 +510,7 @@ impl<'a> VM<'a> {
 
         let offset: usize = offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let size = size
             .try_into()
@@ -954,11 +954,11 @@ impl<'a> VM<'a> {
 
         let args_start_offset: usize = args_start_offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let return_data_start_offset: usize = return_data_start_offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         // Calculated here for memory expansion gas cost
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;

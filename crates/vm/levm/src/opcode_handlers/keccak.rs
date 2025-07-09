@@ -16,7 +16,7 @@ impl<'a> VM<'a> {
         let [offset, size] = *current_call_frame.stack.pop()?;
         let offset: usize = offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let size: usize = size
             .try_into()

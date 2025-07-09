@@ -92,6 +92,7 @@ impl MemoryV2 {
         Ok(())
     }
 
+    #[inline]
     pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
         let new_size = offset.checked_add(size).unwrap();
         self.resize(new_size)?;
@@ -105,6 +106,7 @@ impl MemoryV2 {
             .to_vec())
     }
 
+    #[inline]
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
         let new_size = offset.checked_add(N).unwrap();
         self.resize(new_size)?;
@@ -158,6 +160,13 @@ impl MemoryV2 {
         self.store(data, offset, data.len())
     }
 
+    #[inline]
+    pub fn store_zeroes(&mut self, offset: usize, size: usize) -> Result<(), VMError> {
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        self.resize(new_size)
+    }
+
+    #[inline]
     pub fn store_range(&mut self, offset: usize, size: usize, data: &[u8]) -> Result<(), VMError> {
         if size == 0 {
             return Ok(());
@@ -168,13 +177,17 @@ impl MemoryV2 {
         self.store(data, offset, size)
     }
 
+    #[inline]
     pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {
         let new_size: usize = offset
             .checked_add(WORD_SIZE_IN_BYTES_USIZE)
             .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
-        self.store(&word.to_big_endian(), offset, WORD_SIZE_IN_BYTES_USIZE)
+        if word != U256::zero() {
+            self.store(&word.to_big_endian(), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        }
+        Ok(())
     }
 
     pub fn copy_within(
@@ -194,30 +207,22 @@ impl MemoryV2 {
                 .ok_or(InternalError::Overflow)?,
         )?;
 
-        let mut temporary_buffer = vec![0u8; size];
         let true_from_offset = from_offset
             .checked_add(self.current_base)
             .ok_or(OutOfBounds)?;
-        let mut buffer = self.buffer.borrow_mut();
-
-        #[expect(clippy::indexing_slicing)]
-        temporary_buffer[..size].copy_from_slice(
-            &buffer[true_from_offset
-                ..(true_from_offset
-                    .checked_add(size)
-                    .ok_or(InternalError::Overflow)?)],
-        );
 
         let true_to_offset = to_offset
             .checked_add(self.current_base)
             .ok_or(OutOfBounds)?;
+        let mut buffer = self.buffer.borrow_mut();
 
-        #[expect(clippy::indexing_slicing)]
-        buffer[true_to_offset
-            ..(true_to_offset
-                .checked_add(size)
-                .ok_or(InternalError::Overflow)?)]
-            .copy_from_slice(&temporary_buffer[..size]);
+        buffer.copy_within(
+            true_from_offset
+                ..(true_from_offset
+                    .checked_add(size)
+                    .ok_or(InternalError::Overflow)?),
+            true_to_offset,
+        );
 
         Ok(())
     }
@@ -273,4 +278,75 @@ pub fn calculate_memory_size(offset: usize, size: usize) -> Result<usize, VMErro
         .checked_add(size)
         .and_then(|sum| sum.checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE))
         .ok_or(OutOfBounds.into())
+}
+
+#[cfg(test)]
+mod test {
+    #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+    use ethrex_common::U256;
+
+    use crate::memory::MemoryV2;
+
+    #[test]
+    fn test_basic_store_data() {
+        let mut mem = MemoryV2::new(0);
+
+        mem.store_data(0, &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]).unwrap();
+
+        assert_eq!(&mem.buffer.borrow()[0..10], &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(mem.len(), 32);
+    }
+
+    #[test]
+    fn test_words() {
+        let mut mem = MemoryV2::new(0);
+
+        mem.store_word(0, U256::from(4)).unwrap();
+
+        assert_eq!(mem.load_word(0).unwrap(), U256::from(4));
+        assert_eq!(mem.len(), 32);
+    }
+
+    #[test]
+    fn test_copy_word_within() {
+        {
+            let mut mem = MemoryV2::new(0);
+
+            mem.store_word(0, U256::from(4)).unwrap();
+            mem.copy_within(0, 32, 32).unwrap();
+
+            assert_eq!(mem.load_word(32).unwrap(), U256::from(4));
+            assert_eq!(mem.len(), 64);
+        }
+
+        {
+            let mut mem = MemoryV2::new(0);
+
+            mem.store_word(32, U256::from(4)).unwrap();
+            mem.copy_within(32, 0, 32).unwrap();
+
+            assert_eq!(mem.load_word(0).unwrap(), U256::from(4));
+            assert_eq!(mem.len(), 64);
+        }
+
+        {
+            let mut mem = MemoryV2::new(0);
+
+            mem.store_word(0, U256::from(4)).unwrap();
+            mem.copy_within(0, 0, 32).unwrap();
+
+            assert_eq!(mem.load_word(0).unwrap(), U256::from(4));
+            assert_eq!(mem.len(), 32);
+        }
+
+        {
+            let mut mem = MemoryV2::new(0);
+
+            mem.store_word(0, U256::from(4)).unwrap();
+            mem.copy_within(32, 0, 32).unwrap();
+
+            assert_eq!(mem.load_word(0).unwrap(), U256::zero());
+            assert_eq!(mem.len(), 64);
+        }
+    }
 }

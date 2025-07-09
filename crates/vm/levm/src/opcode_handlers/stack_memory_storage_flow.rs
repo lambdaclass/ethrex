@@ -12,6 +12,8 @@ use ethrex_common::{H256, U256, types::Fork};
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
 
+pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
+
 impl<'a> VM<'a> {
     // POP operation
     pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
@@ -102,7 +104,7 @@ impl<'a> VM<'a> {
 
         let offset: usize = offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -126,7 +128,7 @@ impl<'a> VM<'a> {
 
         let offset: usize = offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
@@ -273,17 +275,29 @@ impl<'a> VM<'a> {
         }
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
+
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
+        // If size is 0 but offsets are out of bounds, consume gas and continue.
+        if size == 0 && (dest_offset > OUT_OF_BOUNDS || src_offset > OUT_OF_BOUNDS) {
+            current_call_frame.increase_consumed_gas(gas_cost::mcopy(
+                0,
+                current_call_frame.memory.len(),
+                size,
+            )?)?;
+
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        }
+
         let dest_offset: usize = dest_offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let src_offset: usize = src_offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
 

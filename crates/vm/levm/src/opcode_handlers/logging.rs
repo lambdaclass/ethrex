@@ -29,7 +29,7 @@ impl<'a> VM<'a> {
 
         let offset: usize = offset
             .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
