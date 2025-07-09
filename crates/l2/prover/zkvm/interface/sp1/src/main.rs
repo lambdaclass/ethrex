@@ -8,5 +8,5 @@ pub fn main() {
     let input = sp1_zkvm::io::read::<JSONProgramInput>().0;
     let output = execution_program(input).unwrap();
 
-    sp1_zkvm::io::commit(&output.encode());
+    sp1_zkvm::io::commit_slice(&output.encode());
 }
