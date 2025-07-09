@@ -85,11 +85,22 @@ pub async fn run_tx(
     };
     prover_db.apply_account_updates(&changes)?;
 
+    let cache = LevmCache::default();
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         let mut vm = if l2 {
-            Evm::new_for_l2(EvmEngine::LEVM, prover_db.clone())?
+            Evm::new_for_l2(
+                EvmEngine::LEVM {
+                    cache: cache.clone(),
+                },
+                prover_db.clone(),
+            )?
         } else {
-            Evm::new_for_l1(EvmEngine::LEVM, prover_db.clone())
+            Evm::new_for_l1(
+                EvmEngine::LEVM {
+                    cache: cache.clone(),
+                },
+                prover_db.clone(),
+            )
         };
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;

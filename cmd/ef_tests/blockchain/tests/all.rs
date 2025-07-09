@@ -6,7 +6,9 @@ const TEST_FOLDER: &str = "vectors/";
 
 fn parse_and_execute_runner(path: &Path) -> datatest_stable::Result<()> {
     let engine = if cfg!(feature = "levm") {
-        EvmEngine::LEVM
+        EvmEngine::LEVM {
+            cache: Default::default(),
+        }
     } else {
         EvmEngine::REVM
     };
