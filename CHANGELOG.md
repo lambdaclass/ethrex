@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-08
+
+- Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)
+
 ### 2025-06-30
 
 - Use a stack pool [#3386](https://github.com/lambdaclass/ethrex/pull/3386)
