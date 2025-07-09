@@ -1,7 +1,7 @@
 use crate::rlpx::connection::server::{broadcast_message, send};
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
-use crate::rlpx::{connection::server::Established, error::RLPxError};
+use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
 use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
@@ -98,7 +98,9 @@ pub(crate) async fn handle_based_capability_message(
     established.l2_state.connection_state()?;
     match msg {
         L2Message::BatchSealed(ref batch_sealed_msg) => {
+            tracing::warn!("RECEIVED BATCH SEALED");
             if should_process_batch_sealed(established, batch_sealed_msg).await? {
+                tracing::warn!("PROCESSING BATCH SEALED");
                 process_batch_sealed(established, batch_sealed_msg).await?;
                 broadcast_message(established, msg.into())?;
             }
@@ -320,7 +322,7 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
     let batch_sealed_msg = {
         let l2_state = established.l2_state.connection_state_mut()?;
         let next_batch_to_send = l2_state.latest_batch_sent + 1;
-        if l2_state
+        if !l2_state
             .store_rollup
             .contains_batch(&next_batch_to_send)
             .await?
@@ -350,8 +352,8 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
             }
         }
     };
-
-    send(established, batch_sealed_msg.into()).await?;
+    let batch_sealed_msg: Message = batch_sealed_msg.into();
+    send(established, batch_sealed_msg).await?;
     established.l2_state.connection_state_mut()?.latest_batch_sent += 1;
     Ok(())
 }

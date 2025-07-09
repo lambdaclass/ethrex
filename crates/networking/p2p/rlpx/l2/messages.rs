@@ -104,9 +104,13 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.first_block)
             .encode_field(&self.batch.last_block)
             .encode_field(&self.batch.state_root)
+            .encode_field(&self.batch.privileged_transactions_hash)
+            .encode_field(&self.batch.message_hashes)
             .encode_field(&self.batch.blobs_bundle.blobs)
             .encode_field(&self.batch.blobs_bundle.commitments)
             .encode_field(&self.batch.blobs_bundle.proofs)
+            .encode_optional_field(&self.batch.commit_tx)
+            .encode_optional_field(&self.batch.verify_tx)
             .encode_field(&self.signature)
             .encode_field(&self.recovery_id)
             .finish();
@@ -123,29 +127,30 @@ impl RLPxMessage for BatchSealed {
         let (last_block, decoder) = decoder.decode_field("last_block")?;
         let (state_root, decoder) = decoder.decode_field("state_root")?;
         let (privileged_transactions_hash, decoder) =
-            decoder.decode_field("priviliged_transactions_hash")?;
+            decoder.decode_field("privileged_transactions_hash")?;
+        let (message_hashes, decoder) = decoder.decode_field("message_hashes")?;
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
+        let (commit_tx, decoder) = decoder.decode_optional_field();
+        let (verify_tx, decoder) = decoder.decode_optional_field();
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
-        let (commit_tx, decoder) = decoder.decode_optional_field();
-        let (message_hashes, decoder) = decoder.decode_field("messages_hashes")?;
-        let (verify_tx, decoder) = decoder.decode_optional_field();
         decoder.finish()?;
+
         let batch = Batch {
             number: batch_number,
             first_block,
             last_block,
             state_root,
+            privileged_transactions_hash,
+            message_hashes,
             blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
                 blobs,
                 commitments,
                 proofs,
             },
             commit_tx,
-            message_hashes,
-            privileged_transactions_hash,
             verify_tx,
         };
         Ok(BatchSealed::new(batch, signature, recovery_id))

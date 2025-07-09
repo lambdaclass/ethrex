@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
@@ -133,7 +133,7 @@ impl RLPxConnectionState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
@@ -252,7 +252,7 @@ impl GenServer for RLPxConnection {
                     let _ = handle_block_range_update(&mut established_state).await;
                 }
                 Self::CastMsg::L2(msg) => {
-                    log_peer_debug(&established_state.node, "Handling csat for L2 msg: {msg:?}");
+                    log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
                             let _ = l2_connection::send_sealed_batch(&mut established_state).await;
@@ -609,7 +609,17 @@ where
 }
 
 pub(crate) async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
-    state.sink.lock().await.send(message).await
+    if let Message::L2(l2::messages::L2Message::BatchSealed(_)) = message {
+        tracing::warn!("SENDING BATCH");
+    }
+
+    let result = state.sink.lock().await.send(message).await;
+
+    if let Err(ref e) = result {
+        // tracing::error!("FAILED TO SEND MESSAGE: {}", e);
+    }
+
+    result
 }
 
 /// Reads from the frame until a frame is available.
@@ -642,6 +652,7 @@ where
         loop {
             match stream.next().await {
                 Some(Ok(message)) => {
+                    // tracing::warn!("RECEIVED MESSAGE: {}", message);
                     let _ = conn.cast(CastMessage::PeerMessage(message)).await;
                 }
                 Some(Err(e)) => {
