@@ -281,44 +281,48 @@ impl StoreEngine for Store {
 
                 // NOTE: typically storage updates take the longest to write, and the `scope`
                 // scheduler prioritizes in LIFO order, so make sure this is the last task spawned.
-                s.spawn(|_| {
-                    if let Err(e) = update_batch
-                        .storage_updates
-                        .into_par_iter()
-                        .flat_map(|(hashed_address, nodes)| {
-                            let hashed_address = hashed_address.clone();
-                            nodes.into_par_iter().map(move |(node_hash, node_data)| {
-                                (
-                                    (hashed_address.into(), node_hash_to_fixed_size(node_hash)),
-                                    node_data,
-                                )
-                            })
-                        })
-                        .try_for_each_init(
-                            || tx.cursor::<StorageTriesNodes>().unwrap(),
-                            |cursor, (key, data)| cursor.upsert(key, data),
-                        )
-                        .map_err(StoreError::LibmdbxError)
-                    {
-                        // OK if full, we'll catch whichever other error happened first
-                        _ = err_send.try_send(e);
-                        return;
-                    }
-                    // for (hashed_address, nodes) in update_batch.storage_updates {
-                    //     for (node_hash, node_data) in nodes {
-                    //         let key_1: [u8; 32] = hashed_address.into();
-                    //         let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    //         if let Err(e) = storage_tries_cursor
-                    //             .upsert((key_1, key_2), node_data)
-                    //             .map_err(StoreError::LibmdbxError)
-                    //         {
-                    //             // OK if full, we'll catch whichever other error happened first
-                    //             _ = err_send.try_send(e);
-                    //             return;
-                    //         }
-                    //     }
+                s.spawn(|s| {
+                    // if let Err(e) = update_batch
+                    //     .storage_updates
+                    //     .into_par_iter()
+                    //     .flat_map(|(hashed_address, nodes)| {
+                    //         let hashed_address = hashed_address.clone();
+                    //         nodes.into_par_iter().map(move |(node_hash, node_data)| {
+                    //             (
+                    //                 (hashed_address.into(), node_hash_to_fixed_size(node_hash)),
+                    //                 node_data,
+                    //             )
+                    //         })
+                    //     })
+                    //     .try_for_each_init(
+                    //         || tx.cursor::<StorageTriesNodes>().unwrap(),
+                    //         |cursor, (key, data)| cursor.upsert(key, data),
+                    //     )
+                    //     .map_err(StoreError::LibmdbxError)
+                    // {
+                    //     // OK if full, we'll catch whichever other error happened first
+                    //     _ = err_send.try_send(e);
+                    //     return;
                     // }
+                    for (hashed_address, nodes) in update_batch.storage_updates {
+                        let mut storage_trie_cursor = tx.cursor::<StorageTriesNodes>().unwrap();
+                        let err_send = err_send.clone();
+                        s.spawn(move |_| {
+                            for (node_hash, node_data) in nodes {
+                                let key_1: [u8; 32] = hashed_address.into();
+                                let key_2 = node_hash_to_fixed_size(node_hash);
+
+                                if let Err(e) = storage_trie_cursor
+                                    .upsert((key_1, key_2), node_data)
+                                    .map_err(StoreError::LibmdbxError)
+                                {
+                                    // OK if full, we'll catch whichever other error happened first
+                                    _ = err_send.try_send(e);
+                                    return;
+                                }
+                            }
+                        });
+                    }
                 });
             });
 
