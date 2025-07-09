@@ -22,17 +22,24 @@ use revm::db::EvmState;
 use std::fmt;
 use std::sync::Arc;
 
-#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, Clone)]
 pub enum EvmEngine {
-    #[default]
-    LEVM,
+    LEVM { cache: LevmCache },
     REVM,
+}
+
+impl Default for EvmEngine {
+    fn default() -> Self {
+        Self::LEVM {
+            cache: Default::default(),
+        }
+    }
 }
 
 impl fmt::Display for EvmEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EvmEngine::LEVM => write!(f, "levm"),
+            EvmEngine::LEVM { .. } => write!(f, "levm"),
             EvmEngine::REVM => write!(f, "revm"),
         }
     }
@@ -45,7 +52,9 @@ impl TryFrom<String> for EvmEngine {
     fn try_from(s: String) -> Result<Self, Self::Error> {
         match s.to_lowercase().as_str() {
             "revm" => Ok(EvmEngine::REVM),
-            "levm" => Ok(EvmEngine::LEVM),
+            "levm" => Ok(EvmEngine::LEVM {
+                cache: Default::default(),
+            }),
             _ => Err(EvmError::InvalidEVM(s)),
         }
     }
@@ -84,10 +93,10 @@ impl Evm {
             EvmEngine::REVM => Evm::REVM {
                 state: evm_state(wrapped_db),
             },
-            EvmEngine::LEVM => Evm::LEVM {
+            EvmEngine::LEVM { cache } => Evm::LEVM {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
                 vm_type: VMType::L1,
-                cache: Default::default(),
+                cache,
             },
         }
     }

@@ -264,7 +264,12 @@ fn execute_stateless(
 
         // Execute block
         #[cfg(feature = "l2")]
-        let mut vm = Evm::new_for_l2(EvmEngine::LEVM, db.clone())?;
+        let mut vm = Evm::new_for_l2(
+            EvmEngine::LEVM {
+                cache: Default::default(),
+            },
+            db.clone(),
+        )?;
         #[cfg(not(feature = "l2"))]
         let mut vm = Evm::new_for_l1(EvmEngine::LEVM, db.clone());
         let result = vm
