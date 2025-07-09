@@ -162,12 +162,6 @@ impl MemoryV2 {
     }
 
     #[inline]
-    pub fn store_zeroes(&mut self, offset: usize, size: usize) -> Result<(), VMError> {
-        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
-        self.resize(new_size)
-    }
-
-    #[inline]
     pub fn store_range(&mut self, offset: usize, size: usize, data: &[u8]) -> Result<(), VMError> {
         if size == 0 {
             return Ok(());
@@ -185,9 +179,7 @@ impl MemoryV2 {
             .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
-        if word != U256::zero() {
-            self.store(&word.to_big_endian(), offset, WORD_SIZE_IN_BYTES_USIZE)?;
-        }
+        self.store(&word.to_big_endian(), offset, WORD_SIZE_IN_BYTES_USIZE)?;
         Ok(())
     }
 

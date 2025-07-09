@@ -155,16 +155,16 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let mut data = vec![0u8; size];
+
         if calldata_offset > current_call_frame.calldata.len().into() {
-            current_call_frame.memory.store_zeroes(dest_offset, size)?;
+            current_call_frame.memory.store_data(dest_offset, &data)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let calldata_offset: usize = calldata_offset
             .try_into()
             .map_err(|_err| InternalError::TypeConversion)?;
-
-        let mut data = vec![0u8; size];
 
         for (i, byte) in current_call_frame
             .calldata
