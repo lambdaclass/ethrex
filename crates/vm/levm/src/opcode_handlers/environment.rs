@@ -138,7 +138,10 @@ impl<'a> VM<'a> {
             Err(_) if size == 0 => 0,
             Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
         };
-        let calldata_offset: Option<usize> = calldata_offset.try_into().ok();
+        let calldata_offset: usize = match calldata_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -153,25 +156,21 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        match calldata_offset {
-            Some(calldata_offset) if calldata_offset <= current_call_frame.calldata.len() => {
-                for (i, byte) in current_call_frame
-                    .calldata
-                    .iter()
-                    .skip(calldata_offset)
-                    .take(size)
-                    .enumerate()
-                {
-                    if let Some(data_byte) = data.get_mut(i) {
-                        *data_byte = *byte;
-                    }
+        if calldata_offset <= current_call_frame.calldata.len() {
+            for (i, byte) in current_call_frame
+                .calldata
+                .iter()
+                .skip(calldata_offset)
+                .take(size)
+                .enumerate()
+            {
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
                 }
-                memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
-            }
-            _ => {
-                memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
             }
         }
+
+        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -203,7 +202,6 @@ impl<'a> VM<'a> {
         };
         let code_offset: usize = match code_offset.try_into() {
             Ok(x) => x,
-            Err(_) if size == 0 => 0,
             Err(_) => usize::MAX,
         };
 
@@ -280,7 +278,6 @@ impl<'a> VM<'a> {
         };
         let offset: usize = match offset.try_into() {
             Ok(x) => x,
-            Err(_) if size == 0 => 0,
             Err(_) => usize::MAX,
         };
         let current_memory_size = call_frame.memory.len();
@@ -339,15 +336,18 @@ impl<'a> VM<'a> {
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, returndata_offset, size] = *current_call_frame.stack.pop()?;
-        let dest_offset: usize = dest_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let returndata_offset: usize = returndata_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let returndata_offset: usize = match returndata_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 

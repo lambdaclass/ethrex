@@ -231,12 +231,13 @@ impl<'a> VM<'a> {
     pub fn op_return(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let offset = offset
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let offset: usize = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         if size == 0 {
             return Ok(OpcodeResult::Halt);
@@ -466,12 +467,13 @@ impl<'a> VM<'a> {
             code_offset_in_memory,
             code_size_in_memory,
         ] = *current_call_frame.stack.pop()?;
-        let code_offset_in_memory: usize = code_offset_in_memory
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let code_offset_in_memory: usize = match code_offset_in_memory.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -500,12 +502,13 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             salt,
         ] = *current_call_frame.stack.pop()?;
-        let code_offset_in_memory: usize = code_offset_in_memory
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let code_size_in_memory: usize = code_size_in_memory
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let code_offset_in_memory: usize = match code_offset_in_memory.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -533,12 +536,13 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let offset = offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let offset = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();

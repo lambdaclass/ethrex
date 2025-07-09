@@ -14,12 +14,13 @@ impl<'a> VM<'a> {
     pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [offset, size] = *current_call_frame.stack.pop()?;
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let offset: usize = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 

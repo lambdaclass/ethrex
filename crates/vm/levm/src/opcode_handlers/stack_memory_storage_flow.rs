@@ -287,8 +287,7 @@ impl<'a> VM<'a> {
         };
         let src_offset: usize = match src_offset.try_into() {
             Ok(x) => x,
-            Err(_) if size == 0 => 0,
-            Err(_) => return Err(ExceptionalHalt::OutOfGas.into()),
+            Err(_) => usize::MAX,
         };
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
