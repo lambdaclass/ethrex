@@ -148,12 +148,13 @@ impl<'a> VM<'a> {
                 return_data_size,
             ] = *current_call_frame.stack.pop()?;
             let address = word_to_address(address);
-            let args_start_offset = args_start_offset
-                .try_into()
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let args_size = args_size
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+            let args_start_offset = match args_start_offset.try_into() {
+                Ok(x) => x,
+                Err(_) => usize::MAX,
+            };
             let return_data_start_offset = return_data_start_offset
                 .try_into()
                 .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
