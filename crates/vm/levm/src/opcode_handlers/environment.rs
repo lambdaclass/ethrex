@@ -270,15 +270,19 @@ impl<'a> VM<'a> {
         let call_frame = self.current_call_frame_mut()?;
         let [address, dest_offset, offset, size] = *call_frame.stack.pop()?;
         let address = word_to_address(address);
-        let dest_offset = dest_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let offset: usize = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => usize::MAX,
+        };
         let current_memory_size = call_frame.memory.len();
 
         let address_was_cold = self.substate.accessed_addresses.insert(address);
