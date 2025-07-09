@@ -100,17 +100,22 @@ impl<'a> VM<'a> {
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(offset)
-            .take(32)
-            .enumerate()
+
+        let offset_end = offset
+            .checked_add(32)
+            .ok_or(InternalError::Overflow)?
+            .min(current_call_frame.calldata.len());
+
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
         {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+            let copied_size = offset_end - offset;
+
+            // the slice is verified previously to be correct. (copied_size <= 32)
+            if let Some(src_data) = current_call_frame.calldata.get(offset..offset_end) {
+                data[..copied_size].copy_from_slice(src_data);
             }
         }
+
         let result = u256_from_big_endian_const(data);
 
         current_call_frame.stack.push(&[result])?;
@@ -160,17 +165,21 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| InternalError::TypeConversion)?;
 
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(calldata_offset)
-            .take(size)
-            .enumerate()
+        let offset_end = calldata_offset
+            .checked_add(size)
+            .ok_or(InternalError::Overflow)?
+            .min(current_call_frame.calldata.len());
+
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
         {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+            let copied_size = offset_end - calldata_offset;
+
+            // the slice is verified previously to be correct. (copied_size <= size)
+            if let Some(src_data) = current_call_frame.calldata.get(calldata_offset..offset_end) {
+                data[..copied_size].copy_from_slice(src_data);
             }
         }
+
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -295,9 +304,19 @@ impl<'a> VM<'a> {
             let offset: usize = offset
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?;
-            for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
+
+            let offset_end = offset
+                .checked_add(size)
+                .ok_or(InternalError::Overflow)?
+                .min(bytecode.len());
+
+            #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+            {
+                let copied_size = offset_end - offset;
+
+                // the slice is verified previously to be correct. (copied_size <= size)
+                if let Some(src_data) = bytecode.get(offset..offset_end) {
+                    data[..copied_size].copy_from_slice(src_data);
                 }
             }
         }
@@ -359,15 +378,22 @@ impl<'a> VM<'a> {
         // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.
         // I would've used copy_from_slice but it can panic.
         let mut data = vec![0u8; size];
-        for (i, byte) in current_call_frame
-            .sub_return_data
-            .iter()
-            .skip(returndata_offset)
-            .take(size)
-            .enumerate()
+
+        let offset_end = returndata_offset
+            .checked_add(size)
+            .ok_or(InternalError::Overflow)?
+            .min(current_call_frame.sub_return_data.len());
+
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
         {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+            let copied_size = offset_end - returndata_offset;
+
+            // the slice is verified previously to be correct. (copied_size <= size)
+            if let Some(src_data) = current_call_frame
+                .sub_return_data
+                .get(returndata_offset..offset_end)
+            {
+                data[..copied_size].copy_from_slice(src_data);
             }
         }
 
