@@ -190,7 +190,7 @@ impl L1ProofVerifier {
                             batch_number,
                             prover_type,
                             existing_hex: hex::encode(existing_pi),
-                            latest_hex: hex::encode(public_inpust),
+                            latest_hex: hex::encode(public_inputs),
                         });
                     }
                 } else {
