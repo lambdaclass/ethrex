@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752042497312,
+  "lastUpdate": 1752061643144,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6264,6 +6264,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/8aa44c11650df469a2a89d215c9791da67403a4b"
         },
         "date": 1752042496628,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006510887804878049,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "09dd2a27634849d96d500da4042781d1d4596a12",
+          "message": "fix(l1): metrics exporter sync status, percent, distance and rate panels (#3456)\n\n**Motivation**\n\nEthereum Metrics Exporter is showing incorrect data for the sync status,\nsync percent, sync distance and sync rate panels when running a sync, as\ndescribed in the issue #3104.\n\n**Description**\n\nThis pr fixes the rpc call handler for eth_syncing as described\n[here](https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_syncing).\n\nHere you can see how the panels look like up to now:\n<img width=\"1429\" alt=\"Screenshot 2025-07-03 at 11 25 57\"\nsrc=\"https://github.com/user-attachments/assets/22646c5d-1ab8-4687-be66-56d2d8eb3fc3\"\n/>\n\nTo run this you can go to tooling/sync and run `make\nstart_hoodi_metrics_docker`, then go to http://localhost:3001/ to see\nthe panels.\n\nCloses #3325 and closes #3455",
+          "timestamp": "2025-07-09T11:19:46Z",
+          "tree_id": "4ca1ad3f11fa2a52a207afc9fa3c31e230ff2891",
+          "url": "https://github.com/lambdaclass/ethrex/commit/09dd2a27634849d96d500da4042781d1d4596a12"
+        },
+        "date": 1752061642710,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
