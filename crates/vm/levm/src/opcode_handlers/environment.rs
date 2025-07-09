@@ -193,15 +193,19 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
-        let destination_offset: usize = destination_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
-        let code_offset: usize = code_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let destination_offset: usize = match destination_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let code_offset: usize = match code_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
