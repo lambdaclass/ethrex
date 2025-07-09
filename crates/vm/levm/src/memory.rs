@@ -23,11 +23,7 @@ impl MemoryV2 {
     #[inline]
     pub fn new(current_base: usize) -> Self {
         Self {
-            buffer: Rc::new(RefCell::new({
-                let mut v = Vec::new();
-                v.reserve_exact(4096);
-                v
-            })),
+            buffer: Rc::new(RefCell::new(Vec::new())),
             current_base,
             len_gas: 0,
         }
