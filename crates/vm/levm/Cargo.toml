@@ -9,6 +9,7 @@ ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 
+
 bytes.workspace = true
 keccak-hash.workspace = true
 thiserror.workspace = true
