@@ -176,7 +176,6 @@ impl Command {
                     l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
-
                 let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
                 // TODO: This should be handled differently, the current problem
@@ -198,9 +197,9 @@ impl Command {
                         Some(P2PBasedContext {
                             store_rollup: rollup_store.clone(),
                             committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
-                        })
+                        }),
                     )
-                        .await;
+                    .await;
                 } else {
                     info!("P2P is disabled");
                 }

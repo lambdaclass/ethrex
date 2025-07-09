@@ -44,7 +44,7 @@ pub enum L2ConnState {
 #[derive(Debug, Clone)]
 pub enum L2Cast {
     BlockBroadcast,
-    BatchBroadcast
+    BatchBroadcast,
 }
 
 impl L2ConnState {
@@ -83,7 +83,6 @@ impl L2ConnState {
             Self::Connected(_) => Ok(()),
         }
     }
-
 }
 
 fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
@@ -98,9 +97,7 @@ pub(crate) async fn handle_based_capability_message(
     established.l2_state.connection_state()?;
     match msg {
         L2Message::BatchSealed(ref batch_sealed_msg) => {
-            tracing::warn!("RECEIVED BATCH SEALED");
             if should_process_batch_sealed(established, batch_sealed_msg).await? {
-                tracing::warn!("PROCESSING BATCH SEALED");
                 process_batch_sealed(established, batch_sealed_msg).await?;
                 broadcast_message(established, msg.into())?;
             }
@@ -117,7 +114,10 @@ pub(crate) async fn handle_based_capability_message(
 
 pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), RLPxError> {
     let latest_block_number = established.storage.get_latest_block_number().await?;
-    let latest_block_sent = established.l2_state.connection_state_mut()?.latest_block_sent;
+    let latest_block_sent = established
+        .l2_state
+        .connection_state_mut()?
+        .latest_block_sent;
     for block_number in latest_block_sent + 1..=latest_block_number {
         let new_block_msg = {
             let l2_state = established.l2_state.connection_state_mut()?;
@@ -126,11 +126,13 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                 block_number, l2_state.latest_block_sent
             );
 
-            let new_block_body = established.storage.get_block_body(block_number).await?.ok_or(
-                RLPxError::InternalError(
+            let new_block_body = established
+                .storage
+                .get_block_body(block_number)
+                .await?
+                .ok_or(RLPxError::InternalError(
                     "Block body not found after querying for the block number".to_owned(),
-                ),
-            )?;
+                ))?;
             let new_block_header = established.storage.get_block_header(block_number)?.ok_or(
                 RLPxError::InternalError(
                     "Block header not found after querying for the block number".to_owned(),
@@ -168,13 +170,19 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
         };
 
         send(established, new_block_msg.into()).await?;
-        established.l2_state.connection_state_mut()?.latest_block_sent = block_number;
+        established
+            .l2_state
+            .connection_state_mut()?
+            .latest_block_sent = block_number;
     }
 
     Ok(())
 }
 
-async fn should_process_new_block(established: &mut Established, msg: &NewBlock) -> Result<bool, RLPxError> {
+async fn should_process_new_block(
+    established: &mut Established,
+    msg: &NewBlock,
+) -> Result<bool, RLPxError> {
     let l2_state = established.l2_state.connection_state_mut()?;
     if !established.blockchain.is_synced() {
         debug!("Not processing new block, blockchain is not synced");
@@ -220,7 +228,10 @@ async fn should_process_new_block(established: &mut Established, msg: &NewBlock)
     Ok(true)
 }
 
-async fn should_process_batch_sealed(established: &mut Established, msg: &BatchSealed) -> Result<bool, RLPxError> {
+async fn should_process_batch_sealed(
+    established: &mut Established,
+    msg: &BatchSealed,
+) -> Result<bool, RLPxError> {
     let l2_state = established.l2_state.connection_state_mut()?;
     if !established.blockchain.is_synced() {
         debug!("Not processing new block, blockchain is not synced");
@@ -287,16 +298,20 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
             next_block_to_add += 1;
             continue;
         }
-        established.blockchain.add_block(&block).await.inspect_err(|e| {
-            log_peer_error(
-                &established.node,
-                &format!(
-                    "Error adding new block {} with hash {:?}, error: {e}",
-                    block.header.number,
-                    block.hash()
-                ),
-            );
-        })?;
+        established
+            .blockchain
+            .add_block(&block)
+            .await
+            .inspect_err(|e| {
+                log_peer_error(
+                    &established.node,
+                    &format!(
+                        "Error adding new block {} with hash {:?}, error: {e}",
+                        block.header.number,
+                        block.hash()
+                    ),
+                );
+            })?;
         let block_hash = block.hash();
 
         apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
@@ -332,7 +347,11 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
         let Some(batch) = l2_state.store_rollup.get_batch(next_batch_to_send).await? else {
             return Ok(());
         };
-        match l2_state.store_rollup.get_signature_by_batch(next_batch_to_send).await {
+        match l2_state
+            .store_rollup
+            .get_signature_by_batch(next_batch_to_send)
+            .await
+        {
             Ok(Some(recovered_sig)) => {
                 let (signature, recovery_id) = {
                     let mut signature = [0u8; 64];
@@ -347,20 +366,28 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
                 BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())
             }
             Err(err) => {
-                warn!("Fetching signature from store returned an error, defaulting to signing with commiter key: {err}");
+                warn!(
+                    "Fetching signature from store returned an error, defaulting to signing with commiter key: {err}"
+                );
                 BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())
             }
         }
     };
     let batch_sealed_msg: Message = batch_sealed_msg.into();
     send(established, batch_sealed_msg).await?;
-    established.l2_state.connection_state_mut()?.latest_batch_sent += 1;
+    established
+        .l2_state
+        .connection_state_mut()?
+        .latest_batch_sent += 1;
     Ok(())
 }
 
-async fn process_batch_sealed(established: &mut Established, msg: &BatchSealed) -> Result<(), RLPxError> {
+async fn process_batch_sealed(
+    established: &mut Established,
+    msg: &BatchSealed,
+) -> Result<(), RLPxError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    l2_state.store_rollup.seal_batch(msg.batch.clone()).await?;
+    l2_state.store_rollup.seal_batch(*msg.batch.clone()).await?;
     info!(
         "Sealed batch {} with blocks from {} to {}",
         msg.batch.number, msg.batch.first_block, msg.batch.last_block
@@ -368,36 +395,8 @@ async fn process_batch_sealed(established: &mut Established, msg: &BatchSealed) 
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::network::public_key_from_signing_key;
-    use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
-    use crate::rlpx::message::Message;
-    use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
-    use crate::types::Node;
-
-    use ethrex_blockchain::Blockchain;
-    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
-    use ethrex_common::types::batch::Batch;
-    use ethrex_common::{
-        H160,
-        types::{BlockHeader, ELASTICITY_MULTIPLIER},
-    };
-    use ethrex_common::{H256, H512};
-    use ethrex_storage::{EngineType, Store};
-    use ethrex_storage_rollup::StoreRollup;
-    use k256::SecretKey;
-    use k256::ecdsa::SigningKey;
-    use secp256k1::Message as SignedMessage;
-    use secp256k1::SecretKey as SigningKeySecp256k1;
-    use sha3::{Digest, Keccak256};
-    use std::fs::File;
-    use std::io::BufReader;
-    use std::sync::Arc;
-    use tokio::io::duplex;
-    use tokio::sync::{broadcast, mpsc};
 
     // async fn test_store(path: &str) -> Store {
     //     // Get genesis

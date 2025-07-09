@@ -373,14 +373,14 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         block_hash: H256,
         signature: [u8; 68],
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(SIGNATURES_BY_BLOCK, block_hash.into(), signature)
             .await
     }
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<[u8; 68]>, StoreError> {
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
         Ok(self
             .read(SIGNATURES_BY_BLOCK, block_hash.into())
             .await?
@@ -390,14 +390,14 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         batch_number: u64,
         signature: [u8; 68],
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(SIGNATURES_BY_BATCH, batch_number, signature)
             .await
     }
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<[u8; 68]>, StoreError> {
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
         Ok(self
             .read(SIGNATURES_BY_BATCH, batch_number)
             .await?

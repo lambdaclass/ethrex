@@ -6,10 +6,13 @@ use std::{
 
 use crate::{
     rlpx::{
-        connection::server::{Established, InnerState}, error::RLPxError, l2::l2_connection::L2ConnState, utils::{
+        connection::server::{Established, InnerState},
+        error::RLPxError,
+        l2::l2_connection::L2ConnState,
+        utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
-        }
+        },
     },
     types::Node,
 };

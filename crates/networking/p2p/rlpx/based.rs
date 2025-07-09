@@ -3,7 +3,7 @@ use super::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{batch::Batch, Block};
+use ethrex_common::types::{Block, batch::Batch};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},

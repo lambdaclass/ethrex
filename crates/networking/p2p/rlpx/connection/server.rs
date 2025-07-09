@@ -25,24 +25,33 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
     kademlia::{KademliaTable, PeerChannels},
     network::P2PContext,
     rlpx::{
-        connection::{codec::RLPxCodec, handshake}, error::RLPxError, eth::{
+        connection::{codec::RLPxCodec, handshake},
+        error::RLPxError,
+        eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
             status::StatusMessage,
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
-        }, l2::{self, l2_connection::{self, handle_based_capability_message, L2Cast, L2ConnState}, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL}, message::Message, p2p::{
+        },
+        l2::{
+            self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            l2_connection::{self, L2Cast, L2ConnState, handle_based_capability_message},
+        },
+        message::Message,
+        p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
-        }, utils::{log_peer_debug, log_peer_error, log_peer_warn}
+        },
+        utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
@@ -106,7 +115,7 @@ pub struct Established {
     pub(crate) table: Arc<Mutex<KademliaTable>>,
     pub(crate) backend_channel: Option<Sender<Message>>,
     pub(crate) inbound: bool,
-    pub(crate) l2_state: L2ConnState
+    pub(crate) l2_state: L2ConnState,
 }
 
 #[derive(Clone)]
@@ -142,7 +151,7 @@ pub enum CastMessage {
     SendNewPooledTxHashes,
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
-    L2(L2Cast)
+    L2(L2Cast),
 }
 
 #[derive(Clone)]
@@ -333,12 +342,12 @@ where
         send_interval(
             PERIODIC_BLOCK_BROADCAST_INTERVAL,
             handle.clone(),
-            CastMessage::L2(L2Cast::BlockBroadcast)
+            CastMessage::L2(L2Cast::BlockBroadcast),
         );
         send_interval(
             PERIODIC_BATCH_BROADCAST_INTERVAL,
             handle.clone(),
-            CastMessage::L2(L2Cast::BatchBroadcast)
+            CastMessage::L2(L2Cast::BatchBroadcast),
         );
     }
 
@@ -526,11 +535,8 @@ where
         &SUPPORTED_P2P_CAPABILITIES[..],
     ]
     .concat();
-    match state.l2_state {
-        L2ConnState::Disconnected(_) => {
-            supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
-        }
-        _ => {}
+    if let L2ConnState::Disconnected(_) = state.l2_state {
+        supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
     }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
@@ -577,7 +583,7 @@ where
                         }
                     }
                     "based" => {
-                       state.l2_state.set_established()?;
+                        state.l2_state.set_established()?;
                     }
                     _ => {}
                 }
@@ -609,17 +615,7 @@ where
 }
 
 pub(crate) async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
-    if let Message::L2(l2::messages::L2Message::BatchSealed(_)) = message {
-        tracing::warn!("SENDING BATCH");
-    }
-
-    let result = state.sink.lock().await.send(message).await;
-
-    if let Err(ref e) = result {
-        // tracing::error!("FAILED TO SEND MESSAGE: {}", e);
-    }
-
-    result
+    state.sink.lock().await.send(message).await
 }
 
 /// Reads from the frame until a frame is available.
@@ -652,7 +648,6 @@ where
         loop {
             match stream.next().await {
                 Some(Ok(message)) => {
-                    // tracing::warn!("RECEIVED MESSAGE: {}", message);
                     let _ = conn.cast(CastMessage::PeerMessage(message)).await;
                 }
                 Some(Err(e)) => {

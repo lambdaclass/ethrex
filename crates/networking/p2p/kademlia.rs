@@ -1,10 +1,6 @@
 use crate::{
     discv4::messages::FindNodeRequest,
-    rlpx::{
-        connection::server::RLPxConnection,
-        message::Message as RLPxMessage,
-        p2p::Capability,
-    },
+    rlpx::{connection::server::RLPxConnection, message::Message as RLPxMessage, p2p::Capability},
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
@@ -12,7 +8,7 @@ use rand::random;
 use spawned_concurrency::tasks::GenServerHandle;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;

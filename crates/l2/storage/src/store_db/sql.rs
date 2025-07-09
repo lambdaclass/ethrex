@@ -22,7 +22,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 13] = [
+const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -36,6 +36,8 @@ const DB_SCHEMA: [&str; 13] = [
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
     "INSERT INTO latest_sent VALUES (0, 0)",
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
+    "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
 ];
 
 impl SQLStore {
@@ -556,6 +558,80 @@ impl StoreEngineRollup for SQLStore {
         }
         Ok(None)
     }
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM block_signatures WHERE block_hash = ?1",
+                vec![Vec::from(block_hash.to_fixed_bytes())].into_params()?,
+            ),
+            (
+                "INSERT INTO block_signatures VALUES (?1, ?2)",
+                (Vec::from(block_hash.to_fixed_bytes()), signature.to_vec()).into_params()?,
+            ),
+        ])
+        .await
+    }
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT signature FROM block_signatures WHERE block_hash = ?1",
+                vec![Vec::from(block_hash.to_fixed_bytes())],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+            let signature: [u8; 68] = vec
+                .try_into()
+                .map_err(|_| RollupStoreError::Custom("Invalid signature length".to_string()))?;
+            return Ok(Some(signature));
+        }
+        Ok(None)
+    }
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM batch_signatures WHERE batch = ?1",
+                vec![batch_number].into_params()?,
+            ),
+            (
+                "INSERT INTO batch_signatures VALUES (?1, ?2)",
+                (batch_number, signature.to_vec()).into_params()?,
+            ),
+        ])
+        .await
+    }
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT signature FROM batch_signatures WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let vec = read_from_row_blob(&row, 0)?;
+            let signature: [u8; 68] = vec
+                .try_into()
+                .map_err(|_| RollupStoreError::Custom("Invalid signature length".to_string()))?;
+            return Ok(Some(signature));
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -575,6 +651,8 @@ mod tests {
             "operation_count",
             "latest_sent",
             "batch_proofs",
+            "block_signatures",
+            "batch_signatures",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -615,6 +693,10 @@ mod tests {
                 ("batch_proofs", "batch") => "INT",
                 ("batch_proofs", "prover_type") => "INT",
                 ("batch_proofs", "proof") => "BLOB",
+                ("block_signatures", "block_hash") => "BLOB",
+                ("block_signatures", "signature") => "BLOB",
+                ("batch_signatures", "batch") => "INT",
+                ("batch_signatures", "signature") => "BLOB",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",

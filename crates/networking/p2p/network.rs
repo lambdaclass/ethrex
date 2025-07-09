@@ -1,7 +1,7 @@
 use crate::discv4::server::{DiscoveryError, Discv4Server};
 use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
+use crate::rlpx::l2::l2_connection::P2PBasedContext;
 use crate::rlpx::message::Message as RLPxMessage;
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::types::{Node, NodeRecord};

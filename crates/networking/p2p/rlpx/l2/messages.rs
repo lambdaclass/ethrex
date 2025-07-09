@@ -4,8 +4,8 @@ use crate::rlpx::{
 };
 use bytes::BufMut;
 use ethrex_common::{
-    types::{batch::Batch, Block},
     H256,
+    types::{Block, batch::Batch},
 };
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::{Decoder, Encoder};
@@ -58,7 +58,7 @@ impl RLPxMessage for NewBlock {
 
 #[derive(Debug, Clone)]
 pub struct BatchSealed {
-    pub batch: Batch,
+    pub batch: Box<Batch>,
     pub signature: [u8; 64],
     pub recovery_id: [u8; 4],
 }
@@ -71,14 +71,14 @@ impl BatchSealed {
             .serialize_compact();
         let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
         Self {
-            batch,
+            batch: Box::new(batch),
             recovery_id,
             signature,
         }
     }
     pub fn new(batch: Batch, signature: [u8; 64], recovery_id: [u8; 4]) -> Self {
         Self {
-            batch,
+            batch: Box::new(batch),
             signature,
             recovery_id,
         }
