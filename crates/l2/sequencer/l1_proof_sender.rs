@@ -268,13 +268,19 @@ async fn send_proof_to_aligned(
             )));
         };
 
+        let pub_input = match prover_type {
+            ProverType::RISC0 => Some(batch_proof.public_values()),
+            ProverType::SP1 => None, // SP1 pub inputs are embedded in the proof
+            _ => continue,
+        };
+
         let verification_data = VerificationData {
             proving_system,
             proof,
             proof_generator_addr: state.l1_address.0.into(),
             vm_program_code: Some(vm_program_code),
             verification_key: None,
-            pub_input: None,
+            pub_input,
         };
 
         submit(
