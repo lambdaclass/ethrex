@@ -138,6 +138,16 @@ impl StoreEngineRollup for SQLStore {
         .await
     }
 
+    async fn get_latest_batch(&self) -> Result<u64, RollupStoreError> {
+        let mut rows = self
+            .query("SELECT COALESCE(MAX(batch), 0) FROM blocks", ())
+            .await?;
+        if let Some(row) = rows.next().await? {
+            return read_from_row_int(&row, 0);
+        }
+        Ok(0)
+    }
+
     /// Gets the message hashes by a given batch number.
     async fn get_message_hashes_by_batch(
         &self,

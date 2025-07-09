@@ -118,6 +118,12 @@ impl Store {
             .await
     }
 
+    pub async fn get_latest_batch(&self) -> Result<u64, RollupStoreError> {
+        // max_committed_batch + pending_offset (vanilla mode here)
+        let max = self.engine.get_latest_batch().await?;
+        Ok(max + 1)
+    }
+
     pub async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,

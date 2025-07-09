@@ -153,6 +153,23 @@ impl StoreEngineRollup for RedBStoreRollup {
             .await
     }
 
+    async fn get_latest_batch(&self) -> Result<u64, RollupStoreError> {
+        let db = self.db.clone();
+        let max = tokio::task::spawn_blocking(move || -> Result<u64, RollupStoreError> {
+            let read_tx = db.begin_read().map_err(Box::new)?;
+            let table = read_tx.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
+            let mut iter = table.iter()?;
+            let mut last_key = None;
+            while let Some((k, _)) = iter.next()? {
+                last_key = Some(k);
+            }
+            Ok(last_key.unwrap_or(0))
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("spawn_blocking failed: {e}")))??;
+        Ok(max)
+    }
+
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,

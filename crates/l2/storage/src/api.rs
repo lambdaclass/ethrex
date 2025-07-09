@@ -27,6 +27,9 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<(), RollupStoreError>;
 
+    /// Returns the number of the batch currently “in flight”
+    async fn get_latest_batch(&self) -> Result<u64, RollupStoreError>;
+
     /// Gets the message hashes by a given batch number.
     async fn get_message_hashes_by_batch(
         &self,
