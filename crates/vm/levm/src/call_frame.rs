@@ -288,8 +288,16 @@ impl CallFrame {
         Ok(())
     }
 
-    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
+    pub fn set_code(
+        &mut self,
+        code: Bytes,
+        invalid_jump_destinations: Option<Box<[usize]>>,
+    ) -> Result<(), VMError> {
+        self.invalid_jump_destinations = if let Some(inv) = invalid_jump_destinations {
+            inv
+        } else {
+            get_invalid_jump_destinations(&code)?
+        };
         self.bytecode = code;
         Ok(())
     }

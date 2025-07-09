@@ -5,7 +5,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     db::{CacheDB, gen_db::GeneralizedDatabase},
-    vm::VMType,
+    vm::{LevmCache, VMType},
 };
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, backends::levm::LEVM};
 use eyre::Ok;
@@ -65,6 +65,7 @@ pub async fn run_tx(
     cache: Cache,
     tx_hash: H256,
     l2: bool,
+    levm_cache: LevmCache,
 ) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
     let block = cache
         .blocks
@@ -79,16 +80,27 @@ pub async fn run_tx(
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(prover_db.clone()));
         let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
-        LEVM::prepare_block(block, &mut db, vm_type)?;
+        LEVM::prepare_block(block, &mut db, vm_type, levm_cache)?;
         LEVM::get_state_transitions(&mut db)?
     };
     prover_db.apply_account_updates(&changes)?;
 
+    let cache = LevmCache::default();
     for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         let mut vm = if l2 {
-            Evm::new_for_l2(EvmEngine::LEVM, prover_db.clone())?
+            Evm::new_for_l2(
+                EvmEngine::LEVM {
+                    cache: cache.clone(),
+                },
+                prover_db.clone(),
+            )?
         } else {
-            Evm::new_for_l1(EvmEngine::LEVM, prover_db.clone())
+            Evm::new_for_l1(
+                EvmEngine::LEVM {
+                    cache: cache.clone(),
+                },
+                prover_db.clone(),
+            )
         };
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;

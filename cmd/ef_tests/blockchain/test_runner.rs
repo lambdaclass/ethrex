@@ -43,7 +43,7 @@ pub fn parse_and_execute(
             continue;
         }
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, evm));
+        let result = rt.block_on(run_ef_test(&test_key, &test, evm.clone()));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -74,7 +74,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
     // Blockchain EF tests are meant for L1.
     let blockchain_type = BlockchainType::L1;
 
-    let blockchain = Blockchain::new(evm, store.clone(), blockchain_type);
+    let blockchain = Blockchain::new(evm.clone(), store.clone(), blockchain_type);
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
@@ -115,7 +115,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) -> Res
         }
     }
     check_poststate_against_db(test_key, test, &store).await;
-    if evm == EvmEngine::LEVM {
+    if let EvmEngine::LEVM { .. } = &evm {
         re_run_stateless(blockchain, test, test_key).await;
     }
     Ok(())

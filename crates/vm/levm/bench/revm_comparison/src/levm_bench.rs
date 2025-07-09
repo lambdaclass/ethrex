@@ -5,6 +5,7 @@ use ethrex_common::{
     Address, U256,
     types::{Account, EIP1559Transaction, Transaction, TxKind},
 };
+use ethrex_levm::vm::LevmCache;
 use ethrex_levm::{
     Environment,
     db::gen_db::GeneralizedDatabase,
@@ -27,13 +28,15 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 
     let mut db = init_db(bytecode);
 
+    let cache = LevmCache::default();
+
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
     for _nonce in 0..runs - 1 {
-        let mut vm = init_vm(&mut db, 0, calldata.clone());
+        let mut vm = init_vm(&mut db, 0, calldata.clone(), cache.clone());
         let tx_report = black_box(vm.stateless_execute().unwrap());
         assert!(tx_report.is_success());
     }
-    let mut vm = init_vm(&mut db, 0, calldata.clone());
+    let mut vm = init_vm(&mut db, 0, calldata.clone(), cache);
     let tx_report = black_box(vm.stateless_execute().unwrap());
 
     assert!(tx_report.is_success(), "{:?}", tx_report.result);
@@ -67,7 +70,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     GeneralizedDatabase::new(Arc::new(store), cache)
 }
 
-fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
+fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes, cache: LevmCache) -> VM {
     let env = Environment {
         origin: Address::from_low_u64_be(SENDER_ADDRESS),
         tx_nonce: nonce,
@@ -81,5 +84,5 @@ fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1, cache)
 }

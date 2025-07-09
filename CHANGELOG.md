@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-09
+
+- Cache invalid_jump_destinations [#3572](https://github.com/lambdaclass/ethrex/pull/3572)
+
 ### 2025-06-30
 
 - Use a stack pool [#3386](https://github.com/lambdaclass/ethrex/pull/3386)

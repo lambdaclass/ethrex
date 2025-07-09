@@ -16,7 +16,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H160, H256, U256,
     tracing::CallType,
     types::{Log, Transaction},
 };
@@ -24,6 +24,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeSet, HashMap, HashSet},
     rc::Rc,
+    sync::{Arc, RwLock},
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -64,6 +65,13 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+    pub cache: LevmCache,
+}
+
+/// A cache used to store data held between blocks / transactions. Such as bytecode invalid jump destinations.
+#[derive(Debug, Default, Clone)]
+pub struct LevmCache {
+    pub invalid_jump_dests: Arc<RwLock<HashMap<H160, Box<[usize]>>>>,
 }
 
 impl<'a> VM<'a> {
@@ -73,6 +81,7 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
+        cache: LevmCache,
     ) -> Self {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -89,6 +98,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            cache,
         }
     }
 
