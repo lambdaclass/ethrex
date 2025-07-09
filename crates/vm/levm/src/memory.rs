@@ -39,7 +39,8 @@ impl MemoryV2 {
 
     /// Cleans the memory from base onwards, this should be used in callframes when handling returns. On the callframe that is about to be dropped.
     pub fn clean_from_base(&self) {
-        self.buffer.borrow_mut().truncate(self.current_base);
+        #[allow(clippy::indexing_slicing)]
+        self.buffer.borrow_mut()[self.current_base..].fill(0);
     }
 
     /// Returns the len of the current memory for gas, this differs from the actual allocated length due to optimizations.
