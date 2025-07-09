@@ -139,10 +139,6 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        if dest_offset > OUT_OF_BOUNDS {
-            dbg!("calldatacopy oob");
-        }
-
         let dest_offset: usize = dest_offset
             .try_into()
             .map_err(|_err| ExceptionalHalt::OutOfGas)?;
@@ -203,10 +199,6 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
-
-        if destination_offset > OUT_OF_BOUNDS {
-            dbg!("codecopy oob");
-        }
 
         let destination_offset: usize = destination_offset
             .try_into()
