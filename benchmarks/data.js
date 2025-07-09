@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752081982526,
+  "lastUpdate": 1752082873020,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6387,6 +6387,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012485799812909262,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d454a1b2940492bb4d43e1643f2ec8c97f276e46",
+          "message": "perf(levm): improve sstore (#3555)\n\n**Motivation**\n\nLocally the sstore bench from\nhttps://github.com/lambdaclass/ethrex/pull/3552 goes from 2x worse to a\nbit better than revm\n\nGas benchmarks improve 2x\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-09T16:25:59Z",
+          "tree_id": "36ea0d7b6740d61c8fd225e9f8c4abb054ad1e83",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d454a1b2940492bb4d43e1643f2ec8c97f276e46"
+        },
+        "date": 1752082860574,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006607584158415842,
             "unit": "Mgas/s"
           }
         ]
