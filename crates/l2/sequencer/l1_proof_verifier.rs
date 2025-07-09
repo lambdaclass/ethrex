@@ -186,9 +186,12 @@ impl L1ProofVerifier {
 
                 if let Some(ref existing_pi) = current_batch_public_inputs {
                     if *existing_pi != public_inputs {
-                        return Err(ProofVerifierError::InternalError(format!(
-                            "Mismatched public inputs for batch {batch_number}"
-                        )));
+                        return Err(ProofVerifierError::MismatchedPublicInputs {
+                            batch_number,
+                            prover_type,
+                            existing_hex: hex::encode(existing_pi),
+                            latest_hex: hex::encode(public_inpust),
+                        });
                     }
                 } else {
                     current_batch_public_inputs = Some(public_inputs.clone());
