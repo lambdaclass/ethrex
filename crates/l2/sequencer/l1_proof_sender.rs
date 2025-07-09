@@ -195,21 +195,14 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         }
     }
 
-    if missing_proof_types.is_empty() {
-        if state.aligned_mode {
-            send_proof_to_aligned(state, batch_to_send, proofs.values()).await?;
-        } else {
-            send_proof_to_contract(state, batch_to_send, proofs).await?;
-        }
-        // if transaction succeeds, then the proof was correctly sent.
-        state
-            .rollup_store
-            .set_latest_sent_batch_proof(batch_to_send)
-            .await?;
-
-        // TODO: we should anyways handle the "OnChainProposer: batch already verified" error and
-        // modify the latest sent proof accordingly, otherwise we risk the proof sender getting stuck.
+    if state.aligned_mode {
+        // send proofs to Aligned batcher as soon as sequencer receives them
+        send_proof_to_aligned(state, batch_to_send, proofs.values()).await?;
+    } else if missing_proofs_types.is_empty() {
+        // send proofs to L1 verifier as soon as all required proofs are present
+        send_proof_to_contract(state, batch_to_send, proofs).await?;
     } else {
+        // not Aligned, nor all required types present
         let missing_proof_types: Vec<String> = missing_proof_types
             .iter()
             .map(|proof_type| format!("{proof_type:?}"))
@@ -219,7 +212,16 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
             ?batch_to_send,
             "Missing batch proof(s), will not send",
         );
+        return Ok(());
     }
+
+    // if above transaction succeeds, assume proofs are valid
+    state
+        .rollup_store
+        .set_latest_sent_batch_proof(batch_to_send)
+        .await?;
+    // TODO: we should anyways handle the "OnChainProposer: batch already verified" error and
+    // modify the latest sent proof accordingly, otherwise we risk the proof sender getting stuck.
 
     Ok(())
 }
