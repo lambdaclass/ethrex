@@ -166,13 +166,15 @@ pub enum ProofVerifierError {
     RollupStoreError(#[from] RollupStoreError),
     #[error("Aligned does not support prover type {0}")]
     UnsupportedProverType(String),
-    #[error("Mismatched public inputs for batch {batch_number} and prover type {prover_type}. Existing: {existing_hex}, latest: {latest_hex}")]
+    #[error(
+        "Mismatched public inputs for batch {batch_number} and prover type {prover_type}. Existing: {existing_hex}, latest: {latest_hex}"
+    )]
     MismatchedPublicInputs {
         batch_number: u64,
         prover_type: ProverType,
         existing_hex: String,
-        latest_hex: String
-    }
+        latest_hex: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]

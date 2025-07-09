@@ -255,7 +255,7 @@ async fn send_proof_to_aligned(
         info!(
             prover_type = ?batch_proof.prover_type(),
             ?batch_number,
-            "Submitting compressed proof to Aligned"
+            "Submitting proof to Aligned"
         );
 
         let Some(proof) = batch_proof.compressed() else {
@@ -263,7 +263,9 @@ async fn send_proof_to_aligned(
         };
 
         let Some(vm_program_code) = prover_type.aligned_vm_program_code()? else {
-            return Err(ProofSenderError::InternalError(format!("no vm_program_code for {prover_type}")));
+            return Err(ProofSenderError::InternalError(format!(
+                "no vm_program_code for {prover_type}"
+            )));
         };
 
         let verification_data = VerificationData {

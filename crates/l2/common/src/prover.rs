@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use crate::calldata::Value;
 
@@ -69,7 +67,7 @@ impl ProverType {
         let path = match self {
             // for risc0, Aligned requires the image id
             Self::RISC0 => format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-zkvm-vk",
+                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             // for sp1, Aligned requires the ELF file

@@ -72,8 +72,14 @@ fn build_sp1_program() {
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
 
-    std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk-bn254", vk.vk.bytes32_raw())
-        .expect("could not write SP1 vk-bn254 to file");
-    std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk-u32", vk.vk.hash_bytes())
-        .expect("could not write SP1 vk-u32 to file");
+    std::fs::write(
+        "./sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+        vk.vk.bytes32_raw(),
+    )
+    .expect("could not write SP1 vk-bn254 to file");
+    std::fs::write(
+        "./sp1/out/riscv32im-succinct-zkvm-vk-u32",
+        vk.vk.hash_bytes(),
+    )
+    .expect("could not write SP1 vk-u32 to file");
 }

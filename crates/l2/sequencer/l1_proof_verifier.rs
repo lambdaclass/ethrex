@@ -224,7 +224,10 @@ impl L1ProofVerifier {
                     );
                     aggregated_proofs_for_batch.insert(prover_type, merkle_path);
                 } else {
-                    info!(?prover_type, "No more proofs have been aggregated");
+                    info!(
+                        ?prover_type,
+                        "Proof has not been aggregated by Aligned, aborting"
+                    );
                     break;
                 }
             }
