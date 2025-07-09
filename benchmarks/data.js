@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752018335269,
+  "lastUpdate": 1752020484552,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3175,6 +3175,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209254002792,
             "range": "± 621219268",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8aa44c11650df469a2a89d215c9791da67403a4b",
+          "message": "ci(l1): comment flaky devp2p test BasicFindnode (#3542)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nThis test fails very occasionally, here are a few runs in which it\nhappened:\n-\nhttps://github.com/lambdaclass/ethrex/actions/runs/16125250426/job/45501078767\n-\nhttps://github.com/lambdaclass/ethrex/actions/runs/16126040468/job/45503603345\n-\nhttps://github.com/lambdaclass/ethrex/actions/runs/16120603086/job/45485976155\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3549",
+          "timestamp": "2025-07-08T23:18:40Z",
+          "tree_id": "61b413b67618e34b836f1dc72f2729db6fd4c0da",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8aa44c11650df469a2a89d215c9791da67403a4b"
+        },
+        "date": 1752020473541,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209372926820,
+            "range": "± 593704898",
             "unit": "ns/iter"
           }
         ]
