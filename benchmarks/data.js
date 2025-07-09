@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752026914728,
+  "lastUpdate": 1752027750671,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6037,6 +6037,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012532694835680751,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c15c01ae92a2f736614192f65d1884539d9e6ed5",
+          "message": "ci(l1,l2): remove `core` scope and improve PR labeling workflow (#3561)\n\n**Motivation**\n\n- Declutter `ethrex_l1` project and remove ambiguous `core` scope in\ntitle.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Remove core scope because it is ambiguous. Replace it with `l1,l2`\n- Merge `pr_author.yaml` and `pr_label.yaml` into one file\n`pr_github_metadata.yaml`\n- Change rules of labeling because of preferences in our projects:\n- `ethrex_performance`: Will have PRs that have `perf` at the beginning\nof the title.\n  - `ethrex_l2`: Will have any PR that has in the title scope `l2`\n- `ethrex_l1`: Will have PRs that haven't been assigned to\n`ethrex_performance` or `ethrex_l2` that have `l1` or `levm` in their\ntitle.\n\nThe decisions were made according to the preferences of each team.\n`ethrex_l2` project will have anything that has to do with the L2\n`ethrex_l1` project will have things that touch only l1 stuff and\nnothing else so that we assure they truly belong to this project. Some\nPRs will be filtered out and will have to be added manually, but we\nprefer that rather over the clutter of having more PRs than necessary.\n\nCloses #3565",
+          "timestamp": "2025-07-08T18:18:32Z",
+          "tree_id": "40bae128432e6ab09b6688b548bf5e4f8870f8aa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c15c01ae92a2f736614192f65d1884539d9e6ed5"
+        },
+        "date": 1752027750227,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006640457711442786,
             "unit": "Mgas/s"
           }
         ]
