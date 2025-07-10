@@ -4,6 +4,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
+use tracing::info;
 use ExceptionalHalt::OutOfBounds;
 use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
 
@@ -19,6 +20,7 @@ impl<'a> VM<'a> {
         let read_n_bytes = read_bytcode_slice::<N>(current_call_frame)?;
 
         let value = u256_from_big_endian_const(read_n_bytes);
+        info!("[PUSH{N}] Pushing value: {value} to stack");
         current_call_frame.stack.push(&[value])?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
