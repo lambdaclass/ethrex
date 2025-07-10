@@ -218,8 +218,7 @@ jobs:
             const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
 
-            console.log(pr.mergeable);
-            console.log(pr.mergeStateStatus);
+            console.log(pr.body);
 
             // Get project and item representing Pull Request.
             const project = await getProject(orgLogin, projectNumber);
