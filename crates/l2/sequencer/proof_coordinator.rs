@@ -453,6 +453,7 @@ async fn handle_request(
             .is_none()
         {
             all_proofs_exist = false;
+            break;
         }
     }
 
