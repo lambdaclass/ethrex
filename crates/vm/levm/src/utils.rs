@@ -99,24 +99,24 @@ pub fn calculate_create2_address(
 /// This is a necessary calculation because of PUSH opcodes.
 /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
 /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
-    let mut address_blacklist = Vec::new();
+pub fn get_valid_jump_destinations(code: &Bytes) -> Result<Box<[u64]>, VMError> {
+    let mut address_whitelist = vec![0u64; code.len().next_multiple_of(64) >> 6];
 
     let mut iter = code.iter().enumerate();
-    while let Some((_, &value)) = iter.next() {
+    while let Some((index, &value)) = iter.next() {
         let op_code = Opcode::from(value);
-        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
+        if op_code == Opcode::JUMPDEST {
+            address_whitelist[index >> 6] |= 1 << (index & 0x3F);
+        } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
             #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
             let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
-            address_blacklist.extend(
-                (&mut iter)
-                    .take(num_bytes)
-                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
-            );
+            for _ in 0..num_bytes {
+                _ = iter.next();
+            }
         }
     }
 
-    Ok(address_blacklist.into_boxed_slice())
+    Ok(address_whitelist.into_boxed_slice())
 }
 
 // ================== Backup related functions =======================
