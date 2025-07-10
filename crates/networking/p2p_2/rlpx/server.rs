@@ -35,55 +35,46 @@ type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
 #[derive(Clone)]
-pub struct Initiator {
-    pub(crate) context: P2PContext,
-    pub(crate) node: Node,
-}
-
-#[derive(Clone)]
-pub struct Receiver {
-    pub(crate) context: P2PContext,
-    pub(crate) peer_addr: SocketAddr,
-    pub(crate) stream: Arc<TcpStream>,
-}
-
-#[derive(Clone)]
-pub struct Established {
-    pub(crate) signer: SigningKey,
-    // Sending part of the TcpStream to connect with the remote peer
-    // The receiving part is owned by the stream listen loop task
-    pub(crate) sink: Arc<Mutex<SplitSink<Framed<TcpStream, RLPxCodec>, Message>>>,
-    pub(crate) node: Node,
-    pub(crate) storage: Store,
-    pub(crate) blockchain: Arc<Blockchain>,
-    pub(crate) capabilities: Vec<Capability>,
-    pub(crate) negotiated_eth_capability: Option<Capability>,
-    pub(crate) negotiated_snap_capability: Option<Capability>,
-    pub(crate) last_block_range_update_block: u64,
-    pub(crate) broadcasted_txs: HashSet<H256>,
-    pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
-    pub(crate) client_version: String,
-    //// Send end of the channel used to broadcast messages
-    //// to other connected peers, is ok to have it here,
-    //// since internally it's an Arc.
-    //// The ID is to ignore the message sent from the same task.
-    //// This is used both to send messages and to received broadcasted
-    //// messages from other connections (sent from other peers).
-    //// The receive end is instantiated after the handshake is completed
-    //// under `handle_peer`.
-    /// TODO: Improve this mechanism
-    /// See https://github.com/lambdaclass/ethrex/issues/3388
-    pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
-    pub(crate) table: Arc<Mutex<KademliaTable>>,
-    pub(crate) backend_channel: Option<Sender<Message>>,
-    pub(crate) inbound: bool,
-}
-
-#[derive(Clone)]
 pub enum RLPxConnectionState {
-    Initiator(Initiator),
-    Receiver(Receiver),
-    Established(Established),
+    Initiator {
+        context: P2PContext,
+        node: Node,
+    },
+    Receiver {
+        context: P2PContext,
+        peer_addr: SocketAddr,
+        stream: Arc<TcpStream>,
+    },
+    Established {
+        signer: SigningKey,
+        // Sending part of the TcpStream to connect with the remote peer
+        // The receiving part is owned by the stream listen loop task
+        sink: Arc<Mutex<SplitSink<Framed<TcpStream, RLPxCodec>, Message>>>,
+        node: Node,
+        storage: Store,
+        blockchain: Arc<Blockchain>,
+        capabilities: Vec<Capability>,
+        negotiated_eth_capability: Option<Capability>,
+        negotiated_snap_capability: Option<Capability>,
+        last_block_range_update_block: u64,
+        broadcasted_txs: HashSet<H256>,
+        requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
+        client_version: String,
+        //// Send end of the channel used to broadcast messages
+        //// to other connected peers, is ok to have it here,
+        //// since internally it's an Arc.
+        //// The ID is to ignore the message sent from the same task.
+        //// This is used both to send messages and to received broadcasted
+        //// messages from other connections (sent from other peers).
+        //// The receive end is instantiated after the handshake is completed
+        //// under `handle_peer`.
+        /// TODO: Improve this mechanism
+        /// See https://github.com/lambdaclass/ethrex/issues/3388
+        connection_broadcast_send: RLPxConnBroadcastSender,
+        table: Arc<Mutex<KademliaTable>>,
+        backend_channel: Option<Sender<Message>>,
+        inbound: bool,
+    },
 }
 
 impl RLPxConnectionState {
