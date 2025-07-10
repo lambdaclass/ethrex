@@ -12,7 +12,7 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::{AccountInfo, MempoolTransaction};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
@@ -22,7 +22,7 @@ use ethrex_common::types::{
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
-use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_common::{Address, TrieLogger, H256, U256};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -62,6 +62,15 @@ pub struct Blockchain {
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
     pub r#type: BlockchainType,
+}
+
+#[derive(Debug)]
+pub struct AccountUpdateSimplified {
+    pub removed: bool,
+    pub info: Option<AccountInfo>,
+    pub added_storage: HashMap<H256, U256>,
+    // Matches TODO in code
+    // removed_storage_keys: Vec<H256>,
 }
 
 #[derive(Debug, Clone)]
@@ -521,7 +530,7 @@ impl Blockchain {
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
-        let account_u = BTreeMap::from_iter(account_updates.iter().map(|acc| (acc.address, acc)));
+        let account_u = BTreeMap::from_iter(account_updates.iter().map(|acc| (acc.address, AccountUpdateSimplified { removed: acc.removed, info: acc.info.clone(), added_storage: acc.added_storage.clone() })));
         info!("Account Updates: {account_u:?}");
 
         let last_block = blocks
