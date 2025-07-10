@@ -92,12 +92,36 @@ jobs:
                       fields(first: 100) {
                         nodes {
                           __typename
-                          id
-                          name
                           ... on ProjectV2SingleSelectField {
+                            id
+                            name
                             options {
                               id
                               name
+                            }
+                          }
+                          ... on ProjectV2DateField {
+                            id
+                            name
+                          }
+                          ... on ProjectV2TextField {
+                            id
+                            name
+                          }
+                          ... on ProjectV2NumberField {
+                            id
+                            name
+                          }
+                          ... on ProjectV2IterationField {
+                            id
+                            name
+                            configuration {
+                              iterations {
+                                id
+                                title
+                                startDate
+                                duration
+                              }
                             }
                           }
                         }
