@@ -83,13 +83,13 @@ contract OnChainProposer is
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice Maximum time the sequencer can take without sending privileged transactions
-    uint256 public constant PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = 300;
+    uint256 public constant PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
     /// @notice Minimum of privileged transactions that must be included to reset the deadline
     /// @dev If there aren't that many pending, pendingTxHashes.length is used
-    uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 20;
-    /// @notice A batch is still accepted if's short of {MIN_INCLUDED_PRIVILEGED_TX} by only a few transactions
+    uint16 public constant PRIVILEGED_TX_INCLUSION_TARGET;
+    /// @notice A batch is still accepted if's short of {PRIVILEGED_TX_INCLUSION_TARGET} by only a few transactions
     /// @dev This avoids having to discard a batch due to a last-minute transaction
-    uint16 public constant TOLERANCE_NONINCLUDED_PRIVILEGED_TX = 5;
+    uint16 public constant PRIVILEGED_TX_TOLERANCE;
 
     /// @notice Deadline for including the next batch of privileged transactions, if any are pending
     uint256 public txInclusionDeadline;
@@ -121,7 +121,10 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        address sequencer_registry
+        address sequencer_registry,
+        uint256 privilegedMaxWait,
+        uint16 privilegedInclusionTarget,
+        uint16 privilegedTolerance
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -212,6 +215,11 @@ contract OnChainProposer is
             "OnChainProposer: sequencer_registry is the contract address"
         );
         SEQUENCER_REGISTRY = sequencer_registry;
+
+        PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = privilegedMaxWait;
+        PRIVILEGED_TX_INCLUSION_TARGET = privilegedInclusionTarget;
+        PRIVILEGED_TX_TOLERANCE = privilegedTolerance;
+
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -459,13 +467,13 @@ contract OnChainProposer is
         uint256 pending_count = ICommonBridge(BRIDGE)
             .getPendingTransactionHashes()
             .length;
-        uint16 inclusion_target = MIN_INCLUDED_PRIVILEGED_TX > pending_count
+        uint16 inclusion_target = PRIVILEGED_TX_INCLUSION_TARGET > pending_count
             ? uint16(pending_count)
-            : MIN_INCLUDED_PRIVILEGED_TX;
-        uint16 mimimum_to_include = TOLERANCE_NONINCLUDED_PRIVILEGED_TX >
+            : PRIVILEGED_TX_INCLUSION_TARGET;
+        uint16 mimimum_to_include = PRIVILEGED_TX_TOLERANCE >
             inclusion_target
             ? 0
-            : inclusion_target - TOLERANCE_NONINCLUDED_PRIVILEGED_TX;
+            : inclusion_target - PRIVILEGED_TX_TOLERANCE;
         if (block.timestamp > txInclusionDeadline) {
             require(
                 privileged_transaction_count >= mimimum_to_include,

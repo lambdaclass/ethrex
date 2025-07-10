@@ -282,6 +282,27 @@ pub struct DeployerOptions {
         help = "Address of the owner of the SequencerRegistry contract, who can upgrade the contract."
     )]
     pub sequencer_registry_owner: Option<Address>,
+    #[arg(
+        long,
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
+        help_heading = "Deployer options",
+        help = "Max time in seconds that can pass without enough deposits being processed."
+    )]
+    pub inclusion_max_wait: u64,
+    #[arg(
+        long,
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCLUSION_TARGET",
+        help_heading = "Deployer options",
+        help = "Inclusion target for privileged transactions."
+    )]
+    pub inclusion_target: u64,
+    #[arg(
+        long,
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCLUSION_TOLERANCE",
+        help_heading = "Deployer options",
+        help = "Allow a batch if it is within N privileged transactions of the target."
+    )]
+    pub inclusion_tolerance: u64,
 }
 
 impl Default for DeployerOptions {
@@ -361,6 +382,9 @@ impl Default for DeployerOptions {
             ),
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
+            inclusion_max_wait: 300,
+            inclusion_target: 20,
+            inclusion_tolerance: 5,
         }
     }
 }
