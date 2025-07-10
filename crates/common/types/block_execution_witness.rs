@@ -146,7 +146,7 @@ impl ExecutionWitnessResult {
         let state_trie = rebuild_trie(parent_header.state_root, state.clone())?;
 
         // Keys can either be account addresses or storage slots. They have different sizes,
-        // so we filter them by size. Addresses are 20 u8 long
+        // so we filter them by size. The from_slice method panics if the input has the wrong size.
         let addresses: Vec<Address> = self
             .keys
             .iter()
