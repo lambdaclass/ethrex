@@ -168,7 +168,13 @@ impl<'a> VM<'a> {
         }
 
         self.backup_substate();
-        let context_result = self.run_execution()?;
+        let mut acc = [(0,0f64); 256];
+
+        let context_result = self.run_execution(&mut acc);
+        
+        Self::send_results(acc);
+        
+        let context_result= context_result?;
 
         let report = self.finalize_execution(context_result)?;
 
@@ -176,7 +182,7 @@ impl<'a> VM<'a> {
     }
 
     /// Main execution loop.
-    pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+    pub fn run_execution(&mut self, acc: &mut [(u64, f64); 256]) -> Result<ContextResult, VMError> {
         if self.is_precompile(&self.current_call_frame()?.to) {
             return self.execute_precompile();
         }
@@ -186,7 +192,6 @@ impl<'a> VM<'a> {
         let mut end: Instant;
 
         // Accumulator that saves number of execution times and total execution time for each opcode.
-        let mut acc = [(0,0f64); 256];
 
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
@@ -206,7 +211,7 @@ impl<'a> VM<'a> {
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };
-            Self::send_results(acc);
+
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
                 self.handle_state_backup(&result)?;
