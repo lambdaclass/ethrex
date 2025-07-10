@@ -1,3 +1,4 @@
+{ gitRev }:
 let
   pkgs = import <nixpkgs> { };
   fenix = pkgs.callPackage (pkgs.fetchFromGitHub {
@@ -46,6 +47,10 @@ let
       rustPlatform.cargoSetupHook
     ];
     env.OPENSSL_NO_VENDOR = 1;
+
+    preBuild = ''
+      echo "${gitRev}" > git-revision
+    '';
   };
 in
 {

@@ -20,6 +20,12 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          large-packages: false
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -34,6 +40,9 @@ jobs:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -41,8 +50,10 @@ jobs:
 
       - name: Build prover
         run: |
+          sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
-          cargo build --release
+          make image.raw
 
       - name: Build test
         run: |
@@ -60,15 +71,26 @@ jobs:
           cargo build --release
           cp target/release/rex /usr/local/bin
 
-      - name: Run L1 and deploy
+      - name: Build L1 docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/blockchain/dev/Dockerfile
+          tags: ethrex_dev:latest
+          push: false
+
+      - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
           touch .env
-          make init-local-l1;
+          CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
           ETHREX_TDX_DEV_MODE=true \
-          make deploy-l1
+          docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer and test
         run: |
@@ -77,5 +99,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           make init-l2-no-metrics &
           sleep 30
-          ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
+          cd tee/quote-gen/
+          ETHREX_TDX_DEV_MODE=true make run &
+          cd ../../
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
