@@ -308,7 +308,19 @@ impl StoreEngineRollup for Store {
     }
 
     async fn get_latest_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
-        Ok(None)
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(RollupStoreError::LibmdbxError)?;
+        let mut cursor = txn
+            .cursor::<BlockNumbersByBatch>()
+            .map_err(RollupStoreError::LibmdbxError)?;
+
+        let result = cursor.last().map_err(RollupStoreError::LibmdbxError)?;
+
+        let latest_key = result.map(|(key, _value)| key);
+
+        Ok(latest_key)
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
