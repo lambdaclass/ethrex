@@ -521,8 +521,8 @@ impl Blockchain {
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
-        let account_u = BTreeMap::from_iter(account_updates.iter().map(|acc| (acc.address, acc)));
-        info!("Account Updates: {account_u:?}");
+        //let account_u = BTreeMap::from_iter(account_updates.iter().map(|acc| (acc.address, acc)));
+        //info!("Account Updates: {account_u:?}");
 
         let last_block = blocks
             .last()
