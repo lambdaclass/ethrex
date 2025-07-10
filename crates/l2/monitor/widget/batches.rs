@@ -98,16 +98,18 @@ impl BatchesTable {
     async fn get_batches(from: &mut u64, to: u64, rollup_store: &StoreRollup) -> Vec<Batch> {
         let mut new_batches = Vec::new();
 
-        while *from < to {
-            *from += 1;
-
-            let new_batch = rollup_store
-                .get_batch(*from)
+        for batch_number in *from + 1..=to {
+            let batch = rollup_store
+                .get_batch(batch_number)
                 .await
-                .unwrap_or_else(|err| panic!("Failed to get batch by number ({from}): {err}"))
-                .unwrap_or_else(|| panic!("Batch {from} not found in the rollup store"));
+                .unwrap_or_else(|err| {
+                    panic!("Failed to get batch by number ({batch_number}): {err}")
+                })
+                .unwrap_or_else(|| panic!("Batch {batch_number} not found in the rollup store"));
 
-            new_batches.push(new_batch);
+            *from = batch_number;
+
+            new_batches.push(batch);
         }
 
         new_batches
