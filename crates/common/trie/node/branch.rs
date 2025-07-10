@@ -1,3 +1,4 @@
+use ethereum_types::H256;
 use ethrex_rlp::structs::Encoder;
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
@@ -44,7 +45,10 @@ impl BranchNode {
             // Delegate to children if present
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .unwrap();
                 child_node.get(db, path)
             } else {
                 Ok(None)
@@ -61,6 +65,7 @@ impl BranchNode {
         db: &dyn TrieDB,
         mut path: Nibbles,
         value: ValueOrHash,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<Node, TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
@@ -75,9 +80,12 @@ impl BranchNode {
                 (choice_ref, ValueOrHash::Value(value)) => {
                     let child_node = choice_ref
                         .get_node(db)?
-                        .ok_or(TrieError::InconsistentTree)?;
+                        .ok_or(TrieError::InconsistentTree)
+                        .unwrap();
 
-                    *choice_ref = child_node.insert(db, path, value)?.into();
+                    *choice_ref = child_node
+                        .insert(db, path, value, invalidated_nodes)?
+                        .into();
                 }
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
@@ -88,10 +96,14 @@ impl BranchNode {
                             "attempt to override proof node with external hash".to_string(),
                         ));
                     } else {
+                        if let NodeRef::Hash(NodeHash::Hashed(hash)) = choice_ref {
+                            invalidated_nodes.push(*hash)
+                        }
                         *choice_ref = choice_ref
                             .get_node(db)?
-                            .ok_or(TrieError::InconsistentTree)?
-                            .insert(db, path, value)?
+                            .ok_or(TrieError::InconsistentTree)
+                            .unwrap()
+                            .insert(db, path, value, invalidated_nodes)?
                             .into();
                     }
                 }
@@ -112,6 +124,7 @@ impl BranchNode {
         mut self,
         db: &dyn TrieDB,
         mut path: Nibbles,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Step 1: Removal
@@ -135,11 +148,16 @@ impl BranchNode {
         // Check if the value is located in a child subtrie
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
+                if let NodeRef::Hash(NodeHash::Hashed(hash)) = self.choices[choice_index] {
+                    invalidated_nodes.push(hash)
+                }
                 let child_node = self.choices[choice_index]
                     .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)?;
+                    .ok_or(TrieError::InconsistentTree)
+                    .unwrap();
                 // Remove value from child node
-                let (child_node, old_value) = child_node.remove(db, path.clone())?;
+                let (child_node, old_value) =
+                    child_node.remove(db, path.clone(), invalidated_nodes)?;
                 if let Some(child_node) = child_node {
                     // Update child node
                     self.choices[choice_index] = child_node.into();
@@ -176,7 +194,10 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
-                let child = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child = child_ref
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .unwrap();
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
@@ -243,7 +264,10 @@ impl BranchNode {
             // Continue to child
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                let child_node = child_ref
+                    .get_node(db)?
+                    .ok_or(TrieError::InconsistentTree)
+                    .unwrap();
                 child_node.get_path(db, path, node_path)?;
             }
         }
@@ -345,7 +369,12 @@ mod test {
         let value = vec![0x3];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(
+                trie.db.as_ref(),
+                path.clone(),
+                value.clone().into(),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
@@ -366,7 +395,12 @@ mod test {
         let value = vec![0x21];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(
+                trie.db.as_ref(),
+                path.clone(),
+                value.clone().into(),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
@@ -389,7 +423,12 @@ mod test {
 
         let new_node = node
             .clone()
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(
+                trie.db.as_ref(),
+                path.clone(),
+                value.clone().into(),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         let new_node = match new_node {
@@ -412,7 +451,11 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            .remove(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x00]),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -431,7 +474,11 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            .remove(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x00]),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Some(Node::Branch(_))));
@@ -448,7 +495,11 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            .remove(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x00]),
+                &mut Vec::new(),
+            )
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -465,7 +516,7 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]))
+            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]), &mut Vec::new())
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -483,7 +534,7 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]))
+            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]), &mut Vec::new())
             .unwrap();
 
         assert!(matches!(node, Some(Node::Branch(_))));

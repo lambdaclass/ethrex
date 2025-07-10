@@ -52,8 +52,9 @@ pub enum EngineType {
 pub struct UpdateBatch {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
+    pub invalidated_state_nodes: Vec<H256>,
     /// Storage tries updated and their new nodes
-    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    pub storage_updates: Vec<(H256, Vec<TrieNode>, Vec<H256>)>,
     /// Blocks to be added
     pub blocks: Vec<Block>,
     /// Receipts added per block
@@ -66,11 +67,12 @@ pub struct UpdateBatch {
     pub storage_log_updates: Vec<AccountStorageLogEntry>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>, Vec<H256>)>;
 
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub invalidated_state_nodes: Vec<H256>,
     pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Bytes)>,
 }
@@ -505,19 +507,25 @@ impl Store {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                let (storage_hash, storage_updates) =
+                let (storage_hash, storage_updates, invalidated_storage_nodes) =
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((
+                    H256::from_slice(&hashed_address),
+                    storage_updates,
+                    invalidated_storage_nodes,
+                ));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates, invalidated_state_nodes) =
+            state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
             state_trie_hash,
             state_updates,
+            invalidated_state_nodes,
             storage_updates: ret_storage_updates,
             code_updates,
         })

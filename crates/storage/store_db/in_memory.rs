@@ -191,7 +191,7 @@ impl StoreEngine for Store {
             store.account_codes.insert(hashed_address, code);
         }
 
-        for (hashed_address, nodes) in update_batch.storage_updates {
+        for (hashed_address, nodes, _) in update_batch.storage_updates {
             let mut addr_store = store
                 .storage_trie_nodes
                 .entry(hashed_address)
@@ -337,6 +337,8 @@ impl StoreEngine for Store {
                 block_hash: canonical_hash,
             };
 
+            tracing::warn!("REPLAY: processing block {target_block:?}");
+
             // Apply account state logs for this block
             if let Some(entries) = store.account_state_logs.get(&target_block).cloned() {
                 for (parent_block, log) in entries {
@@ -386,6 +388,10 @@ impl StoreEngine for Store {
         // Update the current snapshot block
         store.current_snapshot_block = Some(current_snapshot);
         Ok(())
+    }
+
+    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+        todo!()
     }
 
     fn get_current_account_info(

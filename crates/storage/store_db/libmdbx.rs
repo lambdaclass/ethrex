@@ -41,6 +41,10 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use std::thread;
+
+/// The number of blocks to keep in the state and storage log tables
+const KEEP_BLOCKS: u64 = 128;
 
 // Define tables
 table!(
@@ -84,15 +88,32 @@ dupsort!(
     ( AccountsStorageWriteLog ) (BlockNumHash, BlockNumHash)[BlockNumHash] => AccountStorageLogEntry
 );
 
+type StateTriePruningLogEntry = [u8; 32];
+dupsort!(
+    /// Trie node insertion logs for pruning.
+    /// includes the block number as the search key.
+    ( StateTriePruningLog ) BlockNumHash[BlockNumber] => StateTriePruningLogEntry
+);
+
+type StorageTriesPruningLogEntry = (StorageTriesNodesSeekKey, StorageTriesNodesSuffixKey);
+dupsort!(
+    /// Trie node insertion logs for pruning.
+    /// includes the block number as the search key.
+    ( StorageTriesPruningLog ) BlockNumHash[BlockNumber] => StorageTriesPruningLogEntry
+);
+
 dupsort!(
     /// Receipts table.
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
+type StorageTriesNodesSeekKey = [u8; 32];
+type StorageTriesNodesSuffixKey = [u8; 33];
+
 dupsort!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
-    ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
+    ( StorageTriesNodes ) (StorageTriesNodesSeekKey, StorageTriesNodesSuffixKey)[StorageTriesNodesSeekKey] => Vec<u8>
 );
 
 dupsort!(
@@ -114,7 +135,7 @@ table!(
 
 // Trie storages
 
-table!(
+dupsort!(
     /// state trie nodes
     ( StateTrieNodes ) NodeHash => Vec<u8>
 );
@@ -169,9 +190,23 @@ pub struct Store {
 }
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
-        })
+        // FIXME 🔥🔥🔥🔥!!!
+        let db = Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?);
+
+        let store = Store { db: db.clone() };
+
+        // we prune the database in a separate thread to avoid blocking the main thread
+        let _join = thread::Builder::new()
+            .name("trie_pruner🗑️".to_string())
+            .spawn(move || {
+                loop {
+                    thread::sleep(std::time::Duration::from_secs(1));
+                    #[allow(clippy::unwrap_used)]
+                    store.prune_state_and_storage_log().unwrap();
+                }
+            });
+
+        Ok(Self { db })
     }
 
     // Helper method to write into a libmdbx table
@@ -332,11 +367,15 @@ impl Store {
                 break;
             }
 
-            tracing::debug!("UNDO: restoring account {}", log_entry.address);
+            tracing::warn!(
+                "UNDO: found state log for {current_block:?}: {final_block:?}/{found_parent:?}"
+            );
 
             // Save the previous account info change for later update
             account_updates.push((log_entry.address, log_entry.previous_info));
 
+            // We update this here to ensure it's the previous block according
+            // to the logs found.
             parent_block = Some(found_parent);
             state_logs = state_log_cursor.next()?;
         }
@@ -364,15 +403,15 @@ impl Store {
                 break;
             }
 
-            tracing::debug!(
-                "UNDO: restoring storage {}:{}",
-                log_entry.address,
-                log_entry.slot
+            tracing::warn!(
+                "UNDO: found storage log for {current_block:?}: {final_block:?}/{found_parent:?}"
             );
 
             // Save the previous storage change for later update
             storage_updates.push((log_entry.address, log_entry.slot, log_entry.old_value));
 
+            // We update this here to ensure it's the previous block according
+            // to the logs found.
             parent_block = Some(found_parent);
             storage_logs = storage_log_cursor.next()?;
         }
@@ -547,76 +586,90 @@ impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
+            // If no blocks are updated then the batchs should be empty and there's no work to do.
+            let (Some(first_block), Some(last_block)) =
+                (update_batch.blocks.first(), update_batch.blocks.last())
+            else {
+                return Ok(());
+            };
+
             let tx = db.begin_readwrite()?;
 
             // We only need to update the flat tables if the update batch contains blocks
             // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
-            if let (Some(first_block), Some(last_block)) =
-                (update_batch.blocks.first(), update_batch.blocks.last())
+            let parent_block = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
+            let final_block = (last_block.header.number, last_block.hash()).into();
+
+            // Update the account info log table
+            let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
             {
-                let parent_block = (
-                    first_block.header.number - 1,
-                    first_block.header.parent_hash,
-                )
-                    .into();
-                let final_block = (last_block.header.number, last_block.hash()).into();
-
-                // Store the account info log updates
-                let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
-                for (addr, old_info, new_info) in
-                    update_batch.account_info_log_updates.iter().cloned()
-                {
-                    account_info_log_cursor.upsert(
-                        (final_block, parent_block),
-                        AccountInfoLogEntry {
-                            address: addr.0,
-                            info: new_info,
-                            previous_info: old_info,
-                        },
-                    )?;
-                }
-
-                // Store the storage log updates
-                let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
-                for entry in update_batch.storage_log_updates.iter().cloned() {
-                    account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
-                }
-
-                let current_snapshot = tx
-                    .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
-                    .unwrap_or_default();
-
-                // If the current snapshot is the parent block, we need to update the flat tables
-                if current_snapshot == parent_block {
-                    let mut cursor = tx.cursor::<FlatAccountInfo>()?;
-                    let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
-
-                    // Update the flat account info
-                    for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
-                        let key = addr;
-                        let value = (new_info != AccountInfo::default())
-                            .then_some(EncodableAccountInfo(new_info));
-                        Self::replace_value_or_delete(&mut cursor, key, value)?;
-                    }
-
-                    // Update the flat account storage
-                    for entry in update_batch.storage_log_updates {
-                        let key = (entry.address.into(), entry.slot.into());
-                        let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
-                        Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
-                    }
-                    tx.upsert::<FlatTablesBlockMetadata>(
-                        FlatTablesBlockMetadataKey {},
-                        final_block,
-                    )?;
-                }
+                account_info_log_cursor.upsert(
+                    (final_block, parent_block),
+                    AccountInfoLogEntry {
+                        address: addr.0,
+                        info: new_info,
+                        previous_info: old_info,
+                    },
+                )?;
             }
 
-            // for each block in the update batch, we iterate over the account updates (by index)
+            // Update the account storage log table
+            let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+            for entry in update_batch.storage_log_updates.iter().cloned() {
+                account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
+            }
+
+            let meta = tx
+                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+                .unwrap_or_default();
+            // If we are at the parent block, we need to update the flat tables with the new changes
+            // and update the metadata to the final block
+            if meta == parent_block {
+                let mut info_cursor = tx.cursor::<FlatAccountInfo>()?;
+                let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+
+                for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
+                    let key = addr;
+                    let value = (new_info != AccountInfo::default())
+                        .then_some(EncodableAccountInfo(new_info));
+                    Self::replace_value_or_delete(&mut info_cursor, key, value)?;
+                }
+                for entry in update_batch.storage_log_updates {
+                    let key = (entry.address.into(), entry.slot.into());
+                    let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
+                    Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
+                }
+                tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)?;
+            }
+
+            let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+            let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+
+            // For each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
             // store account updates
-            for (node_hash, node_data) in update_batch.account_updates {
+            for (node_hash, mut node_data) in update_batch.account_updates {
+                tracing::debug!(
+                    node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                    parent_block_number = parent_block.block_number,
+                    parent_block_hash = hex::encode(parent_block.block_hash),
+                    final_block_number = final_block.block_number,
+                    final_block_hash = hex::encode(final_block.block_hash),
+                    "[WRITING STATE TRIE NODE]",
+                );
+                node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
+            }
+
+            for node_hash in update_batch.invalidated_state_nodes {
+                // Before inserting, we insert the node into the pruning log
+                cursor_state_trie_pruning_log
+                    .upsert(final_block, StateTriePruningLogEntry::from(node_hash.0))?;
             }
 
             // store code updates
@@ -624,12 +677,28 @@ impl StoreEngine for Store {
                 tx.upsert::<AccountCodes>(hashed_address.into(), code.into())?;
             }
 
-            for (hashed_address, nodes) in update_batch.storage_updates {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = hashed_address.into();
+            for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
+                let key_1: [u8; 32] = hashed_address.into();
+                for (node_hash, mut node_data) in nodes {
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
+                    tracing::debug!(
+                        hashed_address = hex::encode(hashed_address.0),
+                        node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                        parent_block_number = parent_block.block_number,
+                        parent_block_hash = hex::encode(parent_block.block_hash),
+                        final_block_number = final_block.block_number,
+                        final_block_hash = hex::encode(final_block.block_hash),
+                        "[WRITING STORAGE TRIE NODE]",
+                    );
+                    node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
+                }
+                for node_hash in invalidated_nodes {
+                    // NOTE: the hash itself *should* suffice, but this way the value matches
+                    // the other table's key.
+                    let key_2 = node_hash_to_fixed_size(NodeHash::Hashed(node_hash));
+                    cursor_storage_trie_pruning_log.upsert(final_block, (key_1, key_2))?;
                 }
             }
             for block in update_batch.blocks {
@@ -681,7 +750,8 @@ impl StoreEngine for Store {
             tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))??;
+        self.prune_state_and_storage_log()
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
@@ -777,6 +847,159 @@ impl StoreEngine for Store {
         // Update the snapshot metadata to the last valid snapshot (head)
         tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, current_snapshot)?;
         tx.commit().map_err(|err| err.into())
+    }
+
+    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+        let tx = self.db.begin_readwrite()?;
+
+        let stats_pre_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_pre_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+
+        let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+        // Get the block number of the last state trie pruning log entry
+        if let Some((
+            BlockNumHash {
+                block_number: last_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_state_trie_pruning_log.last()?
+        {
+            // We keep the last 1024 blocks
+            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
+            tracing::debug!(
+                keep_from = keep_from,
+                last_num = last_num,
+                "[KEEPING STATE TRIE PRUNING LOG]"
+            );
+
+            let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
+            let mut kv_state_trie_pruning = cursor_state_trie_pruning_log.first()?;
+            // Iterate over the first entries of the pruning log and delete the nodes from the trie
+            // until we reach the keep from block number
+            while let Some((block, node_hash)) = kv_state_trie_pruning {
+                // If the block number is higher than the keep from, we can stop
+                // since we reached the keep from block number
+                if block.block_number >= keep_from {
+                    tracing::debug!(
+                        keep_from = keep_from,
+                        last_num = last_num,
+                        "[STOPPING STATE TRIE PRUNING]"
+                    );
+                    break;
+                }
+
+                // Delete the node from the trie
+                let k_delete = NodeHash::Hashed(node_hash.into());
+                if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)? {
+                    if key == k_delete {
+                        tracing::debug!(
+                            node = hex::encode(node_hash.as_ref()),
+                            block_number = block.block_number,
+                            block_hash = hex::encode(block.block_hash.0.as_ref()),
+                            "[DELETING STATE NODE]"
+                        );
+                        cursor_state_trie.delete_current()?;
+                        cursor_state_trie_pruning_log.delete_current()?;
+                    }
+                }
+                kv_state_trie_pruning = cursor_state_trie_pruning_log.next()?;
+            }
+        }
+
+        let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+        // Get the block number of the last storage trie pruning log entry
+        if let Some((
+            BlockNumHash {
+                block_number: last_num,
+                block_hash: _,
+            },
+            _,
+        )) = cursor_storage_trie_pruning_log.last()?
+        {
+            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
+
+            let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
+            let mut kv_storage_trie_pruning = cursor_storage_trie_pruning_log.first()?;
+            // Iterate over the first entries of the pruning log and delete the nodes from the trie
+            // until we reach the keep from block number
+            while let Some((block, storage_trie_pruning_hash)) = kv_storage_trie_pruning {
+                // If the block number is higher than the keep from, we can stop
+                // since we reached the keep from block number
+                if block.block_number >= keep_from {
+                    tracing::debug!(
+                        keep_from = keep_from,
+                        last_num = last_num,
+                        "[STOPPING STORAGE TRIE PRUNING]"
+                    );
+                    break;
+                }
+
+                // If the storage trie hash is found, delete it from the trie and the pruning log
+                if let Some((key, _)) = cursor_storage_trie.seek_exact(storage_trie_pruning_hash)? {
+                    if key == storage_trie_pruning_hash {
+                        tracing::debug!(
+                            hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
+                            node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
+                            block_number = block.block_number,
+                            block_hash = hex::encode(block.block_hash.0.as_ref()),
+                            "[DELETING STORAGE NODE]"
+                        );
+                        cursor_storage_trie.delete_current()?;
+                        cursor_storage_trie_pruning_log.delete_current()?;
+                    }
+                }
+                kv_storage_trie_pruning = cursor_storage_trie_pruning_log.next()?;
+            }
+        }
+
+        // Get the stats after the pruning and log the metrics
+        let stats_post_state_log = tx
+            .table_stat::<StateTriePruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_state_nodes = tx
+            .table_stat::<StateTrieNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_storage_log = tx
+            .table_stat::<StorageTriesPruningLog>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+        let stats_post_storage_nodes = tx
+            .table_stat::<StorageTriesNodes>()
+            .map_err(|e| anyhow::anyhow!("error: {e}"))?;
+
+        tracing::info!(
+            state_trie_entries_delta = stats_post_state_nodes.entries() as isize
+                - stats_pre_state_nodes.entries() as isize,
+            state_trie_log_entries_delta =
+                stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+            storage_trie_entries_delta = stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            storage_trie_log_entries_delta = stats_post_storage_log.entries() as isize
+                - stats_pre_storage_log.entries() as isize,
+            "[PRUNING METRICS]",
+        );
+
+        debug_assert_eq!(
+            stats_post_state_nodes.entries() as isize - stats_pre_state_nodes.entries() as isize,
+            stats_post_state_log.entries() as isize - stats_pre_state_log.entries() as isize,
+        );
+        debug_assert_eq!(
+            stats_post_storage_nodes.entries() as isize
+                - stats_pre_storage_nodes.entries() as isize,
+            stats_post_storage_log.entries() as isize - stats_pre_storage_log.entries() as isize,
+        );
+
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn add_block_header(
@@ -1917,6 +2140,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(FlatTablesBlockMetadata),
         table_info!(FlatAccountStorage),
         table_info!(FlatAccountInfo),
+        table_info!(StateTriePruningLog),
+        table_info!(StorageTriesPruningLog),
         table_info!(AccountsStorageWriteLog),
         table_info!(AccountsStateWriteLog),
     ]
@@ -1929,6 +2154,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
             max_size: Some(MAX_MAP_SIZE),
             ..Default::default()
         }),
+        max_tables: Some(1024),
+        max_readers: Some(1024),
         ..Default::default()
     };
     Database::create_with_options(path, options, &tables)
