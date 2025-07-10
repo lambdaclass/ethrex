@@ -194,21 +194,13 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
             missing_proof_types.push(proof_type);
         }
     }
-    let missing_types = !missing_proof_types.is_empty();
 
-    if state.aligned_mode {
-        // send proofs to Aligned batcher as soon as sequencer receives them
-        send_proof_to_aligned(state, batch_to_send, proofs.values()).await?;
-        if !missing_types {
-            // if sent all required types, next batch
-            state
-                .rollup_store
-                .set_latest_sent_batch_proof(batch_to_send)
-                .await?;
+    if !missing_proof_types.is_empty() {
+        if state.aligned_mode {
+            send_proof_to_aligned(state, batch_to_send, proofs.values()).await?;
+        } else {
+            send_proof_to_contract(state, batch_to_send, proofs).await?;
         }
-    } else if !missing_types {
-        // send proofs to L1 verifier as soon as all required proofs are present
-        send_proof_to_contract(state, batch_to_send, proofs).await?;
         state
             .rollup_store
             .set_latest_sent_batch_proof(batch_to_send)
@@ -216,7 +208,6 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         // TODO: we should anyways handle the "OnChainProposer: batch already verified" error and
         // modify the latest sent proof accordingly, otherwise we risk the proof sender getting stuck.
     } else {
-        // not Aligned, nor all required types present
         let missing_proof_types: Vec<String> = missing_proof_types
             .iter()
             .map(|proof_type| format!("{proof_type:?}"))
@@ -226,7 +217,6 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
             ?batch_to_send,
             "Missing batch proof(s), will not send",
         );
-        return Ok(());
     }
 
     Ok(())
