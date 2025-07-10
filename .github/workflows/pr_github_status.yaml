@@ -85,7 +85,7 @@ jobs:
               return null;
             }
 
-            // Set a Date field to a particular date. E.g. StartDate of PR #100 is 05/06/2024
+            // Set a Date field to a particular date. E.g., StartDate of PR #100 is 05/06/2024
             async function setProjectItemDateField(projectId, itemId, fieldName, dateValue) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
@@ -125,7 +125,7 @@ jobs:
               console.log(`Set date field '${fieldName}' to '${date}'.`);
             }
 
-            // Sets the field for status to a project item (PR or Issue). E.g. Set Status for PR #100 to "In Progress".
+            // Sets the field for status to a project item (PR or Issue). E.g., Set Status for PR #100 to "In Progress".
             async function setProjectItemStatus(projectId, itemId, fieldName, optionName) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
@@ -173,6 +173,7 @@ jobs:
               });
             }
 
+            // Gets the value of a field of an item in the project. E.g., The Status of the PR #100 is "In Review".
             async function getProjectItemFieldValue(projectId, itemId, fieldName) {
               const res = await github.graphql(`
                 query($projectId: ID!, $itemId: ID!) {
@@ -304,7 +305,16 @@ jobs:
             const issueNumbers = extractLinkedIssueNumbers(pr.body);
             console.log("Issues that this PR closes:", issueNumbers);
 
-            const issueItems = getProjectItemsForIssues(projectId, issueNumbers);
+            const issueItems = [];
+
+            for (const issueNumber of issueNumbers) {
+              const issue = await findProjectItem(projectId, issueNumber);
+              if (issue) {
+                issueItems.push(issue);
+              } else {
+                console.warn(`Project item for issue #${issueNumber} not found.`);
+              }
+            }
 
             console.log(`Synchronizing linked issues with new PR state.`);
             setStatusForIssues(issueItems, projectId, statusFieldName, status_post_changes);
