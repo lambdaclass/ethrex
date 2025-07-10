@@ -8,8 +8,7 @@ use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS,
     calldata::{self, encode_calldata},
-    claim_erc20withdraw, claim_withdraw, compile_contract, deposit_erc20,
-    download_contract_deps,
+    claim_erc20withdraw, claim_withdraw, compile_contract, deposit_erc20, download_contract_deps,
     get_address_from_secret_key, get_erc1967_slot,
     l1_to_l2_tx_data::L1ToL2TransactionData,
     wait_for_transaction_receipt,

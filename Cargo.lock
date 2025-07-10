@@ -597,7 +597,7 @@ dependencies = [
  "hex",
  "keccak-hash",
  "lazy_static",
- "reqwest 0.12.22",
+ "reqwest 0.12.20",
  "serde",
  "serde_json",
  "tokio",
