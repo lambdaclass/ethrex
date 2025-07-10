@@ -320,6 +320,14 @@ impl Store {
         Ok(())
     }
 
+    pub async fn get_latest_safe_batch(&self) -> Result<Option<Batch>, RollupStoreError> {
+        let Some(batch_number) = self.engine.get_latest_batch_number().await? else {
+            return Ok(None);
+        };
+
+        self.get_batch(batch_number).await
+    }
+
     pub async fn update_operations_count(
         &self,
         transaction_inc: u64,
