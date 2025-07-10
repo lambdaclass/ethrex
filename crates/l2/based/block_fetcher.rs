@@ -704,7 +704,7 @@ async fn store_verify_tx_in_safe_batches(
     state: &mut BlockFetcherState,
 ) -> Result<(), BlockFetcherError> {
     for (batch_number, verify_log) in &state.pending_verify_logs {
-        if state.rollup_store.contains_batch(&batch_number).await? {
+        if state.rollup_store.contains_batch(batch_number).await? {
             state
                 .rollup_store
                 .store_verify_tx_by_batch(*batch_number, verify_log.transaction_hash)
