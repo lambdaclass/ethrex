@@ -227,22 +227,6 @@ jobs:
               return matches.map(match => parseInt(match[1], 10));
             }
 
-            // Given the issue numbers get the items in the project associated to them (if they belong)
-            async function getProjectItemsForIssues(projectId, issueNumbers) {
-              const issueItems = [];
-
-              for (const issueNumber of issueNumbers) {
-                const issue = await findProjectItem(projectId, issueNumber);
-                if (issue) {
-                  issueItems.push(issue);
-                } else {
-                  console.warn(`Project item for issue #${issueNumber} not found.`);
-                }
-              }
-
-              return issueItems;
-            }
-
             // Set a specific status for a list of issues
             async function setStatusForIssues(issueItems, projectId, statusFieldName, status) {
               for (const issueItem of issueItems) {
@@ -306,7 +290,6 @@ jobs:
             console.log("Issues that this PR closes:", issueNumbers);
 
             const issueItems = [];
-
             for (const issueNumber of issueNumbers) {
               const issue = await findProjectItem(projectId, issueNumber);
               if (issue) {
@@ -316,5 +299,6 @@ jobs:
               }
             }
 
+            // Update issue items with the new status.
             console.log(`Synchronizing linked issues with new PR state.`);
             setStatusForIssues(issueItems, projectId, statusFieldName, status_post_changes);
