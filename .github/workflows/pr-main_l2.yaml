@@ -24,6 +24,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -52,6 +54,8 @@ jobs:
           - name: "Vanilla"
             validium: false
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -113,6 +117,8 @@ jobs:
     name: Integration Test - Based
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -197,6 +203,8 @@ jobs:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

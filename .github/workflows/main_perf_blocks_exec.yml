@@ -15,6 +15,12 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Checkout LFS objects
+        run: git lfs checkout
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

@@ -25,6 +25,8 @@ jobs:
       matrix:
         backend: ["sp1", "risc0"]
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

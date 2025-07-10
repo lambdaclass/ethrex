@@ -27,6 +27,12 @@ jobs:
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         uses: ./.github/actions/setup-rust
 
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        with:
+          ref: ${{ github.event.pull_request[matrix.branch].sha }}
+
       - name: Build binary
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         run: |

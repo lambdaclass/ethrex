@@ -17,6 +17,8 @@ jobs:
     name: Integration Test Prover SP1
     runs-on: gpu
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

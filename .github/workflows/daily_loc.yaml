@@ -11,6 +11,8 @@ jobs:
     name: Count ethrex loc and generate report
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

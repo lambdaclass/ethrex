@@ -21,6 +21,8 @@ jobs:
       matrix:
         name: ["levm", "revm"]
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -160,6 +162,8 @@ jobs:
     outputs:
       time: ${{steps.generate-flamegraph-ethrex.outputs.time}}
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

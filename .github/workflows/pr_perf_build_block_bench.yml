@@ -12,6 +12,8 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
