@@ -10,7 +10,6 @@ mod genesis;
 pub mod payload;
 mod receipt;
 pub mod requests;
-pub mod signer;
 pub mod transaction;
 pub mod tx_fields;
 

@@ -1,13 +1,13 @@
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     utils::RpcErr,
+    signer::{LocalSigner, Signable}
 };
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
     types::{
-        AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, Signable,
-        TxKind, signer::LocalSigner,
+        AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, TxKind,
     },
 };
 use ethrex_rpc::types::transaction::SendRawTransactionRequest;

@@ -5,12 +5,14 @@ use crate::{
 use clap::Parser;
 use ethrex_common::{
     Address,
-    types::signer::{LocalSigner, RemoteSigner, Signer},
 };
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
+};
+use ethrex_l2_rpc::{
+    signer::{LocalSigner, RemoteSigner, Signer},
 };
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,

@@ -6,7 +6,10 @@ use bytes::Bytes;
 use calldata::encode_calldata;
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
-use ethrex_common::types::signer::{LocalSigner, Signer};
+use ethrex_l2_rpc::{
+    signer::{LocalSigner, Signer},
+    clients::{send_tx_bump_gas_exponential_backoff, send_eip1559_transaction},
+};
 use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::eth::L1MessageProof;
 use ethrex_rpc::clients::eth::{
@@ -117,7 +120,7 @@ pub async fn transfer(
     let gas_limit = client.estimate_gas(tx_generic).await?;
     tx.gas_limit = gas_limit;
     let signer = LocalSigner::new(*private_key).into();
-    client.send_eip1559_transaction(&tx, &signer).await
+    send_eip1559_transaction(client, &tx, &signer).await
 }
 
 pub async fn deposit_through_transfer(
@@ -159,8 +162,8 @@ pub async fn withdraw(
         .await?;
 
     let signer = LocalSigner::new(from_pk).into();
-    proposer_client
-        .send_eip1559_transaction(&withdraw_transaction, &signer)
+    
+    send_eip1559_transaction(proposer_client, &withdraw_transaction, &signer)
         .await
 }
 
@@ -208,8 +211,8 @@ pub async fn claim_withdraw(
         .await?;
 
     let signer = LocalSigner::new(from_pk).into();
-    eth_client
-        .send_eip1559_transaction(&claim_tx, &signer)
+    
+    send_eip1559_transaction(eth_client, &claim_tx, &signer)
         .await
 }
 
@@ -260,8 +263,8 @@ pub async fn claim_erc20withdraw(
         )
         .await?;
 
-    eth_client
-        .send_eip1559_transaction(&claim_tx, from_signer)
+    
+    send_eip1559_transaction(eth_client, &claim_tx, from_signer)
         .await
 }
 
@@ -298,8 +301,8 @@ pub async fn deposit_erc20(
         )
         .await?;
 
-    eth_client
-        .send_eip1559_transaction(&deposit_tx, from_signer)
+    
+    send_eip1559_transaction(eth_client, &deposit_tx, from_signer)
         .await
 }
 
@@ -553,8 +556,7 @@ async fn create2_deploy(
     eth_client
         .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer.address())
         .await?;
-    let deploy_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer)
+    let deploy_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut wrapped_tx, deployer)
         .await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
@@ -613,8 +615,7 @@ pub async fn initialize_contract(
         .set_gas_for_wrapped_tx(&mut wrapped_tx, initializer.address())
         .await?;
 
-    let initialize_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, initializer)
+    let initialize_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut wrapped_tx, initializer)
         .await?;
 
     Ok(initialize_tx_hash)
@@ -634,7 +635,7 @@ pub async fn call_contract(
         .build_eip1559_transaction(to, from, calldata, Default::default())
         .await?;
 
-    let tx_hash = client.send_eip1559_transaction(&tx, &signer).await?;
+    let tx_hash = send_eip1559_transaction(client, &tx, &signer).await?;
 
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(tx_hash)

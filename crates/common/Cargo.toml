@@ -8,7 +8,6 @@ edition = "2024"
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
-web3signer = { workspace = true, optional = true }
 
 tracing.workspace = true
 tinyvec = "1.6.0"
@@ -37,7 +36,6 @@ hex-literal.workspace = true
 [features]
 default = []
 c-kzg = ["dep:c-kzg"]
-web3sign = ["dep:web3signer"]
 
 [lib]
 path = "./common.rs"

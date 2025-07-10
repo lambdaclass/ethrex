@@ -1,5 +1,3 @@
-use ethrex_common::types::signer::SignerError;
-
 use crate::utils::RpcRequest;
 
 #[derive(Debug, thiserror::Error)]
@@ -54,8 +52,6 @@ pub enum EthClientError {
     TimeoutError,
     #[error("Internal Error. This is most likely a bug: {0}")]
     InternalError(String),
-    #[error("Failed to sign transaction: {0}")]
-    SignerError(#[from] SignerError),
     #[error("Parse Url Error. {0}")]
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]

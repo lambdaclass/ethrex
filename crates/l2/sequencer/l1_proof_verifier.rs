@@ -5,7 +5,7 @@ use aligned_sdk::{
     },
     common::types::Network,
 };
-use ethrex_common::types::signer::Signer;
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
     calldata::Value,

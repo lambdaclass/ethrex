@@ -13,6 +13,7 @@ ethrex-p2p.workspace = true
 ethrex-storage-rollup.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-rpc.workspace = true
+ethrex-rlp.workspace = true
 
 axum.workspace = true
 tower-http = { version = "0.6.2", features = ["cors"] }
@@ -24,6 +25,11 @@ tracing.workspace = true
 thiserror.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
+reqwest.workspace = true
+ethereum-types.workspace = true
+hex.workspace = true
+rustc-hex.workspace = true
+url.workspace = true
 
 [lib]
 path = "./lib.rs"

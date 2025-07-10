@@ -1,7 +1,8 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
-use ethrex_common::types::signer::{LocalSigner, Signer};
+use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_rpc::clients::{send_eip1559_transaction, deploy};
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
@@ -87,8 +88,8 @@ async fn deploy_contract(
     deployer: &Signer,
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
-    let (_, contract_address) = client
-        .deploy(deployer, contract.into(), Overrides::default())
+    let (_, contract_address) = 
+        deploy(&client, deployer, contract.into(), Overrides::default())
         .await?;
 
     eyre::Ok(contract_address)
@@ -133,8 +134,8 @@ async fn claim_erc20_balances(
                 )
                 .await
                 .unwrap();
-            let tx_hash = client
-                .send_eip1559_transaction(&claim_tx, &account)
+            let tx_hash = 
+                send_eip1559_transaction(&client, &claim_tx, &account)
                 .await
                 .unwrap();
             client.wait_for_transaction_receipt(tx_hash, RETRIES).await
@@ -238,7 +239,7 @@ async fn load_test(
                     .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = client.send_eip1559_transaction(&tx, &account).await?;
+                let _sent = send_eip1559_transaction(&client, &tx, &account).await?;
             }
             println!("{tx_amount} transactions have been sent for {encoded_src}",);
             Ok::<(), EthClientError>(())

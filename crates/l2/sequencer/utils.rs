@@ -1,6 +1,8 @@
 use aligned_sdk::common::types::Network;
-use ethrex_common::{Address, H160, H256, types::signer::Signer};
+use ethrex_common::{Address, H160, H256};
 use ethrex_l2_common::prover::ProverType;
+use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::WrappedTransaction},
@@ -61,8 +63,7 @@ pub async fn send_verify_tx(
 
     let mut tx = WrappedTransaction::EIP1559(verify_tx);
 
-    let verify_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut tx, l1_signer)
+    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut tx, l1_signer)
         .await?;
 
     Ok(verify_tx_hash)

@@ -11,7 +11,6 @@ use ethrex_common::{
     types::{
         AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
         MIN_BASE_FEE_PER_BLOB_GAS, batch::Batch, blobs_bundle, fake_exponential_checked,
-        signer::Signer,
     },
 };
 use ethrex_l2_common::{
@@ -24,6 +23,8 @@ use ethrex_l2_common::{
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_l2_rpc::signer::Signer;
+use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::{METRICS, MetricsBlockType};
 use ethrex_metrics::metrics;
@@ -587,9 +588,7 @@ async fn send_commitment(
         .set_gas_for_wrapped_tx(&mut tx, state.signer.address())
         .await?;
 
-    let commit_tx_hash = state
-        .eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut tx, &state.signer)
+    let commit_tx_hash = send_tx_bump_gas_exponential_backoff(&state.eth_client, &mut tx, &state.signer)
         .await?;
 
     info!("Commitment sent: {commit_tx_hash:#x}");

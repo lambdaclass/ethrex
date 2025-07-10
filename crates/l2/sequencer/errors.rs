@@ -3,7 +3,7 @@ use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
-use ethrex_common::types::signer::SignerError;
+use ethrex_l2_rpc::signer::SignerError;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
