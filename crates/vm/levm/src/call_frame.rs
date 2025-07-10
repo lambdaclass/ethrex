@@ -42,10 +42,13 @@ impl Stack {
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
         // check it again.
-        #[expect(clippy::indexing_slicing)]
-        let values = self.values[self.offset..]
-            .first_chunk::<N>()
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        #[expect(unsafe_code)]
+        let values = unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .first_chunk::<N>()
+                .ok_or(ExceptionalHalt::StackUnderflow)?
+        };
         self.offset = next_offset;
 
         Ok(values)
@@ -61,8 +64,12 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[next_offset..self.offset].copy_from_slice(values);
+        #[expect(unsafe_code)]
+        unsafe {
+            self.values
+                .get_unchecked_mut(next_offset..self.offset)
+                .copy_from_slice(values);
+        }
         self.offset = next_offset;
 
         Ok(())
@@ -84,10 +91,13 @@ impl Stack {
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
         // The following index cannot fail because `self.offset` is known to be within
         // `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[self.offset..]
-            .get(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)
+        #[expect(unsafe_code)]
+        unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .get(index)
+                .ok_or(ExceptionalHalt::StackUnderflow)
+        }
     }
 
     pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
