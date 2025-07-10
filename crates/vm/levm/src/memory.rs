@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, RwLock};
 
 use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_USIZE},
@@ -13,9 +13,9 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 /// When a new callframe is created a RC clone of this memory is made, with the current base offset at the length of the buffer at that time.
 #[derive(Debug, Clone)]
 pub struct MemoryV2 {
-    buffer: Rc<RefCell<Vec<u8>>>,
-    current_base: usize,
+    buffer: Arc<RwLock<Vec<u8>>>,
     len_gas: usize,
+    current_base: usize,
 }
 
 #[allow(clippy::unwrap_used)]
@@ -23,29 +23,32 @@ impl MemoryV2 {
     #[inline]
     pub fn new(current_base: usize) -> Self {
         Self {
-            buffer: Rc::new(RefCell::new(Vec::new())),
-            current_base,
+            buffer: Arc::new(RwLock::new(Vec::new())),
             len_gas: 0,
+            current_base,
         }
     }
 
     #[inline]
     pub fn next_memory(&self) -> MemoryV2 {
         let mut mem = self.clone();
-        mem.current_base = mem.buffer.borrow().len();
+        mem.current_base = mem.buffer.read().unwrap().len();
         mem.len_gas = 0;
         mem
     }
 
     /// Cleans the memory from base onwards, this should be used in callframes when handling returns. On the callframe that is about to be dropped.
     pub fn clean_from_base(&self) {
-        self.buffer.borrow_mut().truncate(self.current_base);
+        let current_len = self.current_len();
+        #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+        self.buffer.write().unwrap()[(self.current_base)..(self.current_base + current_len)]
+            .fill(0);
     }
 
     /// Returns the len of the current memory for gas, this differs from the actual allocated length due to optimizations.
     #[inline]
     pub fn len(&self) -> usize {
-        self.current_len()
+        self.len_gas
     }
 
     pub fn is_empty(&self) -> bool {
@@ -56,7 +59,14 @@ impl MemoryV2 {
     #[inline]
     fn current_len(&self) -> usize {
         // will never wrap
-        self.buffer.borrow().len().wrapping_sub(self.current_base)
+        /*
+        self.buffer
+            .read()
+            .unwrap()
+            .len()
+            .wrapping_sub(self.current_base) */
+
+        self.len_gas
     }
 
     /// Returns the len of the current memory, from the current base.
@@ -64,7 +74,8 @@ impl MemoryV2 {
     fn current_cap(&self) -> usize {
         // will never wrap
         self.buffer
-            .borrow()
+            .read()
+            .unwrap()
             .capacity()
             .wrapping_sub(self.current_base)
     }
@@ -86,7 +97,11 @@ impl MemoryV2 {
             return Ok(());
         }
 
-        let mut buffer = self.buffer.borrow_mut();
+        if self.len_gas < new_memory_size {
+            self.len_gas = new_memory_size;
+        }
+
+        let mut buffer = self.buffer.write().unwrap();
 
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
@@ -98,8 +113,17 @@ impl MemoryV2 {
             buffer.reserve_exact(new_size);
         }
 
-        #[allow(clippy::arithmetic_side_effects)]
-        buffer.resize(real_new_memory_size, 0);
+        // if we are at end of len resize
+        if real_new_memory_size > buffer.len() {
+            #[allow(clippy::arithmetic_side_effects)]
+            buffer.resize(new_size, 0);
+        } else {
+            // since we fill with 0 on clean, this region of memory is zeroed already
+            // otherwise fill with 0 the given region
+            //#[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+            //buffer[(self.current_base + current_len)..(self.current_base + new_memory_size)]
+            //    .fill(0);
+        }
 
         Ok(())
     }
@@ -115,7 +139,7 @@ impl MemoryV2 {
 
         let true_offset = offset.checked_add(self.current_base).unwrap();
 
-        let buf = self.buffer.borrow();
+        let buf = self.buffer.read().unwrap();
         Ok(buf
             .get(true_offset..(true_offset.checked_add(size).unwrap()))
             .ok_or(OutOfBounds)?
@@ -129,7 +153,7 @@ impl MemoryV2 {
 
         let true_offset = offset.checked_add(self.current_base).unwrap();
 
-        let buf = self.buffer.borrow();
+        let buf = self.buffer.read().unwrap();
         Ok(buf
             .get(true_offset..(true_offset.checked_add(N).unwrap()))
             .unwrap()
@@ -153,7 +177,7 @@ impl MemoryV2 {
             .checked_add(at_offset)
             .ok_or(OutOfBounds)?;
 
-        let mut buffer = self.buffer.borrow_mut();
+        let mut buffer = self.buffer.write().unwrap();
 
         let real_data_size = data_size.min(data.len());
 
@@ -217,7 +241,7 @@ impl MemoryV2 {
         let true_to_offset = to_offset
             .checked_add(self.current_base)
             .ok_or(OutOfBounds)?;
-        let mut buffer = self.buffer.borrow_mut();
+        let mut buffer = self.buffer.write().unwrap();
 
         buffer.copy_within(
             true_from_offset
@@ -296,7 +320,10 @@ mod test {
 
         mem.store_data(0, &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]).unwrap();
 
-        assert_eq!(&mem.buffer.borrow()[0..10], &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            &mem.buffer.read().unwrap()[0..10],
+            &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]
+        );
         assert_eq!(mem.len(), 32);
     }
 

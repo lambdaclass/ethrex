@@ -16,3 +16,4 @@ pub mod utils;
 pub mod vm;
 pub use environment::*;
 pub mod l2_precompiles;
+pub use memory::MemoryV2;

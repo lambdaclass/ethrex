@@ -64,6 +64,7 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+    pub shared_memory: Option<MemoryV2>
 }
 
 impl<'a> VM<'a> {
@@ -89,6 +90,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            shared_memory: None
         }
     }
 
@@ -97,7 +99,7 @@ impl<'a> VM<'a> {
     }
 
     /// Initializes substate and creates first execution callframe.
-    pub fn setup_vm(&mut self) -> Result<(), VMError> {
+    pub fn setup_vm(&mut self, shared_memory: MemoryV2) -> Result<(), VMError> {
         self.initialize_substate()?;
 
         let (callee, is_create) = self.get_tx_callee()?;
@@ -117,7 +119,7 @@ impl<'a> VM<'a> {
             U256::zero(),
             0,
             Stack::default(),
-            MemoryV2::default(),
+            shared_memory,
         );
 
         self.call_frames.push(initial_call_frame);
@@ -147,7 +149,7 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        self.setup_vm()?;
+        self.setup_vm(self.shared_memory.clone().unwrap_or_default())?;
 
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.

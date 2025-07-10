@@ -25,6 +25,7 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
+use ethrex_vm::backends::MemoryV2;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
@@ -62,6 +63,7 @@ pub struct Blockchain {
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
     pub r#type: BlockchainType,
+    pub shared_memory: Option<MemoryV2>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +92,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: blockchain_type,
+            shared_memory: None,
         }
     }
 
@@ -100,6 +103,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
             r#type: BlockchainType::default(),
+            shared_memory: None,
         }
     }
 
@@ -122,7 +126,11 @@ impl Blockchain {
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = self.new_evm(vm_db)?;
-        let execution_result = vm.execute_block(block)?;
+        let execution_result = if let Some(memory) = &self.shared_memory {
+            vm.execute_block_with_shared_memory(block, memory.clone())?
+        } else {
+            vm.execute_block(block)?
+        };
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright

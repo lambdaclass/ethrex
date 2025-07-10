@@ -16,6 +16,7 @@ use ethrex_common::{
         Transaction, TxKind, Withdrawal, requests::Requests,
     },
 };
+use ethrex_levm::memory::MemoryV2;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -55,6 +56,48 @@ impl LEVM {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
+
+            cumulative_gas_used += report.gas_used;
+            let receipt = Receipt::new(
+                tx.tx_type(),
+                matches!(report.result.clone(), TxResult::Success),
+                cumulative_gas_used,
+                report.logs.clone(),
+            );
+
+            receipts.push(receipt);
+        }
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
+        // TODO: I don't like deciding the behavior based on the VMType here.
+        // TODO2: Revise this, apparently extract_all_requests_levm is not called
+        // in L2 execution, but its implementation behaves differently based on this.
+        let requests = match vm_type {
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L2 => Default::default(),
+        };
+
+        Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    pub fn execute_block_with_shared_memory(
+        block: &Block,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        shared_memory: MemoryV2
+    ) -> Result<BlockExecutionResult, EvmError> {
+        Self::prepare_block(block, db, vm_type.clone())?;
+
+        let mut receipts = Vec::new();
+        let mut cumulative_gas_used = 0;
+
+        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
+            let report = Self::execute_tx_with_shared_memory(tx, tx_sender, &block.header, db, vm_type.clone(), shared_memory.clone())?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -137,6 +180,27 @@ impl LEVM {
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
 
         vm.execute().map_err(VMError::into)
+    }
+
+     pub fn execute_tx_with_shared_memory(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        shared_memory: MemoryV2,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+        vm.shared_memory = Some(shared_memory.clone());
+
+        let result = vm.execute()?;
+        shared_memory.clean_from_base();
+
+        Ok(result)
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {

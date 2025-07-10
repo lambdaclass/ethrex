@@ -95,7 +95,9 @@ pub fn init_blockchain(
     blockchain_type: BlockchainType,
 ) -> Arc<Blockchain> {
     info!("Initiating blockchain with EVM: {}", evm_engine);
-    Blockchain::new(evm_engine, store, blockchain_type).into()
+    let mut blockchain = Blockchain::new(evm_engine, store, blockchain_type);
+    blockchain.shared_memory = Some(Default::default());
+    blockchain.into()
 }
 
 #[allow(clippy::too_many_arguments)]

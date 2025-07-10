@@ -15,6 +15,7 @@ use ethrex_common::types::{
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
+pub use ethrex_levm::memory::MemoryV2;
 use ethrex_levm::vm::VMType;
 use levm::LEVM;
 use revm::REVM;
@@ -126,6 +127,13 @@ impl Evm {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
             Evm::LEVM { db, vm_type } => LEVM::execute_block(block, db, vm_type.clone()),
+        }
+    }
+
+    pub fn execute_block_with_shared_memory(&mut self, block: &Block, shared_memory: MemoryV2) -> Result<BlockExecutionResult, EvmError> {
+        match self {
+            Evm::REVM { state } => REVM::execute_block(block, state),
+            Evm::LEVM { db, vm_type } => LEVM::execute_block_with_shared_memory(block, db, vm_type.clone(), shared_memory),
         }
     }
 
