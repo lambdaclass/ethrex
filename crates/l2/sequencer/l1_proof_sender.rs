@@ -195,7 +195,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         }
     }
 
-    if !missing_proof_types.is_empty() {
+    if missing_proof_types.is_empty() {
         if state.aligned_mode {
             send_proof_to_aligned(state, batch_to_send, proofs.values()).await?;
         } else {
