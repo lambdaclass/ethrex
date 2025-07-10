@@ -37,6 +37,7 @@ BENCH_MINT_ITERATIONS := 500
 BENCH_TRANSFER_ITERATIONS := 500
 BENCH_APPROVAL_ITERATIONS := 500
 BENCH_PUSH_ITERATIONS := 0 # unused, fixed size array to use stack
+BENCH_MSTOREBENCH_ITERATIONS := 0 # unused, fixed size array to use stack
 
 # For manually testing you could add --show-output to hyperfine
 define run_benchmark
@@ -76,6 +77,7 @@ compile-contracts:
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
+	$(call run_benchmark,MstoreBench,REPETITIONS,BENCH_MSTOREBENCH_ITERATIONS)
 	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_benchmark,FibonacciRecursive,REPETITIONS_SLOW,BENCH_FIB_REC_ITERATIONS)
 	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
@@ -94,6 +96,7 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
+	$(call run_benchmark_ci,MstoreBench,REPETITIONS,BENCH_MSTOREBENCH_ITERATIONS)
 	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
 	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)

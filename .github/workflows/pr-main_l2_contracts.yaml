@@ -28,6 +28,8 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Caching
         uses: Swatinem/rust-cache@v2
       - name: Run test of deployer.rs

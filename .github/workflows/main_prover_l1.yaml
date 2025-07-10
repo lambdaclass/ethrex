@@ -55,13 +55,14 @@ jobs:
       - name: Build
         run: |
           cd cmd/ethrex_replay
+          export PATH=$PATH:/usr/local/cuda-12.8/bin
           cargo b -r --features "${{ matrix.backend }},gpu"
 
       - name: Run
         env:
           # TODO(): use RPC
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
-          RPC_URL: "dummy"
+          RPC_URL: "http://dummy"
         run: |
           cp fixtures/cache/rpc_prover/cache_690403.json cmd/ethrex_replay
           cd cmd/ethrex_replay
@@ -83,11 +84,11 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-      - name: Report Status
-        if: always()
-        uses: ravsamhq/notify-slack-action@v2
-        with:
-          status: ${{ job.status }}
-          notify_when: 'failure'
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      # - name: Report Status
+      #   if: always()
+      #   uses: ravsamhq/notify-slack-action@v2
+      #   with:
+      #     status: ${{ job.status }}
+      #     notify_when: 'failure'
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
