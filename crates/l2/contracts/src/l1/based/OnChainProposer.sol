@@ -83,13 +83,13 @@ contract OnChainProposer is
     bytes32 public RISC0_VERIFICATION_KEY;
 
     /// @notice Maximum time the sequencer can take without sending privileged transactions
-    uint256 public constant PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+    uint256 public PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
     /// @notice Minimum of privileged transactions that must be included to reset the deadline
     /// @dev If there aren't that many pending, pendingTxHashes.length is used
-    uint16 public constant PRIVILEGED_TX_INCLUSION_TARGET;
+    uint16 public PRIVILEGED_TX_INCLUSION_TARGET;
     /// @notice A batch is still accepted if's short of {PRIVILEGED_TX_INCLUSION_TARGET} by only a few transactions
     /// @dev This avoids having to discard a batch due to a last-minute transaction
-    uint16 public constant PRIVILEGED_TX_TOLERANCE;
+    uint16 public PRIVILEGED_TX_TOLERANCE;
 
     /// @notice Deadline for including the next batch of privileged transactions, if any are pending
     uint256 public txInclusionDeadline;
