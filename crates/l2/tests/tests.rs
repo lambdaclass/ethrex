@@ -3,12 +3,13 @@
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::H160;
-use ethrex_common::types::{
-    BlockNumber,
-    signer::{LocalSigner, Signer},
-};
+use ethrex_common::types::BlockNumber;
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::{
+    clients::{deploy, send_eip1559_transaction},
+    signer::{LocalSigner, Signer},
+};
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS,
     calldata::{self},
@@ -522,7 +523,9 @@ async fn test_send(
         )
         .await
         .unwrap();
-    let tx_hash = client.send_eip1559_transaction(&tx, &signer).await.unwrap();
+    let tx_hash = send_eip1559_transaction(client, &tx, &signer)
+        .await
+        .unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)
         .await
         .unwrap()
@@ -1140,9 +1143,13 @@ async fn test_deploy(
         .get_balance(fees_vault(), BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let (deploy_tx_hash, contract_address) = proposer_client
-        .deploy(&deployer, init_code.to_vec().into(), Overrides::default())
-        .await?;
+    let (deploy_tx_hash, contract_address) = deploy(
+        proposer_client,
+        &deployer,
+        init_code.to_vec().into(),
+        Overrides::default(),
+    )
+    .await?;
 
     let deploy_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, proposer_client, 5).await?;
@@ -1190,13 +1197,13 @@ async fn test_deploy_l1(
 
     let deployer_signer: Signer = LocalSigner::new(*private_key).into();
 
-    let (deploy_tx_hash, contract_address) = client
-        .deploy(
-            &deployer_signer,
-            init_code.to_vec().into(),
-            Overrides::default(),
-        )
-        .await?;
+    let (deploy_tx_hash, contract_address) = deploy(
+        client,
+        &deployer_signer,
+        init_code.to_vec().into(),
+        Overrides::default(),
+    )
+    .await?;
 
     ethrex_l2_sdk::wait_for_transaction_receipt(deploy_tx_hash, client, 5).await?;
 
