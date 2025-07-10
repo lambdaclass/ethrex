@@ -3,7 +3,7 @@ Description=Ethrex L2
 After=network.target
 
 [Service]
-ExecStart={{ ethrex_dir }}/target/release/ethrex l2 init \
+ExecStart={{ ethrex_dir }}/bin/ethrex l2 init \
           --network {{ genesis_json_file }} \
           --http.addr 0.0.0.0 --http.port 1729 \
           --metrics --metrics.port 3702 \

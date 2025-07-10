@@ -7,6 +7,14 @@
     uploaded_json_genesis_file: "{{ ethrex_dir }}/genesis.json"
 
   tasks:
+    - name: Make directories
+      file:
+        path: "{{ ethrex_dir }}/bin"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0700"
+
     - name: Download ethrex
       get_url:
         url: https://github.com/lambdaclass/ethrex/releases/download/v{{ ethrex_version }}/ethrex-linux_{{ ansible_architecture }}
@@ -22,7 +30,7 @@
 
     - name: Download defualt dev genesis (If a custom one not provided)
       get_url:
-        url: https://raw.githubusercontent.com/lambdaclass/ethrex/refs/tags/l2_v0.0.1-rc1/fixtures/genesis/l2.json
+        url: https://raw.githubusercontent.com/lambdaclass/ethrex/refs/tags/v{{ ethrex_version }}/fixtures/genesis/l2.json
         dest: "{{ uploaded_json_genesis_file }}"
       when: lookup('env', 'GENESIS_JSON_FILE') | length == 0
 
