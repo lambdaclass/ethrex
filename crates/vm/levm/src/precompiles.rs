@@ -345,23 +345,9 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErro
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
-    let base_size = u256_from_big_endian(
-        calldata
-            .get(0..32)
-            .ok_or(PrecompileError::ParsingInputError)?,
-    );
-
-    let exponent_size = u256_from_big_endian(
-        calldata
-            .get(32..64)
-            .ok_or(PrecompileError::ParsingInputError)?,
-    );
-
-    let modulus_size = u256_from_big_endian(
-        calldata
-            .get(64..96)
-            .ok_or(PrecompileError::ParsingInputError)?,
-    );
+    let base_size = U256::from_big_endian(calldata.get(0..32).ok_or(InternalError::Slicing)?);
+    let exponent_size = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
+    let modulus_size = U256::from_big_endian(calldata.get(64..96).ok_or(InternalError::Slicing)?);
 
     if base_size == U256::zero() && modulus_size == U256::zero() {
         // On Berlin or newer there is a floor cost for the modexp precompile
@@ -471,21 +457,11 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let calldata = fill_with_zeros(calldata, 128);
 
     increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
-    let first_point_x = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
 
-    let first_point_y = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    let second_point_x = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    let second_point_y = calldata
-        .get(96..128)
-        .ok_or(PrecompileError::ParsingInputError)?;
+    let first_point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let first_point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
+    let second_point_x = calldata.get(64..96).ok_or(InternalError::Slicing)?;
+    let second_point_y = calldata.get(96..128).ok_or(InternalError::Slicing)?;
 
     // If points are zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
@@ -548,19 +524,11 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
 
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let point_x = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
+    let point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
+    let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
+    let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
 
-    let point_y = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-
-    let scalar = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let scalar =
-        element::U256::from_bytes_be(scalar).map_err(|_| PrecompileError::ParsingInputError)?;
+    let scalar = element::U256::from_bytes_be(scalar).map_err(|_| InternalError::Slicing)?;
 
     // If point is zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
@@ -570,10 +538,8 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
 
-    let point_x = BN254FieldElement::from_bytes_be(point_x)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let point_y = BN254FieldElement::from_bytes_be(point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let point_x = BN254FieldElement::from_bytes_be(point_x).map_err(|_| InternalError::Slicing)?;
+    let point_y = BN254FieldElement::from_bytes_be(point_y).map_err(|_| InternalError::Slicing)?;
 
     let point = BN254Curve::create_point_from_affine(point_x, point_y)
         .map_err(|_| PrecompileError::ParsingInputError)?;
@@ -615,13 +581,13 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     if (u256_from_big_endian(first_point_x) == U256::zero())
         ^ (u256_from_big_endian(first_point_y) == U256::zero())
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::InvalidPoint.into());
     }
 
     let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
     let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
 
     Ok((first_point_x, first_point_y))
 }
@@ -643,7 +609,7 @@ fn parse_second_point_coordinates(
     if (u256_from_big_endian(second_point_x_first_part) == U256::zero())
         ^ (u256_from_big_endian(second_point_x_second_part) == U256::zero())
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::InvalidPoint.into());
     }
 
     let second_point_y_first_part = input_data.get(160..192).ok_or(InternalError::Slicing)?;
@@ -653,7 +619,7 @@ fn parse_second_point_coordinates(
     if (u256_from_big_endian(second_point_y_first_part) == U256::zero())
         ^ (u256_from_big_endian(second_point_y_second_part) == U256::zero())
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::InvalidPoint.into());
     }
 
     // Check if the second point belongs to the curve (this happens if it's lower than the prime)
@@ -662,16 +628,16 @@ fn parse_second_point_coordinates(
         || u256_from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
         || u256_from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
     {
-        return Err(PrecompileError::DefaultError.into());
+        return Err(PrecompileError::PointNotInTheCurve.into());
     }
 
     let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
     let second_point_y_bytes = [second_point_y_first_part, second_point_y_second_part].concat();
 
     let second_point_x = BN254TwistCurveFieldElement::from_bytes_be(&second_point_x_bytes)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
     let second_point_y = BN254TwistCurveFieldElement::from_bytes_be(&second_point_y_bytes)
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| InternalError::msg("Failed to create BN254 element from bytes"))?;
 
     Ok((second_point_x, second_point_y))
 }
@@ -699,39 +665,33 @@ fn handle_pairing_from_coordinates(
         }
         (true, false) => {
             // If the first point is infinity, then do the checks for the second
-            if let Ok(p2) = BN254TwistCurve::create_point_from_affine(
+            let p2 = BN254TwistCurve::create_point_from_affine(
                 second_point_x.clone(),
                 second_point_y.clone(),
-            ) {
-                if !p2.is_in_subgroup() {
-                    Err(PrecompileError::DefaultError.into())
-                } else {
-                    Ok(true)
-                }
-            } else {
-                Err(PrecompileError::DefaultError.into())
+            )
+            .map_err(|_| PrecompileError::InvalidPoint)?;
+
+            if !p2.is_in_subgroup() {
+                return Err(PrecompileError::PointNotInSubgroup.into());
             }
+            Ok(true)
         }
         (false, true) => {
             // If the second point is infinity, then do the checks for the first
-            if BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
-                .is_err()
-            {
-                Err(PrecompileError::DefaultError.into())
-            } else {
-                Ok(true)
-            }
+            BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
+                .map_err(|_| PrecompileError::InvalidPoint)?;
+            Ok(true)
         }
         (false, false) => {
             // Define the pairing points
             let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-                .map_err(|_| PrecompileError::DefaultError)?;
+                .map_err(|_| PrecompileError::InvalidPoint)?;
 
             let second_point =
                 BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
-                    .map_err(|_| PrecompileError::DefaultError)?;
+                    .map_err(|_| PrecompileError::InvalidPoint)?;
             if !second_point.is_in_subgroup() {
-                return Err(PrecompileError::DefaultError.into());
+                return Err(PrecompileError::PointNotInSubgroup.into());
             }
 
             // Get the result of the pairing and affect the mul value with it
@@ -799,7 +759,7 @@ fn update_pairing_result(
     second_point: ShortWeierstrassProjectivePoint<BN254TwistCurve>,
 ) -> Result<(), VMError> {
     let pairing_result = BN254AtePairing::compute_batch(&[(&first_point, &second_point)])
-        .map_err(|_| PrecompileError::DefaultError)?;
+        .map_err(|_| PrecompileError::BN254AtePairingError)?;
 
     *mul *= pairing_result;
 
@@ -992,33 +952,33 @@ fn point_evaluation(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, 
     // Parse inputs
     let versioned_hash: [u8; 32] = calldata
         .get(..32)
-        .ok_or(PrecompileError::ParsingInputError)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let x: [u8; 32] = calldata
         .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let y: [u8; 32] = calldata
         .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let commitment: [u8; 48] = calldata
         .get(96..144)
-        .ok_or(PrecompileError::ParsingInputError)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let proof: [u8; 48] = calldata
         .get(144..192)
-        .ok_or(PrecompileError::ParsingInputError)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     // Perform the evaluation
 
@@ -1341,7 +1301,6 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError.into())
 }
-
 fn parse_g1_point(
     point_raw_bytes: Option<&[u8]>,
     unchecked: bool,

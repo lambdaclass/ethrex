@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-08
+
+- Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)
+
 ### 2025-07-07
 
 - Improve blake2f [#3503](https://github.com/lambdaclass/ethrex/pull/3503)
