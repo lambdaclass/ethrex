@@ -18,7 +18,7 @@ in
       imports = [
         "${modulesPath}/image/repart.nix"
         "${modulesPath}/profiles/minimal.nix"
-        (import ./service.nix { inherit pkgs gitRev; })
+        (import ./service.nix { inherit gitRev; })
       ];
 
       system.stateVersion = "25.11";
