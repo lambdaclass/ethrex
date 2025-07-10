@@ -1386,12 +1386,15 @@ impl EthClient {
         }
     }
 
-    pub async fn get_batch_by_number(&self, batch_number: u64) -> Result<RpcBatch, EthClientError> {
+    pub async fn get_batch_by_number(
+        &self,
+        block: BlockIdentifier,
+    ) -> Result<RpcBatch, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "ethrex_getBatchByNumber".to_string(),
-            params: Some(vec![json!(format!("{batch_number:#x}")), json!(true)]),
+            params: Some(vec![block.into(), json!(true)]),
         };
 
         match self.send_request(request).await? {

@@ -121,6 +121,22 @@ impl StoreEngineRollup for Store {
             .await
     }
 
+    async fn get_latest_batch(&self) -> Result<u64, RollupStoreError> {
+        let db = self.db.clone();
+        let max_batch = tokio::task::spawn_blocking(move || -> Result<u64, RollupStoreError> {
+            let txn = db.begin_read().map_err(RollupStoreError::LibmdbxError)?;
+            let mut curs = txn
+                .cursor::<BatchesByBlockNumber>()
+                .map_err(RollupStoreError::LibmdbxError)?;
+            let last_pair = curs.last().map_err(RollupStoreError::LibmdbxError)?;
+            Ok(last_pair.map(|(key, _)| key).unwrap_or(0))
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("spawn_blocking failed: {e}")))??;
+
+        Ok(max_batch)
+    }
+
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
