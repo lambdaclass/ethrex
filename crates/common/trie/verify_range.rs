@@ -56,8 +56,7 @@ pub fn verify_range(
         let hash = trie.hash()?;
         if hash != root {
             return Err(TrieError::Verify(format!(
-                "invalid proof, expected root hash {}, got  {}",
-                root, hash
+                "invalid proof, expected root hash {root}, got  {hash}",
             )));
         }
         return Ok(false);
@@ -68,7 +67,7 @@ pub fn verify_range(
         // We need to check that the proof confirms the non-existance of the first key
         // and that there are no more elements to the right of the first key
         let (_, (left_value, _), num_right_refs) =
-            process_proof_nodes(proof, root.into(), (*first_key, None))?;
+            process_proof_nodes(proof, root.into(), (*first_key, None), None)?;
         if num_right_refs > 0 || !left_value.is_empty() {
             return Err(TrieError::Verify(
                 "no keys returned but more are available on the trie".to_string(),
@@ -82,14 +81,18 @@ pub fn verify_range(
 
     // Special Case: There is only one element and the two edge keys are the same
     if keys.len() == 1 && first_key == last_key {
-        // We need to check that the proof confirms the existance of the first key
+        // We need to check that the proof confirms the existence of the first key
         if first_key != &keys[0] {
             return Err(TrieError::Verify(
                 "correct proof but invalid key".to_string(),
             ));
         }
-        let (_, (left_value, _), num_right_refs) =
-            process_proof_nodes(proof, root.into(), (*first_key, Some(*last_key)))?;
+        let (_, (left_value, _), num_right_refs) = process_proof_nodes(
+            proof,
+            root.into(),
+            (*first_key, Some(*last_key)),
+            Some(*keys.first().unwrap()),
+        )?;
         if left_value != values[0] {
             return Err(TrieError::Verify(
                 "correct proof but invalid data".to_string(),
@@ -104,8 +107,12 @@ pub fn verify_range(
     }
 
     // Process proofs to check if they are valid.
-    let (external_refs, _, num_right_refs) =
-        process_proof_nodes(proof, root.into(), (*first_key, Some(*last_key)))?;
+    let (external_refs, _, num_right_refs) = process_proof_nodes(
+        proof,
+        root.into(),
+        (*first_key, Some(*last_key)),
+        Some(*keys.first().unwrap()),
+    )?;
 
     // Reconstruct the internal nodes by inserting the elements on the range
     for (key, value) in keys.iter().zip(values.iter()) {
@@ -122,8 +129,7 @@ pub fn verify_range(
     let hash = trie.hash();
     if hash != root {
         return Err(TrieError::Verify(format!(
-            "invalid proof, expected root hash {}, got  {}",
-            root, hash
+            "invalid proof, expected root hash {root}, got  {hash}",
         )));
     }
     Ok(num_right_refs > 0)
@@ -144,12 +150,14 @@ fn process_proof_nodes(
     proof: &[Vec<u8>],
     root: NodeHash,
     bounds: (H256, Option<H256>),
+    first_key: Option<H256>,
 ) -> Result<ProcessProofNodesResult, TrieError> {
     // Convert `H256` bounds into `Nibble` bounds for convenience.
     let bounds = (
         Nibbles::from_bytes(&bounds.0.0),
         bounds.1.map(|x| Nibbles::from_bytes(&x.0)),
     );
+    let first_key = first_key.map(|first_key| Nibbles::from_bytes(&first_key.0));
 
     // Generate a map of node hashes to node data for obtaining proof nodes given their hashes.
     let proof = proof
@@ -196,12 +204,37 @@ fn process_proof_nodes(
 
                 match get_node(&proof, hash)? {
                     Some(node) => {
-                        // Append implicit leaf extension when pushing leaves.
-                        if let Node::Leaf(node) = &node {
-                            partial_path.extend(&node.partial);
-                        }
+                        // Handle proofs of absences in the left bound.
+                        //
+                        // When the proof proves an absence, the left bound won't end up in a leaf
+                        // and there will not be a path that the external references can follow to
+                        // avoid inconsistent trie errors. In those cases, there will be subtrees
+                        // completely outside of the verification range. Since we have the hash of
+                        // the entire subtree within the proof, we can just treat it as an external
+                        // reference and ignore everything inside.
+                        //
+                        // This optimization should not be a problem because we're the ones that
+                        // have computed the hash of the subtree (it's not part of the proof)
+                        // therefore we can always be sure it's representing the data the proof has
+                        // provided.
+                        //
+                        // Note: The right bound cannot be a proof of absence because it cannot be
+                        //   specified externally, and is always keys.last(). In other words, if
+                        //   there is a right bound, it'll always exist.
+                        if first_key.as_ref().is_some_and(|first_key| {
+                            first_key.compare_prefix(&partial_path) == Ordering::Greater
+                        }) {
+                            // The subtree is not part of the path to the first available key. Treat
+                            // the entire subtree as an external reference.
+                            external_refs.push((partial_path, hash));
+                        } else {
+                            // Append implicit leaf extension when pushing leaves.
+                            if let Node::Leaf(node) = &node {
+                                partial_path.extend(&node.partial);
+                            }
 
-                        stack.push_back((partial_path, node));
+                            stack.push_back((partial_path, node));
+                        }
                     }
                     None => {
                         if cmp_l == Ordering::Equal || cmp_r.is_some_and(|x| x == Ordering::Equal) {
@@ -264,6 +297,29 @@ mod tests {
     use proptest::prelude::any;
     use proptest::{bool, proptest};
     use std::str::FromStr;
+
+    #[test]
+    fn verify_range_proof_of_absence() {
+        let mut trie = Trie::new_temp();
+        trie.insert(vec![0x00, 0x01], vec![0x00]).unwrap();
+        trie.insert(vec![0x00, 0x02], vec![0x00]).unwrap();
+        trie.insert(vec![0x01; 32], vec![0x00]).unwrap();
+
+        // Obtain a proof of absence for a node that will return a branch completely outside the
+        // path of the first available key.
+        let mut proof = trie.get_proof(&vec![0x00, 0xFF]).unwrap();
+        proof.extend(trie.get_proof(&vec![0x01; 32]).unwrap());
+
+        let root = trie.hash_no_commit();
+        let keys = &[H256([0x01u8; 32])];
+        let values = &[vec![0x00u8]];
+
+        let mut first_key = H256([0xFF; 32]);
+        first_key.0[0] = 0;
+
+        let fetch_more = verify_range(root, &first_key, keys, values, &proof).unwrap();
+        assert!(!fetch_more);
+    }
 
     #[test]
     fn verify_range_regular_case_only_branch_nodes() {

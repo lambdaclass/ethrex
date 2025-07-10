@@ -160,7 +160,7 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let tx_set: HashSet<_> = tx_pool.iter().map(|(hash, _)| hash).collect();
+        let tx_set: HashSet<_> = tx_pool.keys().collect();
         Ok(possible_hashes
             .iter()
             .filter(|hash| !tx_set.contains(hash))
@@ -226,10 +226,21 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
         Ok(pooled_transactions
-            .iter()
-            .map(|(_, mem_tx)| mem_tx.transaction())
+            .values()
+            .map(MempoolTransaction::transaction)
             .cloned()
             .collect())
+    }
+
+    /// Returns the status of the mempool, which is the number of transactions currently in
+    /// the pool. Until we add "queue" transactions.
+    pub fn status(&self) -> Result<usize, MempoolError> {
+        let pool_lock = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        Ok(pool_lock.len())
     }
 
     pub fn contains_sender_nonce(
@@ -237,20 +248,71 @@ impl Mempool {
         sender: Address,
         nonce: u64,
         received_hash: H256,
-    ) -> Result<bool, MempoolError> {
+    ) -> Result<Option<MempoolTransaction>, MempoolError> {
         let pooled_transactions = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let count = pooled_transactions
+        let mut txs = pooled_transactions
             .iter()
-            .filter(|(hash, tx)| {
-                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_hash
+            .filter_map(|(hash, tx)| {
+                if tx.sender() == sender && tx.nonce() == nonce && *hash != received_hash {
+                    Some(tx.clone())
+                } else {
+                    None
+                }
             })
-            .count();
+            .collect::<Vec<_>>();
 
-        Ok(count > 0)
+        Ok(txs.pop())
+    }
+
+    pub fn find_tx_to_replace(
+        &self,
+        sender: Address,
+        nonce: u64,
+        tx: &Transaction,
+    ) -> Result<Option<H256>, MempoolError> {
+        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.compute_hash())? else {
+            return Ok(None);
+        };
+
+        let is_a_replacement_tx = {
+            // EIP-1559 values
+            let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
+            let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
+            let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
+            let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
+
+            // Legacy tx values
+            let old_tx_gas_price = tx_in_pool.gas_price();
+            let new_tx_gas_price = tx.gas_price();
+
+            // EIP-4844 values
+            let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
+            let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
+
+            let eip4844_higher_fees = if let (Some(old_blob_fee), Some(new_blob_fee)) =
+                (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob)
+            {
+                new_blob_fee > old_blob_fee
+            } else {
+                true // We are marking it as always true if the tx is not eip-4844
+            };
+
+            let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
+                && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
+            let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
+
+            eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees)
+        };
+
+        if !is_a_replacement_tx {
+            return Err(MempoolError::NonceTooLow);
+        }
+
+        Ok(Some(tx_in_pool.compute_hash()))
     }
 }
 
@@ -691,10 +753,10 @@ mod tests {
     #[test]
     fn test_filter_mempool_transactions() {
         let plain_tx_decoded = Transaction::decode_canonical(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap();
-        let plain_tx_sender = plain_tx_decoded.sender();
+        let plain_tx_sender = plain_tx_decoded.sender().unwrap();
         let plain_tx = MempoolTransaction::new(plain_tx_decoded, plain_tx_sender);
         let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
-        let blob_tx_sender = blob_tx_decoded.sender();
+        let blob_tx_sender = blob_tx_decoded.sender().unwrap();
         let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
         let plain_tx_hash = plain_tx.compute_hash();
         let blob_tx_hash = blob_tx.compute_hash();

@@ -66,5 +66,10 @@ prof_*.json
 prof.json
 profile.json.gz
 
-# Mdbook artifacts
-book
+# mdbook artifacts
+book/
+# mdbook-mermaid artifacts
+mermaid-init.js
+mermaid.min.js
+
+bench-results/

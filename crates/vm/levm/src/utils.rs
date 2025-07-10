@@ -2,26 +2,29 @@ use crate::{
     EVMConfig,
     call_frame::CallFrameBackup,
     constants::*,
-    db::{cache, gen_db::GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
+    l2_precompiles,
     opcodes::Opcode,
     precompiles::{
-        SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
-        is_precompile,
+        self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    vm::{Substate, VM},
+    vm::{Substate, VM, VMType},
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
-use ethrex_common::types::{Account, TxKind};
 use ethrex_common::{
     Address, H256, U256,
     types::{Fork, tx_fields::*},
+};
+use ethrex_common::{
+    types::{Account, TxKind},
+    utils::u256_from_big_endian_const,
 };
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
@@ -43,7 +46,7 @@ pub fn address_to_word(address: Address) -> U256 {
         *word_byte = *address_byte;
     }
 
-    U256::from_big_endian(&word)
+    u256_from_big_endian_const(word)
 }
 
 /// Calculates the address of a new conctract using the CREATE
@@ -92,34 +95,28 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
-/// Calculates valid jump destinations given some bytecode.
+/// Generates blacklist of jump destinations given some bytecode.
 /// This is a necessary calculation because of PUSH opcodes.
 /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
 /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
-    let mut valid_jump_destinations = HashSet::new();
-    let mut pc = 0;
+pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
+    let mut address_blacklist = Vec::new();
 
-    while let Some(&opcode_number) = code.get(pc) {
-        let current_opcode = Opcode::from(opcode_number);
-
-        if current_opcode == Opcode::JUMPDEST {
-            // If current opcode is jumpdest, add it to valid destinations set
-            valid_jump_destinations.insert(pc);
-        } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&current_opcode) {
-            // If current opcode is push, skip as many positions as the size of the push
-            let size_to_push = opcode_number
-                .checked_sub(u8::from(Opcode::PUSH1))
-                .ok_or(InternalError::Underflow)?;
-            let skip_length =
-                usize::from(size_to_push.checked_add(1).ok_or(InternalError::Overflow)?);
-            pc = pc.checked_add(skip_length).ok_or(InternalError::Overflow)?;
+    let mut iter = code.iter().enumerate();
+    while let Some((_, &value)) = iter.next() {
+        let op_code = Opcode::from(value);
+        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
+            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+            let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
+            address_blacklist.extend(
+                (&mut iter)
+                    .take(num_bytes)
+                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
+            );
         }
-
-        pc = pc.checked_add(1).ok_or(InternalError::Overflow)?;
     }
 
-    Ok(valid_jump_destinations)
+    Ok(address_blacklist.into_boxed_slice())
 }
 
 // ================== Backup related functions =======================
@@ -130,7 +127,7 @@ pub fn restore_cache_state(
     callframe_backup: CallFrameBackup,
 ) -> Result<(), VMError> {
     for (address, account) in callframe_backup.original_accounts_info {
-        if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+        if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
             current_account.code = account.code;
         }
@@ -140,7 +137,9 @@ pub fn restore_cache_state(
         // This call to `get_account_mut` should never return None, because we are looking up accounts
         // that had their storage modified, which means they should be in the cache. That's why
         // we return an internal error in case we haven't found it.
-        let account = cache::get_account_mut(&mut db.cache, &address)
+        let account = db
+            .current_accounts_state
+            .get_mut(&address)
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
@@ -209,26 +208,6 @@ pub fn get_blob_gas_price(
         .ok_or(InternalError::Overflow)?;
 
     Ok(blob_fee)
-}
-
-// =================== Opcode related functions ======================
-
-pub fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
-    let offset = (usize::from(op))
-        .checked_sub(usize::from(base_opcode))
-        .ok_or(ExceptionalHalt::InvalidOpcode)?
-        .checked_add(1)
-        .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-    Ok(offset)
-}
-
-pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
-    let number_of_topics = (u8::from(op))
-        .checked_sub(u8::from(Opcode::LOG0))
-        .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-    Ok(number_of_topics)
 }
 
 // ==================== Word related functions =======================
@@ -403,9 +382,8 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let (authority_account, _address_was_cold) = self
-                .db
-                .access_account(&mut self.substate, authority_address)?;
+            let authority_account = self.db.get_account(authority_address)?;
+            self.substate.accessed_addresses.insert(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -415,7 +393,7 @@ impl<'a> VM<'a> {
             }
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
-            // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
+            // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
             if authority_account.info.nonce != auth_tuple.nonce {
                 continue;
@@ -484,7 +462,7 @@ impl<'a> VM<'a> {
         intrinsic_gas = intrinsic_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
 
         // Create Cost
-        if self.is_create() {
+        if self.is_create()? {
             // https://eips.ethereum.org/EIPS/eip-2#specification
             intrinsic_gas = intrinsic_gas
                 .checked_add(CREATE_BASE_COST)
@@ -550,7 +528,7 @@ impl<'a> VM<'a> {
     /// Calculates the minimum gas to be consumed in the transaction.
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
-        let calldata = if self.is_create() {
+        let calldata = if self.is_create()? {
             &self.current_call_frame()?.bytecode
         } else {
             &self.current_call_frame()?.calldata
@@ -575,7 +553,10 @@ impl<'a> VM<'a> {
     }
 
     pub fn is_precompile(&self, address: &Address) -> bool {
-        is_precompile(address, self.env.config.fork)
+        match self.vm_type {
+            VMType::L1 => precompiles::is_precompile(address, self.env.config.fork),
+            VMType::L2 => l2_precompiles::is_precompile(address, self.env.config.fork),
+        }
     }
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
@@ -625,18 +606,20 @@ impl<'a> VM<'a> {
             created_accounts: HashSet::new(),
             refunded_gas: 0,
             transient_storage: HashMap::new(),
+            logs: Vec::new(),
         };
 
         Ok(())
     }
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
-    pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
+    /// Bool indicates whether it is a `create` transaction or not.
+    pub fn get_tx_callee(&mut self) -> Result<(Address, bool), VMError> {
         match self.tx.to() {
             TxKind::Call(address_to) => {
                 self.substate.accessed_addresses.insert(address_to);
 
-                Ok(address_to)
+                Ok((address_to, false))
             }
 
             TxKind::Create => {
@@ -647,7 +630,7 @@ impl<'a> VM<'a> {
                 self.substate.accessed_addresses.insert(created_address);
                 self.substate.created_accounts.insert(created_address);
 
-                Ok(created_address)
+                Ok((created_address, true))
             }
         }
     }

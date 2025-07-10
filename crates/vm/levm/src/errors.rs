@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use derive_more::derive::Display;
-use ethrex_common::types::Log;
+use ethrex_common::{Address, U256, types::Log};
 use serde::{Deserialize, Serialize};
 use thiserror;
 
@@ -21,6 +21,11 @@ impl VMError {
     /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
     pub fn should_propagate(&self) -> bool {
         matches!(self, VMError::Internal(_))
+    }
+
+    /// Error triggered by revert opcode. This error doesn't consume all gas left in context.
+    pub fn is_revert_opcode(&self) -> bool {
+        matches!(self, VMError::RevertOpcode)
     }
 }
 
@@ -64,36 +69,56 @@ pub enum ExceptionalHalt {
     Precompile(#[from] PrecompileError),
 }
 
+// Error strings are attached to execution-spec-tests mapping https://github.com/ethereum/execution-spec-tests
+// If any change is made here without changing the mapper it will break some hive tests.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum TxValidationError {
-    #[error("Sender account shouldn't be a contract")]
-    SenderNotEOA,
-    #[error("Insufficient account founds")]
+    #[error("Sender account {0} shouldn't be a contract")]
+    SenderNotEOA(Address),
+    #[error("Insufficient account funds")]
     InsufficientAccountFunds,
     #[error("Nonce is max")]
     NonceIsMax,
     #[error("Nonce mismatch: expected {expected}, got {actual}")]
     NonceMismatch { expected: u64, actual: u64 },
-    #[error("Initcode size exceeded")]
-    InitcodeSizeExceeded,
-    #[error("Priority fee is greater than max fee per gas")]
-    PriorityGreaterThanMaxFeePerGas,
+    #[error("Initcode size exceeded, max size: {max_size}, actual size: {actual_size}")]
+    InitcodeSizeExceeded { max_size: usize, actual_size: usize },
+    #[error("Priority fee {priority_fee} is greater than max fee per gas {max_fee_per_gas}")]
+    PriorityGreaterThanMaxFeePerGas {
+        priority_fee: U256,
+        max_fee_per_gas: U256,
+    },
     #[error("Intrinsic gas too low")]
     IntrinsicGasTooLow,
-    #[error("Gas allowance exceeded")]
-    GasAllowanceExceeded,
+    #[error(
+        "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
+    )]
+    GasAllowanceExceeded {
+        block_gas_limit: u64,
+        tx_gas_limit: u64,
+    },
     #[error("Insufficient max fee per gas")]
     InsufficientMaxFeePerGas,
-    #[error("Insufficient max fee per blob gas")]
-    InsufficientMaxFeePerBlobGas,
+    #[error(
+        "Insufficient max fee per blob gas. Expected at least {base_fee_per_blob_gas}, got: {tx_max_fee_per_blob_gas}"
+    )]
+    InsufficientMaxFeePerBlobGas {
+        base_fee_per_blob_gas: U256,
+        tx_max_fee_per_blob_gas: U256,
+    },
     #[error("Type 3 transactions are not supported before the Cancun fork")]
     Type3TxPreFork,
     #[error("Type 3 transaction without blobs")]
     Type3TxZeroBlobs,
     #[error("Invalid blob versioned hash")]
     Type3TxInvalidBlobVersionedHash,
-    #[error("Blob count exceeded")]
-    Type3TxBlobCountExceeded,
+    #[error(
+        "Blob count exceeded. Max blob count: {max_blob_count}, actual blob count: {actual_blob_count}"
+    )]
+    Type3TxBlobCountExceeded {
+        max_blob_count: usize,
+        actual_blob_count: usize,
+    },
     #[error("Contract creation in blob transaction")]
     Type3TxContractCreation,
     #[error("Type 4 transactions are not supported before the Prague fork")]
@@ -149,14 +174,18 @@ impl InternalError {
 pub enum PrecompileError {
     #[error("Error while parsing the calldata")]
     ParsingInputError,
-    #[error("Error while increasing consumed gas")]
-    GasConsumedOverflow,
     #[error("There is not enough gas to execute precompiled contract")]
     NotEnoughGas,
-    #[error("There was an error evaluating the point")]
-    EvaluationError,
-    #[error("This is a default error")]
-    DefaultError,
+    #[error("Kzg error: {0}")]
+    KzgError(String),
+    #[error("Invalid point")]
+    InvalidPoint,
+    #[error("The point is not in the curve")]
+    PointNotInTheCurve,
+    #[error("The point is not in the subgroup")]
+    PointNotInSubgroup,
+    #[error("BN254 ate pairing error")]
+    BN254AtePairingError,
     #[error("The G1 point is not in the curve")]
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
@@ -194,6 +223,19 @@ pub struct ExecutionReport {
 }
 
 impl ExecutionReport {
+    pub fn is_success(&self) -> bool {
+        matches!(self.result, TxResult::Success)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextResult {
+    pub result: TxResult,
+    pub gas_used: u64,
+    pub output: Bytes,
+}
+
+impl ContextResult {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }

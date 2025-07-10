@@ -1,10 +1,13 @@
-use std::{fs::read_to_string, path::Path, process::Command};
+use std::path::PathBuf;
+use std::process::{Command, ExitStatus};
+use std::{fs::read_to_string, path::Path};
 
 use bytes::Bytes;
-use calldata::{Value, encode_calldata};
+use calldata::encode_calldata;
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
-use ethrex_rpc::clients::eth::WithdrawalProof;
+use ethrex_l2_common::calldata::Value;
+use ethrex_rpc::clients::eth::L1MessageProof;
 use ethrex_rpc::clients::eth::{
     EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
 };
@@ -16,9 +19,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod calldata;
 pub mod l1_to_l2_tx_data;
-pub mod merkle_tree;
 
 pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
+use tracing::{info, trace};
 
 // 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
@@ -29,6 +32,11 @@ pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xff,
+]);
+
+pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfe,
 ]);
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
@@ -80,12 +88,7 @@ pub async fn transfer(
     private_key: &SecretKey,
     client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!(
-        "Transferring {amount} from {from:#x} to {to:#x}",
-        amount = amount,
-        from = from,
-        to = to
-    );
+    println!("Transferring {amount} from {from:#x} to {to:#x}");
     let gas_price = client
         .get_gas_price_with_extra(20)
         .await?
@@ -132,28 +135,6 @@ pub async fn deposit_through_transfer(
     .await
 }
 
-pub async fn deposit_through_contract_call(
-    amount: impl Into<U256>,
-    to: Address,
-    l1_gas_limit: u64,
-    l2_gas_limit: u64,
-    depositor_private_key: &SecretKey,
-    bridge_address: Address,
-    eth_client: &EthClient,
-) -> Result<H256, EthClientError> {
-    let l1_from = get_address_from_secret_key(depositor_private_key)?;
-    send_l1_to_l2_tx(
-        l1_from,
-        Some(amount),
-        Some(l1_gas_limit),
-        L1ToL2TransactionData::new_deposit_data(to, l2_gas_limit),
-        depositor_private_key,
-        bridge_address,
-        eth_client,
-    )
-    .await
-}
-
 pub async fn withdraw(
     amount: U256,
     from: Address,
@@ -182,26 +163,21 @@ pub async fn withdraw(
 
 pub async fn claim_withdraw(
     amount: U256,
-    l2_withdrawal_tx_hash: H256,
     from: Address,
     from_pk: SecretKey,
     eth_client: &EthClient,
-    withdrawal_proof: &WithdrawalProof,
+    message_proof: &L1MessageProof,
 ) -> Result<H256, EthClientError> {
     println!("Claiming {amount} from bridge to {from:#x}");
 
-    const CLAIM_WITHDRAWAL_SIGNATURE: &str =
-        "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";
+    const CLAIM_WITHDRAWAL_SIGNATURE: &str = "claimWithdrawal(uint256,uint256,uint256,bytes32[])";
 
     let calldata_values = vec![
-        Value::Uint(U256::from_big_endian(
-            l2_withdrawal_tx_hash.as_fixed_bytes(),
-        )),
         Value::Uint(amount),
-        Value::Uint(withdrawal_proof.batch_number.into()),
-        Value::Uint(U256::from(withdrawal_proof.index)),
+        Value::Uint(message_proof.batch_number.into()),
+        Value::Uint(message_proof.message_id),
         Value::Array(
-            withdrawal_proof
+            message_proof
                 .merkle_proof
                 .iter()
                 .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))
@@ -230,6 +206,96 @@ pub async fn claim_withdraw(
 
     eth_client
         .send_eip1559_transaction(&claim_tx, &from_pk)
+        .await
+}
+
+pub async fn claim_erc20withdraw(
+    token_l1: Address,
+    token_l2: Address,
+    amount: U256,
+    from_pk: SecretKey,
+    eth_client: &EthClient,
+    message_proof: &L1MessageProof,
+) -> Result<H256, EthClientError> {
+    let from = get_address_from_secret_key(&from_pk)?;
+    const CLAIM_WITHDRAWAL_ERC20_SIGNATURE: &str =
+        "claimWithdrawalERC20(address,address,uint256,uint256,uint256,bytes32[])";
+
+    let calldata_values = vec![
+        Value::Address(token_l1),
+        Value::Address(token_l2),
+        Value::Uint(amount),
+        Value::Uint(U256::from(message_proof.batch_number)),
+        Value::Uint(message_proof.message_id),
+        Value::Array(
+            message_proof
+                .merkle_proof
+                .iter()
+                .map(|v| Value::Uint(U256::from_big_endian(v.as_bytes())))
+                .collect(),
+        ),
+    ];
+
+    let claim_withdrawal_data =
+        encode_calldata(CLAIM_WITHDRAWAL_ERC20_SIGNATURE, &calldata_values)?;
+
+    println!(
+        "Claiming withdrawal with calldata: {}",
+        hex::encode(&claim_withdrawal_data)
+    );
+
+    let claim_tx = eth_client
+        .build_eip1559_transaction(
+            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+            from,
+            claim_withdrawal_data.into(),
+            Overrides {
+                from: Some(from),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    eth_client
+        .send_eip1559_transaction(&claim_tx, &from_pk)
+        .await
+}
+
+pub async fn deposit_erc20(
+    token_l1: Address,
+    token_l2: Address,
+    amount: U256,
+    from: Address,
+    from_pk: SecretKey,
+    eth_client: &EthClient,
+) -> Result<H256, EthClientError> {
+    println!("Claiming {amount} from bridge to {from:#x}");
+
+    const DEPOSIT_ERC20_SIGNATURE: &str = "depositERC20(address,address,address,uint256)";
+
+    let calldata_values = vec![
+        Value::Address(token_l1),
+        Value::Address(token_l2),
+        Value::Address(from),
+        Value::Uint(amount),
+    ];
+
+    let deposit_data = encode_calldata(DEPOSIT_ERC20_SIGNATURE, &calldata_values)?;
+
+    let deposit_tx = eth_client
+        .build_eip1559_transaction(
+            bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
+            from,
+            deposit_data.into(),
+            Overrides {
+                from: Some(from),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    eth_client
+        .send_eip1559_transaction(&deposit_tx, &from_pk)
         .await
 }
 
@@ -361,6 +427,7 @@ const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
     0xc0, 0xb4, 0x95, 0x6c,
 ]);
 
+#[derive(Default)]
 pub struct ProxyDeployment {
     pub proxy_address: Address,
     pub proxy_tx_hash: H256,
@@ -555,4 +622,214 @@ pub async fn initialize_contract(
         .await?;
 
     Ok(initialize_tx_hash)
+}
+
+pub async fn call_contract(
+    client: &EthClient,
+    private_key: &SecretKey,
+    to: Address,
+    signature: &str,
+    parameters: Vec<Value>,
+) -> Result<H256, EthClientError> {
+    let calldata = encode_calldata(signature, &parameters)?.into();
+    let from = get_address_from_secret_key(private_key)?;
+    let tx = client
+        .build_eip1559_transaction(to, from, calldata, Default::default())
+        .await?;
+
+    let tx_hash = client.send_eip1559_transaction(&tx, private_key).await?;
+
+    wait_for_transaction_receipt(tx_hash, client, 100).await?;
+    Ok(tx_hash)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GitError {
+    #[error("Failed to clone: {0}")]
+    DependencyError(String),
+    #[error("Internal error: {0}")]
+    InternalError(String),
+    #[error("Failed to get string from path")]
+    FailedToGetStringFromPath,
+}
+
+pub fn git_clone(
+    repository_url: &str,
+    outdir: &str,
+    branch: Option<&str>,
+    submodules: bool,
+) -> Result<ExitStatus, GitError> {
+    info!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning or updating git repository");
+
+    if PathBuf::from(outdir).join(".git").exists() {
+        info!(outdir = %outdir, "Found existing git repository, updating...");
+
+        let branch_name = if let Some(b) = branch {
+            b.to_string()
+        } else {
+            // Look for default branch name (could be main, master or other)
+            let output = Command::new("git")
+                .current_dir(outdir)
+                .arg("symbolic-ref")
+                .arg("refs/remotes/origin/HEAD")
+                .output()
+                .map_err(|e| {
+                    GitError::DependencyError(format!(
+                        "Failed to get default branch for {outdir}: {e}"
+                    ))
+                })?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(GitError::DependencyError(format!(
+                    "Failed to get default branch for {outdir}: {stderr}"
+                )));
+            }
+
+            String::from_utf8(output.stdout)
+                .map_err(|_| GitError::InternalError("Failed to parse git output".to_string()))?
+                .trim()
+                .split('/')
+                .next_back()
+                .ok_or(GitError::InternalError(
+                    "Failed to parse default branch".to_string(),
+                ))?
+                .to_string()
+        };
+
+        trace!(branch = %branch_name, "Updating to branch");
+
+        // Fetch
+        let fetch_status = Command::new("git")
+            .current_dir(outdir)
+            .args(["fetch", "origin"])
+            .spawn()
+            .map_err(|err| GitError::DependencyError(format!("Failed to spawn git fetch: {err}")))?
+            .wait()
+            .map_err(|err| {
+                GitError::DependencyError(format!("Failed to wait for git fetch: {err}"))
+            })?;
+        if !fetch_status.success() {
+            return Err(GitError::DependencyError(format!(
+                "git fetch failed for {outdir}"
+            )));
+        }
+
+        // Checkout to branch
+        let checkout_status = Command::new("git")
+            .current_dir(outdir)
+            .arg("checkout")
+            .arg(&branch_name)
+            .spawn()
+            .map_err(|err| {
+                GitError::DependencyError(format!("Failed to spawn git checkout: {err}"))
+            })?
+            .wait()
+            .map_err(|err| {
+                GitError::DependencyError(format!("Failed to wait for git checkout: {err}"))
+            })?;
+        if !checkout_status.success() {
+            return Err(GitError::DependencyError(format!(
+                "git checkout of branch {branch_name} failed for {outdir}, try deleting the repo folder"
+            )));
+        }
+
+        // Reset branch to origin
+        let reset_status = Command::new("git")
+            .current_dir(outdir)
+            .arg("reset")
+            .arg("--hard")
+            .arg(format!("origin/{branch_name}"))
+            .spawn()
+            .map_err(|err| GitError::DependencyError(format!("Failed to spawn git reset: {err}")))?
+            .wait()
+            .map_err(|err| {
+                GitError::DependencyError(format!("Failed to wait for git reset: {err}"))
+            })?;
+
+        if !reset_status.success() {
+            return Err(GitError::DependencyError(format!(
+                "git reset failed for {outdir}"
+            )));
+        }
+
+        // Update submodules
+        if submodules {
+            let submodule_status = Command::new("git")
+                .current_dir(outdir)
+                .arg("submodule")
+                .arg("update")
+                .arg("--init")
+                .arg("--recursive")
+                .spawn()
+                .map_err(|err| {
+                    GitError::DependencyError(format!(
+                        "Failed to spawn git submodule update: {err}"
+                    ))
+                })?
+                .wait()
+                .map_err(|err| {
+                    GitError::DependencyError(format!(
+                        "Failed to wait for git submodule update: {err}"
+                    ))
+                })?;
+            if !submodule_status.success() {
+                return Err(GitError::DependencyError(format!(
+                    "git submodule update failed for {outdir}"
+                )));
+            }
+        }
+
+        Ok(reset_status)
+    } else {
+        trace!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning git repository");
+        let mut git_cmd = Command::new("git");
+
+        let git_clone_cmd = git_cmd.arg("clone").arg(repository_url);
+
+        if let Some(branch) = branch {
+            git_clone_cmd.arg("--branch").arg(branch);
+        }
+
+        if submodules {
+            git_clone_cmd.arg("--recurse-submodules");
+        }
+
+        git_clone_cmd
+            .arg(outdir)
+            .spawn()
+            .map_err(|err| GitError::DependencyError(format!("Failed to spawn git: {err}")))?
+            .wait()
+            .map_err(|err| GitError::DependencyError(format!("Failed to wait for git: {err}")))
+    }
+}
+
+pub fn download_contract_deps(contracts_path: &Path) -> Result<(), GitError> {
+    trace!("Downloading contract dependencies");
+    std::fs::create_dir_all(contracts_path.join("lib")).map_err(|err| {
+        GitError::DependencyError(format!("Failed to create contracts/lib: {err}"))
+    })?;
+
+    git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable")
+            .to_str()
+            .ok_or(GitError::FailedToGetStringFromPath)?,
+        None,
+        true,
+    )?;
+
+    git_clone(
+        "https://github.com/succinctlabs/sp1-contracts.git",
+        contracts_path
+            .join("lib/sp1-contracts")
+            .to_str()
+            .ok_or(GitError::FailedToGetStringFromPath)?,
+        None,
+        false,
+    )?;
+
+    trace!("Contract dependencies downloaded");
+    Ok(())
 }

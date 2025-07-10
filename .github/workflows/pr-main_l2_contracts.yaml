@@ -21,11 +21,15 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
       - name: Install solc
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Caching
         uses: Swatinem/rust-cache@v2
       - name: Run test of deployer.rs

@@ -84,7 +84,7 @@ impl RpcHandler for GetBlockByNumberRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated);
+        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
 
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -118,7 +118,7 @@ impl RpcHandler for GetBlockByHashRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated);
+        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -151,7 +151,7 @@ impl RpcHandler for GetBlockTransactionCountRequest {
         };
         let transaction_count = block_body.transactions.len();
 
-        serde_json::to_value(format!("{:#x}", transaction_count))
+        serde_json::to_value(format!("{transaction_count:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -330,7 +330,7 @@ impl RpcHandler for GetBlobBaseFee {
                 .unwrap_or_default(),
         );
 
-        serde_json::to_value(format!("{:#x}", blob_base_fee))
+        serde_json::to_value(format!("{blob_base_fee:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -456,7 +456,7 @@ pub async fn get_all_block_rpc_receipts(
         };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info =
-            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee);
+            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee)?;
         let receipt = RpcReceipt::new(
             receipt.clone(),
             tx_info,

@@ -2,6 +2,32 @@
 
 ## Perf
 
+### 2025-07-08
+
+- Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)
+
+### 2025-07-07
+
+- Improve blake2f [#3503](https://github.com/lambdaclass/ethrex/pull/3503)
+
+### 2025-06-30
+
+- Use a stack pool [#3386](https://github.com/lambdaclass/ethrex/pull/3386)
+
+### 2025-06-27
+
+- Reduce handle_debug runtime cost [#3356](https://github.com/lambdaclass/ethrex/pull/3356)
+- Improve U256 decoding and PUSHX [#3332](https://github.com/lambdaclass/ethrex/pull/3332)
+
+### 2025-06-26
+
+- Refactor jump opcodes to use a blacklist on invalid targets.
+
+### 2025-06-20
+
+- Use a lookup table for opcode parsing [#3253](https://github.com/lambdaclass/ethrex/pull/3253)
+- Use specialized PUSH1 and PUSH2 implementations [#3262](https://github.com/lambdaclass/ethrex/pull/3262)
+
 ### 2025-05-27
 
 - Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
@@ -43,7 +69,7 @@
 #### 2025-04-03
 
 - Fix a bug where RLP encoding was being done twice: [#2353](https://github.com/lambdaclass/ethrex/pull/2353), check
-  the report under perf_report for more information.
+  the report under `docs/perf_reports` for more information.
 
 #### 2025-04-01
 

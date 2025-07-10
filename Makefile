@@ -22,7 +22,7 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex .
+	docker build -t ethrex . --build-arg BUILD_FLAGS="--features metrics"
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
@@ -32,7 +32,7 @@ run-image: build-image ## 🏃 Run the Docker image
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run --bin ethrex --features dev -- \
-			--network ./test_data/genesis-l1.json \
+			--network ./fixtures/genesis/l1.json \
 			--http.port 8545 \
 			--http.addr 0.0.0.0 \
 			--authrpc.port 8551 \
@@ -40,7 +40,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 7d7864cf1cc34138b427c3c7d0e36623efc19300
+ETHEREUM_PACKAGE_REVISION := 6a896a15e6d686b0a60adf4ee97954065bc82435
 
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
@@ -56,8 +56,13 @@ checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum p
 ENCLAVE ?= lambdanet
 
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/network_params.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
+	cp crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_client_comparision.yaml
+	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
 localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
@@ -107,17 +112,31 @@ SIM_PARALLELISM ?= 16
 # The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
 # The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
 
-HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
-HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
-HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
+HIVE_CLIENT_FILE := ../fixtures/network/hive_clients/ethrex.yml
+HIVE_CLIENT_FILE_GIT := ../fixtures/network/hive_clients/ethrex_git.yml
+HIVE_CLIENT_FILE_LOCAL := ../fixtures/network/hive_clients/ethrex_local.yml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
 	$(MAKE) view-hive
+
+run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
+	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+
+# EEST Hive
+TEST_PATTERN_EEST ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
+run-hive-eest: build-image setup-hive ## 🧪 Generic command for running Hive EEST tests. Specify EEST_SIM
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EEST_SIM) --sim.limit "$(TEST_PATTERN_EEST)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat cmd/ef_tests/blockchain/.fixtures_url)
+
+run-hive-eest-engine: ## Run hive EEST Engine tests
+	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-engine
+
+run-hive-eest-rlp: ## Run hive EEST Engine tests
+	$(MAKE) run-hive-eest EEST_SIM=ethereum/eest/consume-rlp
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
@@ -139,28 +158,44 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--features "dev" \
 	--  \
 	--evm $$LEVM \
-	--network test_data/genesis-l2.json \
+	--network fixtures/genesis/l2.json \
 	--http.port 1729 \
 	--dev \
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
 
 load-test-erc20:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
 
 load-test-io:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
-test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
-	solc ./test_data/ERC20.sol -o $@
+fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
+	solc ./fixtures/contracts/ERC20/ERC20.sol -o $@
 
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
+
+# Using & so make calls this recipe only once per run
+mermaid-init.js mermaid.min.js &:
+	@# Required for mdbook-mermaid to work
+	@mdbook-mermaid install . \
+		|| (echo "mdbook-mermaid invocation failed, remember to install docs dependencies first with \`make docs-deps\`" \
+		&& exit 1)
+
+docs-deps: ## 📦 Install dependencies for generating the documentation
+	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck mdbook-katex
+
+docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
+	mdbook build
+
+docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
+	mdbook serve --open

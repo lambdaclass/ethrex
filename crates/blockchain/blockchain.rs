@@ -12,33 +12,45 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, compute_receipts_root, validate_block_header,
+    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
     validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
+use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{ops::Div, time::Instant};
+use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 use vm::StoreVmDatabase;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
+
+#[derive(Debug, Clone, Default)]
+pub enum BlockchainType {
+    #[default]
+    L1,
+    L2,
+}
 
 #[derive(Debug)]
 pub struct Blockchain {
@@ -49,6 +61,7 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+    pub r#type: BlockchainType,
 }
 
 #[derive(Debug, Clone)]
@@ -56,13 +69,27 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
+
+fn log_batch_progress(batch_size: usize, current_block: usize) {
+    let progress_needed = batch_size > 10;
+    const PERCENT_MARKS: [usize; 4] = [20, 40, 60, 80];
+    if progress_needed {
+        PERCENT_MARKS.iter().for_each(|mark| {
+            if (batch_size * mark) / 100 == current_block {
+                info!("[SYNCING] {mark}% of batch processed");
+            }
+        });
+    }
+}
+
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
+    pub fn new(evm_engine: EvmEngine, store: Store, blockchain_type: BlockchainType) -> Self {
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+            r#type: blockchain_type,
         }
     }
 
@@ -72,6 +99,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+            r#type: BlockchainType::default(),
         }
     }
 
@@ -93,7 +121,7 @@ impl Blockchain {
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.new_evm(vm_db)?;
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -165,7 +193,10 @@ impl Blockchain {
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
             let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
-            let mut vm = Evm::new_from_db(logger.clone());
+            let mut vm = match self.r#type {
+                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L2 => Evm::new_from_db_for_l2(logger.clone()),
+            };
 
             // Re-execute block with logger
             vm.execute_block(block)?;
@@ -340,6 +371,7 @@ impl Blockchain {
         let new_state_root = apply_updates_list.state_trie_hash;
         let state_updates = apply_updates_list.state_updates;
         let accounts_updates = apply_updates_list.storage_updates;
+        let code_updates = apply_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -349,6 +381,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            code_updates,
         };
 
         self.storage
@@ -379,19 +412,23 @@ impl Blockchain {
             let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
+            metrics!(
+                let _ = METRICS_BLOCKS.set_block_number(block.header.number);
+                METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
+                METRICS_BLOCKS.set_latest_gigagas(throughput);
+            );
             let base_log = format!(
-                "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
+                "[METRIC] BLOCK EXECUTION THROUGHPUT ({}): {:.2} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {:.0}%, #Txs: {}.",
+                block.header.number,
                 throughput,
                 interval,
+                (block.header.gas_used as f64 / block.header.gas_limit as f64) * 100.0,
                 block.body.transactions.len()
             );
             let extra_log = if as_gigas > 0.0 {
                 format!(
-                    " exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)",
-                    execution_time_per_gigagas,
-                    execution_fraction,
-                    storage_time_per_gigagas,
-                    storage_fraction
+                    " exec/Ggas: {execution_time_per_gigagas} ms ({execution_fraction}%), st/Ggas: {storage_time_per_gigagas} ms ({storage_fraction}%)",
                 )
             } else {
                 "".to_string()
@@ -410,6 +447,7 @@ impl Blockchain {
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
+        cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
@@ -430,7 +468,7 @@ impl Blockchain {
             first_block_header.parent_hash,
             block_hash_cache,
         );
-        let mut vm = Evm::new(self.evm_engine, vm_db);
+        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
@@ -439,6 +477,10 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
+            if cancellation_token.is_cancelled() {
+                info!("Received shutdown signal, aborting");
+                return Err((ChainError::Custom(String::from("shutdown signal")), None));
+            }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 find_parent_header(&block.header, &self.storage).map_err(|err| {
@@ -467,11 +509,12 @@ impl Blockchain {
                     )
                 })?;
 
-            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
+
+            log_batch_progress(blocks_len, i);
         }
 
         let account_updates = vm
@@ -481,6 +524,9 @@ impl Blockchain {
         let last_block = blocks
             .last()
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
+
+        let last_block_number = last_block.header.number;
+        let last_block_gas_limit = last_block.header.gas_limit;
 
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
@@ -493,6 +539,7 @@ impl Blockchain {
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
+        let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
@@ -502,6 +549,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
+            code_updates,
         };
 
         self.storage
@@ -509,16 +557,29 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed_total = interval.elapsed().as_millis();
+        let elapsed_seconds = interval.elapsed().as_secs_f64();
         let mut throughput = 0.0;
-        if elapsed_total != 0 && total_gas_used != 0 {
-            let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
+        if elapsed_seconds > 0.0 && total_gas_used != 0 {
+            let as_gigas = (total_gas_used as f64) / 1e9;
+            throughput = as_gigas / elapsed_seconds;
         }
 
+        metrics!(
+            let _ = METRICS_BLOCKS.set_block_number(last_block_number);
+            METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
+            // Set the latest gas used as the average gas used per block in the batch
+            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
+        );
+
         info!(
-            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len, transactions_count, total_gas_used, throughput
+            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+            blocks_len,
+            last_block_number,
+            last_block_gas_limit,
+            transactions_count,
+            total_gas_used,
+            throughput
         );
 
         Ok(())
@@ -536,10 +597,12 @@ impl Blockchain {
         blobs_bundle.validate(&transaction)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
 
         // Validate transaction
-        self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            self.remove_transaction_from_pool(&tx_to_replace)?;
+        }
 
         // Add transaction and blobs bundle to storage
         let hash = transaction.compute_hash();
@@ -558,9 +621,11 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
         // Validate transaction
-        self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            self.remove_transaction_from_pool(&tx_to_replace)?;
+        }
 
         let hash = transaction.compute_hash();
 
@@ -607,16 +672,16 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-
+    /// Returns the hash of the transaction to replace in case the nonce already exists
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(), MempoolError> {
+    ) -> Result<Option<H256>, MempoolError> {
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok(());
+            return Ok(None);
         }
 
         let header_no = self.storage.get_latest_block_number().await?;
@@ -683,12 +748,8 @@ impl Blockchain {
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
-        if self
-            .mempool
-            .contains_sender_nonce(sender, nonce, tx.compute_hash())?
-        {
-            return Err(MempoolError::InvalidNonce);
-        }
+        // If it exists check if the new tx has higher fees
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
 
         if let Some(chain_id) = tx.chain_id() {
             if chain_id != config.chain_id {
@@ -696,7 +757,7 @@ impl Blockchain {
             }
         }
 
-        Ok(())
+        Ok(tx_to_replace_hash)
     }
 
     /// Marks the node's chain as up to date with the current chain
@@ -710,6 +771,45 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
+            return Err(StoreError::Custom(format!(
+                "Hash {hash} not found in the mempool",
+            )));
+        };
+        let result = match tx {
+            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
+            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
+            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
+            Transaction::EIP4844Transaction(itx) => {
+                let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
+                    return Err(StoreError::Custom(format!(
+                        "Blob transaction present without its bundle: hash {hash}",
+                    )));
+                };
+
+                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                    tx: itx,
+                    blobs_bundle: bundle,
+                })
+            }
+            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
+            Transaction::PrivilegedL2Transaction(itx) => {
+                P2PTransaction::PrivilegedL2Transaction(itx)
+            }
+        };
+
+        Ok(result)
+    }
+
+    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+        let evm = match self.r#type {
+            BlockchainType::L1 => Evm::new_for_l1(self.evm_engine, vm_db),
+            BlockchainType::L2 => Evm::new_for_l2(self.evm_engine, vm_db)?,
+        };
+        Ok(evm)
     }
 }
 
