@@ -206,7 +206,7 @@ impl<'a> VM<'a> {
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };
-
+            Self::send_results(acc);
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
                 self.handle_state_backup(&result)?;
