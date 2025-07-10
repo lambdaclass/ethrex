@@ -220,7 +220,7 @@ jobs:
 
               if (!fieldValue) throw new Error(`No value set for field '${fieldName}'`);
 
-              return fieldValue.optionName;
+              return fieldValue.optionName ?? "No Status";
             }
 
             // Gets all issue numbers that would be closed if the PR is merged.
@@ -320,7 +320,7 @@ jobs:
             }
 
             // Get current status
-            let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
+            let current_status = await getProjectItemFieldValue(pr_item.id, statusFieldName, fields);
             console.log(`Current PR status: ${current_status}`);
 
             if (is_draft && current_status === "Blocked") {
