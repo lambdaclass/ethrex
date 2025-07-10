@@ -218,7 +218,18 @@ jobs:
             const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
 
-            console.log(pr.body);
+            const body = pr.body || "";
+            console.log(body);
+            // Step 1: Remove all markdown/HTML comments
+            const withoutComments = body.replace(/<!--[\s\S]*?-->/g, "");
+            console.log("Body without comments");
+            console.log(withoutComments);
+            // Step 2: Match all issue-closing keywords outside comments
+            const matches = [...withoutComments.matchAll(/(?:close[sd]?|fixe[sd]?|resolve[sd]?)\s+#(\d+)/gi)];
+            // Step 3: Extract issue numbers
+            const issueNumbers = matches.map(match => parseInt(match[1]));
+
+            console.log(issueNumbers);
 
             // Get project and item representing Pull Request.
             const project = await getProject(orgLogin, projectNumber);
