@@ -192,13 +192,16 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     while state.latest_safe_batch < last_safe_batch_number {
         debug!("Node is not up to date. Syncing via L1");
 
-        fetch_pending_logs(state).await?;
+        let (commit_logs, verify_logs) = fetch_logs_from_l1(state).await?;
+
+        process_commit_logs(state, commit_logs)?;
+        process_verify_logs(state, verify_logs)?;
 
         store_safe_batches(state).await?;
 
         store_verify_tx_in_safe_batches(state).await?;
 
-        remove_past_logs(state).await?;
+        remove_previous_logs(state).await?;
     }
 
     debug!("Node is up to date");
@@ -365,16 +368,6 @@ fn process_verify_logs(
     Ok(())
 }
 
-/// Fetch the logs from the L1 (commit & verify).
-pub async fn fetch_pending_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
-    let (commit_logs, verify_logs) = fetch_logs_from_l1(state).await?;
-
-    process_commit_logs(state, commit_logs)?;
-    process_verify_logs(state, verify_logs)?;
-
-    Ok(())
-}
-
 // TODO: Move to calldata module (SDK)
 fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetcherError> {
     // function commitBatch(
@@ -439,7 +432,9 @@ fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetche
     Ok(batch)
 }
 
-/// Traverse the pending batches queue and build and stores the ones that are safe (verified).
+/// Try to reconstruct the batches from the known logs.
+/// It starts from the latest safe batch + 1 in the current state
+/// until the latest safe in the L1.
 pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     let latest_safe_batch = state
         .eth_client
@@ -459,7 +454,7 @@ pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), Blo
                 .get_transaction_by_hash(log.transaction_hash)
                 .await?
                 .ok_or(BlockFetcherError::InternalError(format!(
-                    "Failed to get the receipt for transaction {:x}",
+                    "Failed to get the receipt for transaction {:x}.",
                     log.transaction_hash
                 )))?
                 .data;
@@ -475,9 +470,12 @@ pub async fn store_safe_batches(state: &mut BlockFetcherState) -> Result<(), Blo
                 safe_batches_commit_logs.push(log);
             }
         }
+
         // there should be only one log in safe_commit_logs
         if safe_batches_commit_logs.len() > 1 {
-            //todo some error
+            return Err(BlockFetcherError::InternalError(
+                "There should be only one valid batch.".into(),
+            ));
         }
 
         let Some(safe_batch_commit_log) = safe_batches_commit_logs.pop() else {
@@ -716,7 +714,8 @@ async fn store_verify_tx_in_safe_batches(
     Ok(())
 }
 
-async fn remove_past_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
+/// remove the logs from previous batches
+async fn remove_previous_logs(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     state
         .pending_commit_logs
         .retain(|&key, _| key > state.latest_safe_batch);
