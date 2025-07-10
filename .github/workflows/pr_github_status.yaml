@@ -251,7 +251,7 @@ jobs:
             }
 
             // Get issue items linked to PR
-            console.log("Issues linked to the PR (via description):", issueNumbers);
+            console.log("Issues that this PR closes:", issueNumbers);
             const issueItems = [];
             for (const issueNumber of issueNumbers) {
               const issue = await findProjectItem(projectId, issueNumber);
