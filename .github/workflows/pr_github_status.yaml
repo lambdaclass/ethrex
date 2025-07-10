@@ -250,6 +250,36 @@ jobs:
               return;
             }
 
+            // Set Start date
+            let opened = context.payload.action === "opened"; // This only happens once on each PR
+            if (opened) {
+              await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
+            }
+
+            // Set date of Last update
+            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
+
+
+            // Get current status (just to print on console)
+            let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
+            console.log(`Current PR status: ${current_status}`);
+
+            let is_draft = pr.draft;
+            let ready_for_review = context.payload.action === "ready_for_review";
+            let requested_changes = context.eventName === "pull_request_review" && context.payload.review?.state == "changes_requested";
+
+            // If PR is in draft then it is "In Progress". If it was opened for review it transitions to "In Review".
+            if (is_draft) {
+              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
+            } else if (ready_for_review) {
+              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
+            } else if (requested_changes) {
+              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "Requested Changes");
+            }
+
+            let status_post_changes = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
+            console.log(`PR Status post changes: ${status_post_changes}`);
+
             // Get issue items linked to PR
             console.log("Issues that this PR closes:", issueNumbers);
             const issueItems = [];
@@ -261,54 +291,6 @@ jobs:
                 console.warn(`Project item for issue #${issueNumber} not found.`);
               }
             }
-
-            // In case the event that triggered the workflow is a review: check if it was a "Requested Changes" and update state.
-            if (context.eventName === "pull_request_review") {
-              const review = context.payload.review?.state;
-              console.log(`Review submitted: ${review}.`);
-              if (review === "changes_requested") {
-                await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "Requested Changes");
-                await setStatusForIssues(issueItems, projectId, statusFieldName, "Requested Changes");
-              }
-              console.log("Returning because this was just a review submission.");
-              return;
-            }
-
-            // Set Start date
-            let opened = context.payload.action === "opened"; // This only happens once on each PR
-            if (opened) {
-              await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
-            }
-
-            // Set date of Last update
-            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
-
-
-            // Early exit for the workflow
-            let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
-            console.log(`Current PR status: ${current_status}`);
-
-            if (current_status === "Approved") {
-              // If PR is approved we don't want to change it's state
-
-              // Synchronize the status of the issues with the PR
-              setStatusForIssues(issueItems, projectId, statusFieldName, current_status);
-              console.log(`Exiting workflow because of current PR status. Nothing left to do.`);
-              return;
-            }
-
-            let is_draft = pr.draft;
-            let ready_for_review = context.payload.action === "ready_for_review";
-
-            // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
-            if (is_draft) {
-              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
-            } else if (ready_for_review) {
-              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
-            }
-
-            let status_post_changes = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
-            console.log(`PR Status post changes: ${status_post_changes}`);
 
             console.log(`Synchronizing linked issues with new PR state.`);
             setStatusForIssues(issueItems, projectId, statusFieldName, status_post_changes);
