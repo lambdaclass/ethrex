@@ -278,7 +278,7 @@ jobs:
             }
 
             if (!new_status) {
-              console.log("No status change required for this action.");
+              console.log("No status change required. Exiting.");
               return;
             }
 
