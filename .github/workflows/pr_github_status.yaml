@@ -19,7 +19,7 @@ jobs:
   update-project-status:
     name: Update PR status for ethrex_l1 project
     runs-on: ubuntu-latest
-    # sadly pull_request_review doesn't give me labels information so we'll have to check this later.
+    # sadly pull_request_review doesn't have direct access to labels information so we'll have to check this later.
     if: github.event_name == 'pull_request_review' || contains(github.event.pull_request.labels.*.name, 'L1')
     permissions:
       contents: read
@@ -199,12 +199,17 @@ jobs:
               return allItems.find(i => i.content?.number === number);
             }
 
+            function getFieldByName(fields, fieldName) {
+              const field = fields.find(f => f.name === fieldName);
+              if (!field) throw new Error(`Field '${fieldName}' not found`);
+              return field;
+            }
 
             // ========== MAIN LOGIC ==========
             const pr = context.payload.pull_request;
 
-            // Continue with execution only if it ontains the l1 label.
-            // This check is for the review, the check for a pull_request event was already done before.
+            // Run the status check only if the PR contains the l1 label.
+            // This check is for the submitted review, the check for a pull_request event was previously done.
             if (context.eventName === "pull_request_review") {
               const prNumber = pr.number;
               const { data: labels } = await github.rest.issues.listLabelsOnIssue({
@@ -222,13 +227,6 @@ jobs:
               }
             }
 
-            function getFieldByName(fields, fieldName) {
-              const field = fields.find(f => f.name === fieldName);
-              if (!field) throw new Error(`Field '${fieldName}' not found`);
-              return field;
-            }
-
-
             const projectNumber = 31;
             const orgLogin = "lambdaclass";
 
@@ -237,9 +235,9 @@ jobs:
             const projectId = project.id;
 
             const allItems = await getAllProjectItems(projectId);
-            const pr_item = findItemByNumber(allItems, pr.number);
-            if (!pr_item) {
-              console.log(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
+            const prItem = findItemByNumber(allItems, pr.number);
+            if (!prItem) {
+              console.warn(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
               return;
             }
 
@@ -254,37 +252,37 @@ jobs:
 
             // Set Start date if PR was opened
             if (action === "opened") {
-              await setProjectItemDateField(projectId, pr_item.id, startDateField, pr.created_at);
+              await setProjectItemDateField(projectId, prItem.id, startDateField, pr.created_at);
             }
 
             // Set date of Last update only if it's an update to the PR
             if (action === "synchronize" || action === "edited") {
-              await setProjectItemDateField(projectId, pr_item.id, lastUpdatedField, pr.updated_at);
+              await setProjectItemDateField(projectId, prItem.id, lastUpdatedField, pr.updated_at);
             }
 
-            let converted_to_draft = (action === "opened" || action === "reopened") && pr.draft || action === "converted_to_draft";
-            let ready_for_review = action === "ready_for_review";
-            let requested_changes = context.eventName === "pull_request_review" && context.payload.review?.state == "changes_requested";
+            const isDraftTransition = (action === "opened" || action === "reopened") && pr.draft || action === "converted_to_draft";
+            const readyForReview = action === "ready_for_review";
+            const requestedChanges = context.eventName === "pull_request_review" && context.payload.review?.state == "changes_requested";
 
             // Determine new status of the PR.
-            let new_status = null;
+            let newStatus = null;
 
-            if (converted_to_draft) {
-              new_status = "In Progress";
-            } else if (ready_for_review) {
-              new_status = "In Review";
-            } else if (requested_changes) {
-              new_status = "Requested Changes";
+            if (isDraftTransition) {
+              newStatus = "In Progress";
+            } else if (readyForReview) {
+              newStatus = "In Review";
+            } else if (requestedChanges) {
+              newStatus = "Requested Changes";
             }
 
-            if (!new_status) {
+            if (!newStatus) {
               console.log("No status change required. Exiting.");
               return;
             }
 
             // Set new status of the PR
-            console.log(`Setting new status of the PR to '${new_status}'`);
-            await setProjectItemStatus(pr_item.id, statusField, new_status, projectId);
+            console.log(`Setting new status of the PR to '${newStatus}'`);
+            await setProjectItemStatus(prItem.id, statusField, newStatus, projectId);
 
             // Set new status of each issue linked to the PR
             const issueNumbers = extractLinkedIssueNumbers(pr.body);
@@ -295,8 +293,8 @@ jobs:
               const issueItem = findItemByNumber(allItems, issueNumber);
 
               if (issueItem) {
-                console.log(`Setting status of issue #${issueNumber} to '${status}'.`);
-                await setProjectItemStatus(issueItem.id, statusField, new_status, projectId);
+                console.log(`Setting status of issue #${issueNumber} to '${newStatus}'.`);
+                await setProjectItemStatus(issueItem.id, statusField, newStatus, projectId);
               } else {
                 console.warn(`Project item for issue #${issueNumber} not found.`);
               }
