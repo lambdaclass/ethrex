@@ -37,7 +37,7 @@ jobs:
               return project;
             }
 
-            async function findProjectItem(projectId, prNumber) {
+            async function findProjectItem(projectId, number) {
               let hasNextPage = true;
               let after = null;
 
@@ -57,6 +57,9 @@ jobs:
                               ... on PullRequest {
                                 number
                               }
+                              ... on Issue {
+                                number
+                              }
                             }
                           }
                         }
@@ -66,7 +69,7 @@ jobs:
                 `, { projectId, after });
 
                 const items = res.node.items.nodes;
-                const found = items.find(i => i.content?.number === prNumber);
+                const found = items.find(i => i.content?.number === number);
                 if (found) return found;
 
                 hasNextPage = res.node.items.pageInfo.hasNextPage;
@@ -218,6 +221,7 @@ jobs:
             const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
 
+            // Get issues linked to the PR
             const body = pr.body || "";
             console.log(body);
             // Step 1: Remove all markdown/HTML comments
@@ -229,6 +233,7 @@ jobs:
             // Step 3: Extract issue numbers
             const issueNumbers = matches.map(match => parseInt(match[1]));
 
+            console.log("Issues linked to the PR (through PR description)");
             console.log(issueNumbers);
 
             // Get project and item representing Pull Request.
