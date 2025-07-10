@@ -837,7 +837,7 @@ pub fn modexp(
     //https://eips.ethereum.org/EIPS/eip-2565
 
     let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
-    let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGas)?;
+    let multiplication_complexity = words.checked_mul(words).ok_or(OutOfGas)?;
 
     let calculate_iteration_count =
         if exponent_size <= 32 && *exponent_first_32_bytes != BigUint::ZERO {
