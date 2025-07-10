@@ -194,7 +194,7 @@ impl<'a> VM<'a> {
             end = Instant::now();
 
             // Append opcode, start and end to file
-            println!("{:?} {} {}", opcode, start.elapsed().as_micros(), end.elapsed().as_micros());
+            println!("OPCODE DATA{:?} {} {}", opcode, start.elapsed().as_micros(), end.elapsed().as_micros());
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
