@@ -150,7 +150,7 @@ impl ExecutionWitnessResult {
         let addresses: Vec<Address> = self
             .keys
             .iter()
-            .filter(|k| k.len() == 20)
+            .filter(|k| k.len() == Address::len_bytes())
             .map(|k| Address::from_slice(k))
             .collect();
 

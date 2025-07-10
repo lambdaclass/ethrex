@@ -23,7 +23,6 @@ pub enum PublicNetwork {
 
 impl Network {
     pub fn from_network_name(value: &str) -> eyre::Result<Self> {
-        // TODO: consider removing the () for a proper error
         match value {
             "hoodi" => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
             "holesky" => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),

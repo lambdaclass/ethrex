@@ -1339,7 +1339,6 @@ impl EthClient {
     }
 
     /// Fethches the execution witnes for a given block or range of blocks.
-    /// WARNNING: This method is only compatible with ethrex and not with other debug_executionWitness implementations.
     pub async fn get_witness(
         &self,
         from: BlockIdentifier,
