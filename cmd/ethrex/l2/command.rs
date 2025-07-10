@@ -127,6 +127,8 @@ impl Command {
                     panic!("L2 Doesn't support REVM, use LEVM instead.");
                 }
 
+                l2::initializers::init_tracing(&opts);
+
                 let data_dir = set_datadir(&opts.node_opts.datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
@@ -267,7 +269,7 @@ impl Command {
                             current_block,
                             current_block,
                             contract_address,
-                            event_signature,
+                            vec![event_signature],
                         )
                         .await?;
 

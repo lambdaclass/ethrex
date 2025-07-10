@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub struct RpcBlock {
     hash: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
-    size: u64,
+    pub size: u64,
     #[serde(flatten)]
     pub header: BlockHeader,
     #[serde(flatten)]
