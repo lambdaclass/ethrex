@@ -409,8 +409,12 @@ impl Store {
                 let mut storage_trie = self
                     .engine
                     .open_storage_trie(*address, state.storage_root)?;
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
+                let storage_updates: Vec<_> = update
+                    .added_storage
+                    .par_iter()
+                    .map(|(storage_key, storage_value)| (hash_key(storage_key), storage_value))
+                    .collect();
+                for (hashed_key, storage_value) in storage_updates {
                     if storage_value.is_zero() {
                         storage_trie.remove(hashed_key)?;
                     } else {
