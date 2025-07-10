@@ -66,8 +66,6 @@ async fn main() -> Result<(), DeployerError> {
         Some(opts.maximum_allowed_max_fee_per_blob_gas),
     )?;
 
-    download_contract_deps(&opts)?;
-
     compile_contracts(&opts)?;
 
     let contract_addresses = deploy_contracts(&eth_client, &opts).await?;
@@ -93,11 +91,6 @@ fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
 
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     trace!("Compiling contracts");
-    compile_contract(
-        &opts.contracts_path,
-        "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
-        false,
-    )?;
     if opts.deploy_based_contracts {
         info!("Compiling based contracts");
         compile_contract(
