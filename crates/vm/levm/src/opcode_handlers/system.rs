@@ -100,7 +100,9 @@ impl<'a> VM<'a> {
         let from = callframe.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = callframe.is_static;
+        info!("[CALL (b4 get_calldata)] memory size: {}", self.current_call_frame()?.memory.len());
         let data = self.get_calldata(args_start_offset, args_size)?;
+        info!("[CALL (after get_calldata)] memory size: {}", self.current_call_frame()?.memory.len());
 
         self.tracer.enter(CALL, from, to, value, gas_limit, &data);
 
@@ -162,6 +164,11 @@ impl<'a> VM<'a> {
                 return_data_size,
             )
         };
+        dbg!(current_memory_size,
+            args_start_offset,
+            args_size,
+            return_data_start_offset,
+            return_data_size);
 
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
