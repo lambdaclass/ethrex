@@ -11,7 +11,6 @@ use ethrex_common::{U256, utils::u256_from_big_endian};
 pub type Memory = Vec<u8>;
 
 pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), VMError> {
-    info!("[MSTORE: try_resize] unchecked_new_size: {unchecked_new_size} vs current: {}", memory.len());
     if unchecked_new_size == 0 || unchecked_new_size <= memory.len() {
         return Ok(());
     }
@@ -19,13 +18,11 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
     let new_size = unchecked_new_size
         .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
         .ok_or(OutOfBounds)?;
-    info!("[MSTORE: try_resize] new size in words: {new_size}");
 
     if new_size > memory.len() {
         let additional_size = new_size
             .checked_sub(memory.len())
             .ok_or(InternalError::Underflow)?;
-        info!("[MSTORE: try_resize] nadditional_size: {additional_size}");
         memory
             .try_reserve(additional_size)
             .map_err(|_err| InternalError::MemorySizeOverflow)?;
@@ -77,7 +74,6 @@ pub fn try_store_data(memory: &mut Memory, offset: U256, data: &[u8]) -> Result<
         .ok_or(OutOfBounds)?
         .try_into()
         .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-    info!("[MSTORE: try_store_data]: new_size: {new_size}");
     try_resize(memory, new_size)?;
     try_store(memory, data, offset, data.len())
 }
