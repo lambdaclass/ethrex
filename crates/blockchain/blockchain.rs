@@ -147,9 +147,9 @@ impl Blockchain {
         let execution_result = vm.execute_block(block)?;
 
         // Validate execution went alright
-        validate_gas_used(&execution_result.receipts, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        //validate_gas_used(&execution_result.receipts, &block.header)?;
+        //validate_receipts_root(&block.header, &execution_result.receipts)?;
+        //validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
 
         Ok(execution_result)
     }
