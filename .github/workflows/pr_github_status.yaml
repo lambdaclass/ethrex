@@ -288,11 +288,10 @@ jobs:
             let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
             console.log(`Current PR status: ${current_status}`);
 
-            if (current_status === "Approved" || current_status === "Requested Changes") {
+            if (current_status === "Approved") {
               // If PR is approved we don't want to change it's state
-              // If changes were requested we can't automatically tell if they are ready for review once again. This has to be manual.
 
-              // Synchronize the status of the issues and the PR
+              // Synchronize the status of the issues with the PR
               setStatusForIssues(issueItems, projectId, statusFieldName, current_status);
               console.log(`Exiting workflow because of current PR status. Nothing left to do.`);
               return;
