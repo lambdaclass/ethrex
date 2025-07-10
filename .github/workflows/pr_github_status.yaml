@@ -84,60 +84,21 @@ jobs:
               return items;
             }
 
-            // Looks for an item in the project and returns it if found.
-            async function findProjectItem(projectId, number) {
-              let hasNextPage = true;
-              let after = null;
-
-              while (hasNextPage) {
-                const res = await github.graphql(`
-                  query($projectId: ID!, $after: String) {
-                    node(id: $projectId) {
-                      ... on ProjectV2 {
-                        items(first: 100, after: $after) {
-                          pageInfo {
-                            hasNextPage
-                            endCursor
-                          }
-                          nodes {
-                            id
-                            content {
-                              ... on PullRequest {
-                                number
-                              }
-                              ... on Issue {
-                                number
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                `, { projectId, after });
-
-                const items = res.node.items.nodes;
-                const found = items.find(i => i.content?.number === number);
-                if (found) return found;
-
-                hasNextPage = res.node.items.pageInfo.hasNextPage;
-                after = res.node.items.pageInfo.endCursor;
-              }
-
-              return null;
-            }
-
-            // Set a Date field to a particular date. E.g., StartDate of PR #100 is 05/06/2024
-            async function setProjectItemDateField(projectId, itemId, fieldName, dateValue) {
+            async function getProjectFields(projectId) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
                   node(id: $projectId) {
                     ... on ProjectV2 {
                       fields(first: 100) {
                         nodes {
-                          ... on ProjectV2Field {
-                            id
-                            name
+                          __typename
+                          id
+                          name
+                          ... on ProjectV2SingleSelectField {
+                            options {
+                              id
+                              name
+                            }
                           }
                         }
                       }
@@ -146,7 +107,12 @@ jobs:
                 }
               `, { projectId });
 
-              const field = res.node.fields.nodes.find(f => f.name === fieldName);
+              // Return an array of all fields with their options if available
+              return res.node.fields.nodes;
+            }
+
+            async function setProjectItemDateField(projectId, itemId, fields, fieldName, dateValue) {
+              const field = fields.find(f => f.name === fieldName);
               if (!field) throw new Error(`Field '${fieldName}' not found`);
 
               const date = dateValue.split("T")[0]; // "YYYY-MM-DD"
@@ -301,6 +267,8 @@ jobs:
               if (!hasL1) {
                 console.log("PR does not have 'L1' label. Exiting.");
                 return;
+              } else {
+                console.log("PR contains 'L1' label. Continuing with status checks...")
               }
             }
 
@@ -322,14 +290,17 @@ jobs:
               return;
             }
 
+            // Get all fields of the project.
+            const fields = await getProjectFields(projectId);
+
             // Set Start date if PR was opened
             if (context.payload.action === "opened") {
-              await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
+              await setProjectItemDateField(projectId, pr_item.id, fields, startDateFieldName, pr.created_at);
             }
 
             // Set date of Last update only if it's an update to the PR
             if (context.payload.action === "synchronize" || context.payload.action === "edited") {
-              await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
+              await setProjectItemDateField(projectId, pr_item.id, fields, lastUpdatedFieldName, pr.updated_at);
             }
 
             let is_draft = pr.draft;
@@ -364,7 +335,7 @@ jobs:
 
               const issueItems = [];
               for (const issueNumber of issueNumbers) {
-                const issue = await findProjectItem(projectId, issueNumber);
+                const issue = findItemByNumber(issueNumber);
                 if (issue) {
                   issueItems.push(issue);
                 } else {
