@@ -1,12 +1,15 @@
 # .github/workflows/set-pr-status.yml
-name: Set PR Status to In Progress
+name: PR Status
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, edited]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
   update-project-status:
+    name: Update PR status for ethrex_l1 project
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -164,8 +167,6 @@ jobs:
                 fieldId: field.id,
                 optionId: option.id
               });
-
-              console.log(`Set status to '${optionName}' in field '${fieldName}'.`);
             }
 
             async function getProjectItemFieldValue(projectId, itemId, fieldName) {
@@ -224,10 +225,6 @@ jobs:
             async function setStatusForIssues(issueItems, projectId, statusFieldName, status) {
               for (const issueItem of issueItems) {
                 const issueNumber = issueItem.content?.number;
-                if (!issueNumber) {
-                  console.warn(`Skipping item with missing issue number:`, issueItem);
-                  continue;
-                }
 
                 console.log(`Setting status of issue #${issueNumber} to '${status}'.`);
                 await setProjectItemStatus(projectId, issueItem.id, statusFieldName, status);
@@ -249,19 +246,9 @@ jobs:
             const projectId = project.id;
             const pr_item = await findProjectItem(projectId, pr.number);
             if (!pr_item) {
-              console.log(`PR #${pr.number} not found in project.`);
+              console.log(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
               return;
             }
-
-            // Set Start date
-            let opened = context.payload.action === "opened"; // This only happens once on each PR
-            if (opened) {
-              await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
-            }
-
-            // Set date of Last update
-            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
-
 
             // Get issue items linked to PR
             console.log("Issues linked to the PR (via description):", issueNumbers);
@@ -274,6 +261,28 @@ jobs:
                 console.warn(`Project item for issue #${issueNumber} not found.`);
               }
             }
+
+            // In case the event that triggered the workflow is a review: check if it was a "Requested Changes" and update state.
+            if (context.eventName === "pull_request_review") {
+              const review = context.payload.review?.state;
+              console.log(`Review submitted: ${review}.`);
+              if (review === "changes_requested") {
+                await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "Requested Changes");
+                await setStatusForIssues(issueItems, projectId, statusFieldName, "Requested Changes");
+              }
+              console.log("Returning because this was just a review submission.");
+              return;
+            }
+
+            // Set Start date
+            let opened = context.payload.action === "opened"; // This only happens once on each PR
+            if (opened) {
+              await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
+            }
+
+            // Set date of Last update
+            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
+
 
             // Early exit for the workflow
             let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
@@ -298,7 +307,6 @@ jobs:
             } else if (ready_for_review) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
             }
-
 
             let status_post_changes = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
             console.log(`PR Status post changes: ${status_post_changes}`);
