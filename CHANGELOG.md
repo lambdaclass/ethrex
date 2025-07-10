@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-10
+
+- Improve `MSTORE` opcodes [#3436](https://github.com/lambdaclass/ethrex/pull/3436)
+
 ### 2025-07-08
 
 - Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)
