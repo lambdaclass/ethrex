@@ -380,7 +380,7 @@ impl Command {
                             // Apply all account updates to trie
                             let account_updates = state_diff.to_account_updates(&new_trie)?;
                             let account_updates_list = store
-                                .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
+                                .apply_account_updates_from_trie_batch(new_trie, &account_updates.values().cloned().collect::<Vec<_>>())
                                 .await
                                 .expect("Error applying account updates");
 

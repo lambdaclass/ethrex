@@ -27,7 +27,7 @@ crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
-rayon = "1.5"
+rayon.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
@@ -39,5 +39,5 @@ c-kzg = ["dep:c-kzg"]
 [lib]
 path = "./common.rs"
 
-[lints.clippy] 
+[lints.clippy]
 unwrap_used = "deny"

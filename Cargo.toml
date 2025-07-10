@@ -27,7 +27,7 @@ members = [
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
-  "tooling/archive_sync"
+  "tooling/archive_sync",
 ]
 resolver = "2"
 
@@ -99,9 +99,10 @@ libsql = "0.9.10"
 futures = "0.3.31"
 # Changing the tag for spawned will break the TDX image build
 # When updating it try to build the TDX image and update service.nix with the new hash
-spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
-spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha" }
 lambdaworks-crypto = "0.11.0"
+rayon = "1.5"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }
