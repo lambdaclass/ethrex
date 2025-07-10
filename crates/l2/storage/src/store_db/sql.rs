@@ -15,8 +15,8 @@ use libsql::{
 
 /// ### SQLStore
 /// - `read_conn`: a connection to the database to be used for read only statements
-/// - `write_conn`: a connection to the database to be used for database writes. If writes are done using
-///   the read only connection `SQLite failure: database is locked` problems will arise
+/// - `write_conn`: a connection to the database to be used for writing, protected by a Mutex to enforce a maximum of 1 writer.
+///   If writes are done using the read only connection `SQLite failure: database is locked` problems will arise
 pub struct SQLStore {
     read_conn: Connection,
     write_conn: Arc<Mutex<Connection>>,
