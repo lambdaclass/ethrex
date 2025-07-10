@@ -7,14 +7,14 @@ services:
       # API
       - 0.0.0.0:9000:9000
     volumes:
-      - ../../test_data/web3signer-keys:/keys
+      - ../../fixtures/keys:/keys
     command:
       "--http-host-allowlist=* --key-store-path=/keys eth1 --chain-id=1729" 
 
   ethrex_l2:
     command: >
       l2 init
-      --network /genesis-l2.json
+      --network /genesis/l2.json
       --http.addr 0.0.0.0
       --http.port 1729
       --authrpc.port 8552
