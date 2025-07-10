@@ -86,7 +86,10 @@ contract OnChainProposer is
     uint256 public constant PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = 300;
     /// @notice Minimum of privileged transactions that must be included to reset the deadline
     /// @dev If there aren't that many pending, pendingTxHashes.length is used
-    uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 10;
+    uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 20;
+    /// @notice A batch is still accepted if's short of {MIN_INCLUDED_PRIVILEGED_TX} by only a few transactions
+    /// @dev This avoids having to discard a batch due to a last-minute transaction
+    uint16 public constant TOLERANCE_NONINCLUDED_PRIVILEGED_TX = 5;
 
     /// @notice Deadline for including the next batch of privileged transactions, if any are pending
     uint256 public txInclusionDeadline;
