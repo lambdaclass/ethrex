@@ -155,17 +155,17 @@ jobs:
                 }
               `);
 
-              console.log(`Set date field '${fieldName}' to '${date}'.`);
+              console.log(`Set date field '${field.name}' to '${date}'.`);
             }
 
             // Sets the field for status to a project item (PR or Issue). E.g., Set Status for PR #100 to "In Progress".
             async function setProjectItemStatus(itemId, field, optionName, projectId) {
               // Ensure the field is a single select and has options
-              if (!field.options) throw new Error(`Field '${fieldName}' has no options`);
+              if (!field.options) throw new Error(`Field '${field.name}' has no options`);
 
               // Find the matching option
               const option = field.options.find(opt => opt.name === optionName);
-              if (!option) throw new Error(`Option '${optionName}' not found in field '${fieldName}'`);
+              if (!option) throw new Error(`Option '${optionName}' not found in field '${field.name}'`);
 
               // Run the mutation
               await github.graphql(`
