@@ -2,7 +2,7 @@
   hosts: l2
   vars:
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
-    ethrex_version: "0.0.1-rc2"
+    ethrex_version: "l2_v0.0.1-rc1"
     uploaded_json_genesis_file: "{{ ethrex_dir }}/genesis.json"
 
   tasks:
@@ -16,7 +16,7 @@
 
     - name: Download ethrex
       get_url:
-        url: http://localhost:8000/ethrex-linux_x86-64
+        url: https://github.com/lambdaclass/ethrex/releases/download/{{ ethrex_version }}/ethrex-linux_{{ ansible_architecture }}
         dest: "{{ ethrex_dir }}/bin/ethrex"
         mode: "0744"
 
@@ -29,7 +29,7 @@
 
     - name: Download defualt dev genesis (If a custom one not provided)
       get_url:
-        url: https://raw.githubusercontent.com/lambdaclass/ethrex/refs/tags/v{{ ethrex_version }}/fixtures/genesis/l2.json
+        url: https://raw.githubusercontent.com/lambdaclass/ethrex/refs/tags/{{ ethrex_version }}/fixtures/genesis/l2.json
         dest: "{{ uploaded_json_genesis_file }}"
       when: lookup('env', 'GENESIS_JSON_FILE') | length == 0
 
