@@ -246,7 +246,7 @@ jobs:
             const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
 
-            // Get project and item representing Pull Request.
+            // Get project and item representing Pull Request. Exiting early if it doesn't belong to the project.
             const project = await getProject(orgLogin, projectNumber);
             const projectId = project.id;
             const pr_item = await findProjectItem(projectId, pr.number);
@@ -255,9 +255,8 @@ jobs:
               return;
             }
 
-            // Set Start date
-            let opened = context.payload.action === "opened"; // This only happens once on each PR
-            if (opened) {
+            // Set Start date if PR was opened
+            if (context.payload.action === "opened") {
               await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
             }
 
@@ -265,11 +264,6 @@ jobs:
             if (context.payload.action === "synchronize" || context.payload.action === "edited") {
               await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
             }
-
-
-            // Get current status (just to print on console)
-            let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
-            console.log(`Current PR status: ${current_status}`);
 
             let is_draft = pr.draft;
             let ready_for_review = context.payload.action === "ready_for_review";
@@ -286,7 +280,17 @@ jobs:
               new_status = "Requested Changes";
             }
 
-            if (new_status && new_status !== current_status) {
+            if (!new_status) {
+              console.log("No status change required for this action.");
+              return;
+            }
+
+            // Get current status
+            let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
+            console.log(`Current PR status: ${current_status}`);
+
+            // Update status of PR and issues only if it changed.
+            if (new_status !== current_status) {
               // Get issue items linked to PR
               const issueNumbers = extractLinkedIssueNumbers(pr.body);
               console.log("Issues that this PR closes:", issueNumbers);
@@ -302,7 +306,7 @@ jobs:
               }
 
               // Set new status of the PR
-              console.log(`Setting new status of the PR to: '${new_status}'`);
+              console.log(`Setting new status of the PR to '${new_status}'`);
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, new_status);
 
               // Update issue items with the new status.
