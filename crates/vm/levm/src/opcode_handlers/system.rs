@@ -844,6 +844,8 @@ impl<'a> VM<'a> {
             ..
         } = executed_call_frame;
 
+        old_callframe_memory.clean_from_base();
+
         let ret_offset: usize = ret_offset
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
@@ -883,8 +885,6 @@ impl<'a> VM<'a> {
         stack.clear();
         self.stack_pool.push(stack);
 
-        old_callframe_memory.clean_from_base();
-
         Ok(())
     }
 
@@ -900,6 +900,9 @@ impl<'a> VM<'a> {
             memory: old_callframe_memory,
             ..
         } = executed_call_frame;
+
+        old_callframe_memory.clean_from_base();
+
         let parent_call_frame = self.current_call_frame_mut()?;
 
         // Return unused gas
@@ -932,8 +935,6 @@ impl<'a> VM<'a> {
         let mut stack = executed_call_frame.stack;
         stack.clear();
         self.stack_pool.push(stack);
-
-        old_callframe_memory.clean_from_base();
 
         Ok(())
     }

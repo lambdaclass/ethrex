@@ -39,14 +39,13 @@ impl MemoryV2 {
 
     /// Cleans the memory from base onwards, this should be used in callframes when handling returns. On the callframe that is about to be dropped.
     pub fn clean_from_base(&self) {
-        #[allow(clippy::indexing_slicing)]
-        self.buffer.borrow_mut()[self.current_base..].fill(0);
+        self.buffer.borrow_mut().truncate(self.current_base);
     }
 
     /// Returns the len of the current memory for gas, this differs from the actual allocated length due to optimizations.
     #[inline]
     pub fn len(&self) -> usize {
-        self.len_gas
+        self.current_len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -60,9 +59,19 @@ impl MemoryV2 {
         self.buffer.borrow().len().wrapping_sub(self.current_base)
     }
 
+    /// Returns the len of the current memory, from the current base.
+    #[inline]
+    fn current_cap(&self) -> usize {
+        // will never wrap
+        self.buffer
+            .borrow()
+            .capacity()
+            .wrapping_sub(self.current_base)
+    }
+
     #[inline]
     pub fn resize(&mut self, new_memory_size: usize) -> Result<(), VMError> {
-        if new_memory_size == 0 || new_memory_size <= self.len_gas {
+        if new_memory_size == 0 {
             return Ok(());
         }
 
@@ -71,13 +80,7 @@ impl MemoryV2 {
             .ok_or(OutOfBounds)?;
 
         let current_len = self.current_len();
-
-        #[allow(clippy::arithmetic_side_effects)]
-        {
-            if new_memory_size > self.len_gas {
-                self.len_gas = new_memory_size;
-            }
-        }
+        let current_cap = self.current_cap();
 
         if new_memory_size <= current_len {
             return Ok(());
@@ -85,12 +88,18 @@ impl MemoryV2 {
 
         let mut buffer = self.buffer.borrow_mut();
 
+        #[allow(clippy::arithmetic_side_effects)]
+        let real_new_memory_size = new_memory_size + self.current_base;
         #[expect(clippy::arithmetic_side_effects)]
         // when resizing, resize by allocating entire pages instead of small memory sizes.
-        let new_size =
-            (buffer.len() + new_memory_size) + (4096 - ((buffer.len() + new_memory_size) % 4096));
-        buffer.reserve_exact(new_size);
-        buffer.resize(new_size, 0);
+        let new_size = (real_new_memory_size) + (4096 - ((real_new_memory_size) % 4096));
+
+        if new_size > current_cap {
+            buffer.reserve_exact(new_size);
+        }
+
+        #[allow(clippy::arithmetic_side_effects)]
+        buffer.resize(real_new_memory_size, 0);
 
         Ok(())
     }
