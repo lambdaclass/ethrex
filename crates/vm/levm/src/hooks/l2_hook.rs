@@ -110,9 +110,9 @@ impl Hook for L2Hook {
             return DefaultHook.finalize_execution(vm, ctx_result);
         }
 
-        if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
-            default_hook::undo_value_transfer(vm)?;
-        }
+        //if !ctx_result.is_success() && vm.env.origin != COMMON_BRIDGE_L2_ADDRESS {
+        //    default_hook::undo_value_transfer(vm)?;
+        //}
 
         // Even if privileged transactions themselves can't create
         // They can call contracts that use CREATE/CREATE2

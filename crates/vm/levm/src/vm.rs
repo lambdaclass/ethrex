@@ -167,6 +167,10 @@ impl<'a> VM<'a> {
         self.backup_substate();
         let context_result = self.run_execution()?;
 
+        if !context_result.is_success() {
+            self.undo_value_transfer()?;
+        }
+
         let report = self.finalize_execution(context_result)?;
 
         Ok(report)
@@ -240,6 +244,20 @@ impl<'a> VM<'a> {
         // Restore cache to the state before execution.
         self.db.undo_last_transaction()?;
         Ok(report)
+    }
+
+    pub fn undo_value_transfer(&mut self) -> Result<(), VMError> {
+        // In a create if Tx was reverted the account won't even exist by this point.
+        if !self.is_create()? {
+            self.decrease_account_balance(
+                self.current_call_frame()?.to,
+                self.current_call_frame()?.msg_value,
+            )?;
+        }
+
+        self.increase_account_balance(self.env.origin, self.current_call_frame()?.msg_value)?;
+
+        Ok(())
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
