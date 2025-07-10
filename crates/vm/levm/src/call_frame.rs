@@ -28,6 +28,7 @@ pub struct Stack {
 }
 
 impl Stack {
+    #[inline]
     pub fn pop<const N: usize>(&mut self) -> Result<&[U256; N], ExceptionalHalt> {
         // Compile-time check for stack underflow.
         if N > STACK_LIMIT {
@@ -54,6 +55,7 @@ impl Stack {
         Ok(values)
     }
 
+    #[inline]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
@@ -88,6 +90,7 @@ impl Stack {
         self.offset == self.values.len()
     }
 
+    #[inline]
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
         // The following index cannot fail because `self.offset` is known to be within
         // `STACK_LIMIT`.
@@ -100,6 +103,7 @@ impl Stack {
         }
     }
 
+    #[inline]
     pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
         let index = self
             .offset
