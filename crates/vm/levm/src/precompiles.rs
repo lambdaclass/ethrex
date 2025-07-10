@@ -851,7 +851,7 @@ fn blake2f_compress_f(
     m: &[u64; 16], // The message block to compress
     t: &[u64; 2],  // Affects the work vector (v) before permutations
     f: bool,       // If set as true, inverts all bits
-) -> Result<[u64; 8], InternalError> {
+) -> [u64; 8] {
     // Initialize local work vector v[0..15], takes first half from state and second half from IV.
     let mut v: [u64; 16] = [0; 16];
     v[0..8].copy_from_slice(&h);
@@ -870,14 +870,16 @@ fn blake2f_compress_f(
     let mut output = [0; 8];
 
     // XOR the two halves, put the results in the output slice
-    for (i, pos) in output.iter_mut().enumerate() {
-        *pos = h.get(i).ok_or(InternalError::Slicing)?
-            ^ v.get(i).ok_or(InternalError::Slicing)?
-            ^ v.get(i.overflowing_add(8).0)
-                .ok_or(InternalError::Slicing)?;
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "index is within constant bounds"
+    )]
+    for i in 0..8 {
+        output[i] = h[i] ^ v[i] ^ v[i + 8];
     }
 
-    Ok(output)
+    output
 }
 
 /// Reads part of the calldata and returns what is read as u64 or an error
@@ -955,7 +957,7 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
     }
     let f = *f == 1;
 
-    let result = blake2f_compress_f(rounds, h, &m, &t, f)?;
+    let result = blake2f_compress_f(rounds, h, &m, &t, f);
 
     // map the result to the output format (from a u64 slice to a u8 one)
     let output: Vec<u8> = result.iter().flat_map(|num| num.to_le_bytes()).collect();
