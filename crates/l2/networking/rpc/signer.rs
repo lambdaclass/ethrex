@@ -1,18 +1,18 @@
-use url::ParseError;
 use bytes::Bytes;
 use ethereum_types::{Address, Signature};
 use ethrex_common::{
     U256,
     types::{
-        Transaction, LegacyTransaction, EIP1559Transaction, EIP2930Transaction, 
-        EIP4844Transaction, EIP7702Transaction, TxType, 
-    }
+        EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
+        LegacyTransaction, Transaction, TxType,
+    },
 };
-use keccak_hash::keccak;
-use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
-use reqwest::{Url, Client};
-use rustc_hex::FromHexError;
 use ethrex_rlp::encode::PayloadRLPEncode;
+use keccak_hash::keccak;
+use reqwest::{Client, Url};
+use rustc_hex::FromHexError;
+use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
+use url::ParseError;
 
 #[derive(Clone, Debug)]
 pub enum Signer {
@@ -94,7 +94,8 @@ impl RemoteSigner {
     }
 
     pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
-        let url = self.url
+        let url = self
+            .url
             .join("api/v1/eth/sign")?
             .join(&hex::encode(&self.public_key.serialize_uncompressed()[1..]))?;
         let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data));
@@ -153,8 +154,6 @@ pub trait Signable {
         signer: &Signer,
     ) -> impl std::future::Future<Output = Result<(), SignerError>> + Send;
 }
-
-
 
 impl Signable for Transaction {
     async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {

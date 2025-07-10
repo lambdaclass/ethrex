@@ -1,7 +1,7 @@
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
+    signer::{LocalSigner, Signable},
     utils::RpcErr,
-    signer::{LocalSigner, Signable}
 };
 use bytes::Bytes;
 use ethrex_common::{

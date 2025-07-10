@@ -5,12 +5,12 @@ use aligned_sdk::{
     },
     common::types::Network,
 };
-use ethrex_l2_rpc::signer::Signer;
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;

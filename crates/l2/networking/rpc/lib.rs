@@ -1,7 +1,7 @@
+pub mod clients;
 pub mod l2;
 mod rpc;
-pub mod utils;
 pub mod signer;
-pub mod clients;
+pub mod utils;
 
 pub use rpc::start_api;

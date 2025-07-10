@@ -23,7 +23,7 @@ use ethrex_common::{
     types::{
         BlobsBundle, Block, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, TxKind, TxType, WrappedEIP4844Transaction, batch::Batch,
-        block_execution_witness::ExecutionWitnessResult
+        block_execution_witness::ExecutionWitnessResult,
     },
     utils::decode_hex,
 };

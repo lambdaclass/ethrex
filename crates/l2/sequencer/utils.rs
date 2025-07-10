@@ -63,8 +63,8 @@ pub async fn send_verify_tx(
 
     let mut tx = WrappedTransaction::EIP1559(verify_tx);
 
-    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut tx, l1_signer)
-        .await?;
+    let verify_tx_hash =
+        send_tx_bump_gas_exponential_backoff(eth_client, &mut tx, l1_signer).await?;
 
     Ok(verify_tx_hash)
 }

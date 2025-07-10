@@ -1,16 +1,19 @@
+use crate::signer::{Signable, Signer};
+use bytes::Bytes;
 use ethrex_common::{
+    Address, H256, U256,
     types::{EIP1559Transaction, TxKind, TxType, WrappedEIP4844Transaction},
-    Address, H256, U256
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
+    clients::{
+        EthClientError, Overrides,
+        eth::{EthClient, WrappedTransaction},
+    },
     types::block_identifier::{BlockIdentifier, BlockTag},
-    clients::{eth::{EthClient, WrappedTransaction}, EthClientError, Overrides,}
 };
-use crate::signer::{Signer, Signable};
-use tracing::warn;
-use bytes::Bytes;
 use keccak_hash::keccak;
+use tracing::warn;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
@@ -19,7 +22,10 @@ pub async fn send_eip1559_transaction(
     tx: &EIP1559Transaction,
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
-    let signed_tx = tx.sign(signer).await.map_err(|err| EthClientError::Custom(err.to_string()))?;
+    let signed_tx = tx
+        .sign(signer)
+        .await
+        .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
     let mut encoded_tx = signed_tx.encode_to_vec();
     encoded_tx.insert(0, TxType::EIP1559.into());
@@ -33,7 +39,11 @@ pub async fn send_eip4844_transaction(
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
     let mut wrapped_tx = wrapped_tx.clone();
-    wrapped_tx.tx.sign_inplace(signer).await.map_err(|err| EthClientError::Custom(err.to_string()))?;
+    wrapped_tx
+        .tx
+        .sign_inplace(signer)
+        .await
+        .map_err(|err| EthClientError::Custom(err.to_string()))?;
 
     let mut encoded_tx = wrapped_tx.encode_to_vec();
     encoded_tx.insert(0, TxType::EIP4844.into());
@@ -48,15 +58,14 @@ pub async fn send_wrapped_transaction(
 ) -> Result<H256, EthClientError> {
     match wrapped_tx {
         WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-            send_eip4844_transaction(client, wrapped_eip4844_transaction, signer)
-                .await
+            send_eip4844_transaction(client, wrapped_eip4844_transaction, signer).await
         }
         WrappedTransaction::EIP1559(eip1559_transaction) => {
-            send_eip1559_transaction(client, eip1559_transaction, signer)
-                .await
+            send_eip1559_transaction(client, eip1559_transaction, signer).await
         }
         WrappedTransaction::L2(privileged_l2_transaction) => {
-            client.send_privileged_l2_transaction(privileged_l2_transaction)
+            client
+                .send_privileged_l2_transaction(privileged_l2_transaction)
                 .await
         }
     }
@@ -88,12 +97,12 @@ pub async fn deploy(
     (deployer.address(), nonce).encode(&mut encode);
 
     //Taking the last 20bytes so it matches an H160 == Address length
-    let deployed_address =
-        Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
-            EthClientError::Custom("Failed to get deployed_address".to_owned()),
-        )?);
+    let deployed_address = Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
+        EthClientError::Custom("Failed to get deployed_address".to_owned()),
+    )?);
 
-    client.wait_for_transaction_receipt(deploy_tx_hash, 1000)
+    client
+        .wait_for_transaction_receipt(deploy_tx_hash, 1000)
         .await?;
 
     Ok((deploy_tx_hash, deployed_address))
