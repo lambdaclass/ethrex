@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752159252798,
+  "lastUpdate": 1752160219356,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6475,6 +6475,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001240457249070632,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "398a10878145cbb6e1657e2360dc24a0518fbee6",
+          "message": "ci(l2): use correct toolchain in nix build (#3507)\n\n**Motivation**\n\nCurrently the rust version is the one in nixpkgs, which might not follow\nour upgrades.\n\n**Description**\n\nChange the build to rely on the toolchain file on the project root.\n\n---------\n\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: avilagaston9 <gaston.avila@lambdaclass.com>",
+          "timestamp": "2025-07-10T13:50:44Z",
+          "tree_id": "f5011011b112a406ce0326b0800a05603db9ca48",
+          "url": "https://github.com/lambdaclass/ethrex/commit/398a10878145cbb6e1657e2360dc24a0518fbee6"
+        },
+        "date": 1752160208327,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006640457711442786,
             "unit": "Mgas/s"
           }
         ]
