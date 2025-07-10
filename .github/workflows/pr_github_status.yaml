@@ -333,7 +333,7 @@ jobs:
             console.log(`Current PR status: ${current_status}`);
 
             if (is_draft && current_status === "Blocked") {
-              console.log("Cannot move from Blocked to Draft automatically.");
+              console.log("Cannot move from 'Blocked' to 'In Progress' automatically.");
               return;
             }
 
