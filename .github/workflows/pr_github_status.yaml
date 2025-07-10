@@ -11,6 +11,8 @@ jobs:
   update-project-status:
     name: Update PR status for ethrex_l1 project
     runs-on: ubuntu-latest
+    # sadly pull_request_review doesn't give me labels information so we'll have to check this later.
+    if: github.event_name == 'pull_request_review' || contains(github.event.pull_request.labels.*.name, 'L1')
     permissions:
       contents: read
       pull-requests: write
@@ -40,6 +42,46 @@ jobs:
               const project = res.organization.projectsV2.nodes.find(p => p.number === number);
               if (!project) throw new Error(`Project #${number} not found in org ${org}`);
               return project;
+            }
+
+            async function getAllProjectItems(projectId) {
+              let hasNextPage = true;
+              let after = null;
+              let items = [];
+
+              while (hasNextPage) {
+                const res = await github.graphql(`
+                  query($projectId: ID!, $after: String) {
+                    node(id: $projectId) {
+                      ... on ProjectV2 {
+                        items(first: 100, after: $after) {
+                          pageInfo {
+                            hasNextPage
+                            endCursor
+                          }
+                          nodes {
+                            id
+                            content {
+                              ... on PullRequest {
+                                number
+                              }
+                              ... on Issue {
+                                number
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `, { projectId, after });
+
+                items.push(...res.node.items.nodes);
+                hasNextPage = res.node.items.pageInfo.hasNextPage;
+                after = res.node.items.pageInfo.endCursor;
+              }
+
+              return items;
             }
 
             // Looks for an item in the project and returns it if found.
@@ -237,9 +279,32 @@ jobs:
               }
             }
 
+            function findItemByNumber(number) {
+              return allItems.find(i => i.content?.number === number);
+            }
+
 
             // ========== MAIN LOGIC ==========
             const pr = context.payload.pull_request;
+
+            // Continue with execution only if it ontains the l1 label.
+            // This check is for the review, the check for a pull_request event was already done before.
+            if (context.eventName === "pull_request_review") {
+              const prNumber = pr.number;
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+              });
+
+              const hasL1 = labels.some(label => label.name === "L1");
+              if (!hasL1) {
+                console.log("PR does not have 'L1' label. Exiting.");
+                return;
+              }
+            }
+
+
             const projectNumber = 31;
             const statusFieldName = "Status";
             const lastUpdatedFieldName = "Last updated";
@@ -249,7 +314,9 @@ jobs:
             // Get project and item representing Pull Request. Exiting early if it doesn't belong to the project.
             const project = await getProject(orgLogin, projectNumber);
             const projectId = project.id;
-            const pr_item = await findProjectItem(projectId, pr.number);
+
+            const allItems = await getAllProjectItems(projectId);
+            const pr_item = findItemByNumber(pr.number);
             if (!pr_item) {
               console.log(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
               return;
