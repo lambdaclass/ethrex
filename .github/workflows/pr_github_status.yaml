@@ -261,8 +261,10 @@ jobs:
               await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
             }
 
-            // Set date of Last update
-            await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
+            // Set date of Last update only if it's an update to the PR
+            if (context.payload.action === "synchronize" || context.payload.action === "edited") {
+              await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
+            }
 
 
             // Get current status (just to print on console)
@@ -273,32 +275,39 @@ jobs:
             let ready_for_review = context.payload.action === "ready_for_review";
             let requested_changes = context.eventName === "pull_request_review" && context.payload.review?.state == "changes_requested";
 
-            // If PR is in draft then it is "In Progress". If it was opened for review it transitions to "In Review".
+            // Determine new status of the PR.
+            let new_status = null;
+
             if (is_draft) {
-              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
+              new_status = "In Progress";
             } else if (ready_for_review) {
-              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
+              new_status = "In Review";
             } else if (requested_changes) {
-              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "Requested Changes");
+              new_status = "Requested Changes";
             }
 
-            let status_post_changes = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
-            console.log(`PR Status post changes: ${status_post_changes}`);
+            if (new_status && new_status !== current_status) {
+              // Get issue items linked to PR
+              const issueNumbers = extractLinkedIssueNumbers(pr.body);
+              console.log("Issues that this PR closes:", issueNumbers);
 
-            // Get issue items linked to PR
-            const issueNumbers = extractLinkedIssueNumbers(pr.body);
-            console.log("Issues that this PR closes:", issueNumbers);
-
-            const issueItems = [];
-            for (const issueNumber of issueNumbers) {
-              const issue = await findProjectItem(projectId, issueNumber);
-              if (issue) {
-                issueItems.push(issue);
-              } else {
-                console.warn(`Project item for issue #${issueNumber} not found.`);
+              const issueItems = [];
+              for (const issueNumber of issueNumbers) {
+                const issue = await findProjectItem(projectId, issueNumber);
+                if (issue) {
+                  issueItems.push(issue);
+                } else {
+                  console.warn(`Project item for issue #${issueNumber} not found.`);
+                }
               }
-            }
 
-            // Update issue items with the new status.
-            console.log(`Synchronizing linked issues with new PR state.`);
-            setStatusForIssues(issueItems, projectId, statusFieldName, status_post_changes);
+              // Set new status of the PR
+              console.log(`Setting new status of the PR to: '${new_status}'`);
+              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, new_status);
+
+              // Update issue items with the new status.
+              console.log(`Synchronizing linked issues with new PR status.`);
+              await setStatusForIssues(issueItems, projectId, statusFieldName, new_status);
+            } else {
+              console.log(`No status change needed (still '${current_status}').`);
+            }
