@@ -802,7 +802,9 @@ impl Blockchain {
                 })
             }
             Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            // Exclude privileged transactions as they are created via the OnChainProposer contract
+            // Exclude privileged transactions as they are only created
+            // by the lead sequencer. In the future, they might get gossiped
+            // like the rest.
             Transaction::PrivilegedL2Transaction(_) => {
                 return Err(StoreError::Custom(
                     "Privileged Transactions are not supported in P2P".to_string(),
