@@ -210,8 +210,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        // Here we verified indexing is in bounds.
-        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        #[expect(clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "verified constant bounds")]
         if code_offset < current_call_frame.bytecode.len().into() {
             let code_offset: usize = code_offset
                 .try_into()
