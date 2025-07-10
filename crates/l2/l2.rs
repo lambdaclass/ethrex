@@ -1,5 +1,6 @@
 pub mod based;
 pub mod errors;
+pub mod monitor;
 pub mod sequencer;
 pub mod utils;
 
