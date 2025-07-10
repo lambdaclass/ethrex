@@ -10841,7 +10841,7 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?branch=stream_listener#2dc4cc1340331bcde68b68a2d1dfed45867bac6e"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=main#d61a9fa238a711eeb3245db10df874b2e3ef2b0e"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -10851,7 +10851,7 @@ dependencies = [
 [[package]]
 name = "spawned-rt"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?branch=stream_listener#2dc4cc1340331bcde68b68a2d1dfed45867bac6e"
+source = "git+https://github.com/lambdaclass/spawned.git?branch=main#d61a9fa238a711eeb3245db10df874b2e3ef2b0e"
 dependencies = [
  "crossbeam",
  "tokio",

@@ -100,9 +100,9 @@ futures = "0.3.31"
 # Changing the tag for spawned will break the TDX image build
 # When updating it try to build the TDX image and update service.nix with the new hash
 # spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
-spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", branch = "stream_listener" }
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", branch = "main" }
 # spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha" }
-spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", branch = "stream_listener" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", branch = "main" }
 lambdaworks-crypto = "0.11.0"
 
 [patch.crates-io]
