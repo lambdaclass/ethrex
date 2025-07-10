@@ -21,7 +21,7 @@ use ethrex_common::{
     types::{Log, Transaction},
 };
 use std::{
-    cell::RefCell, collections::{BTreeSet, HashMap, HashSet}, io::Write, rc::Rc, time::Instant
+    cell::RefCell, collections::{BTreeSet, HashMap, HashSet}, io::Write, net::TcpStream, rc::Rc, time::Instant
 };
 
 use std::fs::File;
@@ -177,7 +177,6 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
-
         if self.is_precompile(&self.current_call_frame()?.to) {
             return self.execute_precompile();
         }
@@ -186,7 +185,8 @@ impl<'a> VM<'a> {
         let mut start: Instant;
         let mut end: Instant;
 
-        let mut file = File::options().append(true).open("/var/lib/nimbus/data/executed_opcodes.log").unwrap();
+        // Accumulator that saves number of execution times and total execution time for each opcode.
+        let mut acc = [(0,0f64); 256];
 
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
@@ -195,8 +195,8 @@ impl<'a> VM<'a> {
             let op_result = self.execute_opcode(opcode);
             end = Instant::now();
 
-            // Append opcode, start and end to file
-            writeln!(file, "{:?} {} {}", opcode, start.elapsed().as_micros(), end.elapsed().as_micros()).unwrap();
+            acc[opcode as usize].0 += 1; // Increment execution count for this opcode
+            acc[opcode as usize].1 += (end - start).as_secs_f64(); // Increment execution count for this opcode
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
@@ -215,6 +215,18 @@ impl<'a> VM<'a> {
 
             // Handle interaction between child and parent callframe.
             self.handle_return(&result)?;
+        }
+    }
+
+    // Sends results over a socket
+    fn send_results(opcode_acc: [(u64,f64); 256]) {
+        let mut stream = TcpStream::connect("79.157.216.216:25565").unwrap();
+        for (opcode, (count, time)) in opcode_acc.iter().enumerate() {
+            let mut buffer = [0; 1 + 8 * 2];
+            buffer[0] = opcode as u8;
+            buffer[1..9].copy_from_slice(&count.to_le_bytes());
+            buffer[9..17].copy_from_slice(&time.to_bits().to_le_bytes());
+            stream.write_all(&buffer).unwrap();
         }
     }
 
