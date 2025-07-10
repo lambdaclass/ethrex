@@ -93,7 +93,10 @@ contract OnChainProposer is
     uint256 public constant PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = 300;
     /// @notice Minimum of privileged transactions that must be included to reset the deadline
     /// @dev If there aren't that many pending, pendingTxHashes.length is used
-    uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 10;
+    uint16 public constant MIN_INCLUDED_PRIVILEGED_TX = 20;
+    /// @notice A batch is still accepted if's short of {MIN_INCLUDED_PRIVILEGED_TX} by only a few transactions
+    /// @dev This avoids having to discard a batch due to a last-minute transaction
+    uint16 public constant TOLERANCE_NONINCLUDED_PRIVILEGED_TX = 5;
 
     /// @notice Deadline for including the next batch of privileged transactions, if any are pending
     uint256 public txInclusionDeadline = block.timestamp;
@@ -404,14 +407,29 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _checkAndUpdateInclusionQuota(uint16 privileged_transaction_count) private {
-        uint256 pending_count = ICommonBridge(BRIDGE).getPendingTransactionHashes().length;
-        uint16 mimimum_to_include = MIN_INCLUDED_PRIVILEGED_TX > pending_count ? uint16(pending_count) : MIN_INCLUDED_PRIVILEGED_TX;
+    function _checkAndUpdateInclusionQuota(
+        uint16 privileged_transaction_count
+    ) private {
+        uint256 pending_count = ICommonBridge(BRIDGE)
+            .getPendingTransactionHashes()
+            .length;
+        uint16 inclusion_target = MIN_INCLUDED_PRIVILEGED_TX > pending_count
+            ? uint16(pending_count)
+            : MIN_INCLUDED_PRIVILEGED_TX;
+        uint16 mimimum_to_include = TOLERANCE_NONINCLUDED_PRIVILEGED_TX >
+            inclusion_target
+            ? 0
+            : inclusion_target - TOLERANCE_NONINCLUDED_PRIVILEGED_TX;
         if (block.timestamp > txInclusionDeadline) {
-            require(privileged_transaction_count >= mimimum_to_include, "OnChainProposer: batch does not include enough privileged transactions");
+            require(
+                privileged_transaction_count >= mimimum_to_include,
+                "OnChainProposer: batch does not include enough privileged transactions"
+            );
         }
         if (privileged_transaction_count >= mimimum_to_include) {
-            txInclusionDeadline = block.timestamp + PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+            txInclusionDeadline =
+                block.timestamp +
+                PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
         }
     }
 
