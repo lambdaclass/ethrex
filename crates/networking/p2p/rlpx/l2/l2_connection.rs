@@ -351,7 +351,12 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
             .store_rollup
             .get_signature_by_batch(next_batch_to_send)
             .await
-        {
+            .inspect_err(|err| {
+                warn!(
+                    "Fetching signature from store returned an error, \
+             defaulting to signing with commiter key: {err}"
+                )
+            }) {
             Ok(Some(recovered_sig)) => {
                 let (signature, recovery_id) = {
                     let mut signature = [0u8; 64];
@@ -362,13 +367,7 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
                 };
                 BatchSealed::new(batch, signature, recovery_id)
             }
-            Ok(None) => {
-                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())
-            }
-            Err(err) => {
-                warn!(
-                    "Fetching signature from store returned an error, defaulting to signing with commiter key: {err}"
-                );
+            Ok(None) | Err(_) => {
                 BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())
             }
         }
