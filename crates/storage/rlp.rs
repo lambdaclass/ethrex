@@ -8,7 +8,10 @@ use crate::store_db::codec::{
 };
 use bytes::Bytes;
 #[cfg(feature = "redb")]
-use ethrex_common::{Address, U256, types::AccountInfo};
+use ethrex_common::{
+    Address, U256,
+    types::{AccountInfo, BlockNumber},
+};
 use ethrex_common::{
     H256,
     types::{
@@ -38,6 +41,8 @@ pub type AccountInfoLogEntryRLP = Rlp<AccountInfoLogEntry>;
 pub type AccountStorageLogEntryRLP = Rlp<AccountStorageLogEntry>;
 #[cfg(feature = "redb")]
 pub type BlockNumHashRLP = Rlp<BlockNumHash>;
+#[cfg(feature = "redb")]
+pub type BlockNumRLP = Rlp<BlockNumber>;
 #[cfg(feature = "redb")]
 pub type AccountAddressRLP = Rlp<Address>;
 #[cfg(feature = "redb")]

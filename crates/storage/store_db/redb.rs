@@ -877,107 +877,62 @@ impl StoreEngine for RedBStore {
             write_txn.commit().map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))??;
+        self.prune_state_and_storage_log()
     }
 
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
         let txn = self.db.begin_write().map_err(Box::new)?;
         {
-            let mut state_trie_pruning_log_table =
-                txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
-            let mut state_trie_table = txn.open_table(STATE_TRIE_NODES_TABLE)?;
+            let mut log = txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
+            let mut nodes = txn.open_table(STATE_TRIE_NODES_TABLE)?;
 
-            let last_block = {
-                let iter = state_trie_pruning_log_table.range::<BlockNumHashRLP>(..)?;
-                if let Some(Ok((block_guard, _))) = iter.last() {
-                    block_guard.value().to()?
-                } else {
-                    return Ok(());
+            // Get the last block number
+            let mut iter = log.iter()?;
+            let last_block = if let Some(Ok((key_guard, _))) = iter.next_back() {
+                key_guard.value().to()?.block_number
+            } else {
+                return Ok(());
+            };
+
+            let keep_from = last_block.saturating_sub(KEEP_BLOCKS);
+
+            // Collect entries to remove (from the beginning until keep_from)
+            let mut entries_to_remove = Vec::new();
+            let mut forward = log.iter()?;
+            while let Some(Ok((k, mut v))) = forward.next() {
+                let block = k.value().to()?;
+                if block.block_number >= keep_from {
+                    tracing::debug!(
+                        keep_from = keep_from,
+                        last_num = last_block,
+                        "[STOPPING STATE TRIE PRUNING]"
+                    );
+                    break;
                 }
-            };
 
-            let keep_from_block = last_block.block_number.saturating_sub(KEEP_BLOCKS);
-
-            tracing::debug!(
-                keep_from = keep_from_block,
-                "[KEEPING STATE TRIE PRUNING LOG]"
-            );
-
-            let cutoff_key: BlockNumHashRLP = BlockNumHash {
-                block_number: keep_from_block,
-                block_hash: Default::default(),
-            }
-            .into();
-
-            let blocks_to_prune: Vec<BlockNumHash> = {
-                let cursor = state_trie_pruning_log_table.range(..=cutoff_key)?;
-                cursor
-                    .map(|entry| entry.map(|(block, _)| block.value().to()))
-                    .collect::<Result<Result<Vec<_>, _>, _>>()??
-            };
-
-            for block in blocks_to_prune {
-                let block_key: BlockNumHashRLP = block.into();
-                let mut removed = state_trie_pruning_log_table.remove_all(block_key)?;
-                while let Some(hash_guard) = removed.next().transpose()? {
-                    let hash = hash_guard.value();
-                    if state_trie_table.get(hash.as_ref())?.is_some() {
-                        state_trie_table.remove(hash.as_ref())?;
-                    }
+                while let Some(Ok(node_hash)) = v.next() {
+                    entries_to_remove.push((block, node_hash.value()));
                 }
             }
 
-            let mut storage_trie_pruning_log_table =
-                txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
-            let mut storage_trie_table = txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
-
-            let last_block = {
-                let iter = storage_trie_pruning_log_table.range::<BlockNumHashRLP>(..)?;
-                if let Some(Ok((block_guard, _))) = iter.last() {
-                    block_guard.value().to()?
-                } else {
-                    return Ok(());
-                }
-            };
-
-            let keep_from_block = last_block.block_number.saturating_sub(KEEP_BLOCKS);
-
-            tracing::debug!(
-                keep_from = keep_from_block,
-                "[KEEPING STORAGE TRIE PRUNING LOG]"
-            );
-
-            let cutoff_key: BlockNumHashRLP = BlockNumHash {
-                block_number: keep_from_block,
-                block_hash: Default::default(),
-            }
-            .into();
-
-            let storage_blocks_to_prune: Vec<BlockNumHash> = {
-                let cursor = storage_trie_pruning_log_table.range(..=cutoff_key)?;
-                cursor
-                    .map(|entry| entry.map(|(block, _)| block.value().to()))
-                    .collect::<Result<Result<Vec<_>, _>, _>>()??
-            };
-
-            for block in storage_blocks_to_prune {
-                let block_key: BlockNumHashRLP = block.into();
-                let mut removed = storage_trie_pruning_log_table.remove_all(block_key)?;
-                while let Some(hash_guard) = removed.next().transpose()? {
-                    let (addr_hash, node_hash): ([u8; 32], [u8; 33]) = hash_guard.value();
-                    if storage_trie_table
-                        .get(&(addr_hash, node_hash))?
-                        .next()
-                        .is_some()
-                    {
-                        storage_trie_table.remove_all((addr_hash, node_hash))?;
-                    }
+            // Remove entries
+            for (block, node_hash) in entries_to_remove {
+                let k_delete = NodeHash::Hashed(node_hash.into());
+                if nodes.get(k_delete.as_ref())?.is_some() {
+                    let block_rlp: BlockNumHashRLP = block.into();
+                    nodes.remove(k_delete.as_ref())?;
+                    log.remove(block_rlp, node_hash)?;
+                    tracing::debug!(
+                        node_hash = hex::encode(node_hash.as_ref()),
+                        block_number = block.block_number,
+                        "[DELETING STATE NODE]"
+                    );
                 }
             }
         }
 
-        txn.commit()?;
-        Ok(())
+        txn.commit().map_err(StoreError::from)
     }
 
     async fn add_block_header(
