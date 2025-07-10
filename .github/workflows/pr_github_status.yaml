@@ -213,6 +213,27 @@ jobs:
               return fieldValue.optionName;
             }
 
+            // Gets all issue numbers that would be closed if the PR is merged.
+            function extractLinkedIssueNumbers(prBody) {
+              const body = prBody || "";
+              const withoutComments = body.replace(/<!--[\s\S]*?-->/g, "");
+              const matches = [...withoutComments.matchAll(/(?:close[sd]?|fixe[sd]?|resolve[sd]?)\s+#(\d+)/gi)];
+              return matches.map(match => parseInt(match[1], 10));
+            }
+
+            async function setStatusForIssues(issueItems, projectId, statusFieldName, status) {
+              for (const issueItem of issueItems) {
+                const issueNumber = issueItem.content?.number;
+                if (!issueNumber) {
+                  console.warn(`Skipping item with missing issue number:`, issueItem);
+                  continue;
+                }
+
+                console.log(`Setting status of issue #${issueNumber} to '${status}'.`);
+                await setProjectItemStatus(projectId, issueItem.id, statusFieldName, status);
+              }
+            }
+
 
             // ========== MAIN LOGIC ==========
             const pr = context.payload.pull_request;
@@ -221,18 +242,7 @@ jobs:
             const lastUpdatedFieldName = "Last updated";
             const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
-
-            // Get issues linked to the PR
-            const body = pr.body || "";
-            // Step 1: Remove all markdown/HTML comments
-            const withoutComments = body.replace(/<!--[\s\S]*?-->/g, "");
-            // Step 2: Match all issue-closing keywords outside comments
-            const matches = [...withoutComments.matchAll(/(?:close[sd]?|fixe[sd]?|resolve[sd]?)\s+#(\d+)/gi)];
-            // Step 3: Extract issue numbers
-            const issueNumbers = matches.map(match => parseInt(match[1]));
-
-            console.log("Issues linked to the PR (through PR description)");
-            console.log(issueNumbers);
+            const issueNumbers = extractLinkedIssueNumbers(pr.body);
 
             // Get project and item representing Pull Request.
             const project = await getProject(orgLogin, projectNumber);
@@ -243,14 +253,8 @@ jobs:
               return;
             }
 
-            const issueItems = [];
-            for (const issueNumber of issueNumbers) {
-              const issue = await findProjectItem(projectId, issueNumber);
-              issueItems.push(issue);
-            }
-
             // Set Start date
-            let opened = context.payload.action === "opened"; // This only happens once in each PR
+            let opened = context.payload.action === "opened"; // This only happens once on each PR
             if (opened) {
               await setProjectItemDateField(projectId, pr_item.id, startDateFieldName, pr.created_at);
             }
@@ -258,13 +262,30 @@ jobs:
             // Set date of Last update
             await setProjectItemDateField(projectId, pr_item.id, lastUpdatedFieldName, pr.updated_at);
 
+
+            // Get issue items linked to PR
+            console.log("Issues linked to the PR (via description):", issueNumbers);
+            const issueItems = [];
+            for (const issueNumber of issueNumbers) {
+              const issue = await findProjectItem(projectId, issueNumber);
+              if (issue) {
+                issueItems.push(issue);
+              } else {
+                console.warn(`Project item for issue #${issueNumber} not found.`);
+              }
+            }
+
+            // Early exit for the workflow
             let current_status = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
-            console.log(`Current status: ${current_status}`);
+            console.log(`Current PR status: ${current_status}`);
 
             if (current_status === "Approved" || current_status === "Requested Changes") {
               // If PR is approved we don't want to change it's state
               // If changes were requested we can't automatically tell if they are ready for review once again. This has to be manual.
-              console.log(`Exiting workflow because of current PR status.`);
+
+              // Synchronize the status of the issues and the PR
+              setStatusForIssues(issueItems, projectId, statusFieldName, current_status);
+              console.log(`Exiting workflow because of current PR status. Nothing left to do.`);
               return;
             }
 
@@ -274,12 +295,13 @@ jobs:
             // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
             if (is_draft) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
-              for (const issueItem of issueItems) {
-                await setProjectItemStatus(projectId, issueItem.id, statusFieldName, "In Progress");
-              }
             } else if (ready_for_review) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
-              for (const issueItem of issueItems) {
-                await setProjectItemStatus(projectId, issueItem.id, statusFieldName, "In Review");
-              }
             }
+
+
+            let status_post_changes = await getProjectItemFieldValue(projectId, pr_item.id, statusFieldName);
+            console.log(`PR Status post changes: ${status_post_changes}`);
+
+            console.log(`Synchronizing linked issues with new PR state.`);
+            setStatusForIssues(issueItems, projectId, statusFieldName, status_post_changes);
