@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752085364285,
+  "lastUpdate": 1752159252798,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3265,6 +3265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208948964115,
             "range": "± 409252867",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "398a10878145cbb6e1657e2360dc24a0518fbee6",
+          "message": "ci(l2): use correct toolchain in nix build (#3507)\n\n**Motivation**\n\nCurrently the rust version is the one in nixpkgs, which might not follow\nour upgrades.\n\n**Description**\n\nChange the build to rely on the toolchain file on the project root.\n\n---------\n\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: avilagaston9 <gaston.avila@lambdaclass.com>",
+          "timestamp": "2025-07-10T13:50:44Z",
+          "tree_id": "f5011011b112a406ce0326b0800a05603db9ca48",
+          "url": "https://github.com/lambdaclass/ethrex/commit/398a10878145cbb6e1657e2360dc24a0518fbee6"
+        },
+        "date": 1752159241680,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211874830502,
+            "range": "± 722590930",
             "unit": "ns/iter"
           }
         ]
