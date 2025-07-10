@@ -1,5 +1,7 @@
-use ef_tests_state::runner_v2::parser::parse_file;
+use ef_tests_state::runner_v2::{parser::parse_file, runner::run_tests};
 
-pub fn main() {
-    parse_file();
+#[tokio::main]
+pub async fn main() {
+    let tests = parse_file().await;
+    run_tests(tests).await;
 }

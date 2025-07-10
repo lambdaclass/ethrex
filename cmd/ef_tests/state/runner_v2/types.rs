@@ -17,7 +17,7 @@ use bytes::Bytes;
 
 use ethrex_common::{
     Address, H256, U256,
-    types::{Fork, TxKind},
+    types::{Fork, GenesisAccount, TxKind},
 };
 
 use serde::Deserialize;
@@ -186,7 +186,7 @@ impl<'de> Deserialize<'de> for Tests {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct TestCase {
     pub data: Bytes,
     pub gas: u64,
@@ -234,7 +234,7 @@ impl Display for TestCase {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TestCasePost {
     pub hash: H256,
     pub logs: H256,
@@ -296,6 +296,17 @@ pub struct AccountState {
     pub storage: HashMap<U256, U256>,
 }
 
+impl From<&AccountState> for GenesisAccount {
+    fn from(value: &AccountState) -> Self {
+        Self {
+            code: value.code.clone(),
+            storage: value.storage.clone(),
+            balance: value.balance,
+            nonce: value.nonce,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Info {
     #[serde(default)]
@@ -334,7 +345,7 @@ pub struct Info {
     pub reference_spec_version: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct Env {
     #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
