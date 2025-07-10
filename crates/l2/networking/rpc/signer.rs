@@ -12,6 +12,7 @@ use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
+use tracing::info;
 use url::ParseError;
 
 #[derive(Clone, Debug)]
@@ -96,7 +97,7 @@ impl RemoteSigner {
     pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
         let url = self
             .url
-            .join("api/v1/eth1/sign")?
+            .join("api/v1/eth1/sign/")?
             .join(&hex::encode(&self.public_key.serialize_uncompressed()[1..]))?;
         let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data));
 
