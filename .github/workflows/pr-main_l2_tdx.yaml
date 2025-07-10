@@ -42,7 +42,7 @@ jobs:
       - name: Build prover
         run: |
           cd crates/l2/tee/quote-gen
-          cargo build --release
+          make image.raw
 
       - name: Build test
         run: |
@@ -77,5 +77,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           make init-l2-no-metrics &
           sleep 30
-          ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
+          cd tee/quote-gen/
+          ETHREX_TDX_DEV_MODE=true make run &
+          cd ../../
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
