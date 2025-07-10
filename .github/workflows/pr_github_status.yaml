@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
     steps:
       - uses: actions/github-script@v7
         with:
@@ -223,11 +224,8 @@ jobs:
 
             // Get issues linked to the PR
             const body = pr.body || "";
-            console.log(body);
             // Step 1: Remove all markdown/HTML comments
             const withoutComments = body.replace(/<!--[\s\S]*?-->/g, "");
-            console.log("Body without comments");
-            console.log(withoutComments);
             // Step 2: Match all issue-closing keywords outside comments
             const matches = [...withoutComments.matchAll(/(?:close[sd]?|fixe[sd]?|resolve[sd]?)\s+#(\d+)/gi)];
             // Step 3: Extract issue numbers
@@ -243,6 +241,12 @@ jobs:
             if (!pr_item) {
               console.log(`PR #${pr.number} not found in project.`);
               return;
+            }
+
+            const issueItems = [];
+            for (const issueNumber of issueNumbers) {
+              const issue = await findProjectItem(projectId, issueNumber);
+              issueItems.push(issue);
             }
 
             // Set Start date
@@ -270,6 +274,12 @@ jobs:
             // If PR is in draft it is "In Progress". Otherwise, if it was opened for review it's "In Review".
             if (is_draft) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Progress");
+              for (const issueItem of issueItems) {
+                await setProjectItemStatus(projectId, issueItem.id, statusFieldName, "In Progress");
+              }
             } else if (ready_for_review) {
               await setProjectItemStatus(projectId, pr_item.id, statusFieldName, "In Review");
+              for (const issueItem of issueItems) {
+                await setProjectItemStatus(projectId, issueItem.id, statusFieldName, "In Review");
+              }
             }
