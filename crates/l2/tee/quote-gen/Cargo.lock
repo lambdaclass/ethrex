@@ -2206,6 +2206,7 @@ dependencies = [
  "hex",
  "k256",
  "keccak-hash",
+ "kzg-rs",
  "lazy_static",
  "once_cell",
  "rayon",
@@ -2217,6 +2218,10 @@ dependencies = [
  "tinyvec",
  "tracing",
 ]
+
+[[package]]
+name = "ethrex-crypto"
+version = "0.1.0"
 
 [[package]]
 name = "ethrex-dev"
@@ -2311,10 +2316,10 @@ dependencies = [
  "datatest-stable",
  "derive_more 1.0.0",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "k256",
  "keccak-hash",
- "kzg-rs",
  "lambdaworks-math 0.11.0",
  "lazy_static",
  "num-bigint 0.4.6",
@@ -4732,7 +4737,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "keccak-hash",
- "kzg-rs",
  "secp256k1",
  "serde",
  "serde_json",
@@ -7396,8 +7400,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "keccak-hash",
- "kzg-rs",
  "serde",
  "serde_json",
  "serde_with",
