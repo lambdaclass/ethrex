@@ -95,6 +95,8 @@ impl<'a> VM<'a> {
             cost.checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
+        info!("[CALL] current_memory_size: {current_memory_size}, args_start_offset: {args_start_offset}, args_size: {args_size}, return_data_start_offset: {return_data_start_offset}, return_data_size: {return_data_size}");
+
 
         // OPERATION
         let from = callframe.to; // The new sender will be the current contract.
@@ -164,8 +166,6 @@ impl<'a> VM<'a> {
                 return_data_size,
             )
         };
-        info!("[CALL] current_memory_size: {current_memory_size}, args_start_offset: {args_start_offset}, args_size: {args_size}, return_data_start_offset: {return_data_start_offset}, return_data_size: {return_data_size}");
-
         // CHECK EIP7702
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, address)?;
