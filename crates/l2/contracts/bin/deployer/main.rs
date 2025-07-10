@@ -85,10 +85,6 @@ async fn main() -> Result<(), DeployerError> {
     Ok(())
 }
 
-fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
-    ethrex_l2_sdk::download_contract_deps(&opts.contracts_path).map_err(DeployerError::from)
-}
-
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     trace!("Compiling contracts");
     if opts.deploy_based_contracts {
@@ -660,7 +656,7 @@ fn write_contract_addresses_to_env(
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod test {
-    use crate::{DeployerError, DeployerOptions, compile_contracts, download_contract_deps};
+    use crate::{DeployerError, DeployerOptions, compile_contracts};
     use std::{env, path::Path};
 
     #[test]
@@ -689,7 +685,6 @@ mod test {
             ..Default::default()
         };
 
-        download_contract_deps(&opts)?;
         compile_contracts(&opts)?;
 
         std::fs::remove_dir_all(solc_out).unwrap();
