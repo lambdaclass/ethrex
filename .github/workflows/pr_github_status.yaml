@@ -3,7 +3,15 @@ name: PR Status
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, edited, ready_for_review]
+    types:
+      [
+        opened,
+        reopened,
+        synchronize,
+        edited,
+        ready_for_review,
+        converted_to_draft,
+      ]
   pull_request_review:
     types: [submitted]
 
@@ -131,10 +139,7 @@ jobs:
 
 
             // Sets a date field.
-            async function setProjectItemDateField(projectId, itemId, fields, fieldName, dateValue) {
-              const field = fields.find(f => f.name === fieldName);
-              if (!field) throw new Error(`Field '${fieldName}' not found`);
-
+            async function setProjectItemDateField(projectId, itemId, field, dateValue) {
               const date = dateValue.split("T")[0]; // "YYYY-MM-DD"
 
               await github.graphql(`
@@ -154,11 +159,7 @@ jobs:
             }
 
             // Sets the field for status to a project item (PR or Issue). E.g., Set Status for PR #100 to "In Progress".
-            async function setProjectItemStatus(itemId, fieldName, optionName, fields, projectId) {
-              // Find the field by name
-              const field = fields.find(f => f.name === fieldName);
-              if (!field) throw new Error(`Field '${fieldName}' not found`);
-
+            async function setProjectItemStatus(itemId, field, optionName, projectId) {
               // Ensure the field is a single select and has options
               if (!field.options) throw new Error(`Field '${fieldName}' has no options`);
 
@@ -186,43 +187,6 @@ jobs:
               });
             }
 
-            // Gets the value of a field (e.g., Status) from a project item using pre-fetched fields
-            async function getProjectItemFieldValue(itemId, fieldName, fields) {
-              const field = fields.find(f => f.name === fieldName);
-              if (!field) throw new Error(`Field '${fieldName}' not found`);
-
-              const res = await github.graphql(`
-                query($itemId: ID!) {
-                  item: node(id: $itemId) {
-                    ... on ProjectV2Item {
-                      fieldValues(first: 100) {
-                        nodes {
-                          ... on ProjectV2ItemFieldSingleSelectValue {
-                            field {
-                              ... on ProjectV2SingleSelectField {
-                                id
-                                name
-                              }
-                            }
-                            optionId
-                            optionName: name
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              `, { itemId });
-
-              const fieldValue = res.item.fieldValues.nodes.find(
-                fv => fv.field?.id === field.id
-              );
-
-              if (!fieldValue) throw new Error(`No value set for field '${fieldName}'`);
-
-              return fieldValue.optionName ?? "No Status";
-            }
-
             // Gets all issue numbers that would be closed if the PR is merged.
             function extractLinkedIssueNumbers(prBody) {
               const body = prBody || "";
@@ -231,17 +195,7 @@ jobs:
               return matches.map(match => parseInt(match[1], 10));
             }
 
-            // Set a specific status for a list of issues
-            async function setStatusForIssues(issueItems, projectId, statusFieldName, status, fields) {
-              for (const issueItem of issueItems) {
-                const issueNumber = issueItem.content?.number;
-
-                console.log(`Setting status of issue #${issueNumber} to '${status}'.`);
-                await setProjectItemStatus(issueItem.id, statusFieldName, status, fields, projectId);
-              }
-            }
-
-            function findItemByNumber(number) {
+            function findItemByNumber(allItems, number) {
               return allItems.find(i => i.content?.number === number);
             }
 
@@ -268,11 +222,14 @@ jobs:
               }
             }
 
+            function getFieldByName(fields, fieldName) {
+              const field = fields.find(f => f.name === fieldName);
+              if (!field) throw new Error(`Field '${fieldName}' not found`);
+              return field;
+            }
+
 
             const projectNumber = 31;
-            const statusFieldName = "Status";
-            const lastUpdatedFieldName = "Last updated";
-            const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
 
             // Get project and item representing Pull Request. Exiting early if it doesn't belong to the project.
@@ -280,7 +237,7 @@ jobs:
             const projectId = project.id;
 
             const allItems = await getAllProjectItems(projectId);
-            const pr_item = findItemByNumber(pr.number);
+            const pr_item = findItemByNumber(allItems, pr.number);
             if (!pr_item) {
               console.log(`PR #${pr.number} not found in ethrex_l1 project. Exiting...`);
               return;
@@ -289,24 +246,30 @@ jobs:
             // Get all fields of the project.
             const fields = await getProjectFields(projectId);
 
+            const statusField = getFieldByName(fields, "Status");
+            const lastUpdatedField = getFieldByName(fields, "Last updated");
+            const startDateField = getFieldByName(fields, "Start date");
+
+            const action = context.payload.action;
+
             // Set Start date if PR was opened
-            if (context.payload.action === "opened") {
-              await setProjectItemDateField(projectId, pr_item.id, fields, startDateFieldName, pr.created_at);
+            if (action === "opened") {
+              await setProjectItemDateField(projectId, pr_item.id, startDateField, pr.created_at);
             }
 
             // Set date of Last update only if it's an update to the PR
-            if (context.payload.action === "synchronize" || context.payload.action === "edited") {
-              await setProjectItemDateField(projectId, pr_item.id, fields, lastUpdatedFieldName, pr.updated_at);
+            if (action === "synchronize" || action === "edited") {
+              await setProjectItemDateField(projectId, pr_item.id, lastUpdatedField, pr.updated_at);
             }
 
-            let is_draft = pr.draft;
-            let ready_for_review = context.payload.action === "ready_for_review";
+            let converted_to_draft = (action === "opened" || action === "reopened") && pr.draft || action === "converted_to_draft";
+            let ready_for_review = action === "ready_for_review";
             let requested_changes = context.eventName === "pull_request_review" && context.payload.review?.state == "changes_requested";
 
             // Determine new status of the PR.
             let new_status = null;
 
-            if (is_draft) {
+            if (converted_to_draft) {
               new_status = "In Progress";
             } else if (ready_for_review) {
               new_status = "In Review";
@@ -319,38 +282,22 @@ jobs:
               return;
             }
 
-            // Get current status
-            let current_status = await getProjectItemFieldValue(pr_item.id, statusFieldName, fields);
-            console.log(`Current PR status: ${current_status}`);
+            // Set new status of the PR
+            console.log(`Setting new status of the PR to '${new_status}'`);
+            await setProjectItemStatus(pr_item.id, statusField, new_status, projectId);
 
-            if (is_draft && current_status === "Blocked") {
-              console.log("Cannot move from 'Blocked' to 'In Progress' automatically.");
-              return;
-            }
+            // Set new status of each issue linked to the PR
+            const issueNumbers = extractLinkedIssueNumbers(pr.body);
+            console.log("Issues that this PR closes:", issueNumbers);
 
-            // Update status of PR and issues only if it changed.
-            if (new_status !== current_status) {
-              // Get issue items linked to PR
-              const issueNumbers = extractLinkedIssueNumbers(pr.body);
-              console.log("Issues that this PR closes:", issueNumbers);
+            console.log(`Synchronizing linked issues with new PR status.`);
+            for (const issueNumber of issueNumbers) {
+              const issueItem = findItemByNumber(allItems, issueNumber);
 
-              const issueItems = [];
-              for (const issueNumber of issueNumbers) {
-                const issue = findItemByNumber(issueNumber);
-                if (issue) {
-                  issueItems.push(issue);
-                } else {
-                  console.warn(`Project item for issue #${issueNumber} not found.`);
-                }
+              if (issueItem) {
+                console.log(`Setting status of issue #${issueNumber} to '${status}'.`);
+                await setProjectItemStatus(issueItem.id, statusField, new_status, projectId);
+              } else {
+                console.warn(`Project item for issue #${issueNumber} not found.`);
               }
-
-              // Set new status of the PR
-              console.log(`Setting new status of the PR to '${new_status}'`);
-              await setProjectItemStatus(pr_item.id, statusFieldName, new_status, fields, projectId);
-
-              // Update issue items with the new status.
-              console.log(`Synchronizing linked issues with new PR status.`);
-              await setStatusForIssues(issueItems, projectId, statusFieldName, new_status, fields);
-            } else {
-              console.log(`No status change needed (still '${current_status}').`);
             }
