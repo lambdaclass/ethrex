@@ -71,15 +71,26 @@ jobs:
           cargo build --release
           cp target/release/rex /usr/local/bin
 
-      - name: Run L1 and deploy
+      - name: Build L1 docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/blockchain/dev/Dockerfile
+          tags: ethrex_dev:latest
+          push: false
+
+      - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
           touch .env
-          make init-local-l1;
+          CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
           ETHREX_TDX_DEV_MODE=true \
-          make deploy-l1
+          docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer and test
         run: |
