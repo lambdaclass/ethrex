@@ -1,7 +1,6 @@
 - name: Ethrex L2 Setup
   hosts: l2
   vars:
-    rust_version: "1.87.0"
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     ethrex_version: "0.0.1-rc2"
     uploaded_json_genesis_file: "{{ ethrex_dir }}/genesis.json"
@@ -17,7 +16,7 @@
 
     - name: Download ethrex
       get_url:
-        url: https://github.com/lambdaclass/ethrex/releases/download/v{{ ethrex_version }}/ethrex-linux_{{ ansible_architecture }}
+        url: http://localhost:8000/ethrex-linux_x86-64
         dest: "{{ ethrex_dir }}/bin/ethrex"
         mode: "0744"
 
