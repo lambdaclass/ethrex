@@ -270,6 +270,9 @@ impl Store {
     }
 
     /// Stores the sequencer signature for a given batch number.
+    /// When the lead sequencer sends a batch by P2P, it
+    /// should also sign it, this will map a batch number
+    /// to the batch's signature.
     pub async fn store_signature_by_batch(
         &self,
         batch_number: u64,
@@ -281,6 +284,8 @@ impl Store {
     }
 
     /// Returns the sequencer signature for a given batch number.
+    /// This is used mostly in P2P to avoid signing an
+    /// already known batch.
     pub async fn get_signature_by_batch(
         &self,
         batch_number: u64,
