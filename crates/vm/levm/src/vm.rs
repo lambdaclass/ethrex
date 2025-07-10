@@ -186,7 +186,7 @@ impl<'a> VM<'a> {
         let mut start: Instant;
         let mut end: Instant;
 
-        let mut file = File::options().append(true).open("executed_opcodes.log").unwrap();
+        let mut file = File::options().append(true).open("/var/lib/nimbus/data/executed_opcodes.log").unwrap();
 
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
