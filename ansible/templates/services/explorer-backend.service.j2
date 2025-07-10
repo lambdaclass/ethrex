@@ -3,7 +3,9 @@ Description=Explorer Backend
 After=network.target
 
 [Service]
-ExecStart=
+Environment="MIX_ENV=prod"
+ExecStart=mix phx.server
+WorkingDirecroty={{ explorer_dir }}
 
 Restart=on-failure
 

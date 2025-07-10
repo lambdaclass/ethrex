@@ -6,16 +6,21 @@ help:
 all: inventory ethrex-l2
 
 inventory: ## Generates inventory for ansible
-	@if [ -n "$(DATABASE_IP)" ] || [ -n "$(EXPLORER_IP)" ] || [ -n "$(L1_IP)" ] || [ -n "$(L2_IP)" ] || [ -n "$(MONITORING_IP)" ]; then \
+	@if [ -n "$(DATABASE_IP)" ] || [ -n "$(EXPLORER_FRONTEND_IP)" ] || [ -n "$(EXPLORER_BACKEND_IP)" ] || [ -n "$(L1_IP)" ] || [ -n "$(L2_IP)" ] || [ -n "$(MONITORING_IP)" ]; then \
 		truncate -s0 inventory.ini; \
 		if [ -n "$(DATABASE_IP)" ]; then \
 			echo "[database]" >> inventory.ini; \
 			for ip in $$(echo $(DATABASE_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=admin ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
-		if [ -n "$(EXPLORER_IP)" ]; then \
-			echo "[explorer]" >> inventory.ini; \
-			for ip in $$(echo $(EXPLORER_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+		if [ -n "$(EXPLORER_FRONTEND_IP)" ]; then \
+			echo "[explorer_frontend]" >> inventory.ini; \
+			for ip in $$(echo $(EXPLORER_FRONTEND_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			echo "" >> inventory.ini; \
+		fi; \
+		if [ -n "$(EXPLORER_BACKEND_IP)" ]; then \
+			echo "[explorer_backend]" >> inventory.ini; \
+			for ip in $$(echo $(EXPLORER_BACKEND_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=admin ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 		if [ -n "$(L1_IP)" ]; then \
@@ -34,7 +39,7 @@ inventory: ## Generates inventory for ansible
 			echo "" >> inventory.ini; \
 		fi; \
 	else \
-		echo "Error: At least one of DATABASE_IP, EXPLORER_IP, L1_IP, L2_IP, or MONITORING_IP must be set." 1>&2; exit 1; \
+		echo "Error: At least one of DATABASE_IP, EXPLORER_FRONTEND_IP, EXPLORER_BACKEND_IP, L1_IP, L2_IP, or MONITORING_IP must be set." 1>&2; exit 1; \
 	fi
 
 database: ## Installs Postgres database
@@ -58,13 +63,13 @@ ethrex-l2: ## Installs Ethrex L2
 	ansible-playbook -i inventory.ini ethrex-l2.yml
 
 explorer_backend: ## Installs explorer backend
-	DATABASE_URL=$(DATABASE_URL) # ecto://user:pass@127.0.0.1:5432/db
-	ETHEREUM_JSONRPC_VARIANT=geth
-	ETHEREUM_JSONRPC_HTTP_URL=http://localhost:8545
+	DATABASE_URL=$(DATABASE_URL)
+	ETHEREUM_JSONRPC_VARIANT=$(ETHEREUM_JSONRPC_VARIANT)
+	ETHEREUM_JSONRPC_HTTP_URL=$(ETHEREUM_JSONRPC_HTTP_URL)
 	API_V2_ENABLED=true
 	PORT=3001
-	COIN=ETH
-	COIN_NAME=ETH
+	COIN=$(COIN)
+	COIN_NAME=$(COIN_NAME)
 	DISPLAY_TOKEN_ICONS=true
 	MIX_ENV=prod
 	MICROSERVICE_SC_VERIFIER_ENABLED=true
@@ -75,7 +80,30 @@ explorer_backend: ## Installs explorer backend
 	ansible-playbook -i inventory.ini explorer_backend.yml
 
 explorer_fontend: ## Installs explorer frontend
-	ansible-playbook -i inventory.ini explorer_fontend.yml
+	NEXT_PUBLIC_API_HOST=$(NEXT_PUBLIC_API_HOST)
+	NEXT_PUBLIC_API_PORT=8000
+	NEXT_PUBLIC_API_PROTOCOL=https
+	NEXT_PUBLIC_APP_HOST=$(NEXT_PUBLIC_APP_HOST)
+	NEXT_PUBLIC_APP_PORT=8001
+	NEXT_PUBLIC_APP_PROTOCOL=https
+	NEXT_PUBLIC_APP_ENV=production
+	NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL=wss
+	NEXT_PUBLIC_NETWORK_NAME=$(NEXT_PUBLIC_NETWORK_NAME)
+	NEXT_PUBLIC_NETWORK_ID=1
+	NEXT_PUBLIC_AD_BANNER_PROVIDER=none
+	NEXT_PUBLIC_AD_TEXT_PROVIDER=none
+	NEXT_PUBLIC_MARKETPLACE_ENABLED=false
+	NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE=false
+	NEXT_PUBLIC_NETWORK_LOGO=$(NEXT_PUBLIC_NETWORK_LOGO)
+	NEXT_PUBLIC_NETWORK_LOGO_DARK=$(NEXT_PUBLIC_NETWORK_LOGO_DARK)
+	NEXT_PUBLIC_NETWORK_ICON=$(NEXT_PUBLIC_NETWORK_ICON)
+	NEXT_PUBLIC_NETWORK_ICON_DARK=$(NEXT_PUBLIC_NETWORK_ICON_DARK)
+	NEXT_PUBLIC_STATS_API_HOST=$(NEXT_PUBLIC_STATS_API_HOST)
+	NEXT_PUBLIC_GRAPHIQL_TRANSACTION=none
+	NEXT_PUBLIC_API_SPEC_URL=none
+	NEXT_PUBLIC_NAVIGATION_HIDDEN_LINKS="['eth_rpc_api','rpc_api']"
+	ansible-playbook -i inventory.ini explorer_frontend.yml
 
 metrics: ## Installs grafana and metrics
+	GRAFANA_PASSWORD=$(GRAFANA_PASSWORD)
 	ansible-playbook -i inventory.ini metrics.yml

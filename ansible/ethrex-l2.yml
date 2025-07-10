@@ -3,6 +3,8 @@
   vars:
     rust_version: "1.88.0"
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
+    uploaded_json_genesis_file: "/home/{{ ansible_user }}/genesis.json"
+    original_json_genesis_file: "{{ ethrex_dir }}/fixtures/genesis/l2.json"
 
   tasks:
     - name: Install dependencies
@@ -49,10 +51,12 @@
       environment:
         PATH: "{{ ansible_env.PATH }}:/home/{{ ansible_user }}/.cargo/bin"
 
-    - name: Copy genesis JSON file
+    - name: Copy genesis JSON file (If set)
+      register: genesis_copy
       copy:
         src: "{{ lookup('env', 'GENESIS_JSON_FILE') }}"
-        dest: "/home/{{ ansible_user }}/genesis.json"
+        dest: "{{ uploaded_json_genesis_file }}"
+      when: lookup('env', 'GENESIS_JSON_FILE') | length != 0 # Copy genesis JSON from ansible host only if envvar is set.
 
     - name: Ensure user systemd directory exists
       file:
@@ -67,7 +71,7 @@
         src: services/ethrex-l2.service.j2
         dest: /home/{{ ansible_user }}/.config/systemd/user/ethrex-l2.service
       vars:
-        genesis_json_file: "/home/{{ ansible_user }}/genesis.json"
+        genesis_json_file: "{{ genesis_copy is success | ternary('{{ uploaded_json_genesis_file }}', '{{ original_json_genesis_file }}"
         common_bridge_address: "{{ lookup('env', 'COMMON_BRIDGE_ADDRESS') }}"
         on_chain_proposer_address: "{{ lookup('env', 'ON_CHAIN_PROPOSER_ADDRESS') }}"
         committer_pk: "{{ lookup('env', 'COMMITTER_PK') }}"

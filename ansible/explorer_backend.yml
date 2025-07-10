@@ -1,10 +1,10 @@
 - name: Deploy Explorer
-  hosts: explorer
-  become: yes
-
+  hosts: explorer_backend
+  become: true
   vars:
-    explorer_dir: "/home/{{ ansible_user }}/explorer"
-    nodejs_version: "22.16.0"
+    explorer_url: "https://github.com/lambdaclass/sovra-explorer.git"
+    explorer_dir: "/home/{{ ansible_user }}/sovra-explorer-backend"
+    nodejs_version: "22.11.0"
 
   tasks:
     - name: Install Explorer tools and libraries
@@ -42,7 +42,7 @@
 
     - name: Add Erlang Solutions GPG key
       apt_key:
-        url: https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc
+        url: https://binaries2.erlang-solutions.com/GPG-KEY-pmanager.asc
         keyring: /etc/apt/trusted.gpg.d/erlang-solutions.gpg
         state: present
 
@@ -54,43 +54,90 @@
         update_cache: yes
       loop:
         - { repo: "deb https://binaries2.erlang-solutions.com/ubuntu/ jammy-esl-erlang-25 contrib", name: "erlang" }
-        - { repo: "deb https://binaries2.erlang-solutions.com/ubuntu/ trusty contrib", name: "elixir" }
+        - { repo: "deb https://binaries2.erlang-solutions.com/debian/ bullseye-elixir-1.15 contrib", name: "elixir" }
+
+    - name: Add Docker’s official GPG key
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        keyring: /etc/apt/trusted.gpg.d/docker.gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/debian bookworm stable
+        state: present
+
+    - name: Install Docker packages
+      apt:
+        name:
+          - docker-ce 
+          - docker-ce-cli 
+          - containerd.io 
+          - docker-buildx-plugin 
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker service is running and enabled
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add user to docker group
+      user:
+        name: "{{ user }}"
+        groups: docker
+        append: yes
+      vars:
+        user: app
+
+    - name: Check if nodejs is installed
+      stat:
+        path: /usr/local/bin/node
+      register: nodejs_check
 
     - name: Get architecture
       set_fact:
-        architecture: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
+        architecture: "{{ 'x64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
+      when: not nodejs_check.stat.exists
 
     - name: Download NodeJS
       get_url:
         url: "https://nodejs.org/dist/v{{ nodejs_version }}/node-v{{ nodejs_version }}-linux-{{ architecture }}.tar.xz"
         dest: "/tmp/nodejs-{{ nodejs_version }}.tar.xz"
         mode: '0644'
+      when: not nodejs_check.stat.exists
 
     - name: Extract NodeJS
       unarchive:
         src: "/tmp/nodejs-{{ nodejs_version }}.tar.xz"
         dest: /tmp/
         remote_src: yes
+      when: not nodejs_check.stat.exists
 
     - name: Move NodeJS
-      copy:
-        remote_src: true
-        src: "/tmp/nodejs-{{ nodejs_version }}/bin/"
-        dest: "/usr/local/bin/"
-        mode: '0755'
+      become: true
+      shell: "sudo cp -r /tmp/node-v{{ nodejs_version }}-linux-{{ architecture }}/* /usr/local/"
+      vars:
+        ansible_ssh_user: admin
+      when: not nodejs_check.stat.exists
 
     - name: Install Erlang and Elixir
       apt:
         name:
-          - erlang-esl
+          - erlang
           - elixir
-        state: latest
+        state: present
+        update_cache: true
 
     - name: Clone Explorer repository
       git:
-        repo: "https://github.com/lambdaclass/sovra-explorer.git"
+        repo: "{{ explorer_url }}"
         dest: "{{ explorer_dir }}"
         version: stable
+      vars:
+        ansible_ssh_user: app
 
     - name: Compile Explorer
       shell:
@@ -103,6 +150,7 @@
           mix phx.digest
         chdir: "{{ explorer_dir }}"
       vars:
+        ansible_ssh_user: app
         DATABASE_URL: "{{ lookup('env', 'DATABASE_URL') }}"
         SECRET_KEY_BASE: "{{ lookup('pipe', 'mix phx.gen.secret') }}" # Generate SECRET_KEY_BASE at runtime.
         ETHEREUM_JSONRPC_VARIANT: "{{ lookup('env', 'ETHEREUM_JSONRPC_VARIANT') }}"
@@ -119,10 +167,19 @@
         POOL_SIZE_API: "{{ lookup('env', 'POOL_SIZE_API') }}"
         DISABLE_WEBAPP: "{{ lookup('env', 'DISABLE_WEBAPP') }}"
 
+    - name: Deploy backend
+      command:
+        cmd: docker compose -f docker-compose/microservices.yml up -d stats sc-verifier
+        chdir: "{{ explorer_dir }}"
+      vars:
+        ansible_ssh_user: app
+
     - name: Install Explorer service
       template:
         src: services/explorer-backend.service.j2
         dest: "/home/{{ ansible_user }}/.config/systemd/user/explorer-backend.service"
+      vars:
+        ansible_ssh_user: app
 
     - name: Start Explorer
       systemd:
@@ -130,3 +187,6 @@
         state: started
         enabled: true
         daemon_reload: true
+        scope: user
+      vars:
+        ansible_ssh_user: app
