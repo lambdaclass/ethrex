@@ -34,37 +34,11 @@ impl TrieDB for RedBTrie {
             .get(key.as_ref())
             .map_err(|e| TrieError::DbError(e.into()))?
             .map(|guard| {
-                let node_data = guard.value().to_vec();
-
-                // 🔍 LOG CRÍTICO: Verificar longitud antes de truncate
-                tracing::debug!(
-                    node_hash = hex::encode(node_hash_to_fixed_size(key)),
-                    data_length = node_data.len(),
-                    data_hex = hex::encode(&node_data),
-                    "[REDB GET] Raw node data before truncate"
-                );
-
-                if node_data.len() < 8 {
-                    tracing::error!(
-                        node_hash = hex::encode(node_hash_to_fixed_size(key)),
-                        data_length = node_data.len(),
-                        data_hex = hex::encode(&node_data),
-                        "[REDB GET] Node data too short! Expected at least 8 bytes"
-                    );
-                    return vec![]; // Devolver vacío en lugar de crashear
-                }
-
-                let mut result = node_data;
-                result.truncate(result.len() - 8);
-
-                tracing::debug!(
-                    node_hash = hex::encode(node_hash_to_fixed_size(key)),
-                    final_length = result.len(),
-                    final_hex = hex::encode(&result),
-                    "[REDB GET] Final node data after truncate"
-                );
-
-                result
+                let mut node_data = guard.value().to_vec();
+                // Nodes are stored with 8 extra bytes at the end to store the block number
+                // Remove the last 8 bytes that contain the block number
+                node_data.truncate(node_data.len() - 8);
+                node_data
             }))
     }
 

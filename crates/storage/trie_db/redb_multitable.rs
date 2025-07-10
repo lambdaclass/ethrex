@@ -30,7 +30,6 @@ impl TrieDB for RedBMultiTableTrieDB {
             node_hash = hex::encode(node_hash_to_fixed_size(key)),
             "[QUERYING STORAGE TRIE NODE]",
         );
-
         let read_txn = self
             .db
             .begin_read()
@@ -39,52 +38,29 @@ impl TrieDB for RedBMultiTableTrieDB {
             .open_multimap_table(STORAGE_TRIE_NODES_TABLE)
             .map_err(|e| TrieError::DbError(e.into()))?;
 
-        let mut iter = table
+        let values = table
             .get((self.fixed_key, node_hash_to_fixed_size(key)))
             .map_err(|e| TrieError::DbError(e.into()))?;
 
-        let guard = iter
-            .next_back()
-            .transpose()
-            .map_err(|e| TrieError::DbError(e.into()))?;
-        let mut data = guard.map(|g| g.value().to_vec()).unwrap_or_default();
-
-        if data.is_empty() {
-            return Ok(None);
-        }
-
-        // 🔍 LOG CRÍTICO: Verificar longitud antes de truncate
-        tracing::debug!(
-            hashed_address = hex::encode(self.fixed_key),
-            node_hash = hex::encode(node_hash_to_fixed_size(key)),
-            data_length = data.len(),
-            data_hex = hex::encode(&data),
-            "[REDB MULTITABLE GET] Raw node data before truncate"
-        );
-
-        if data.len() < 8 {
-            tracing::error!(
-                hashed_address = hex::encode(self.fixed_key),
-                node_hash = hex::encode(node_hash_to_fixed_size(key)),
-                data_length = data.len(),
-                data_hex = hex::encode(&data),
-                "[REDB MULTITABLE GET] Node data too short! Expected at least 8 bytes"
+        let mut ret = vec![];
+        for value in values {
+            ret.push(
+                value
+                    .map_err(|e| TrieError::DbError(e.into()))?
+                    .value()
+                    .to_vec(),
             );
-            return Ok(None); // Devolver None en lugar de crashear
         }
 
-        // Remove the last 8 bytes that contain the block number
-        data.truncate(data.len() - 8);
+        let mut ret_flattened = ret.concat();
 
-        tracing::debug!(
-            hashed_address = hex::encode(self.fixed_key),
-            node_hash = hex::encode(node_hash_to_fixed_size(key)),
-            final_length = data.len(),
-            final_hex = hex::encode(&data),
-            "[REDB MULTITABLE GET] Final node data after truncate"
-        );
-
-        Ok(Some(data))
+        if ret.is_empty() {
+            Ok(None)
+        } else {
+            // Remove the last 8 bytes that contain the block number
+            ret_flattened.truncate(ret_flattened.len() - 8);
+            Ok(Some(ret_flattened))
+        }
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
@@ -96,7 +72,6 @@ impl TrieDB for RedBMultiTableTrieDB {
             let mut table = write_txn
                 .open_multimap_table(STORAGE_TRIE_NODES_TABLE)
                 .map_err(|e| TrieError::DbError(e.into()))?;
-
             for (key, mut value) in key_values {
                 // Add 8 extra bytes to store the block number
                 value.extend_from_slice(&[0u8; 8]);
@@ -105,6 +80,10 @@ impl TrieDB for RedBMultiTableTrieDB {
                     .map_err(|e| TrieError::DbError(e.into()))?;
             }
         }
-        write_txn.commit().map_err(|e| TrieError::DbError(e.into()))
+        write_txn
+            .commit()
+            .map_err(|e| TrieError::DbError(e.into()))?;
+
+        Ok(())
     }
 }
