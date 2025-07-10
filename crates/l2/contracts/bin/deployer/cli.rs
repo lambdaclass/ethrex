@@ -293,7 +293,7 @@ pub struct DeployerOptions {
         long,
         env = "ETHREX_ON_CHAIN_PROPOSER_INCLUSION_TARGET",
         help_heading = "Deployer options",
-        help = "Inclusion target for privileged transactions."
+        help = "Privileged transactions expected to be included per batch, if there are enough."
     )]
     pub inclusion_target: u64,
     #[arg(

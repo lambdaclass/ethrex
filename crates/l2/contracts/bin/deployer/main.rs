@@ -27,10 +27,8 @@ use tracing::{Level, debug, error, info, trace, warn};
 mod cli;
 mod error;
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256,uint16,uint16)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256,uint16,uint16)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256,uint16,uint16)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256,uint16,uint16)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
