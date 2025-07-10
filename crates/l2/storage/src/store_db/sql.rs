@@ -55,7 +55,7 @@ impl SQLStore {
             write_conn.busy_timeout(Duration::from_millis(5000))?;
             let store = SQLStore {
                 read_conn: db.connect()?,
-                write_conn: Arc::new(Mutex::new(db.connect()?)),
+                write_conn: Arc::new(Mutex::new(write_conn)),
             };
             store.init_db().await?;
             Ok(store)
