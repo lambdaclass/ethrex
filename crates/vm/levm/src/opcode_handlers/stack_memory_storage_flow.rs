@@ -241,7 +241,10 @@ impl<'a> VM<'a> {
                 storage_slot_was_cold,
             )?)?;
 
-        self.update_account_storage(to, key, new_storage_slot_value)?;
+        if new_storage_slot_value != current_value {
+            self.update_account_storage(to, key, new_storage_slot_value)?;
+        }
+
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
