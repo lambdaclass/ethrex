@@ -567,7 +567,7 @@ where
 
             // Check if we have any capability in common and store the highest version
             for cap in &hello_message.capabilities {
-                match cap.protocol {
+                match cap.protocol() {
                     "eth" => {
                         if SUPPORTED_ETH_CAPABILITIES.contains(cap)
                             && cap.version > negotiated_eth_version

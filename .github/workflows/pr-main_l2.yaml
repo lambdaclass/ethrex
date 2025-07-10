@@ -91,6 +91,7 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -159,7 +160,8 @@ jobs:
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
-          
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
         with:
@@ -255,9 +257,10 @@ jobs:
           push: false
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum
-          sudo apt-get update && sudo apt-get -y install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Start L1 & Deploy contracts
         run: |
