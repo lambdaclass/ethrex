@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752175765428,
+  "lastUpdate": 1752176592214,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6769,6 +6769,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006575034482758621,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "dcb3c9cf5cc3072eddc35f1f2640d1a66baad894",
+          "message": "perf(levm): improve blake2f  (#3503)\n\n**Motivation**\n\nCleaner code and better perfomance\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nMain\n\n![image](https://github.com/user-attachments/assets/1112c9dc-7257-4c7f-a8ae-b26cc1190894)\n\npr\n\n![image](https://github.com/user-attachments/assets/7cbdbe56-98d6-41ce-bc6a-11ad18a31208)\n\n\nImproves blake2f 1 round mgas\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-10T16:31:46Z",
+          "tree_id": "e34318e84d26a13bd37d346390e93cc12cae7640",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dcb3c9cf5cc3072eddc35f1f2640d1a66baad894"
+        },
+        "date": 1752176591310,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006479281553398058,
             "unit": "Mgas/s"
           }
         ]
