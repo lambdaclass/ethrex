@@ -186,22 +186,13 @@ jobs:
               });
             }
 
-            // Gets the value of a field of an item in the project. E.g., The Status of the PR #100 is "In Review".
-            async function getProjectItemFieldValue(projectId, itemId, fieldName) {
+            // Gets the value of a field (e.g., Status) from a project item using pre-fetched fields
+            async function getProjectItemFieldValue(itemId, fieldName, fields) {
+              const field = fields.find(f => f.name === fieldName);
+              if (!field) throw new Error(`Field '${fieldName}' not found`);
+
               const res = await github.graphql(`
-                query($projectId: ID!, $itemId: ID!) {
-                  node(id: $projectId) {
-                    ... on ProjectV2 {
-                      fields(first: 100) {
-                        nodes {
-                          ... on ProjectV2SingleSelectField {
-                            id
-                            name
-                          }
-                        }
-                      }
-                    }
-                  }
+                query($itemId: ID!) {
                   item: node(id: $itemId) {
                     ... on ProjectV2Item {
                       fieldValues(first: 100) {
@@ -221,12 +212,12 @@ jobs:
                     }
                   }
                 }
-              `, { projectId, itemId });
+              `, { itemId });
 
-              const field = res.node.fields.nodes.find(f => f.name === fieldName);
-              if (!field) throw new Error(`Field '${fieldName}' not found`);
+              const fieldValue = res.item.fieldValues.nodes.find(
+                fv => fv.field?.id === field.id
+              );
 
-              const fieldValue = res.item.fieldValues.nodes.find(fv => fv.field?.name === fieldName);
               if (!fieldValue) throw new Error(`No value set for field '${fieldName}'`);
 
               return fieldValue.optionName;
