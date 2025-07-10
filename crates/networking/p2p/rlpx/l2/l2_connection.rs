@@ -399,4 +399,4 @@ async fn process_batch_sealed(
 // the new GenServer approach changes a lot of things,
 // this will be eventually addressed (#3563)
 #[cfg(test)]
-mod tests { }
+mod tests {}
