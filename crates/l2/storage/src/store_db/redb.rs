@@ -3,7 +3,7 @@ use std::{panic::RefUnwindSafe, sync::Arc};
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
@@ -152,15 +152,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|b| b.value()))
     }
 
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.write(BATCHES_BY_BLOCK_NUMBER_TABLE, block_number, batch_number)
-            .await
-    }
-
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
@@ -169,32 +160,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(MESSAGES_BY_BATCH, batch_number)
             .await?
             .map(|w| w.value().to()))
-    }
-
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        messages: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            MESSAGES_BY_BATCH,
-            batch_number,
-            <Vec<H256> as Into<MessageHashesRLP>>::into(messages),
-        )
-        .await
-    }
-
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            BLOCK_NUMBERS_BY_BATCH,
-            batch_number,
-            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
-        )
-        .await
     }
 
     async fn get_block_numbers_by_batch(
@@ -215,19 +180,6 @@ impl StoreEngineRollup for RedBStoreRollup {
         Ok(exists)
     }
 
-    async fn store_privileged_transactions_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write(
-            PRIVILEGED_TRANSACTIONS_HASHES,
-            batch_number,
-            privileged_transactions_hash.into(),
-        )
-        .await
-    }
-
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
@@ -238,15 +190,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|rlp| rlp.value().to()))
     }
 
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write(STATE_ROOTS, batch_number, state_root.into())
-            .await
-    }
-
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
@@ -255,15 +198,6 @@ impl StoreEngineRollup for RedBStoreRollup {
             .read(STATE_ROOTS, batch_number)
             .await?
             .map(|rlp| rlp.value().to()))
-    }
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.write(BLOB_BUNDLES, batch_number, state_diff.into())
-            .await
     }
 
     async fn get_blob_bundle_by_batch_number(
@@ -468,6 +402,65 @@ impl StoreEngineRollup for RedBStoreRollup {
         delete_starting_at(&txn, BLOB_BUNDLES, batch_number + 1)?;
         txn.commit()?;
         Ok(())
+    }
+
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let transaction = db.begin_write().map_err(Box::new)?;
+
+            {
+                let mut table = transaction.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
+                for block in blocks.iter() {
+                    table.insert(*block, batch.number)?;
+                }
+            }
+
+            transaction.open_table(BLOCK_NUMBERS_BY_BATCH)?.insert(
+                batch.number,
+                BlockNumbersRLP::from_bytes(blocks.encode_to_vec()),
+            )?;
+
+            transaction.open_table(MESSAGES_BY_BATCH)?.insert(
+                batch.number,
+                <Vec<H256> as Into<MessageHashesRLP>>::into(batch.message_hashes),
+            )?;
+
+            transaction
+                .open_table(PRIVILEGED_TRANSACTIONS_HASHES)?
+                .insert(
+                    batch.number,
+                    <H256 as Into<Rlp<H256>>>::into(batch.privileged_transactions_hash),
+                )?;
+
+            transaction.open_table(BLOB_BUNDLES)?.insert(
+                batch.number,
+                <Vec<Blob> as Into<Rlp<Vec<Blob>>>>::into(batch.blobs_bundle.blobs),
+            )?;
+
+            transaction.open_table(STATE_ROOTS)?.insert(
+                batch.number,
+                <H256 as Into<Rlp<H256>>>::into(batch.state_root),
+            )?;
+
+            if let Some(commit_tx) = batch.commit_tx {
+                transaction
+                    .open_table(COMMIT_TX_BY_BATCH)?
+                    .insert(batch.number, <H256 as Into<Rlp<H256>>>::into(commit_tx))?;
+            }
+
+            if let Some(verify_tx) = batch.verify_tx {
+                transaction
+                    .open_table(VERIFY_TX_BY_BATCH)?
+                    .insert(batch.number, <H256 as Into<Rlp<H256>>>::into(verify_tx))?;
+            }
+
+            transaction.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
