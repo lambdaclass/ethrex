@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752174926434,
+  "lastUpdate": 1752175765428,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6740,6 +6740,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012591811320754717,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8dac7cb1d7d71ccff299f6c9888444bc56846fdd",
+          "message": "fix(l2): seal a batch in a single DB transaction  (#3554)\n\n**Motivation**\n\nWhen deploying ethrex L2 some errors came up that are related to the\nseal_batch process not being done in a single DB transaction.\n\n**Description**\n\n- Move seal_batch to the `StoreEngineRollup` trait\n- For sql rollup store engine\n- Wrap all the DB write functions from the trait with a <name>_in_tx\nthat gets as an input an Option<Transaction> in case the transaction is\nSome then it uses the existing transaction, and does not commit. If its\nNone it creates a new transaction and commits at the end of the\nfunction.\n- Modify the `SQLStore` struct to hold two instances of `Connection` one\nfor reads and one for writes, the write connection is protected by a\nMutex to enforce a maximum of 1 to prevent this error:\n      ```\nfailed because of a rollup store error: Limbo Query error: SQLite\nfailure: `cannot start a transaction within a transaction`\n      ``` \n- Use `PRAGMA journal_mode=WAL` for [better\nconcurrency](https://sqlite.org/wal.html#concurrency)\n- For `libmdbx` , `redb` and `in-memory`\n   - Implement the `seal_batch` function \n- Refactor: remove all the functions that were exposed by `store.rs` and\nwere only part of seal_batch to prevent its usage outside of batch\nsealing.\n\n\nCloses #3546",
+          "timestamp": "2025-07-10T16:09:07Z",
+          "tree_id": "b7b1d653a7447a46b3c6a30eae3762bc6c4962d7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8dac7cb1d7d71ccff299f6c9888444bc56846fdd"
+        },
+        "date": 1752175753096,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006575034482758621,
             "unit": "Mgas/s"
           }
         ]
