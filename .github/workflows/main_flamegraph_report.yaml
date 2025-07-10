@@ -21,21 +21,8 @@ jobs:
       matrix:
         name: ["levm", "revm"]
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Cache Extra Binaries
         id: cache-binaries
@@ -173,21 +160,8 @@ jobs:
     outputs:
       time: ${{steps.generate-flamegraph-ethrex.outputs.time}}
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Caching
         uses: Swatinem/rust-cache@v2

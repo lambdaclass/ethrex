@@ -23,30 +23,9 @@ jobs:
           path: bin/ethrex-${{ matrix.branch }}
           key: binary-${{ github.event.pull_request[matrix.branch].sha }}
 
-      - name: Checkout
+      - name: Setup Rust Environment
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request[matrix.branch].sha }}
-
-      - name: Extract Rust version from rust-toolchain.toml
-        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
-
-      - name: Fetch Rust cache
-        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/setup-rust
 
       - name: Build binary
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}

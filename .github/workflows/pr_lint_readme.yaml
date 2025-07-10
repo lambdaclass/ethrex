@@ -21,24 +21,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Build ethrex binary
         run: cargo build --bin ethrex

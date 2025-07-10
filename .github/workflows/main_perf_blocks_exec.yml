@@ -15,25 +15,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Checkout LFS objects
-        run: git lfs checkout
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Update package lists
         run: sudo apt-get update

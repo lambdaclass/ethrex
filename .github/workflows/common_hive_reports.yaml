@@ -102,21 +102,8 @@ jobs:
     outputs:
       artifact_name: results_${{ inputs.job_type }}.md
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Download all results
         uses: actions/download-artifact@v4
@@ -124,9 +111,6 @@ jobs:
           path: hive/workspace/logs
           pattern: "*_${{ inputs.job_type }}_logs"
           merge-multiple: true
-
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
 
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md

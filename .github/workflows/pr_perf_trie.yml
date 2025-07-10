@@ -14,24 +14,8 @@ jobs:
   build-ethrex-trie:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Fetch Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3

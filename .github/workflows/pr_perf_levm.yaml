@@ -15,27 +15,10 @@ jobs:
     name: Benchmark for PR
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR
-        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          ref: ${{ github.head_ref }}
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
           components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Install hyperfine
         uses: taiki-e/install-action@v2
@@ -80,27 +63,10 @@ jobs:
     name: Benchmark for Main
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          ref: main
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
           components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Install hyperfine
         uses: taiki-e/install-action@v2

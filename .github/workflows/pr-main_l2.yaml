@@ -24,25 +24,10 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
           components: rustfmt, clippy
-
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -67,24 +52,8 @@ jobs:
           - name: "Vanilla"
             validium: false
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -132,24 +101,8 @@ jobs:
     name: Integration Test - Based
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Build L1 docker image
         run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
@@ -220,24 +173,8 @@ jobs:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Build L1 docker image
         run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .

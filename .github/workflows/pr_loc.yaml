@@ -19,22 +19,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
 
-      - name: Extract Rust version from rust-toolchain.toml
-        id: rustver
-        run: |
-          rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
-                   | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
-          echo "Rust version: ${rust_version}"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ steps.rustver.outputs.rust_version }}
           components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Run Lines of Code Counter for base
         run: cd tooling/loc && make loc-detailed
@@ -48,6 +36,11 @@ jobs:
         with:
           clean: "false" # Don't clean the workspace, so we can keep the previous report
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
 
       - name: Run Lines of Code Counter for PR
         run: cd tooling/loc && make loc-detailed
