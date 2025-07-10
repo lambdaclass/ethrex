@@ -44,6 +44,7 @@ jobs:
               return project;
             }
 
+            // Get all items of a project.
             async function getAllProjectItems(projectId) {
               let hasNextPage = true;
               let after = null;
@@ -84,6 +85,7 @@ jobs:
               return items;
             }
 
+            // Gets all fields of a project. Any kind of field.
             async function getProjectFields(projectId) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
@@ -127,6 +129,8 @@ jobs:
               return res.node.fields.nodes;
             }
 
+
+            // Sets a date field.
             async function setProjectItemDateField(projectId, itemId, fields, fieldName, dateValue) {
               const field = fields.find(f => f.name === fieldName);
               if (!field) throw new Error(`Field '${fieldName}' not found`);
@@ -150,34 +154,19 @@ jobs:
             }
 
             // Sets the field for status to a project item (PR or Issue). E.g., Set Status for PR #100 to "In Progress".
-            async function setProjectItemStatus(projectId, itemId, fieldName, optionName) {
-              const res = await github.graphql(`
-                query($projectId: ID!) {
-                  node(id: $projectId) {
-                    ... on ProjectV2 {
-                      fields(first: 100) {
-                        nodes {
-                          ... on ProjectV2SingleSelectField {
-                            id
-                            name
-                            options {
-                              id
-                              name
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              `, { projectId });
-
-              const field = res.node.fields.nodes.find(f => f.name === fieldName);
+            async function setProjectItemStatus(itemId, fieldName, optionName, fields, projectId) {
+              // Find the field by name
+              const field = fields.find(f => f.name === fieldName);
               if (!field) throw new Error(`Field '${fieldName}' not found`);
 
+              // Ensure the field is a single select and has options
+              if (!field.options) throw new Error(`Field '${fieldName}' has no options`);
+
+              // Find the matching option
               const option = field.options.find(opt => opt.name === optionName);
               if (!option) throw new Error(`Option '${optionName}' not found in field '${fieldName}'`);
 
+              // Run the mutation
               await github.graphql(`
                 mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
                   updateProjectV2ItemFieldValue(input: {
@@ -252,12 +241,12 @@ jobs:
             }
 
             // Set a specific status for a list of issues
-            async function setStatusForIssues(issueItems, projectId, statusFieldName, status) {
+            async function setStatusForIssues(issueItems, projectId, statusFieldName, status, fields) {
               for (const issueItem of issueItems) {
                 const issueNumber = issueItem.content?.number;
 
                 console.log(`Setting status of issue #${issueNumber} to '${status}'.`);
-                await setProjectItemStatus(projectId, issueItem.id, statusFieldName, status);
+                await setProjectItemStatus(issueItem.id, statusFieldName, status, fields, projectId);
               }
             }
 
@@ -361,11 +350,11 @@ jobs:
 
               // Set new status of the PR
               console.log(`Setting new status of the PR to '${new_status}'`);
-              await setProjectItemStatus(projectId, pr_item.id, statusFieldName, new_status);
+              await setProjectItemStatus(pr_item.id, statusFieldName, new_status, fields, projectId);
 
               // Update issue items with the new status.
               console.log(`Synchronizing linked issues with new PR status.`);
-              await setStatusForIssues(issueItems, projectId, statusFieldName, new_status);
+              await setStatusForIssues(issueItems, projectId, statusFieldName, new_status, fields);
             } else {
               console.log(`No status change needed (still '${current_status}').`);
             }
