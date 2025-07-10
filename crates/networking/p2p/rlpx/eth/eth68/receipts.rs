@@ -1,6 +1,5 @@
 use crate::rlpx::{
-    message::RLPxMessage,
-    utils::{snappy_compress, snappy_decompress},
+    eth::receipts::Receipts, message::RLPxMessage, utils::{snappy_compress, snappy_decompress}
 };
 use bytes::BufMut;
 use ethrex_common::types::{Receipt, ReceiptWithBloom};
@@ -10,15 +9,15 @@ use ethrex_rlp::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct Receipts68 {
+pub struct Receipts68 {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
     pub receipts: Vec<Vec<ReceiptWithBloom>>,
 }
 
-impl Receipts68 {
-    pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
+impl Receipts for Receipts68{
+    fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self{
         if receipts.is_empty() {
             return Self {
                 id,
@@ -35,7 +34,7 @@ impl Receipts68 {
         }
     }
 
-    pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
+    fn get_receipts(&self) -> Vec<Vec<Receipt>> {
         if self.receipts.is_empty() {
             return vec![];
         }
@@ -44,6 +43,10 @@ impl Receipts68 {
             receipts.push(vec![Receipt::from(&r[0])]);
         }
         receipts
+    }
+
+    fn get_id(&self) -> u64 {
+        self.id
     }
 }
 

@@ -56,59 +56,66 @@ impl RLPxMessage for GetReceipts {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#receipts-0x10
-#[derive(Debug, Clone)]
-pub(crate) enum Receipts {
-    Receipts68(Receipts68),
-    Receipts69(Receipts69),
-}
+// #[derive(Debug, Clone)]
+// pub(crate) enum Receipts {
+//     Receipts68(Receipts68),
+//     Receipts69(Receipts69),
+// }
 
-impl Receipts {
-    pub fn new(id: u64, receipts: Vec<Vec<Receipt>>, eth: &Capability) -> Result<Self, RLPxError> {
-        match eth.version {
-            68 => Ok(Receipts::Receipts68(Receipts68::new(id, receipts))),
-            69 => Ok(Receipts::Receipts69(Receipts69::new(id, receipts))),
-            _ => Err(RLPxError::IncompatibleProtocol),
-        }
-    }
+// impl Receipts {
+//     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>, eth: &Capability) -> Result<Self, RLPxError> {
+//         match eth.version {
+//             68 => Ok(Receipts::Receipts68(Receipts68::new(id, receipts))),
+//             69 => Ok(Receipts::Receipts69(Receipts69::new(id, receipts))),
+//             _ => Err(RLPxError::IncompatibleProtocol),
+//         }
+//     }
 
-    pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
-        match self {
-            Receipts::Receipts68(msg) => msg.get_receipts(),
-            Receipts::Receipts69(msg) => msg.receipts.clone(),
-        }
-    }
+//     pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
+//         match self {
+//             Receipts::Receipts68(msg) => msg.get_receipts(),
+//             Receipts::Receipts69(msg) => msg.receipts.clone(),
+//         }
+//     }
 
-    pub fn get_id(&self) -> u64 {
-        match self {
-            Receipts::Receipts68(msg) => msg.id,
-            Receipts::Receipts69(msg) => msg.id,
-        }
-    }
-}
+//     pub fn get_id(&self) -> u64 {
+//         match self {
+//             Receipts::Receipts68(msg) => msg.id,
+//             Receipts::Receipts69(msg) => msg.id,
+//         }
+//     }
+// }
 
-impl RLPxMessage for Receipts {
+// impl RLPxMessage for Receipts {
+//     const CODE: u8 = 0x10;
+
+//     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+//         match self {
+//             Receipts::Receipts68(msg) => msg.encode(buf),
+//             Receipts::Receipts69(msg) => msg.encode(buf),
+//         }
+//     }
+
+//     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+//         if has_bloom(msg_data)? {
+//             Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
+//         } else {
+//             Ok(Receipts::Receipts69(Receipts69::decode(msg_data)?))
+//         }
+//     }
+// }
+
+pub trait Receipts : RLPxMessage{
     const CODE: u8 = 0x10;
-
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        match self {
-            Receipts::Receipts68(msg) => msg.encode(buf),
-            Receipts::Receipts69(msg) => msg.encode(buf),
-        }
-    }
-
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        if has_bloom(msg_data)? {
-            Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
-        } else {
-            Ok(Receipts::Receipts69(Receipts69::decode(msg_data)?))
-        }
-    }
+    fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self;
+    fn get_receipts(&self) -> Vec<Vec<Receipt>>;
+    fn get_id(&self) -> u64;
 }
 
 // We should receive something like this:
 // [request-id, [[r1], [r2], [r3],... ]]
 // in this fn, we're checking if r1 has a bloom field inside
-fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
+pub fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
     let decompressed_data = snappy_decompress(msg_data)?;
     let decoder = Decoder::new(&decompressed_data)?;
     let (_, decoder): (u64, _) = decoder.decode_field("request-id")?;

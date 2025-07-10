@@ -1,6 +1,10 @@
 use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
+use tracing::warn;
 use std::fmt::Display;
+use crate::rlpx::eth::eth68::receipts::Receipts68;
+use crate::rlpx::eth::eth69::receipts::Receipts69;
+use crate::rlpx::eth::receipts::has_bloom;
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
@@ -127,7 +131,15 @@ impl Message {
                     PooledTransactions::decode(data)?,
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+                Receipts::CODE => {
+                    if has_bloom(data)? {
+                        warn!("Enters with 68");
+                        return Ok(Message::Receipts(Receipts::Receipts68(Receipts68::decode(data)?)));
+                    } else {
+                        warn!("Enters with 69");
+                        return Ok(Message::Receipts(Receipts::Receipts69(Receipts69::decode(data)?)));
+                    }
+                },
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }

@@ -35,12 +35,7 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::RLPxError,
         eth::{
-            backend,
-            blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts},
-            status::StatusMessage,
-            transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
-            update::BlockRangeUpdate,
+            backend, blocks::{BlockBodies, BlockHeaders}, eth68::receipts::Receipts68, eth69::receipts::Receipts69, receipts::{GetReceipts, Receipts}, status::StatusMessage, transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions}, update::BlockRangeUpdate
         },
         message::Message,
         p2p::{
@@ -712,7 +707,13 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 for hash in block_hashes.iter() {
                     receipts.push(state.storage.get_receipts_for_block(hash)?);
                 }
-                let response = Receipts::new(id, receipts, eth)?;
+                // This doesn't work, been looking for something that can make it work
+                // otherwise go back to the enum implementation
+                let response = match eth.version {
+                    68 => Receipts68::new(id,receipts),
+                    69 => Receipts69::new(id,receipts),
+                    _ => Err(RLPxError::IncompatibleProtocol),
+                }
                 send(state, Message::Receipts(response)).await?;
             }
         }
