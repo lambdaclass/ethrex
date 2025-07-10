@@ -1,6 +1,6 @@
 use crate::{
     constants::*,
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
+    errors::{ContextResult, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -59,7 +59,7 @@ impl Hook for DefaultHook {
         validate_sufficient_max_fee_per_gas(vm)?;
 
         // (5) INITCODE_SIZE_EXCEEDED
-        if vm.is_create() {
+        if vm.is_create()? {
             validate_init_code_size(vm)?;
         }
 
@@ -106,7 +106,7 @@ impl Hook for DefaultHook {
             validate_type_4_tx(vm)?;
         }
 
-        transfer_value_if_applicable(vm)?;
+        transfer_value(vm)?;
 
         set_bytecode_and_code_address(vm)?;
 
@@ -121,15 +121,15 @@ impl Hook for DefaultHook {
     fn finalize_execution(
         &mut self,
         vm: &mut VM<'_>,
-        report: &mut ExecutionReport,
+        ctx_result: &mut ContextResult,
     ) -> Result<(), VMError> {
-        if !report.is_success() {
+        if !ctx_result.is_success() {
             undo_value_transfer(vm)?;
         }
 
-        let gas_refunded: u64 = compute_gas_refunded(report)?;
-        let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
-        refund_sender(vm, report, gas_refunded, actual_gas_used)?;
+        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+        let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+        refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
 
         pay_coinbase(vm, actual_gas_used)?;
 
@@ -141,7 +141,7 @@ impl Hook for DefaultHook {
 
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     // In a create if Tx was reverted the account won't even exist by this point.
-    if !vm.is_create() {
+    if !vm.is_create()? {
         vm.decrease_account_balance(
             vm.current_call_frame()?.to,
             vm.current_call_frame()?.msg_value,
@@ -155,13 +155,13 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 pub fn refund_sender(
     vm: &mut VM<'_>,
-    report: &mut ExecutionReport,
+    ctx_result: &mut ContextResult,
     refunded_gas: u64,
     actual_gas_used: u64,
 ) -> Result<(), VMError> {
-    // c. Update gas used and refunded in the Execution Report.
-    report.gas_used = actual_gas_used;
-    report.gas_refunded = refunded_gas;
+    // c. Update gas used and refunded.
+    ctx_result.gas_used = actual_gas_used;
+    vm.substate.refunded_gas = refunded_gas;
 
     // d. Finally, return unspent gas to the sender.
     let gas_to_return = vm
@@ -182,10 +182,11 @@ pub fn refund_sender(
 }
 
 // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-pub fn compute_gas_refunded(report: &ExecutionReport) -> Result<u64, VMError> {
-    Ok(report
-        .gas_refunded
-        .min(report.gas_used / MAX_REFUND_QUOTIENT))
+pub fn compute_gas_refunded(vm: &VM<'_>, ctx_result: &ContextResult) -> Result<u64, VMError> {
+    Ok(vm
+        .substate
+        .refunded_gas
+        .min(ctx_result.gas_used / MAX_REFUND_QUOTIENT))
 }
 
 // Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
@@ -227,6 +228,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
     for address in selfdestruct_set {
         let account_to_remove = vm.get_account_mut(address)?;
         *account_to_remove = Account::default();
+        vm.db.destroyed_accounts.insert(address);
     }
     Ok(())
 }
@@ -328,7 +330,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // it won't reach this point.
     // For more information, please check the following thread:
     // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
-    if vm.is_create() {
+    if vm.is_create()? {
         return Err(TxValidationError::Type3TxContractCreation.into());
     }
 
@@ -354,7 +356,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // it won't reach this point.
     // For more information, please check the following thread:
     // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
-    if vm.is_create() {
+    if vm.is_create()? {
         return Err(TxValidationError::Type4TxContractCreation.into());
     }
 
@@ -443,11 +445,9 @@ pub fn deduct_caller(
     Ok(())
 }
 
-/// Transfer msg_value to transaction recipient ONLY if it is a non-privileged CALL transaction.
-/// Note that non-privileged is a concept of L2 and in L1 every transaction is non-privileged
-pub fn transfer_value_if_applicable(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // Transfer value only in Call transactions that are not privileged.
-    if !vm.is_create() && !vm.env.is_privileged {
+/// Transfer msg_value to transaction recipient
+pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
+    if !vm.is_create()? {
         vm.increase_account_balance(
             vm.current_call_frame()?.to,
             vm.current_call_frame()?.msg_value,
@@ -459,7 +459,7 @@ pub fn transfer_value_if_applicable(vm: &mut VM<'_>) -> Result<(), VMError> {
 /// Sets bytecode and code_address to CallFrame
 pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     // Get bytecode and code_address for assigning those values to the callframe.
-    let (bytecode, code_address) = if vm.is_create() {
+    let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
         let calldata = std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
         (calldata, vm.current_call_frame()?.to)

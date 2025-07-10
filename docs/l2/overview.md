@@ -1,4 +1,4 @@
-# High Level Docs
+# General overview of the ethrex L2 stack
 
 This document aims to explain how the Lambda ethrex L2 and all its moving parts work.
 
@@ -61,7 +61,7 @@ Going a bit further, instead of posting the entire transaction, we could just po
 
 This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the network.
 
-Detailed documentation on the state diffs spec [here](./state_diffs.md).
+Detailed documentation on [the state diffs spec](./state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
@@ -107,17 +107,18 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
   - The commitment's hash is equal to the versioned hash for that blob.
   - The evaluation is correct.
 
-## How do deposits and withdrawals work?
+## L1<->L2 communication
+
+To communicate between L1 and L2, we use two mechanisms called *Privileged transactions*, and *L1 messages*.
+In this section we talk a bit about them, first going through the more specific use cases for *Deposits* and *Withdrawals*.
 
 ### Deposits
 
-TODO
+The mechanism for depositing funds to L2 from L1 is explained in detail in ["Deposits"](./deposits.md).
 
 ### Withdrawals
 
-Detailed specs [here](./withdrawals.md).
-
-TODO: Explain it a high level maybe?
+The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](./withdrawals.md).
 
 ## Recap
 
@@ -160,7 +161,6 @@ The contract will then:
 - Compute the proof public input from the new and previous batch commitments (both are already stored in the contract).
 - Pass the proof and public inputs to the verifier and assert the proof passes.
 - If the proof passes, finalize the L2 state, setting the latest batch as the given one and allowing any withdrawals for that batch to occur.
-
 
 ## What the sequencer cannot do
 

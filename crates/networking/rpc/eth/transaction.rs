@@ -20,14 +20,10 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{Evm, ExecutionResult};
+use ethrex_vm::ExecutionResult;
 use serde::Serialize;
 
-#[cfg(feature = "l2")]
-use ethrex_common::types::Transaction;
 use serde_json::Value;
-#[cfg(feature = "l2")]
-use tracing::debug;
 use tracing::info;
 
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
@@ -174,7 +170,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
             Some(block_number),
             block_header.hash(),
             Some(self.transaction_index),
-        );
+        )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -221,7 +217,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(block_number),
             self.block,
             Some(self.transaction_index),
-        );
+        )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -268,7 +264,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             Some(block_number),
             block_hash,
             Some(index as usize),
-        );
+        )?;
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -352,7 +348,7 @@ impl RpcHandler for CreateAccessListRequest {
         };
 
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
-        let mut vm = Evm::new(context.blockchain.evm_engine, vm_db);
+        let mut vm = context.blockchain.new_evm(vm_db)?;
         let chain_config = context.storage.get_chain_config()?;
         let fork = chain_config.get_fork(header.timestamp);
 
@@ -481,7 +477,7 @@ impl RpcHandler for EstimateGasRequest {
                     fork,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
-                    return serde_json::to_value(format!("{:#x}", TRANSACTION_GAS))
+                    return serde_json::to_value(format!("{TRANSACTION_GAS:#x}"))
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 }
             }
@@ -550,7 +546,7 @@ impl RpcHandler for EstimateGasRequest {
             middle_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        serde_json::to_value(format!("{:#x}", highest_gas_limit))
+        serde_json::to_value(format!("{highest_gas_limit:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -578,15 +574,15 @@ fn simulate_tx(
     blockchain: Arc<Blockchain>,
     fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
-    let db = StoreVmDatabase::new(storage.clone(), block_header.hash());
-    let mut vm = Evm::new(blockchain.evm_engine, db);
+    let vm_db = StoreVmDatabase::new(storage.clone(), block_header.hash());
+    let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header, fork)? {
         ExecutionResult::Revert {
             gas_used: _,
             output,
         } => Err(RpcErr::Revert {
-            data: format!("0x{:#x}", output),
+            data: format!("0x{output:#x}"),
         }),
         ExecutionResult::Halt { reason, gas_used } => Err(RpcErr::Halt { reason, gas_used }),
         success => Ok(success),
@@ -609,33 +605,20 @@ impl RpcHandler for SendRawTransactionRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            #[cfg(feature = "l2")]
-            {
-                debug!(
-                    "EIP-4844 transaction are not supported in the L2: {:#x}",
-                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).compute_hash()
-                );
-                return Err(RpcErr::InvalidEthrexL2Message(
-                    "EIP-4844 transactions are not supported in the L2".to_string(),
-                ));
-            }
-            #[cfg(not(feature = "l2"))]
-            {
-                context
-                    .blockchain
-                    .add_blob_transaction_to_pool(
-                        wrapped_blob_tx.tx.clone(),
-                        wrapped_blob_tx.blobs_bundle.clone(),
-                    )
-                    .await
-            }
+            context
+                .blockchain
+                .add_blob_transaction_to_pool(
+                    wrapped_blob_tx.tx.clone(),
+                    wrapped_blob_tx.blobs_bundle.clone(),
+                )
+                .await
         } else {
             context
                 .blockchain
                 .add_transaction_to_pool(self.to_transaction())
                 .await
         }?;
-        serde_json::to_value(format!("{:#x}", hash))
+        serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

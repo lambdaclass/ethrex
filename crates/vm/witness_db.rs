@@ -1,10 +1,8 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{
-        AccountInfo, AccountState, EMPTY_KECCACK_HASH,
-        block_execution_witness::ExecutionWitnessResult,
-    },
+    constants::EMPTY_KECCACK_HASH,
+    types::{AccountInfo, AccountState, block_execution_witness::ExecutionWitnessResult},
 };
 use ethrex_rlp::decode::RLPDecode;
 use sha3::{Digest, Keccak256};
@@ -80,8 +78,7 @@ impl VmDatabase for ExecutionWitnessResult {
         match self.codes.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => Err(EvmError::DB(format!(
-                "Could not find code for hash {}",
-                code_hash
+                "Could not find code for hash {code_hash}"
             ))),
         }
     }

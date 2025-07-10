@@ -10,8 +10,8 @@ use super::{
 };
 use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
-    network::{P2PContext, handle_peer_as_initiator},
-    rlpx::{connection::MAX_PEERS_TCP_CONNECTIONS, utils::node_id},
+    network::P2PContext,
+    rlpx::{connection::server::RLPxConnection, utils::node_id},
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
@@ -27,6 +27,7 @@ use tracing::{debug, error};
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
+pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 // These interval times are arbitrary numbers, maybe we should read them from a cfg or a cli param
 const REVALIDATION_INTERVAL_IN_SECONDS: u64 = 30;
@@ -224,10 +225,8 @@ impl Discv4Server {
                     return Ok(());
                 }
 
-                let ctx = self.ctx.clone();
-                self.ctx
-                    .tracker
-                    .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
+                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
+
                 Ok(())
             }
             Message::FindNode(msg) => {
@@ -518,11 +517,8 @@ impl Discv4Server {
                 if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
                     return Ok(());
                 }
-                let ctx = self.ctx.clone();
 
-                self.ctx
-                    .tracker
-                    .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
+                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())
             }
@@ -730,16 +726,12 @@ pub(super) mod tests {
         types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
-    #[cfg(feature = "l2")]
-    use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
     use ethrex_common::H32;
     use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
     use ethrex_storage::EngineType;
     use ethrex_storage::Store;
     use ethrex_storage::error::StoreError;
 
-    #[cfg(feature = "l2")]
-    use ethrex_storage_rollup::StoreRollup;
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
     use std::net::{IpAddr, Ipv4Addr};
@@ -782,10 +774,9 @@ pub(super) mod tests {
 
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id())));
-        let (broadcast, _) =
-            tokio::sync::broadcast::channel::<(tokio::task::Id, H256, Arc<RLPxMessage>)>(
-                MAX_MESSAGES_TO_BROADCAST,
-            );
+        let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
+            MAX_MESSAGES_TO_BROADCAST,
+        );
         let tracker = tokio_util::task::TaskTracker::new();
         let local_node_record = Arc::new(Mutex::new(
             NodeRecord::from_node(&local_node, 1, &signer)
@@ -801,12 +792,7 @@ pub(super) mod tests {
             blockchain,
             broadcast,
             client_version: "ethrex/test".to_string(),
-            based: false,
-            #[cfg(feature = "l2")]
-            store_rollup: StoreRollup::default(),
-            committer_key: None,
-            #[cfg(feature = "l2")]
-            sequencer_state: SequencerState::from(SequencerStatus::default()),
+            based_context: None,
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;

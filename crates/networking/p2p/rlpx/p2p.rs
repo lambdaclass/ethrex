@@ -17,7 +17,6 @@ use serde::Serialize;
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
-pub const SUPPORTED_BASED_CAPABILITIES: Capability = Capability::based(1);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capability {
@@ -278,7 +277,7 @@ impl RLPxMessage for DisconnectMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct PingMessage {}
 
 impl RLPxMessage for PingMessage {
@@ -304,7 +303,7 @@ impl RLPxMessage for PingMessage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct PongMessage {}
 
 impl RLPxMessage for PongMessage {

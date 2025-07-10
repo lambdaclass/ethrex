@@ -64,7 +64,7 @@ impl RLPxMessage for Transactions {
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x08
 // Broadcast message
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct NewPooledTransactionHashes {
     transaction_types: Bytes,
     transaction_sizes: Vec<usize>,
@@ -260,7 +260,8 @@ impl PooledTransactions {
             if tx.tx_type() as u8 != expected_type {
                 return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
-            if tx.encode_canonical_to_vec().len() != expected_size {
+            let tx_size = tx.encode_canonical_to_vec().len();
+            if tx_size != expected_size {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
         }
@@ -275,7 +276,7 @@ impl PooledTransactions {
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
-                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                    log_peer_warn(node, &format!("Error adding transaction: {e}"));
                     continue;
                 }
             } else {
@@ -283,7 +284,7 @@ impl PooledTransactions {
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
                 if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
+                    log_peer_warn(node, &format!("Error adding transaction: {e}"));
                     continue;
                 }
             }

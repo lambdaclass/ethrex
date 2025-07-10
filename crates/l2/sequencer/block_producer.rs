@@ -4,6 +4,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{BlockProducerConfig, SequencerConfig};
 use ethrex_blockchain::{
     Blockchain,
     fork_choice::apply_fork_choice,
@@ -13,14 +14,15 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 use tracing::{debug, error, info};
-
-use crate::{BlockProducerConfig, SequencerConfig, sequencer::execution_cache::ExecutionCache};
 
 use super::errors::BlockProducerError;
 
@@ -32,19 +34,19 @@ use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRI
 pub struct BlockProducerState {
     store: Store,
     blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
     sequencer_state: SequencerState,
     block_time_ms: u64,
     coinbase_address: Address,
     elasticity_multiplier: u64,
+    rollup_store: StoreRollup,
 }
 
 impl BlockProducerState {
     pub fn new(
         config: &BlockProducerConfig,
         store: Store,
+        rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
         sequencer_state: SequencerState,
     ) -> Self {
         let BlockProducerConfig {
@@ -55,11 +57,11 @@ impl BlockProducerState {
         Self {
             store,
             blockchain,
-            execution_cache,
             sequencer_state,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
+            rollup_store,
         }
     }
 }
@@ -79,16 +81,16 @@ pub struct BlockProducer;
 impl BlockProducer {
     pub async fn spawn(
         store: Store,
+        rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
     ) -> Result<(), BlockProducerError> {
         let state = BlockProducerState::new(
             &cfg.block_producer,
             store,
+            rollup_store,
             blockchain,
-            execution_cache,
             sequencer_state,
         );
         let mut block_producer = BlockProducer::start(state);
@@ -101,7 +103,8 @@ impl BlockProducer {
 }
 
 impl GenServer for BlockProducer {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = BlockProducerState;
 
@@ -111,33 +114,24 @@ impl GenServer for BlockProducer {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         // Right now we only have the Produce message, so we ignore the message
         if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = produce_block(state)
+            let _ = produce_block(&state)
                 .await
                 .inspect_err(|e| error!("Block Producer Error: {e}"));
         }
         send_after(
             Duration::from_millis(state.block_time_ms),
-            tx.clone(),
-            Self::InMsg::Produce,
+            handle.clone(),
+            Self::CastMsg::Produce,
         );
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 
@@ -204,8 +198,10 @@ pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProduc
     info!("Stored new block {:x}", block.hash());
     // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
-    // Cache execution result
-    state.execution_cache.push(block.hash(), account_updates)?;
+    state
+        .rollup_store
+        .store_account_updates_by_block_number(block.header.number, account_updates)
+        .await?;
 
     // Make the new head be part of the canonical chain
     apply_fork_choice(&state.store, block.hash(), block.hash(), block.hash()).await?;

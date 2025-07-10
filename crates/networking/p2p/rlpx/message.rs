@@ -2,9 +2,8 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
-use crate::rlpx::based::{GetBatchSealedMessage, GetBatchSealedResponseMessage};
+use crate::rlpx::l2::messages::{GetBatchSealed, GetBatchSealedResponse};
 
-use super::based::{NewBatchSealedMessage, NewBlockMessage};
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -12,6 +11,8 @@ use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
+use super::l2::messages;
+use super::l2::messages::{BatchSealed, L2Message, NewBlock};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -32,7 +33,7 @@ pub trait RLPxMessage: Sized {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
 }
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum Message {
     Hello(HelloMessage),
     Disconnect(DisconnectMessage),
@@ -63,10 +64,7 @@ pub(crate) enum Message {
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
     // based capability
-    NewBlock(NewBlockMessage),
-    NewBatchSealed(NewBatchSealedMessage),
-    GetBatchSealed(GetBatchSealedMessage),
-    GetBatchSealedResponse(GetBatchSealedResponseMessage),
+    L2(messages::L2Message),
 }
 
 impl Message {
@@ -105,11 +103,15 @@ impl Message {
             Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
 
             // based capability
-            Message::NewBlock(_) => BASED_CAPABILITY_OFFSET + NewBlockMessage::CODE,
-            Message::NewBatchSealed(_) => BASED_CAPABILITY_OFFSET + NewBatchSealedMessage::CODE,
-            Message::GetBatchSealed(_) => BASED_CAPABILITY_OFFSET + GetBatchSealedMessage::CODE,
-            Message::GetBatchSealedResponse(_) => {
-                BASED_CAPABILITY_OFFSET + GetBatchSealedResponseMessage::CODE
+            Message::L2(l2_msg) => {
+                BASED_CAPABILITY_OFFSET + {
+                    match l2_msg {
+                        L2Message::NewBlock(_) => NewBlock::CODE,
+                        L2Message::BatchSealed(_) => BatchSealed::CODE,
+                        L2Message::GetBatchSealed(_) => GetBatchSealed::CODE,
+                        L2Message::GetBatchSealedResponse(_) => GetBatchSealedResponse::CODE,
+                    }
+                }
             }
         }
     }
@@ -170,27 +172,25 @@ impl Message {
             }
         } else {
             // based capability
-            match msg_id - BASED_CAPABILITY_OFFSET {
-                NewBlockMessage::CODE => {
-                    return Ok(Message::NewBlock(NewBlockMessage::decode(data)?));
+            Ok(Message::L2(match msg_id - BASED_CAPABILITY_OFFSET {
+                messages::NewBlock::CODE => {
+                    let decoded = messages::NewBlock::decode(data)?;
+                    L2Message::NewBlock(decoded)
                 }
-                NewBatchSealedMessage::CODE => {
-                    return Ok(Message::NewBatchSealed(NewBatchSealedMessage::decode(
-                        data,
-                    )?));
+                messages::BatchSealed::CODE => {
+                    let decoded = messages::BatchSealed::decode(data)?;
+                    L2Message::BatchSealed(decoded)
                 }
-                GetBatchSealedMessage::CODE => {
-                    return Ok(Message::GetBatchSealed(GetBatchSealedMessage::decode(
-                        data,
-                    )?));
+                messages::GetBatchSealed::CODE => {
+                    let decoded = messages::GetBatchSealed::decode(data)?;
+                    L2Message::GetBatchSealed(decoded)
                 }
-                GetBatchSealedResponseMessage::CODE => {
-                    return Ok(Message::GetBatchSealedResponse(
-                        GetBatchSealedResponseMessage::decode(data)?,
-                    ));
+                messages::GetBatchSealedResponse::CODE => {
+                    let decoded = messages::GetBatchSealedResponse::decode(data)?;
+                    L2Message::GetBatchSealedResponse(decoded)
                 }
                 _ => return Err(RLPDecodeError::MalformedData),
-            }
+            }))
         }
     }
 
@@ -221,10 +221,12 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
-            Message::NewBlock(msg) => msg.encode(buf),
-            Message::NewBatchSealed(msg) => msg.encode(buf),
-            Message::GetBatchSealed(msg) => msg.encode(buf),
-            Message::GetBatchSealedResponse(msg) => msg.encode(buf),
+            Message::L2(l2_msg) => match l2_msg {
+                L2Message::BatchSealed(msg) => msg.encode(buf),
+                L2Message::NewBlock(msg) => msg.encode(buf),
+                L2Message::GetBatchSealed(msg) => msg.encode(buf),
+                L2Message::GetBatchSealedResponse(msg) => msg.encode(buf),
+            },
         }
     }
 }
@@ -256,10 +258,12 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
-            Message::NewBlock(_) => "based:NewBlock".fmt(f),
-            Message::NewBatchSealed(_) => "based:NewBatchSealed".fmt(f),
-            Message::GetBatchSealed(_) => "based:GetBatchSealed".fmt(f),
-            Message::GetBatchSealedResponse(_) => "based:GetBatchSealedResponse".fmt(f),
+            Message::L2(l2_msg) => match l2_msg {
+                L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
+                L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
+                L2Message::GetBatchSealed(_) => "based:GetBatchSealed".fmt(f),
+                L2Message::GetBatchSealedResponse(_) => "based:GetBatchSealedResponse".fmt(f),
+            },
         }
     }
 }

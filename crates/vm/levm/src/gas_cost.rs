@@ -177,8 +177,6 @@ pub const BLS12_381_MAP_FP_TO_G1_COST: u64 = 5500;
 pub const BLS12_PAIRING_CHECK_MUL_COST: u64 = 32600;
 pub const BLS12_PAIRING_CHECK_FIXED_COST: u64 = 37700;
 pub const BLS12_381_MAP_FP2_TO_G2_COST: u64 = 23800;
-#[cfg(feature = "l2")]
-pub const P256VERIFY_COST: u64 = 3450;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
@@ -338,12 +336,15 @@ pub fn log(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
-    number_of_topics: u8,
+    number_of_topics: usize,
 ) -> Result<u64, VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
+    // The following conversion can never fail on systems where `usize` is at most 64 bits, which
+    // covers every system in production today.
+    #[expect(clippy::as_conversions)]
     let topics_cost = LOGN_DYNAMIC_BASE
-        .checked_mul(number_of_topics.into())
+        .checked_mul(number_of_topics as u64)
         .ok_or(OutOfGas)?;
 
     let size: u64 = size
@@ -899,10 +900,7 @@ pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
 /// https://eips.ethereum.org/EIPS/eip-150
 pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMError> {
-    let mut remaining_gas = current_call_frame
-        .gas_limit
-        .checked_sub(current_call_frame.gas_used)
-        .ok_or(InternalError::Underflow)?;
+    let mut remaining_gas = current_call_frame.gas_remaining;
 
     remaining_gas = remaining_gas
         .checked_sub(remaining_gas / 64)

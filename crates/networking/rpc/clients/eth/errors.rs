@@ -9,7 +9,7 @@ pub enum EthClientError {
     #[error("eth_gasPrice request error: {0}")]
     GetGasPriceError(#[from] GetGasPriceError),
     #[error("eth_estimateGas request error: {0}")]
-    EstimateGasPriceError(#[from] EstimateGasPriceError),
+    EstimateGasError(#[from] EstimateGasError),
     #[error("eth_sendRawTransaction request error: {0}")]
     SendRawTransactionError(#[from] SendRawTransactionError),
     #[error("eth_call request error: {0}")]
@@ -22,6 +22,8 @@ pub enum EthClientError {
     GetBlockByHashError(#[from] GetBlockByHashError),
     #[error("eth_getBlockByNumber request error: {0}")]
     GetBlockByNumberError(#[from] GetBlockByNumberError),
+    #[error("debug_getRawBlock request error: {0}")]
+    GetRawBlockError(#[from] GetRawBlockError),
     #[error("eth_getLogs request error: {0}")]
     GetLogsError(#[from] GetLogsError),
     #[error("eth_getTransactionReceipt request error: {0}")]
@@ -35,7 +37,9 @@ pub enum EthClientError {
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
     #[error("ethrex_getWithdrawalProof request error: {0}")]
-    GetWithdrawalProofError(#[from] GetWithdrawalProofError),
+    GetMessageProofError(#[from] GetMessageProofError),
+    #[error("debug_executionWitness request error: {0}")]
+    GetWitnessError(#[from] GetWitnessError),
     #[error("eth_maxPriorityFeePerGas request error: {0}")]
     GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
     #[error("Unreachable nonce")]
@@ -50,6 +54,12 @@ pub enum EthClientError {
     InternalError(String),
     #[error("Parse Url Error. {0}")]
     ParseUrlError(String),
+    #[error("Failed to sign payload: {0}")]
+    FailedToSignPayload(String),
+    #[error("Failed to get transaction pool: {0}")]
+    FailedToGetTxPool(#[from] TxPoolContentError),
+    #[error("ethrex_getBatchByNumber request error: {0}")]
+    GetBatchByNumberError(#[from] GetBatchByNumberError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,7 +75,7 @@ pub enum GetGasPriceError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EstimateGasPriceError {
+pub enum EstimateGasError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
@@ -147,6 +157,16 @@ pub enum GetBlockByNumberError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum GetRawBlockError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    RLPDecodeError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum GetLogsError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
@@ -217,7 +237,7 @@ pub enum CalldataEncodeError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GetWithdrawalProofError {
+pub enum GetMessageProofError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
@@ -226,6 +246,14 @@ pub enum GetWithdrawalProofError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetWitnessError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -238,4 +266,20 @@ pub enum GetMaxPriorityFeeError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TxPoolContentError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetBatchByNumberError {
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
 }

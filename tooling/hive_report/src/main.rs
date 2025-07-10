@@ -48,7 +48,7 @@ impl HiveResult {
             "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
             "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
             other => {
-                eprintln!("Warn: Unknown suite: {}. Skipping", other);
+                eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
             }
         };
@@ -81,13 +81,13 @@ fn create_fork_result(json_data: &JsonFile, fork: &str, test_pattern: &str) -> H
     let total_tests = json_data
         .test_cases
         .iter()
-        .filter(|(_, test_case)| test_case.name.starts_with(test_pattern))
+        .filter(|(_, test_case)| test_case.name.contains(test_pattern))
         .count();
     let passed_tests = json_data
         .test_cases
         .iter()
         .filter(|(_, test_case)| {
-            test_case.name.starts_with(test_pattern) && test_case.summary_result.pass
+            test_case.name.contains(test_pattern) && test_case.summary_result.pass
         })
         .count();
     HiveResult::new(
@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let json_data: JsonFile = match serde_json::from_reader(reader) {
                 Ok(data) => data,
                 Err(_) => {
-                    eprintln!("Error processing file: {}", file_name);
+                    eprintln!("Error processing file: {file_name}");
                     continue;
                 }
             };
@@ -129,15 +129,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if json_data.name.as_str() == "eest/consume-rlp"
                 || json_data.name.as_str() == "eest/consume-engine"
             {
-                // Cancun
-                let result_cancun = create_fork_result(&json_data, "Cancun", "tests/cancun");
+                let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
                 // Shanghai
-                let result_shanghai = create_fork_result(&json_data, "Shanghai", "tests/shanghai");
+                let result_shanghai = create_fork_result(&json_data, "Shanghai", "fork_Shanghai");
+                // Cancun
+                let result_cancun = create_fork_result(&json_data, "Cancun", "fork_Cancun");
                 // Prague
-                let result_prague = create_fork_result(&json_data, "Prague", "tests/prague");
+                let result_prague = create_fork_result(&json_data, "Prague", "fork_Prague");
 
-                results.push(result_cancun);
+                results.push(result_paris);
                 results.push(result_shanghai);
+                results.push(result_cancun);
                 results.push(result_prague);
             } else {
                 let total_tests = json_data.test_cases.len();
@@ -174,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // print category
         println!("*{}*", results[0].category);
         for result in results {
-            println!("\t{}", result);
+            println!("\t{result}");
         }
         println!();
     }

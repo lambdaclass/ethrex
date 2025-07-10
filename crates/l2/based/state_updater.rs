@@ -11,8 +11,12 @@ use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerError, send_after};
+use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
+use spawned_concurrency::{
+    error::GenServerError,
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 use tracing::{debug, error, info, warn};
 
 use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date, utils::parse::hash_to_address};
@@ -27,10 +31,14 @@ pub enum StateUpdaterError {
     CalldataParsingError(String),
     #[error("State Updater failed due to a Store error: {0}")]
     StoreError(#[from] ethrex_storage::error::StoreError),
+    #[error("State Updater failed due to a RollupStore error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
     #[error("Failed to apply fork choice for fetched block: {0}")]
     InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
     #[error("Internal Error: {0}")]
     InternalError(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -115,7 +123,8 @@ impl StateUpdater {
 }
 
 impl GenServer for StateUpdater {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = StateUpdaterState;
     type Error = StateUpdaterError;
@@ -124,30 +133,21 @@ impl GenServer for StateUpdater {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> spawned_concurrency::CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> spawned_concurrency::CastResponse {
-        let _ = update_state(state)
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
+        let _ = update_state(&mut state)
             .await
             .inspect_err(|err| error!("State Updater Error: {err}"));
         send_after(
             Duration::from_millis(state.check_interval_ms),
-            tx.clone(),
-            Self::InMsg::UpdateState,
+            handle.clone(),
+            Self::CastMsg::UpdateState,
         );
-        CastResponse::NoReply
+        CastResponse::NoReply(state)
     }
 }
 
@@ -162,10 +162,10 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
             )
             .await?
             .parse()
-            .map_err(|_| {
-                StateUpdaterError::CalldataParsingError(
-                    "Failed to parse leaderSequencer() return data".to_string(),
-                )
+            .map_err(|err| {
+                StateUpdaterError::CalldataParsingError(format!(
+                    "Failed to parse leaderSequencer() return data: {err}"
+                ))
             })?,
     );
 

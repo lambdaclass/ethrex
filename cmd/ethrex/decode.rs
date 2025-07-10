@@ -1,6 +1,6 @@
 use anyhow::Error;
 use bytes::Bytes;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::Block;
 use ethrex_rlp::decode::RLPDecode as _;
 use std::{
     fs::File,
@@ -32,11 +32,6 @@ pub fn chain_file(file: File) -> Result<Vec<Block>, Error> {
     Ok(blocks)
 }
 
-pub fn genesis_file(file: File) -> Result<Genesis, serde_json::Error> {
-    let genesis_reader = BufReader::new(file);
-    serde_json::from_reader(genesis_reader)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::decode::chain_file;
@@ -45,7 +40,8 @@ mod tests {
 
     #[test]
     fn decode_chain_file() {
-        let file = File::open("../../test_data/chain.rlp").expect("Failed to open chain file");
+        let file =
+            File::open("../../fixtures/blockchain/chain.rlp").expect("Failed to open chain file");
         let blocks = chain_file(file).expect("Failed to decode chain file");
         assert_eq!(20, blocks.len(), "There should be 20 blocks in chain file");
         assert_eq!(

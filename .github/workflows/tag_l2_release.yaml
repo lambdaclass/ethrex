@@ -33,14 +33,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
       - name: Build ethrex L2
         run: |
-          cargo build --release --features l2 --bin ethrex
+          cargo build --release --bin ethrex
           mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
@@ -77,9 +79,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.87.0
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Install SP1
         env:
@@ -125,9 +127,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.87.0
+          toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Install RISC0
         env:

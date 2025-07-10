@@ -3,20 +3,24 @@ use ethrex_rlp::{
     encode::RLPEncode,
     structs::{Decoder, Encoder},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::H256;
 
 use super::BlobsBundle;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct Batch {
     pub number: u64,
     pub first_block: u64,
     pub last_block: u64,
     pub state_root: H256,
-    pub deposit_logs_hash: H256,
-    pub withdrawal_hashes: Vec<H256>,
+    pub privileged_transactions_hash: H256,
+    pub message_hashes: Vec<H256>,
+    #[serde(skip_serializing, skip_deserializing)]
     pub blobs_bundle: BlobsBundle,
+    pub commit_tx: Option<H256>,
+    pub verify_tx: Option<H256>,
 }
 
 impl RLPEncode for Batch {
@@ -26,9 +30,11 @@ impl RLPEncode for Batch {
             .encode_field(&self.first_block)
             .encode_field(&self.last_block)
             .encode_field(&self.state_root)
-            .encode_field(&self.deposit_logs_hash)
-            .encode_field(&self.withdrawal_hashes)
+            .encode_field(&self.privileged_transactions_hash)
+            .encode_field(&self.message_hashes)
             .encode_field(&self.blobs_bundle)
+            .encode_optional_field(&self.commit_tx)
+            .encode_optional_field(&self.verify_tx)
             .finish();
     }
 }
@@ -40,18 +46,23 @@ impl RLPDecode for Batch {
         let (first_block, decoder) = decoder.decode_field("first_block")?;
         let (last_block, decoder) = decoder.decode_field("last_block")?;
         let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (deposit_logs_hash, decoder) = decoder.decode_field("deposit_logs_hash")?;
-        let (withdrawal_hashes, decoder) = decoder.decode_field("withdrawal_hashes")?;
+        let (privileged_transactions_hash, decoder) =
+            decoder.decode_field("privileged_transactions_hash")?;
+        let (message_hashes, decoder) = decoder.decode_field("message_hashes")?;
         let (blobs_bundle, decoder) = decoder.decode_field("blobs_bundle")?;
+        let (commit_tx, decoder) = decoder.decode_optional_field();
+        let (verify_tx, decoder) = decoder.decode_optional_field();
         Ok((
             Batch {
                 number,
                 first_block,
                 last_block,
                 state_root,
-                deposit_logs_hash,
-                withdrawal_hashes,
+                privileged_transactions_hash,
+                message_hashes,
                 blobs_bundle,
+                commit_tx,
+                verify_tx,
             },
             decoder.finish()?,
         ))

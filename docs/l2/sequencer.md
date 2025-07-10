@@ -1,17 +1,5 @@
 # Ethrex L2 sequencer
 
-## ToC
-
-- [Ethrex L2 sequencer](#ethrex-l2-sequencer)
-  - [ToC](#toc)
-  - [Components](#components)
-    - [Block Producer](#block-producer)
-    - [L1 Watcher](#l1-watcher)
-    - [L1 Transaction Sender (a.k.a. L1 Committer)](#l1-transaction-sender-aka-l1-committer)
-    - [Proof Coordinator](#proof-coordinator)
-    - [L1 Proof Sender](#l1-proof-sender)
-  - [Configuration](#configuration)
-
 ## Components
 
 The L2 Proposer is composed of the following components:
@@ -51,4 +39,4 @@ The L1 Proof Sender is responsible for interacting with Ethereum L1 to manage pr
 
 ## Configuration
 
-Configuration is done either by CLI flags or through environment variables. Run `cargo run --release --bin ethrex --features l2 -- l2 init --help` in the repository's root directory to see the available CLI flags and envs.
+Configuration is done either by CLI flags or through environment variables. Run `cargo run --release --bin ethrex -- l2 init --help` in the repository's root directory to see the available CLI flags and envs.
