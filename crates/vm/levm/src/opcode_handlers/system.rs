@@ -79,6 +79,7 @@ impl<'a> VM<'a> {
                 eip7702_gas_consumed,
                 callee,
             )?;
+        info!("[CALL] new_memory_size: {new_memory_size}");
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
