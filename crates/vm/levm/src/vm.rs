@@ -21,10 +21,10 @@ use ethrex_common::{
     types::{Log, Transaction},
 };
 use std::{
-    cell::RefCell,
-    collections::{BTreeSet, HashMap, HashSet},
-    rc::Rc,
+    cell::RefCell, collections::{BTreeSet, HashMap, HashSet}, io::Write, rc::Rc, time::Instant
 };
+
+use std::fs::File;
 
 pub type Storage = HashMap<U256, H256>;
 
@@ -177,14 +177,26 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+
         if self.is_precompile(&self.current_call_frame()?.to) {
             return self.execute_precompile();
         }
 
+        // Define start and end instant variables
+        let mut start: Instant;
+        let mut end: Instant;
+
+        let mut file = File::options().append(true).open("executed_opcodes.log").unwrap();
+
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
 
+            start = Instant::now();
             let op_result = self.execute_opcode(opcode);
+            end = Instant::now();
+
+            // Append opcode, start and end to file
+            writeln!(file, "{:?} {} {}", opcode, start.elapsed().as_micros(), end.elapsed().as_micros()).unwrap();
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
