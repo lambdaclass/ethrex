@@ -34,6 +34,9 @@ jobs:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
         with:
