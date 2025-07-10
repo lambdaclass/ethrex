@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752162715272,
+  "lastUpdate": 1752166033421,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6533,6 +6533,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012347197039777984,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d396ca4b52b5ea3c69fd62a1887ada672c6930ef",
+          "message": "fix(l2): avoid proving already proved batch (#3588)\n\n**Motivation**\nAvoid this situation:\n- Prover finishes proving batch n\n- Prover asks for batch to prove gets batch n again because:\n`let batch_to_verify = 1 + get_latest_sent_batch()` is still n because\nthe proof_sender dind't send the verification tx yet.\n- Verifier verifies batch n + 1\n- Prover is still proving batch n when it could start proving batch n +\n1\n\n\n**Description**\n\n- Before sending a new batch to prove check if we already have all\nneeded proofs for that batch stored in the DB in case we do send and\nempty response\n\nCloses #3545",
+          "timestamp": "2025-07-10T15:51:44Z",
+          "tree_id": "f17356b28dc850006c1b9694ba271d6e1128893c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d396ca4b52b5ea3c69fd62a1887ada672c6930ef"
+        },
+        "date": 1752166020997,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012416111627906977,
             "unit": "Mgas/s"
           }
         ]
