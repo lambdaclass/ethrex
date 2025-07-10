@@ -4,7 +4,7 @@ use crate::{
     types::{EFTest, EFTests},
 };
 use colored::Colorize;
-use std::fs::DirEntry;
+use std::{fs::DirEntry, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EFTestParseError {
@@ -69,9 +69,8 @@ pub fn parse_ef_test_dir(
     test_dir: DirEntry,
     opts: &EFTestRunnerOptions,
 ) -> Result<Vec<EFTest>, EFTestParseError> {
-    println!("Parsing directory {:?}", test_dir.file_name());
-
     let mut directory_tests = Vec::new();
+    let mut parsed_directory_tests = Vec::new();
     for test in std::fs::read_dir(test_dir.path())
         .map_err(|err| {
             EFTestParseError::FailedToReadDirectory(format!("{:?}: {err}", test_dir.file_name()))
@@ -158,7 +157,11 @@ pub fn parse_ef_test_dir(
             EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", test.path()))
         })?;
         for test in tests.0.iter_mut() {
-            test.dir = test_dir.file_name().into_string().unwrap();
+            test.dir = test_dir.path().to_str().unwrap().to_string();
+            let relative_path = get_test_directories_names(test_dir.path());
+            if !parsed_directory_tests.contains(&relative_path) {
+                parsed_directory_tests.push(relative_path);
+            }
         }
 
         // We only want to include tests that have post states from the specified forks in EFTestsRunnerOptions.
@@ -180,5 +183,34 @@ pub fn parse_ef_test_dir(
 
         directory_tests.extend(tests.0);
     }
+
+    print_parsed_directories(parsed_directory_tests);
+
     Ok(directory_tests)
+}
+
+fn get_test_directories_names(full_path: PathBuf) -> String {
+    let start_dir_name = "vectors";
+    let mut path_prefix = PathBuf::new();
+
+    for dir in full_path.components() {
+        if dir.as_os_str().to_str().unwrap() == start_dir_name {
+            break;
+        }
+        path_prefix.push(dir);
+    }
+    path_prefix.push(PathBuf::from(start_dir_name));
+
+    full_path
+        .strip_prefix(path_prefix)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+fn print_parsed_directories(parsed_directory_tests: Vec<String>) {
+    for dir in parsed_directory_tests {
+        println!("Parsing directory {}", dir);
+    }
 }
