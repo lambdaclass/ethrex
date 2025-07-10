@@ -1,4 +1,5 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
 use ethrex_common::{
@@ -8,12 +9,17 @@ use ethrex_common::{
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use libsql::{
-    Builder, Database, Row, Rows, Transaction, Value,
+    Builder, Connection, Row, Rows, Transaction, Value,
     params::{IntoParams, Params},
 };
 
+/// ### SQLStore
+/// - `read_conn`: a connection to the database to be used for read only statements
+/// - `write_conn`: a connection to the database to be used for database writes. If writes are done using
+///   the read only connection `SQLite failure: database is locked` problems will arise
 pub struct SQLStore {
-    db: Database,
+    read_conn: Connection,
+    write_conn: Arc<Mutex<Connection>>,
 }
 
 impl Debug for SQLStore {
@@ -42,21 +48,36 @@ impl SQLStore {
     pub fn new(path: &str) -> Result<Self, RollupStoreError> {
         futures::executor::block_on(async {
             let db = Builder::new_local(path).build().await?;
-            let store = SQLStore { db };
+            let write_conn = db.connect()?;
+            // From libsql documentation:
+            // Newly created connections currently have a default busy timeout of
+            // 5000ms, but this may be subject to change.
+            write_conn.busy_timeout(Duration::from_millis(5000))?;
+            let store = SQLStore {
+                read_conn: db.connect()?,
+                write_conn: Arc::new(Mutex::new(db.connect()?)),
+            };
             store.init_db().await?;
             Ok(store)
         })
     }
+
     async fn execute<T: IntoParams>(&self, sql: &str, params: T) -> Result<(), RollupStoreError> {
-        let conn = self.db.connect()?;
+        let conn = self.write_conn.lock().await;
         conn.execute(sql, params).await?;
         Ok(())
     }
+
     async fn query<T: IntoParams>(&self, sql: &str, params: T) -> Result<Rows, RollupStoreError> {
-        let conn = self.db.connect()?;
-        Ok(conn.query(sql, params).await?)
+        Ok(self.read_conn.query(sql, params).await?)
     }
+
     async fn init_db(&self) -> Result<(), RollupStoreError> {
+        // We use WAL for better concurrency
+        // "readers do not block writers and a writer does not block readers. Reading and writing can proceed concurrently"
+        // https://sqlite.org/wal.html#concurrency
+        // still a limit of only 1 writer is imposed by sqlite databases
+        self.query("PRAGMA journal_mode=WAL;", ()).await?;
         let mut rows = self
             .query(
                 "SELECT name FROM sqlite_schema WHERE type='table' AND name='blocks'",
@@ -87,8 +108,8 @@ impl SQLStore {
                 existing_tx.execute(query, params).await?;
             }
         } else {
-            let connection = self.db.connect()?;
-            let tx = connection.transaction().await?;
+            let conn = self.write_conn.lock().await;
+            let tx = conn.transaction().await?;
             for (query, params) in queries {
                 tx.execute(query, params).await?;
             }
@@ -607,7 +628,7 @@ impl StoreEngineRollup for SQLStore {
 
     async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
-        let conn = self.db.connect()?;
+        let conn = self.write_conn.lock().await;
         let transaction = conn.transaction().await?;
 
         for block_number in blocks.iter() {
