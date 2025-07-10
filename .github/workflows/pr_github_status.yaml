@@ -100,18 +100,6 @@ jobs:
                               name
                             }
                           }
-                          ... on ProjectV2DateField {
-                            id
-                            name
-                          }
-                          ... on ProjectV2TextField {
-                            id
-                            name
-                          }
-                          ... on ProjectV2NumberField {
-                            id
-                            name
-                          }
                           ... on ProjectV2IterationField {
                             id
                             name
@@ -123,6 +111,10 @@ jobs:
                                 duration
                               }
                             }
+                          }
+                          ... on ProjectV2FieldCommon {
+                            id
+                            name
                           }
                         }
                       }
