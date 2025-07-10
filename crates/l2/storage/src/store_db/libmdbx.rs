@@ -7,7 +7,7 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
@@ -112,15 +112,6 @@ impl StoreEngineRollup for Store {
         self.read::<BatchesByBlockNumber>(block_number).await
     }
 
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<BatchesByBlockNumber>(block_number, batch_number)
-            .await
-    }
-
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
@@ -129,15 +120,6 @@ impl StoreEngineRollup for Store {
             .read::<MessageHashesByBatch>(batch_number)
             .await?
             .map(|w| w.to()))
-    }
-
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        messages: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<MessageHashesByBatch>(batch_number, messages.into())
-            .await
     }
 
     async fn get_block_numbers_by_batch(
@@ -150,30 +132,6 @@ impl StoreEngineRollup for Store {
             .map(|numbers| numbers.to()))
     }
 
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<BlockNumbersByBatch>(
-            batch_number,
-            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
-        )
-        .await
-    }
-
-    async fn store_privileged_transactions_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<PrivilegedTransactionsHash>(
-            batch_number,
-            Rlp::from_bytes(privileged_transactions_hash.encode_to_vec()),
-        )
-        .await
-    }
-
     async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
@@ -184,15 +142,6 @@ impl StoreEngineRollup for Store {
             .map(|hash| hash.to()))
     }
 
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<StateRoots>(batch_number, Rlp::from_bytes(state_root.encode_to_vec()))
-            .await
-    }
-
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
@@ -201,15 +150,6 @@ impl StoreEngineRollup for Store {
             .read::<StateRoots>(batch_number)
             .await?
             .map(|hash| hash.to()))
-    }
-
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        blob_bundles: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<BlobsBundles>(batch_number, blob_bundles.into())
-            .await
     }
 
     async fn get_blob_bundle_by_batch_number(
@@ -380,6 +320,67 @@ impl StoreEngineRollup for Store {
         delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
         txn.commit().map_err(RollupStoreError::LibmdbxError)?;
         Ok(())
+    }
+
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let transaction = db
+                .begin_readwrite()
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            for block in blocks.iter() {
+                transaction
+                    .upsert::<BatchesByBlockNumber>(*block, batch.number)
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            transaction
+                .upsert::<BlockNumbersByBatch>(
+                    batch.number,
+                    BlockNumbersRLP::from_bytes(blocks.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<MessageHashesByBatch>(batch.number, batch.message_hashes.into())
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<PrivilegedTransactionsHash>(
+                    batch.number,
+                    Rlp::from_bytes(batch.privileged_transactions_hash.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<BlobsBundles>(batch.number, batch.blobs_bundle.blobs.into())
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<StateRoots>(
+                    batch.number,
+                    Rlp::from_bytes(batch.state_root.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            if let Some(commit_tx) = batch.commit_tx {
+                transaction
+                    .upsert::<CommitTxByBatch>(batch.number, commit_tx.into())
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            if let Some(verify_tx) = batch.verify_tx {
+                transaction
+                    .upsert::<VerifyTxByBatch>(batch.number, verify_tx.into())
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            transaction.commit().map_err(RollupStoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
