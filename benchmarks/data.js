@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752181852544,
+  "lastUpdate": 1752187119005,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6857,6 +6857,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012627549668874172,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "187e8c27f9b9a22948cd82b0b3f79866c16ac489",
+          "message": "chore(l2): add forced withdrawal integration test (#3541)\n\n**Motivation**\n\nWe want an integration test for forced withdrawals\n\n**Description**\n\nWithdraws through a privileged transaction.\n\nCloses #3394",
+          "timestamp": "2025-07-10T18:10:57Z",
+          "tree_id": "486f18735fda83de70f48ba4f654780e8515f3d9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/187e8c27f9b9a22948cd82b0b3f79866c16ac489"
+        },
+        "date": 1752187118347,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012544473684210527,
             "unit": "Mgas/s"
           }
         ]
