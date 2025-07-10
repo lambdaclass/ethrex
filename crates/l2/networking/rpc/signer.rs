@@ -96,7 +96,7 @@ impl RemoteSigner {
     pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
         let url = self
             .url
-            .join("api/v1/eth/sign")?
+            .join("api/v1/eth1/sign")?
             .join(&hex::encode(&self.public_key.serialize_uncompressed()[1..]))?;
         let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data));
 
