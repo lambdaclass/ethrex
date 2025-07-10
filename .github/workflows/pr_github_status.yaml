@@ -22,6 +22,7 @@ jobs:
           script: |
             // ========== FUNCTIONS ==========
 
+            // Gets a project given the number and the organization.
             async function getProject(org, number) {
               const res = await github.graphql(`
                 query($org: String!) {
@@ -41,6 +42,7 @@ jobs:
               return project;
             }
 
+            // Looks for an item in the project and returns it if found.
             async function findProjectItem(projectId, number) {
               let hasNextPage = true;
               let after = null;
@@ -83,6 +85,7 @@ jobs:
               return null;
             }
 
+            // Set a Date field to a particular date. E.g. StartDate of PR #100 is 05/06/2024
             async function setProjectItemDateField(projectId, itemId, fieldName, dateValue) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
@@ -122,6 +125,7 @@ jobs:
               console.log(`Set date field '${fieldName}' to '${date}'.`);
             }
 
+            // Sets the field for status to a project item (PR or Issue). E.g. Set Status for PR #100 to "In Progress".
             async function setProjectItemStatus(projectId, itemId, fieldName, optionName) {
               const res = await github.graphql(`
                 query($projectId: ID!) {
@@ -222,6 +226,23 @@ jobs:
               return matches.map(match => parseInt(match[1], 10));
             }
 
+            // Given the issue numbers get the items in the project associated to them (if they belong)
+            async function getProjectItemsForIssues(projectId, issueNumbers) {
+              const issueItems = [];
+
+              for (const issueNumber of issueNumbers) {
+                const issue = await findProjectItem(projectId, issueNumber);
+                if (issue) {
+                  issueItems.push(issue);
+                } else {
+                  console.warn(`Project item for issue #${issueNumber} not found.`);
+                }
+              }
+
+              return issueItems;
+            }
+
+            // Set a specific status for a list of issues
             async function setStatusForIssues(issueItems, projectId, statusFieldName, status) {
               for (const issueItem of issueItems) {
                 const issueNumber = issueItem.content?.number;
@@ -239,7 +260,6 @@ jobs:
             const lastUpdatedFieldName = "Last updated";
             const startDateFieldName = "Start date";
             const orgLogin = "lambdaclass";
-            const issueNumbers = extractLinkedIssueNumbers(pr.body);
 
             // Get project and item representing Pull Request.
             const project = await getProject(orgLogin, projectNumber);
@@ -281,16 +301,10 @@ jobs:
             console.log(`PR Status post changes: ${status_post_changes}`);
 
             // Get issue items linked to PR
+            const issueNumbers = extractLinkedIssueNumbers(pr.body);
             console.log("Issues that this PR closes:", issueNumbers);
-            const issueItems = [];
-            for (const issueNumber of issueNumbers) {
-              const issue = await findProjectItem(projectId, issueNumber);
-              if (issue) {
-                issueItems.push(issue);
-              } else {
-                console.warn(`Project item for issue #${issueNumber} not found.`);
-              }
-            }
+
+            const issueItems = getProjectItemsForIssues(projectId, issueNumbers);
 
             console.log(`Synchronizing linked issues with new PR state.`);
             setStatusForIssues(issueItems, projectId, statusFieldName, status_post_changes);
