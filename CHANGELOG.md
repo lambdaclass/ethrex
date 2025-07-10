@@ -2,6 +2,11 @@
 
 ## Perf
 
+
+### 2025-07-08
+
+- Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)
+
 ### 2025-07-07
 
 - Improve CODECOPY opdcode handling [#3497](https://github.com/lambdaclass/ethrex/pull/3497)
