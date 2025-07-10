@@ -1,8 +1,11 @@
-use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
-use ethrex_l2_sdk::calldata::Value;
 use tracing::warn;
 
 use zkvm_interface::io::{ProgramInput, ProgramOutput};
+
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProofCalldata, ProverType},
+};
 
 pub struct ProveOutput(pub ProgramOutput);
 

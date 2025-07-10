@@ -1,5 +1,3 @@
-use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::TrieError;
 #[cfg(feature = "redb")]
 use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
 use thiserror::Error;
@@ -38,24 +36,6 @@ pub enum RollupStoreError {
     SQLInvalidTypeError,
     #[error("{0}")]
     Custom(String),
-    #[error(transparent)]
-    RLPDecode(#[from] RLPDecodeError),
-    #[error(transparent)]
-    Trie(#[from] TrieError),
-    #[error("missing store: is an execution DB being used instead?")]
-    MissingStore,
-    #[error("Could not open DB for reading")]
-    ReadError,
-    #[error("Could not instantiate cursor for table {0}")]
-    CursorError(String),
-    #[error("Missing latest block number")]
-    MissingLatestBlockNumber,
-    #[error("Missing earliest block number")]
-    MissingEarliestBlockNumber,
-    #[error("Failed to lock mempool for writing")]
-    MempoolWriteLock(String),
-    #[error("Failed to lock mempool for reading")]
-    MempoolReadLock(String),
     #[error("Bincode (de)serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
 }

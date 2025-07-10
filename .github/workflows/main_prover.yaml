@@ -20,6 +20,9 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      - name: Check solc
+        run: solc --version
+
       - name: RISC-V SP1 toolchain install
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
@@ -56,7 +59,10 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose -f docker-compose-l2.yaml up --build contract_deployer
+
+      - name: Ensure admin permissions in _work
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
 
       - name: Start Sequencer
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -65,7 +71,8 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
-          docker compose -f docker-compose-l2.yaml up ethrex_l2 --detach
+          ETHREX_COMMITTER_COMMIT_TIME=180000 \
+          docker compose -f docker-compose-l2.yaml up --build ethrex_l2 --detach
 
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}

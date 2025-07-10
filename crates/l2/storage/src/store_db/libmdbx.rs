@@ -7,8 +7,9 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
 use libmdbx::{
     DatabaseOptions, Mode, PageSize, RW, ReadWriteOptions,
@@ -74,9 +75,12 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(OperationsCount),
         table_info!(BlobsBundles),
         table_info!(StateRoots),
-        table_info!(DepositLogsHash),
+        table_info!(PrivilegedTransactionsHash),
         table_info!(LastSentBatchProof),
         table_info!(AccountUpdatesByBlockNumber),
+        table_info!(BatchProofs),
+        table_info!(CommitTxByBatch),
+        table_info!(VerifyTxByBatch),
     ]
     .into_iter()
     .collect();
@@ -108,15 +112,6 @@ impl StoreEngineRollup for Store {
         self.read::<BatchesByBlockNumber>(block_number).await
     }
 
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<BatchesByBlockNumber>(block_number, batch_number)
-            .await
-    }
-
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
@@ -125,15 +120,6 @@ impl StoreEngineRollup for Store {
             .read::<MessageHashesByBatch>(batch_number)
             .await?
             .map(|w| w.to()))
-    }
-
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        messages: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<MessageHashesByBatch>(batch_number, messages.into())
-            .await
     }
 
     async fn get_block_numbers_by_batch(
@@ -146,47 +132,14 @@ impl StoreEngineRollup for Store {
             .map(|numbers| numbers.to()))
     }
 
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<BlockNumbersByBatch>(
-            batch_number,
-            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
-        )
-        .await
-    }
-
-    async fn store_deposit_logs_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        deposit_logs_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<DepositLogsHash>(
-            batch_number,
-            Rlp::from_bytes(deposit_logs_hash.encode_to_vec()),
-        )
-        .await
-    }
-
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
-            .read::<DepositLogsHash>(batch_number)
+            .read::<PrivilegedTransactionsHash>(batch_number)
             .await?
             .map(|hash| hash.to()))
-    }
-
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<StateRoots>(batch_number, Rlp::from_bytes(state_root.encode_to_vec()))
-            .await
     }
 
     async fn get_state_root_by_batch_number(
@@ -199,15 +152,6 @@ impl StoreEngineRollup for Store {
             .map(|hash| hash.to()))
     }
 
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        blob_bundles: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.write::<BlobsBundles>(batch_number, blob_bundles.into())
-            .await
-    }
-
     async fn get_blob_bundle_by_batch_number(
         &self,
         batch_number: u64,
@@ -216,6 +160,44 @@ impl StoreEngineRollup for Store {
             .read::<BlobsBundles>(batch_number)
             .await?
             .map(|blobs| blobs.to()))
+    }
+
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read::<CommitTxByBatch>(batch_number)
+            .await?
+            .map(|tx| tx.to()))
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write::<CommitTxByBatch>(batch_number, commit_tx.into())
+            .await
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self
+            .read::<VerifyTxByBatch>(batch_number)
+            .await?
+            .map(|tx| tx.to()))
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.write::<VerifyTxByBatch>(batch_number, verify_tx.into())
+            .await
     }
 
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
@@ -229,14 +211,14 @@ impl StoreEngineRollup for Store {
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
-        let (transaction_count, messages_count, deposits_count) = {
+        let (transaction_count, messages_count, privileged_tx_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
-                current_operations[1] + deposits_inc,
+                current_operations[1] + privileged_tx_inc,
                 current_operations[2] + messages_inc,
             )
         };
@@ -244,7 +226,7 @@ impl StoreEngineRollup for Store {
         self.write::<OperationsCount>(
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, privileged_tx_count].encode_to_vec(),
             ),
         )
         .await
@@ -298,6 +280,28 @@ impl StoreEngineRollup for Store {
         self.write::<AccountUpdatesByBlockNumber>(block_number, serialized)
             .await
     }
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), RollupStoreError> {
+        let serialized = bincode::serialize(&proof)?;
+        self.write::<BatchProofs>((batch_number, proof_type.into()), serialized)
+            .await
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
+        self.read::<BatchProofs>((batch_number, proof_type.into()))
+            .await?
+            .map(|s| bincode::deserialize(&s))
+            .transpose()
+            .map_err(RollupStoreError::from)
+    }
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
@@ -311,11 +315,72 @@ impl StoreEngineRollup for Store {
         delete_starting_at::<BatchesByBlockNumber>(&txn, last_kept_block + 1)?;
         delete_starting_at::<MessageHashesByBatch>(&txn, batch_number + 1)?;
         delete_starting_at::<BlockNumbersByBatch>(&txn, batch_number + 1)?;
-        delete_starting_at::<DepositLogsHash>(&txn, batch_number + 1)?;
+        delete_starting_at::<PrivilegedTransactionsHash>(&txn, batch_number + 1)?;
         delete_starting_at::<StateRoots>(&txn, batch_number + 1)?;
         delete_starting_at::<BlobsBundles>(&txn, batch_number + 1)?;
         txn.commit().map_err(RollupStoreError::LibmdbxError)?;
         Ok(())
+    }
+
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let transaction = db
+                .begin_readwrite()
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            for block in blocks.iter() {
+                transaction
+                    .upsert::<BatchesByBlockNumber>(*block, batch.number)
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            transaction
+                .upsert::<BlockNumbersByBatch>(
+                    batch.number,
+                    BlockNumbersRLP::from_bytes(blocks.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<MessageHashesByBatch>(batch.number, batch.message_hashes.into())
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<PrivilegedTransactionsHash>(
+                    batch.number,
+                    Rlp::from_bytes(batch.privileged_transactions_hash.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<BlobsBundles>(batch.number, batch.blobs_bundle.blobs.into())
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            transaction
+                .upsert::<StateRoots>(
+                    batch.number,
+                    Rlp::from_bytes(batch.state_root.encode_to_vec()),
+                )
+                .map_err(RollupStoreError::LibmdbxError)?;
+
+            if let Some(commit_tx) = batch.commit_tx {
+                transaction
+                    .upsert::<CommitTxByBatch>(batch.number, commit_tx.into())
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            if let Some(verify_tx) = batch.verify_tx {
+                transaction
+                    .upsert::<VerifyTxByBatch>(batch.number, verify_tx.into())
+                    .map_err(RollupStoreError::LibmdbxError)?;
+            }
+
+            transaction.commit().map_err(RollupStoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
@@ -348,7 +413,7 @@ table!(
 );
 
 table!(
-    /// Transaction, deposits, messages count
+    /// Transaction, privileged transaction, messages count
     ( OperationsCount ) u64 => OperationsCountRLP
 );
 
@@ -363,8 +428,8 @@ table!(
 );
 
 table!(
-    /// Deposit logs hash by batch number
-    ( DepositLogsHash ) u64 => Rlp<H256>
+    /// Privileged transactions hash by batch number
+    ( PrivilegedTransactionsHash ) u64 => Rlp<H256>
 );
 
 table!(
@@ -375,4 +440,20 @@ table!(
 table!(
     /// List of serialized account updates by block number
     ( AccountUpdatesByBlockNumber ) BlockNumber => Vec<u8>
+);
+
+table!(
+    /// Stores batch proofs, keyed by (BatchNumber, ProverType as u8).
+    /// Value is the bincode-encoded BatchProof data.
+    (BatchProofs) (u64, u32) => Vec<u8>
+);
+
+table!(
+    /// Commit transaction by batch number
+    ( CommitTxByBatch ) u64 => Rlp<H256>
+);
+
+table!(
+    /// Verify transaction by batch number
+    ( VerifyTxByBatch ) u64 => Rlp<H256>
 );

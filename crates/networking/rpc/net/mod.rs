@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
     rpc::RpcApiContext,
@@ -12,8 +12,7 @@ pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcEr
     Ok(value)
 }
 
-// dummy function
-pub fn peer_count(_req: &RpcRequest, _context: RpcApiContext) -> Result<Value, RpcErr> {
-    let value = serde_json::to_value("0")?;
-    Ok(value)
+pub async fn peer_count(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    let total_peers = context.peer_handler.count_total_peers().await;
+    Ok(json!(format!("{:#x}", total_peers)))
 }

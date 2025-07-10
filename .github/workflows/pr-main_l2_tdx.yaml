@@ -7,7 +7,7 @@ on:
     paths:
       - "crates/l2/tee/**"
       - "crates/l2/contracts/**"
-      - "test_data/**"
+      - "fixtures/**"
       - ".github/workflows/pr-main_l2_tdx.yaml"
 
 concurrency:
@@ -23,6 +23,12 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Build prover
         run: |
           cd crates/l2/tee/quote-gen
@@ -34,7 +40,7 @@ jobs:
 
       - name: Build L2
         run: |
-          cargo build --release --bin ethrex --features l2,rollup_storage_libmdbx,metrics
+          cargo build --release --bin ethrex --features rollup_storage_libmdbx,metrics
 
       - name: Install rex
         run: |
@@ -63,4 +69,3 @@ jobs:
           sleep 30
           ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          

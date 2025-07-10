@@ -21,6 +21,12 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Run test of deployer.rs
         run: |
           cd crates/l2/contracts

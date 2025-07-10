@@ -81,11 +81,11 @@ jobs:
         run: |
           if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
             EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
-            echo "HIVE_FLAGS="--sim.buildarg fixtures=$EEST_FIXTURES"" >> $GITHUB_ENV
+            echo 'HIVE_FLAGS=--sim.buildarg fixtures='"$EEST_FIXTURES"' --sim.limit ".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*"' >> $GITHUB_ENV
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../test_data/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
+        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
         continue-on-error: true
 
       - name: Upload results

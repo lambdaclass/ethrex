@@ -1,0 +1,341 @@
+name: Ethrex Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-ethrex:
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+          - macos-latest
+        include:
+          - platform: ubuntu-22.04
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-22.04-arm
+            os: linux
+            arch: arm64
+          - platform: macos-latest
+            os: macos
+            arch: arm64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
+
+      - name: Build ethrex
+        run: |
+          cargo build --release --all-features --bin ethrex
+          mv target/release/ethrex ethrex-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex-${{ matrix.os }}_${{ matrix.arch }}
+
+  build-prover-and-replay-exec:
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+          - macos-latest
+        include:
+          - platform: ubuntu-22.04
+            rustflags: -C target-cpu=native
+            binary: ethrex_prover
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-22.04
+            rustflags: -C target-cpu=native
+            binary: ethrex_replay
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-22.04-arm
+            rustflags: -C target-cpu=native
+            binary: ethrex_prover
+            os: linux
+            arch: arm64
+          - platform: ubuntu-22.04-arm
+            rustflags: -C target-cpu=native
+            binary: ethrex_replay
+            os: linux
+            arch: arm64
+          - platform: macos-latest
+            binary: ethrex_prover
+            os: macos
+            arch: arm64
+          - platform: macos-latest
+            binary: ethrex_replay
+            os: macos
+            arch: arm64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
+
+      - name: Build binary
+        run: |
+          export RUSTFLAGS="${{ matrix.rustflags }}"
+          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
+            cd crates/l2
+            cargo build --release --features "l2" \
+              --manifest-path ./prover/Cargo.toml \
+              --bin ethrex_prover
+            cd ../../
+            mv target/release/ethrex_prover ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          else
+            cd cmd/ethrex_replay
+            cargo build --release
+            cd ../../
+            mv target/release/ethrex-replay ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          path: ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+
+  build-prover-and-replay-sp1:
+    strategy:
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            binary: ethrex_prover
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-22.04
+            binary: ethrex_replay
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-22.04-arm
+            binary: ethrex_prover
+            os: linux
+            arch: arm64
+          - platform: ubuntu-22.04-arm
+            binary: ethrex_replay
+            os: linux
+            arch: arm64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
+
+      - name: Install SP1
+        env:
+          SHELL: /bin/bash
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://sp1up.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 5.0.0
+
+      - name: Set up QEMU
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64
+
+      - name: Build binary
+        run: |
+          export RUSTFLAGS='-C target-cpu=native'
+          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
+            cd crates/l2
+            cargo build --release --features "sp1,gpu,l2" \
+              --manifest-path ./prover/Cargo.toml \
+              --bin ethrex_prover
+            cd ../../
+            mv target/release/ethrex_prover ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+            mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk ethrex-riscv32im-succinct-zkvm-vk
+          else
+            cd cmd/ethrex_replay
+            cargo build --release --features "sp1,gpu"
+            cd ../../
+            mv target/release/ethrex-replay ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          path: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Upload sp1 vk
+        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86-64') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-riscv32im-succinct-zkvm-vk
+          path: ethrex-riscv32im-succinct-zkvm-vk
+
+  build-prover-and-replay-risc0:
+    strategy:
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            binary: ethrex_prover
+            os: linux
+            arch: x86-64
+          - platform: ubuntu-22.04
+            binary: ethrex_replay
+            os: linux
+            arch: x86-64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ vars.RUST_VERSION }}
+
+      - name: Install RISC0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install rust
+
+      - uses: Jimver/cuda-toolkit@v0.2.24
+        id: cuda-toolkit
+        with:
+          cuda: '12.9.0'
+          method: 'network'
+          sub-packages: '["nvcc"]'
+
+      - name: Build binary
+        run: |
+          export RUSTFLAGS='-C target-cpu=native'
+          export NVCC_PREPEND_FLAGS='-arch=sm_70'
+          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
+            cd crates/l2
+            cargo build --release --features "risc0,gpu,l2" \
+              --manifest-path ./prover/Cargo.toml \
+              --bin ethrex_prover
+            cd ../../
+            mv target/release/ethrex_prover ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+            mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk ethrex-riscv32im-risc0-vk
+          else
+            cd cmd/ethrex_replay
+            cargo build --release --features "risc0,gpu"
+            cd ../../
+            mv target/release/ethrex-replay ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          path: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Upload risc0 vk
+        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86-64') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-riscv32im-risc0-vk
+          path: ethrex-riscv32im-risc0-vk
+
+  package-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Archive contracts
+        run: |
+          cd crates/l2/contracts/src/
+          tar -czvf l1-contracts.tar.gz ./l1
+          tar -czvf l2-contracts.tar.gz ./l2
+          cd ../../../../
+          mv crates/l2/contracts/src/l1-contracts.tar.gz ethrex-l1-contracts.tar.gz
+          mv crates/l2/contracts/src/l2-contracts.tar.gz ethrex-l2-contracts.tar.gz
+
+      - name: Upload L1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-l1-contracts.tar.gz
+          path: ethrex-l1-contracts.tar.gz
+
+      - name: Upload L2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethrex-l2-contracts.tar.gz
+          path: ethrex-l2-contracts.tar.gz
+
+  # Creates a draft release on GitHub with the binaries
+  finalize-release:
+    needs:
+      - build-ethrex
+      - build-prover-and-replay-exec
+      - build-prover-and-replay-sp1
+      - build-prover-and-replay-risc0
+      - package-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./bin
+          pattern: "ethrex*"
+
+      - name: Format name
+        run: echo "RELEASE_NAME=$(echo ${{ github.ref_name }} | cut -d_ -f2)" >> $GITHUB_ENV
+
+      - name: Get previous tag
+        run: |
+          name=$(git --no-pager tag --sort=creatordate --merged ${{ github.ref_name }} | tail -2 | head -1)
+          echo "PREVIOUS_TAG: $name"
+          echo "PREVIOUS_TAG=$name" >> $GITHUB_ENV
+
+      - name: Update CHANGELOG
+        id: changelog
+        uses: requarks/changelog-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fromTag: ${{ github.ref_name }}
+          toTag: ${{ env.PREVIOUS_TAG }}
+          writeToFile: false
+
+      - name: Finalize Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: ./bin/**/*
+          draft: false
+          prerelease: false
+          tag_name: ${{ github.ref_name }}
+          name: "ethrex: ${{ env.RELEASE_NAME }}"
+          body: ${{ steps.changelog.outputs.changes }}

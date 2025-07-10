@@ -6,8 +6,8 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::Genesis;
+use ethrex_blockchain::{BlockchainType, error::ChainError};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -16,13 +16,11 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{init_blockchain, init_store, open_store},
-    networks::{Network, PublicNetwork},
+    initializers::{get_network, init_blockchain, init_store, open_store},
+    l2,
+    networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
-
-#[cfg(feature = "l2")]
-use crate::l2;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -38,15 +36,14 @@ pub struct CLI {
 pub struct Options {
     #[arg(
         long = "network",
-        default_value_t = Network::default(),
         value_name = "GENESIS_FILE_PATH",
-        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
+        help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
     )]
-    pub network: Network,
+    pub network: Option<Network>,
     #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
     #[arg(
@@ -96,7 +93,7 @@ pub struct Options {
         long = "dev",
         action = ArgAction::SetTrue,
         help = "Used to create blocks without requiring a Consensus Client",
-        long_help = "If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.",
+        long_help = "If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.",
         help_heading = "Node options"
     )]
     pub dev: bool,
@@ -159,7 +156,7 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.enabled", default_value = if cfg!(feature = "l2") { "false" } else { "true" }, value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
+    #[arg(long = "p2p.enabled", default_value = "true", value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_enabled: bool,
     #[arg(
         long = "p2p.addr",
@@ -207,7 +204,7 @@ impl Default for Options {
             p2p_port: Default::default(),
             discovery_addr: Default::default(),
             discovery_port: Default::default(),
-            network: Network::PublicNetwork(PublicNetwork::Mainnet),
+            network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
             syncmode: Default::default(),
@@ -241,6 +238,8 @@ pub enum Subcommand {
         path: String,
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        l2: bool,
     },
     #[command(
         name = "export",
@@ -279,7 +278,6 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
-    #[cfg(feature = "l2")]
     #[command(subcommand)]
     L2(l2::Command),
 }
@@ -290,7 +288,7 @@ impl Subcommand {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
-            Subcommand::Import { path, removedb } => {
+            Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
@@ -303,9 +301,14 @@ impl Subcommand {
                     .await?;
                 }
 
-                let network = &opts.network;
+                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
-                import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
+                let blockchain_type = if l2 {
+                    BlockchainType::L2
+                } else {
+                    BlockchainType::L1
+                };
+                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -313,9 +316,8 @@ impl Subcommand {
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
-                println!("{:#x}", state_root);
+                println!("{state_root:#x}");
             }
-            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
         Ok(())
@@ -354,67 +356,80 @@ pub async fn import_blocks(
     data_dir: &str,
     genesis: Genesis,
     evm: EvmEngine,
+    blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    let blockchain = init_blockchain(evm, store.clone());
+    let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
-    let blocks = if path_metadata.is_dir() {
-        let mut blocks = vec![];
-        let dir_reader = read_dir(path).expect("Failed to read blocks directory");
-        for file_res in dir_reader {
-            let file = file_res.expect("Failed to open file in directory");
-            let path = file.path();
-            let s = path
-                .to_str()
-                .expect("Path could not be converted into string");
-            blocks.push(utils::read_block_file(s));
-        }
-        blocks
+
+    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
+    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+        info!("Importing blocks from directory: {path}");
+        let mut entries: Vec<_> = read_dir(path)
+            .expect("Failed to read blocks directory")
+            .map(|res| res.expect("Failed to open file in directory").path())
+            .collect();
+
+        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
+        entries.sort();
+
+        entries
+            .iter()
+            .map(|entry| {
+                let path_str = entry.to_str().expect("Couldn't convert path to string");
+                info!("Importing blocks from chain file: {path_str}");
+                utils::read_chain_file(path_str)
+            })
+            .collect()
     } else {
         info!("Importing blocks from chain file: {path}");
-        utils::read_chain_file(path)
+        vec![utils::read_chain_file(path)]
     };
-    let size = blocks.len();
-    for block in &blocks {
-        let hash = block.hash();
-        let number = block.header.number;
-        info!("Adding block {number} with hash {hash:#x}.");
-        // Check if the block is already in the blockchain, if it is do nothing, if not add it
-        let block_number = store.get_block_number(hash).await.map_err(|_e| {
-            ChainError::Custom(String::from(
-                "Couldn't check if block is already in the blockchain",
-            ))
-        })?;
 
-        if block_number.is_some() {
-            info!("Block {} is already in the blockchain", block.hash());
-            continue;
+    for blocks in chains {
+        let size = blocks.len();
+        // Execute block by block
+        for block in &blocks {
+            let hash = block.hash();
+            let number = block.header.number;
+            info!("Adding block {number} with hash {hash:#x}.");
+            // Check if the block is already in the blockchain, if it is do nothing, if not add it
+            let block_number = store.get_block_number(hash).await.map_err(|_e| {
+                ChainError::Custom(String::from(
+                    "Couldn't check if block is already in the blockchain",
+                ))
+            })?;
+
+            if block_number.is_some() {
+                info!("Block {} is already in the blockchain", block.hash());
+                continue;
+            }
+
+            blockchain
+                .add_block(block)
+                .await
+                .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
         }
 
-        blockchain
-            .add_block(block)
+        _ = store
+            .mark_chain_as_canonical(&blocks)
             .await
-            .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
+            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
+
+        // Make head canonical and label all special blocks correctly.
+        if let Some(block) = blocks.last() {
+            store
+                .update_finalized_block_number(block.header.number)
+                .await?;
+            store.update_safe_block_number(block.header.number).await?;
+            store
+                .update_latest_block_number(block.header.number)
+                .await?;
+        }
+
+        info!("Added {size} blocks to blockchain");
     }
-
-    _ = store
-        .mark_chain_as_canonical(&blocks)
-        .await
-        .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-
-    // Make head canonical and label all special blocks correctly.
-    if let Some(block) = blocks.last() {
-        store
-            .update_finalized_block_number(block.header.number)
-            .await?;
-        store.update_safe_block_number(block.header.number).await?;
-        store
-            .update_latest_block_number(block.header.number)
-            .await?;
-    }
-
-    info!("Added {size} blocks to blockchain");
     Ok(())
 }
 

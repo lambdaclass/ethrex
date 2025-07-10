@@ -1,21 +1,18 @@
 use crate::based::block_fetcher::BlockFetcherError;
 use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
-use crate::utils::prover::errors::SaveStateError;
-use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
-use ethrex_l2_common::deposits::DepositError;
-use ethrex_l2_common::l1_messages::L1MessagingError;
+use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
+use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
-use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
 use ethrex_vm::{EvmError, ProverDBError};
-use spawned_concurrency::GenServerError;
+use spawned_concurrency::error::GenServerError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -64,6 +61,8 @@ pub enum L1WatcherError {
     FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("{0}")]
     Custom(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -94,8 +93,6 @@ pub enum ProofCoordinatorError {
     WriteError(String),
     #[error("ProofCoordinator failed to get data from Store: {0}")]
     ItemNotFoundInStore(String),
-    #[error("ProofCoordinator encountered a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
@@ -122,14 +119,14 @@ pub enum ProofSenderError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("Failed with a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
     #[error("{0} proof is not present")]
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
@@ -151,9 +148,11 @@ pub enum ProofVerifierError {
     #[error("ProofVerifier failed to parse beacon url")]
     ParseBeaconUrl(String),
     #[error("Failed with a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
-    #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Store error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("Block Producer failed because of a rollup store error: {0}")]
+    RollupStoreError(#[from] RollupStoreError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -194,6 +193,8 @@ pub enum BlockProducerError {
     FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -226,8 +227,6 @@ pub enum CommitterError {
     FailedToSendCommitment(String),
     #[error("Committer failed to decode deposit hash")]
     FailedToDecodeDepositHash,
-    #[error("Committer failed to merkelize: {0}")]
-    FailedToMerkelize(#[from] MerkleError),
     #[error("Withdrawal transaction was invalid")]
     InvalidWithdrawalTransaction,
     #[error("Blob estimation failed: {0}")]
@@ -240,10 +239,10 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
-    #[error("Deposit error: {0}")]
-    DepositError(#[from] DepositError),
-    #[error("L1Message error: {0}")]
-    L1MessageError(#[from] L1MessagingError),
+    #[error("Privileged Transaction error: {0}")]
+    PrivilegedTransactionError(#[from] PrivilegedTransactionError),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -270,6 +269,8 @@ pub enum MetricsGathererError {
     EthClientError(#[from] EthClientError),
     #[error("MetricsGatherer: {0}")]
     TryInto(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -284,6 +285,8 @@ pub enum ExecutionCacheError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionHandlerError {
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }

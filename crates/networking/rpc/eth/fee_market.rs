@@ -167,7 +167,7 @@ impl RpcHandler for FeeHistoryRequest {
             }
         }
 
-        let u64_to_hex_str = |x: u64| format!("0x{:x}", x);
+        let u64_to_hex_str = |x: u64| format!("0x{x:x}");
         let response = FeeHistoryResponse {
             oldest_block: u64_to_hex_str(oldest_block),
             base_fee_per_gas: base_fee_per_gas.into_iter().map(u64_to_hex_str).collect(),

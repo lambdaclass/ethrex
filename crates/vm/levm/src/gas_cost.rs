@@ -177,8 +177,6 @@ pub const BLS12_381_MAP_FP_TO_G1_COST: u64 = 5500;
 pub const BLS12_PAIRING_CHECK_MUL_COST: u64 = 32600;
 pub const BLS12_PAIRING_CHECK_FIXED_COST: u64 = 37700;
 pub const BLS12_381_MAP_FP2_TO_G2_COST: u64 = 23800;
-#[cfg(feature = "l2")]
-pub const P256VERIFY_COST: u64 = 3450;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
@@ -968,12 +966,8 @@ pub fn bls12_pairing_check(k: usize) -> Result<u64, VMError> {
     let gas_cost = u64::try_from(k)
         .map_err(|_| ExceptionalHalt::VeryLargeNumber)?
         .checked_mul(BLS12_PAIRING_CHECK_MUL_COST)
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::GasConsumedOverflow,
-        ))?
+        .ok_or(InternalError::Overflow)?
         .checked_add(BLS12_PAIRING_CHECK_FIXED_COST)
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::GasConsumedOverflow,
-        ))?;
+        .ok_or(InternalError::Overflow)?;
     Ok(gas_cost)
 }
