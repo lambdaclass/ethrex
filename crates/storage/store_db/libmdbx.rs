@@ -901,17 +901,17 @@ impl StoreEngine for Store {
 
                 // Delete the node from the trie
                 let k_delete = NodeHash::Hashed(node_hash.into());
-                if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
-                    && key == k_delete
-                {
-                    tracing::debug!(
-                        node = hex::encode(node_hash.as_ref()),
-                        block_number = block.block_number,
-                        block_hash = hex::encode(block.block_hash.0.as_ref()),
-                        "[DELETING STATE NODE]"
-                    );
-                    cursor_state_trie.delete_current()?;
-                    cursor_state_trie_pruning_log.delete_current()?;
+                if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)? {
+                    if key == k_delete {
+                        tracing::debug!(
+                            node = hex::encode(node_hash.as_ref()),
+                            block_number = block.block_number,
+                            block_hash = hex::encode(block.block_hash.0.as_ref()),
+                            "[DELETING STATE NODE]"
+                        );
+                        cursor_state_trie.delete_current()?;
+                        cursor_state_trie_pruning_log.delete_current()?;
+                    }
                 }
                 kv_state_trie_pruning = cursor_state_trie_pruning_log.next()?;
             }
@@ -946,20 +946,19 @@ impl StoreEngine for Store {
                 }
 
                 // If the storage trie hash is found, delete it from the trie and the pruning log
-                if let Some((key, _)) = cursor_storage_trie.seek_exact(storage_trie_pruning_hash)?
-                    && key == storage_trie_pruning_hash
-                {
-                    tracing::debug!(
-                        hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
-                        node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
-                        block_number = block.block_number,
-                        block_hash = hex::encode(block.block_hash.0.as_ref()),
-                        "[DELETING STORAGE NODE]"
-                    );
-                    cursor_storage_trie.delete_current()?;
-                    cursor_storage_trie_pruning_log.delete_current()?;
+                if let Some((key, _)) = cursor_storage_trie.seek_exact(storage_trie_pruning_hash)? {
+                    if key == storage_trie_pruning_hash {
+                        tracing::debug!(
+                            hashed_address = hex::encode(storage_trie_pruning_hash.0.as_ref()),
+                            node_hash = hex::encode(storage_trie_pruning_hash.1.as_ref()),
+                            block_number = block.block_number,
+                            block_hash = hex::encode(block.block_hash.0.as_ref()),
+                            "[DELETING STORAGE NODE]"
+                        );
+                        cursor_storage_trie.delete_current()?;
+                        cursor_storage_trie_pruning_log.delete_current()?;
+                    }
                 }
-
                 kv_storage_trie_pruning = cursor_storage_trie_pruning_log.next()?;
             }
         }
