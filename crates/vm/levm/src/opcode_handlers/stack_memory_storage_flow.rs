@@ -101,7 +101,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
-
+        info!("[MSTORE] new_memory_size: {new_memory_size}, resulting from offset {offset}");
         current_call_frame.increase_consumed_gas(gas_cost::mstore(
             new_memory_size,
             current_call_frame.memory.len(),
