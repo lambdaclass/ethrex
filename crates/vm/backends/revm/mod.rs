@@ -83,7 +83,7 @@ impl REVM {
                 cumulative_gas_used,
                 result.logs(),
             );
-            info!("Tx: {tx_idx}; gas used: {}", result.gas_used());
+            //info!("Tx: {tx_idx}; gas used: {}", result.gas_used());
             tx_idx += 1;
 
             receipts.push(receipt);

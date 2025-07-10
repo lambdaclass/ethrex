@@ -59,7 +59,7 @@ impl LEVM {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
 
             cumulative_gas_used += report.gas_used;
-            info!("Tx: {tx_idx}; gas used: {}", report.gas_used);
+            //info!("Tx: {tx_idx}; gas used: {}", report.gas_used);
             tx_idx += 1;
             let receipt = Receipt::new(
                 tx.tx_type(),
