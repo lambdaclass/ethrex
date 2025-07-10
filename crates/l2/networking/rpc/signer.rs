@@ -12,7 +12,6 @@ use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
-use tracing::info;
 use url::ParseError;
 
 #[derive(Clone, Debug)]
