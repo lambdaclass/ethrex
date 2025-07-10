@@ -630,9 +630,10 @@ impl StoreEngineRollup for SQLStore {
             let signature: [u8; 68] = vec
                 .try_into()
                 .map_err(|_| RollupStoreError::Custom("Invalid signature length".to_string()))?;
-            return Ok(Some(signature));
+            Ok(Some(signature))
+        } else {
+            Ok(None)
         }
-        Ok(None)
     }
 }
 
