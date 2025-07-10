@@ -12,6 +12,7 @@ use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
 use ethrex_common::{Address, U256, types::Fork};
+use tracing::info;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -731,6 +732,8 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
+        let precompile = self.is_precompile(&code_address) && !is_delegation_7702;
+        info!("[CALL] Executing generic call; value_transfer: {should_transfer_value}, precompile: {precompile}");
         // Clear callframe subreturn data
         self.current_call_frame_mut()?.sub_return_data = Bytes::new();
 
