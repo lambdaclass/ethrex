@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752176592214,
+  "lastUpdate": 1752177220141,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3415,6 +3415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207462387985,
             "range": "± 483507681",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9dab7c08cb8dbc86a5ae90d38faf2fc2d2c98064",
+          "message": "feat(l2): monitor for ethrex L2 (#3410)\n\n**Description**\n\nThis PR introduces de ethrex monitor. A currently optional tool for node\noperators to monitor the L2 state.\n\nThe node can be monitored in two different tabs, the Overview tab and\nthe Logs tab. Both tabs have a help text line at the bottom to let know\nthe user how to interact with the current tab.\n\nThe Overview tab is composed of:\n- An ASCII ethrex logo.\n- A node status widget\n- A general chain status widget, which lists:\n    - Current batch (the batch being built by the Sequencer).\n    - Current block (the block being built by the Sequencer).\n    - Last committed batch.\n    - Last committed block.\n    - Last verified batch.\n    - Last verified block.\n- An L2 batches widget, which lists the last 50 L2 batches and their\ncurrent status, highlighting:\n    - L2 batch number.\n    - Number of blocks in the batch.\n    - Number of L2 to L1 messages in the batch.\n    - Commit tx hash (if committed).\n    - Verify tx hash (if verified).\n- An L2 blocks widget, which lists the last 50 L2 blocks, highlighting:\n    - L2 block number.\n    - Number of txs in the block.\n    - L2 block hash.\n    - L2 block coinbase (probably more relevant in based rollups).\n    - Gas consumed.\n    - Blob gas consumed.\n    - Size of the block. \n- A mempool widget, which lists the current 50 txs in the memool,\nhighlighting:\n    - Tx type (e.g. EIP1559, Privilege, etc).\n    - Tx hash.\n    - Tx sender.\n    - Tx nonce.\n- An L1 to L2 messages widget, which lists the last 50 L1 to L2 msgs and\ntheir status, highlighting:\n    - Message kind (e.g. deposit, message, etc).\n    - Message status (e.g. Processed on L2, etc).\n    - Message L1 tx hash.\n    - Message L2 tx hash\n    - Value\n- An L2 to L1 messages widget, which lists the last 50 L2 to L1 msgs and\ntheir status, highlighting:\n    - Message kind (e.g. withdrawal, message, etc).\n    - Message status (e.g. initiated, claimed, sent, delivered).\n    - Receiver on L1.\n    - Token L1 (if ERC20 withdrawal).\n    - Token L2 (if ERC20 withdrawal).\n    - L2 tx hash\n    - Value\n\nThe Logs tab shows the logs altogether or by crate. The log level could\nalso be adjusted in runtime.\n\n> [!NOTE]\n> 1. This feature is introduced as optional for now given its initial\nstate. Once mature enough, it will be default for operators.\n> 2. This initial version has some minor known flaws, but they were\nskipped in this PR on purpose:\n>     - #3512 .\n>     - #3513.\n>     - #3514.\n>     - #3515.\n>     - #3516.\n>     - No optimizations were done.\n\n**How to test**\n\n1. Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n2. Run a Sequencer (I suggest `make restart` in `crates/l2`).\n3. Run the prover with `make init-prover` in `crates/l2`.\n4. Run `make test` in `crates/l2`.\n\n**Showcase**\n\n*Overview*\n\n<img width=\"1512\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/0431b1f3-1a8f-49cf-9519-413ea3d3ed1a\"\n/>\n\n*Logs*\n\n<img width=\"1512\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/e0e6cdd7-1f8d-4278-8619-475cfaa14d4b\"\n/>",
+          "timestamp": "2025-07-10T18:51:42Z",
+          "tree_id": "e9c5ec2c406ad35b66a6b0943014497ccfe76e3b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9dab7c08cb8dbc86a5ae90d38faf2fc2d2c98064"
+        },
+        "date": 1752177208715,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208169108689,
+            "range": "± 933679142",
             "unit": "ns/iter"
           }
         ]
