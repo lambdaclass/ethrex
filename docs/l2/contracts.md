@@ -16,7 +16,7 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
 - **`ON_CHAIN_PROPOSER`**: Address of the contract that can commit and verify batches
 - **`L2_BRIDGE_ADDRESS`**: Constant address (0xffff) representing the L2 bridge
 
-### **Core Functionality**
+#### **Core Functionality**
 
 1. **Deposits (L1 → L2)**
     - **`deposit()`**: Allows users to deposit ETH to L2
