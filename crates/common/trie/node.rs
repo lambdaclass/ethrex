@@ -4,6 +4,7 @@ mod leaf;
 
 use std::{
     array,
+    collections::btree_map::Range,
     sync::{Arc, OnceLock},
 };
 
@@ -51,30 +52,30 @@ impl NodeRef {
         }
     }
 
-    pub fn commit<'a>(
+    pub fn commit(
         &mut self,
-        acc: &mut Vec<(NodeHash, (usize, usize))>,
-        encoding_buffer: &'a mut Vec<u8>,
+        buffer: &mut Vec<u8>,
+        acc: &mut Vec<(NodeHash, std::ops::Range<usize>)>,
     ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for node in &mut node.choices {
-                            node.commit(acc, encoding_buffer);
+                            node.commit(buffer, acc);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(acc, encoding_buffer);
+                        node.child.commit(buffer, acc);
                     }
                     Node::Leaf(_) => {}
                 }
 
                 let hash = hash.get_or_init(|| node.compute_hash());
-                let new_encode_start = encoding_buffer.len();
-                node.encode(encoding_buffer);
-                let new_encode_end = encoding_buffer.len();
-                acc.push((*hash, (new_encode_start, new_encode_end)));
+                let first = buffer.len();
+                node.encode(buffer);
+                let last = buffer.len();
+                acc.push((*hash, (first..last)));
 
                 let hash = *hash;
                 *self = hash.into();
