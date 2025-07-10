@@ -63,7 +63,6 @@ impl ProverType {
     }
 
     pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
-        // TODO: these should be compile-time consts
         let path = match self {
             // for risc0, Aligned requires the image id
             Self::RISC0 => format!(
@@ -83,7 +82,6 @@ impl ProverType {
     }
 
     pub fn vk(&self, aligned: bool) -> std::io::Result<Option<Vec<u8>>> {
-        // TODO: these should be compile-time consts
         let path = match &self {
             Self::RISC0 => format!(
                 "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",

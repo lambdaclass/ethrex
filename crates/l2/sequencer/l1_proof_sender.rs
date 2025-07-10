@@ -260,11 +260,7 @@ async fn send_proof_to_aligned(
             _ => continue,
         };
 
-        info!(
-            prover_type = ?batch_proof.prover_type(),
-            ?batch_number,
-            "Submitting proof to Aligned"
-        );
+        info!(?prover_type, ?batch_number, "Submitting proof to Aligned");
 
         let Some(proof) = batch_proof.compressed() else {
             return Err(ProofSenderError::AlignedWrongProofFormat);
@@ -300,11 +296,7 @@ async fn send_proof_to_aligned(
         )
         .await?;
 
-        info!(
-            prover_type = ?batch_proof.prover_type(),
-            ?batch_number,
-            "Submitted compressed proof to Aligned"
-        );
+        info!(?prover_type, ?batch_number, "Submitted proof to Aligned");
     }
 
     Ok(())
