@@ -186,6 +186,8 @@ impl<'a> VM<'a> {
         let mut start: Instant;
         let mut end: Instant;
 
+        let mut file = File::options().append(true).open("/var/lib/nimbus/data/executed_opcodes.log").unwrap();
+
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
 
@@ -194,7 +196,7 @@ impl<'a> VM<'a> {
             end = Instant::now();
 
             // Append opcode, start and end to file
-            println!("OPCODE DATA{:?} {} {}", opcode, start.elapsed().as_micros(), end.elapsed().as_micros());
+            writeln!(file, "{:?} {} {}", opcode, start.elapsed().as_micros(), end.elapsed().as_micros()).unwrap();
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
