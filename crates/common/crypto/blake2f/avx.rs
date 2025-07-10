@@ -149,11 +149,11 @@ pub unsafe fn blake2f_compress_f_inner(
     t: &[u64; 2],  // Affects the work vector (v) before permutations
     f: bool,       // If set as true, inverts all bits
 ) -> [u64; 8] {
-    /// # Safety
-    /// The only operations of concern here are:
-    ///     - _mm256_load_si256: loads memory, which must be 32B-aligned
-    ///     - _mm256_store_si256: stores memory, which must be 32B-aligned
-    /// Both IV and output are made 32B-aligned using the AlignTo32 wrapper
+    // # Safety
+    // The only operations of concern here are:
+    //     - _mm256_load_si256: loads memory, which must be 32B-aligned
+    //     - _mm256_store_si256: stores memory, which must be 32B-aligned
+    // Both IV and output are made 32B-aligned using the AlignTo32 wrapper
     unsafe {
         // This way the caller doesn't need to supply aligned memory
         let a = _mm256_setr_epi64x(h[0] as i64, h[1] as i64, h[2] as i64, h[3] as i64);
@@ -169,7 +169,7 @@ pub unsafe fn blake2f_compress_f_inner(
 
         let (out0, out1) = word_permutation(rounds, a, b, c, d, &m);
 
-        /// output needs to be aligned to 32 bytes
+        // output needs to be aligned to 32 bytes
         let mut output = AlignTo32([0; 8]);
 
         // SAFETY: stores to output[0..4], which is within bounds
@@ -183,7 +183,7 @@ pub unsafe fn blake2f_compress_f_inner(
             _mm256_xor_si256(out1, b),
         );
 
-        output
+        output.0
     }
 }
 
@@ -192,15 +192,17 @@ mod test {
     use crate::blake2f::avx::blake2f_compress_f_inner;
     #[test]
     fn test_12r() {
-        let out = blake2f_compress_f_inner(
-            12,
-            &[1, 2, 3, 4, 5, 6, 7, 8],
-            &[
-                101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
-            ],
-            &[1000, 1001],
-            true,
-        );
+        let out = unsafe {
+            blake2f_compress_f_inner(
+                12,
+                &[1, 2, 3, 4, 5, 6, 7, 8],
+                &[
+                    101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
+                ],
+                &[1000, 1001],
+                true,
+            )
+        };
         assert_eq!(
             out,
             [
