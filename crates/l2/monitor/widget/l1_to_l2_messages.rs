@@ -157,22 +157,14 @@ impl L1ToL2MessagesTable {
         eth_client: &EthClient,
         store: &Store,
     ) -> Vec<L1ToL2MessagesRow> {
-        let logs = Self::get_logs(last_l1_block_fetched, common_bridge_address, eth_client).await;
-        Self::process_logs(&logs, common_bridge_address, eth_client, store).await
-    }
-
-    async fn get_logs(
-        last_l1_block_fetched: &mut U256,
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-    ) -> Vec<RpcLog> {
-        monitor::utils::get_logs(
+        let logs = monitor::utils::get_logs(
             last_l1_block_fetched,
             common_bridge_address,
             vec!["PrivilegedTxSent(address,address,uint256,uint256,uint256,bytes)"],
             eth_client,
         )
-        .await
+        .await;
+        Self::process_logs(&logs, common_bridge_address, eth_client, store).await
     }
 
     async fn process_logs(

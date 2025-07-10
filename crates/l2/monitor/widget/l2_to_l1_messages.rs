@@ -155,18 +155,14 @@ impl L2ToL1MessagesTable {
         eth_client: &EthClient,
         rollup_client: &EthClient,
     ) -> Vec<L2ToL1MessageRow> {
-        let logs = Self::get_logs(last_l2_block_fetched, rollup_client).await;
-        Self::process_logs(&logs, common_bridge_address, eth_client).await
-    }
-
-    async fn get_logs(last_l1_block_fetched: &mut U256, rollup_client: &EthClient) -> Vec<RpcLog> {
-        monitor::utils::get_logs(
-            last_l1_block_fetched,
+        let logs = monitor::utils::get_logs(
+            last_l2_block_fetched,
             COMMON_BRIDGE_L2_ADDRESS,
             vec![],
             rollup_client,
         )
-        .await
+        .await;
+        Self::process_logs(&logs, common_bridge_address, eth_client).await
     }
 
     async fn process_logs(
