@@ -395,6 +395,10 @@ async fn process_batch_sealed(
     Ok(())
 }
 
+// These tests are disabled because they previously assumed
+// the connection used the old struct RLPxConnection, but
+// the new GenServer approach changes a lot of things,
+// this will be eventually addressed (#3563)
 #[cfg(test)]
 mod tests {
 
