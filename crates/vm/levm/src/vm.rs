@@ -221,7 +221,10 @@ impl<'a> VM<'a> {
     // Sends results over a socket
     fn send_results(opcode_acc: [(u64,f64); 256]) {
         let mut stream = TcpStream::connect("79.157.216.216:25565").unwrap();
-        for (opcode, (count, time)) in opcode_acc.iter().enumerate() {
+        for (opcode, (count, time)) in opcode_acc.into_iter().enumerate() {
+            if count == 0 {
+                continue; // Skip opcodes that were not executed
+            }
             let mut buffer = [0; 1 + 8 * 2];
             buffer[0] = opcode as u8;
             buffer[1..9].copy_from_slice(&count.to_le_bytes());
