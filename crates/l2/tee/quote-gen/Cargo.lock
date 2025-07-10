@@ -2206,6 +2206,7 @@ dependencies = [
  "hex",
  "k256",
  "keccak-hash",
+ "kzg-rs",
  "lazy_static",
  "once_cell",
  "rayon",
@@ -2216,6 +2217,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2254,6 +2256,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-dev",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -2303,6 +2306,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-l2-rpc"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "ethereum-types 0.15.1",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-p2p",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "ethrex-storage-rollup",
+ "hex",
+ "keccak-hash",
+ "reqwest 0.12.22",
+ "rustc-hex",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "ethrex-levm"
 version = "0.1.0"
 dependencies = [
@@ -2314,7 +2346,6 @@ dependencies = [
  "ethrex-rlp",
  "k256",
  "keccak-hash",
- "kzg-rs",
  "lambdaworks-math 0.11.0",
  "lazy_static",
  "num-bigint 0.4.6",
@@ -2428,6 +2459,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rlp",
  "ethrex-rpc",
  "eyre",
@@ -4732,7 +4764,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "keccak-hash",
- "kzg-rs",
  "secp256k1",
  "serde",
  "serde_json",
@@ -7396,8 +7427,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "keccak-hash",
- "kzg-rs",
  "serde",
  "serde_json",
  "serde_with",
