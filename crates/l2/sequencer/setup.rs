@@ -1,6 +1,8 @@
 use crate::sequencer::errors::ProofCoordinatorError;
 use ethrex_common::{Address, Bytes};
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::clients::send_tx_bump_gas_exponential_backoff;
+use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::{
@@ -85,9 +87,9 @@ pub async fn register_tdx_key(
 
     let mut tx = WrappedTransaction::EIP1559(verify_tx);
 
-    let verify_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut tx, private_key)
-        .await?;
+    let signer = Signer::Local(LocalSigner::new(*private_key));
+
+    let verify_tx_hash = send_tx_bump_gas_exponential_backoff(eth_client, &mut tx, &signer).await?;
 
     info!("Registered TDX key with transaction hash {verify_tx_hash:#x}");
     Ok(())

@@ -10,7 +10,7 @@ use ethrex_p2p::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -140,6 +140,10 @@ pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, Strin
 
 pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
+    Ok(PublicKey::from_slice(&parse_hex(s)?)?)
 }
 
 pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {

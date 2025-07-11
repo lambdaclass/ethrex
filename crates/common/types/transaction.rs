@@ -4,7 +4,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
-use secp256k1::{Message, SecretKey, ecdsa::RecoveryId};
+use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
@@ -285,22 +285,6 @@ impl Display for TxType {
             TxType::Privileged => write!(f, "Privileged"),
         }
     }
-}
-
-pub trait Signable {
-    /// Both sign and sign_in_place return error when the payload hash calculated that has to
-    /// be signed is not exactly 32 bytes long. Currently it's an unreachable error
-    /// since the payload is hashed with the keccak algorithm which produces a 32 byte hash.
-    fn sign(&self, private_key: &SecretKey) -> Result<Self, secp256k1::Error>
-    where
-        Self: Sized,
-        Self: Clone,
-    {
-        let mut signable = self.clone();
-        signable.sign_inplace(private_key)?;
-        Ok(signable)
-    }
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error>;
 }
 
 impl Transaction {
@@ -888,121 +872,6 @@ impl RLPDecode for PrivilegedL2Transaction {
         };
         Ok((tx, decoder.finish()?))
     }
-}
-
-impl Signable for Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        match self {
-            Transaction::LegacyTransaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP2930Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP7702Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::PrivilegedL2Transaction(_) => Ok(()), // Privileged Transactions are not signed
-        }
-    }
-}
-
-impl Signable for LegacyTransaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let data = Message::from_digest_slice(&keccak(self.encode_payload_to_vec()).0)?;
-
-        let (recovery_id, signature) = secp256k1::SECP256K1
-            .sign_ecdsa_recoverable(&data, private_key)
-            .serialize_compact();
-
-        let mut r = [0u8; 32];
-        let mut s = [0u8; 32];
-        r.copy_from_slice(&signature[..32]);
-        s.copy_from_slice(&signature[32..]);
-
-        self.r = U256::from_big_endian(&r);
-        self.s = U256::from_big_endian(&s);
-        self.v = U256::from(recovery_id.to_i32());
-        Ok(())
-    }
-}
-
-impl Signable for EIP1559Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP1559 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-impl Signable for EIP2930Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP2930 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-impl Signable for EIP4844Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP4844 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-impl Signable for EIP7702Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP7702 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-fn sing_inplace(
-    payload: &Vec<u8>,
-    private_key: &SecretKey,
-    signature_r: &mut U256,
-    signature_s: &mut U256,
-    signature_y_parity: &mut bool,
-) -> Result<(), secp256k1::Error> {
-    let data = Message::from_digest_slice(&keccak(payload).0)?;
-
-    let (recovery_id, signature) = secp256k1::SECP256K1
-        .sign_ecdsa_recoverable(&data, private_key)
-        .serialize_compact();
-
-    let mut r = [0u8; 32];
-    let mut s = [0u8; 32];
-    r.copy_from_slice(&signature[..32]);
-    s.copy_from_slice(&signature[32..]);
-
-    let parity = recovery_id.to_i32() != 0;
-
-    *signature_r = U256::from_big_endian(&r);
-    *signature_s = U256::from_big_endian(&s);
-    *signature_y_parity = parity;
-    Ok(())
 }
 
 impl Transaction {
