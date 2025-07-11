@@ -190,6 +190,7 @@ jobs:
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
+          COMPOSE_BAKE=true \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
       - name: Run test
