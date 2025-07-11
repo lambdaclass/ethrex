@@ -229,6 +229,8 @@ impl EthrexMonitor {
 }
 
 impl Widget for &mut EthrexMonitor {
+    // Since the render method on Widget trait does not return an error, we can't handle the index slicing.
+    #[expect(clippy::indexing_slicing)]
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
