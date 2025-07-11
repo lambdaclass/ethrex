@@ -3,6 +3,7 @@ use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
@@ -297,4 +298,14 @@ pub enum ConnectionHandlerError {
 pub enum MonitorError {
     #[error("Failed because of io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Failed to fetch {0:?} logs from {1}, {2}")]
+    LogsSignatures(Vec<String>, Address, #[source] EthClientError),
+    #[error("Failed to get batch by number {0}: {1}")]
+    RollupStore(u64, #[source] RollupStoreError),
+    #[error("Batch {0} not found in the rollup store")]
+    BatchNotFound(u64),
+    #[error("Failed to get block by number {0}, {1}")]
+    GetBlockByNumber(u64, #[source] StoreError),
+    #[error("Block {0} not found in the store")]
+    BlockNotFound(u64),
 }
