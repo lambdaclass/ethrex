@@ -542,7 +542,6 @@ impl Blockchain {
                 },
             )
         }));
-        info!("Account Updates: {account_u:?}");
         let (this_filename, other_filename) = match self.evm_engine {
             EvmEngine::LEVM => ("levm_state.json", "revm_state.json"),
             EvmEngine::REVM => ("revm_state.json", "levm_state.json"),
