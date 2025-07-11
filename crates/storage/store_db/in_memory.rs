@@ -111,15 +111,15 @@ impl Store {
 
         let store_for_pruning = store.clone();
 
-        let _join = thread::Builder::new()
-            .name("trie_pruner🗑️".to_string())
-            .spawn(move || {
-                loop {
-                    thread::sleep(std::time::Duration::from_secs(1));
-                    #[allow(clippy::unwrap_used)]
-                    store_for_pruning.prune_state_and_storage_log().unwrap();
-                }
-            });
+        // let _join = thread::Builder::new()
+        //     .name("trie_pruner🗑️".to_string())
+        //     .spawn(move || {
+        //         loop {
+        //             thread::sleep(std::time::Duration::from_secs(1));
+        //             #[allow(clippy::unwrap_used)]
+        //             store_for_pruning.prune_state_and_storage_log().unwrap();
+        //         }
+        //     });
 
         store
     }
@@ -132,106 +132,45 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let mut store = self.inner()?;
-
-        // We only need to update the flat tables if the update batch contains blocks
-        // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
+        // Validation first - fail fast
         let (Some(first_block), Some(last_block)) =
             (update_batch.blocks.first(), update_batch.blocks.last())
         else {
             return Ok(());
         };
 
-        let parent_block = (
+        let parent_block: BlockNumHash = (
             first_block.header.number - 1,
             first_block.header.parent_hash,
         )
             .into();
+        let final_block: BlockNumHash = (last_block.header.number, last_block.hash()).into();
 
-        let final_block = (last_block.header.number, last_block.hash()).into();
-        for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned() {
-            let log = AccountInfoLogEntry {
-                address: addr.0,
-                info: new_info,
-                previous_info: old_info,
-            };
-            store
-                .account_state_logs
-                .entry(final_block)
-                .or_default()
-                .push((parent_block, log));
+        // ==== OPTIMIZACIÓN 1: PREPARAR TODAS LAS OPERACIONES PRIMERO ====
+
+        // Preparar state trie updates
+        let mut state_trie_updates = Vec::new();
+        for (node_hash, mut node_data) in update_batch.account_updates {
+            tracing::debug!(
+                node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                parent_block_number = parent_block.block_number,
+                parent_block_hash = hex::encode(parent_block.block_hash),
+                final_block_number = final_block.block_number,
+                final_block_hash = hex::encode(final_block.block_hash),
+                "[WRITING STATE TRIE NODE]",
+            );
+            node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+            state_trie_updates.push((node_hash, node_data));
         }
 
-        for storage_log in update_batch.storage_log_updates.iter().cloned() {
-            store
-                .account_storage_logs
-                .entry(final_block)
-                .or_default()
-                .push((parent_block, storage_log));
-        }
-
-        let current_snapshot = store.current_snapshot_block.unwrap_or_default();
-
-        // If the current snapshot is the parent block, we can update the account and storage
-        if current_snapshot == parent_block {
-            for (addr, _old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
-            {
-                if new_info == AccountInfo::default() {
-                    store.account_info.remove(&addr.0);
-                } else {
-                    store.account_info.insert(addr.0, new_info);
-                }
-            }
-
-            for entry in update_batch.storage_log_updates.iter().cloned() {
-                if entry.new_value.is_zero() {
-                    store.account_storage.remove(&(entry.address, entry.slot));
-                } else {
-                    store
-                        .account_storage
-                        .insert((entry.address, entry.slot), entry.new_value);
-                }
-            }
-
-            store.current_snapshot_block = Some(final_block);
-        }
-
-        {
-            // store account updates
-            let mut state_trie_store = store
-                .state_trie_nodes
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, mut node_data) in update_batch.account_updates {
-                tracing::debug!(
-                    node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
-                    parent_block_number = parent_block.block_number,
-                    parent_block_hash = hex::encode(parent_block.block_hash),
-                    final_block_number = final_block.block_number,
-                    final_block_hash = hex::encode(final_block.block_hash),
-                    "[WRITING STATE TRIE NODE]",
-                );
-                node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
-                state_trie_store.insert(node_hash, node_data);
-            }
-        }
-
-        for node_hash in update_batch.invalidated_state_nodes {
-            store
-                .state_trie_pruning_log
-                .entry(final_block)
-                .or_default()
-                .push(node_hash.0);
-        }
-
-        // store code updates
-        for (hashed_address, code) in update_batch.code_updates {
-            store.account_codes.insert(hashed_address, code);
-        }
+        // Preparar storage trie updates agrupados por address
+        let mut storage_updates_by_address: HashMap<H256, Vec<(NodeHash, Vec<u8>)>> =
+            HashMap::new();
+        let mut storage_invalidations_by_address: HashMap<H256, Vec<NodeHash>> = HashMap::new();
 
         for (hashed_address, nodes, invalid_nodes) in update_batch.storage_updates {
-            let key_address: [u8; 32] = hashed_address.into();
-
+            // Preparar nodos válidos
+            let mut prepared_nodes = Vec::new();
             for (node_hash, mut node_data) in nodes {
                 tracing::debug!(
                     hashed_address = hex::encode(hashed_address.0),
@@ -242,50 +181,163 @@ impl StoreEngine for Store {
                     final_block_hash = hex::encode(final_block.block_hash),
                     "[WRITING STORAGE TRIE NODE]",
                 );
-
                 node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+                prepared_nodes.push((node_hash, node_data));
+            }
+            storage_updates_by_address.insert(hashed_address, prepared_nodes);
+
+            // Preparar invalidaciones
+            let invalid_nodes_hashed = invalid_nodes
+                .iter()
+                .map(|h| NodeHash::Hashed(h.0.into()))
+                .collect();
+            storage_invalidations_by_address.insert(hashed_address, invalid_nodes_hashed);
+        }
+
+        // Preparar logs de accounts
+        let account_logs: Vec<_> = update_batch
+            .account_info_log_updates
+            .iter()
+            .cloned()
+            .map(|(addr, old_info, new_info)| AccountInfoLogEntry {
+                address: addr.0,
+                info: new_info,
+                previous_info: old_info,
+            })
+            .collect();
+
+        let storage_logs: Vec<_> = update_batch.storage_log_updates.to_vec();
+
+        // ==== OPTIMIZACIÓN 2: APLICAR TODO BAJO UN SOLO LOCK PRINCIPAL ====
+        {
+            let mut store = self.inner()?;
+
+            // Account info logs
+            for log in account_logs {
                 store
+                    .account_state_logs
+                    .entry(final_block)
+                    .or_default()
+                    .push((parent_block, log));
+            }
+
+            // Storage logs
+            for storage_log in storage_logs {
+                store
+                    .account_storage_logs
+                    .entry(final_block)
+                    .or_default()
+                    .push((parent_block, storage_log));
+            }
+
+            let current_snapshot = store.current_snapshot_block.unwrap_or_default();
+
+            // Update flat tables if we're at the parent block
+            if current_snapshot == parent_block {
+                for (addr, _old_info, new_info) in
+                    update_batch.account_info_log_updates.iter().cloned()
+                {
+                    if new_info == AccountInfo::default() {
+                        store.account_info.remove(&addr.0);
+                    } else {
+                        store.account_info.insert(addr.0, new_info);
+                    }
+                }
+
+                for entry in update_batch.storage_log_updates.iter().cloned() {
+                    if entry.new_value.is_zero() {
+                        store.account_storage.remove(&(entry.address, entry.slot));
+                    } else {
+                        store
+                            .account_storage
+                            .insert((entry.address, entry.slot), entry.new_value);
+                    }
+                }
+
+                store.current_snapshot_block = Some(final_block);
+            }
+
+            // ==== OPTIMIZACIÓN 3: BATCH PROCESSING PARA STATE TRIE ====
+            {
+                let mut state_trie_store = store
+                    .state_trie_nodes
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
+
+                // Aplicar todos los state updates en batch
+                for (node_hash, node_data) in state_trie_updates {
+                    state_trie_store.insert(node_hash, node_data);
+                }
+            }
+
+            // State trie invalidations
+            for node_hash in update_batch.invalidated_state_nodes {
+                store
+                    .state_trie_pruning_log
+                    .entry(final_block)
+                    .or_default()
+                    .push(node_hash.0);
+            }
+
+            // Code updates
+            for (hashed_address, code) in update_batch.code_updates {
+                store.account_codes.insert(hashed_address, code);
+            }
+
+            // ==== OPTIMIZACIÓN 4: STORAGE UPDATES AGRUPADOS POR ADDRESS ====
+            for (hashed_address, prepared_nodes) in storage_updates_by_address {
+                let mut addr_store = store
                     .storage_trie_nodes
                     .entry(hashed_address)
                     .or_default()
                     .lock()
-                    .map_err(|_| StoreError::LockError)?
-                    .insert(node_hash, node_data);
-            }
-            for node_hash in invalid_nodes {
-                let key_hash = node_hash_to_fixed_size(node_hash.into());
-                store
-                    .storage_trie_pruning_log
-                    .entry(final_block)
-                    .or_default()
-                    .push((key_address, key_hash));
-            }
-        }
+                    .map_err(|_| StoreError::LockError)?;
 
-        for block in update_batch.blocks {
-            // store block
-            let number = block.header.number;
-            let hash = block.hash();
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                store
-                    .transaction_locations
-                    .entry(transaction.compute_hash())
-                    .or_default()
-                    .push((number, hash, index as u64));
+                // Aplicar todos los nodos de esta address en batch
+                for (node_hash, node_data) in prepared_nodes {
+                    addr_store.insert(node_hash, node_data);
+                }
             }
-            store.bodies.insert(hash, block.body);
-            store.headers.insert(hash, block.header);
-            store.block_numbers.insert(hash, number);
-        }
 
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                store
-                    .receipts
-                    .entry(block_hash)
-                    .or_default()
-                    .insert(index as u64, receipt);
+            // Storage invalidations agrupadas
+            for (hashed_address, invalid_nodes) in storage_invalidations_by_address {
+                let key_address: [u8; 32] = hashed_address.into();
+                for node_hash in invalid_nodes {
+                    let key_hash = node_hash_to_fixed_size(node_hash);
+                    store
+                        .storage_trie_pruning_log
+                        .entry(final_block)
+                        .or_default()
+                        .push((key_address, key_hash));
+                }
+            }
+
+            // Block storage
+            for block in update_batch.blocks {
+                let number = block.header.number;
+                let hash = block.hash();
+
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    store
+                        .transaction_locations
+                        .entry(transaction.compute_hash())
+                        .or_default()
+                        .push((number, hash, index as u64));
+                }
+                store.bodies.insert(hash, block.body);
+                store.headers.insert(hash, block.header);
+                store.block_numbers.insert(hash, number);
+            }
+
+            // Receipts
+            for (block_hash, receipts) in update_batch.receipts {
+                for (index, receipt) in receipts.into_iter().enumerate() {
+                    store
+                        .receipts
+                        .entry(block_hash)
+                        .or_default()
+                        .insert(index as u64, receipt);
+                }
             }
         }
 
@@ -450,7 +502,7 @@ impl StoreEngine for Store {
     }
 
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
-        const KEEP_BLOCKS: u64 = 1024;
+        const KEEP_BLOCKS: u64 = 128;
         let mut store = self.inner()?;
 
         // Get the block number of the last state trie pruning log entry
@@ -458,29 +510,30 @@ impl StoreEngine for Store {
             let keep_from = max_block.block_number.saturating_sub(KEEP_BLOCKS);
             let keep_from_key = BlockNumHash {
                 block_number: keep_from,
-                block_hash: H256::zero(), // Valor mínimo para el bloque
+                block_hash: H256::zero(),
             };
 
-            // Split the pruning log into entries to keep and entries to prune
-            // Use the returned log to prune the state trie
-            let splited_log = store.state_trie_pruning_log.split_off(&keep_from_key);
-            let entries_to_prune =
-                std::mem::replace(&mut store.state_trie_pruning_log, splited_log);
+            let mut nodes_to_remove = Vec::new();
+            let mut keys_to_remove = Vec::new();
 
-            // Remove the nodes from the state trie
+            for (block, node_hashes) in store.state_trie_pruning_log.range(..keep_from_key) {
+                keys_to_remove.push(*block);
+                nodes_to_remove.extend(node_hashes.iter().map(|&h| NodeHash::Hashed(H256(h))));
+            }
+
+            // Remover entries del log
+            for key in keys_to_remove {
+                store.state_trie_pruning_log.remove(&key);
+            }
+
+            // Remover nodos del trie
             {
                 let mut state_trie_nodes = store
                     .state_trie_nodes
                     .lock()
                     .map_err(|_| StoreError::LockError)?;
-
-                for (_, node_hashes) in entries_to_prune {
-                    for node_hash_array in node_hashes {
-                        let node_hash = NodeHash::Hashed(H256(node_hash_array));
-                        if state_trie_nodes.get(&node_hash).is_some() {
-                            state_trie_nodes.remove(&node_hash);
-                        }
-                    }
+                for node_hash in nodes_to_remove {
+                    state_trie_nodes.remove(&node_hash);
                 }
             }
         }
@@ -493,22 +546,28 @@ impl StoreEngine for Store {
                 block_hash: H256::zero(),
             };
 
-            // Split the pruning log into entries to keep and entries to prune
-            // Use the returned log to prune the state trie
-            let entries_to_keep = store.storage_trie_pruning_log.split_off(&keep_from_key);
-            let entries_to_prune =
-                std::mem::replace(&mut store.storage_trie_pruning_log, entries_to_keep);
+            let mut storage_nodes_to_remove = Vec::new();
+            let mut storage_keys_to_remove = Vec::new();
 
-            // Remove the nodes from the storage trie
-            for (_, storage_entries) in entries_to_prune {
+            // Collect entries to remove
+            for (block, storage_entries) in store.storage_trie_pruning_log.range(..keep_from_key) {
+                storage_keys_to_remove.push(*block);
                 for (hashed_address, node_hash_fixed) in storage_entries {
-                    if let Some(addr_store) = store.storage_trie_nodes.get(&H256(hashed_address)) {
-                        if let Ok(mut addr_store) = addr_store.lock() {
-                            let node_hash = NodeHash::from_encoded_raw(&node_hash_fixed);
-                            if addr_store.get(&node_hash).is_some() {
-                                addr_store.remove(&node_hash);
-                            }
-                        }
+                    storage_nodes_to_remove.push((*hashed_address, *node_hash_fixed));
+                }
+            }
+
+            // Remover entries del log
+            for key in storage_keys_to_remove {
+                store.storage_trie_pruning_log.remove(&key);
+            }
+
+            // Remover nodos del storage trie
+            for (hashed_address, node_hash_fixed) in storage_nodes_to_remove {
+                if let Some(addr_store) = store.storage_trie_nodes.get(&H256(hashed_address)) {
+                    if let Ok(mut addr_store) = addr_store.lock() {
+                        let node_hash = NodeHash::from_encoded_raw(&node_hash_fixed);
+                        addr_store.remove(&node_hash);
                     }
                 }
             }

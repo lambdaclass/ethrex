@@ -31,6 +31,14 @@ impl ExtensionNode {
                 .child
                 .get_node(db)?
                 .ok_or(TrieError::InconsistentTree)
+                .map_err(|e| {
+                    tracing::error!(
+                        "Error getting child node: {:?}. Child: {:?}",
+                        e.to_string().as_str(),
+                        self.child
+                    );
+                    e
+                })
                 .unwrap();
 
             child_node.get(db, path)
