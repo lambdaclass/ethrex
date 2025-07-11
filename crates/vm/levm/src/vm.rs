@@ -225,17 +225,25 @@ impl<'a> VM<'a> {
 
     // Sends results over a socket
     fn send_results(opcode_acc: [(u64,f64); 256]) {
-        let mut stream = TcpStream::connect("127.0.0.1:5555").unwrap();
+        //print all opcodes
         for (opcode, (count, time)) in opcode_acc.into_iter().enumerate() {
             if count == 0 {
                 continue; // Skip opcodes that were not executed
             }
-            let mut buffer = [0; 1 + 8 * 2];
-            buffer[0] = opcode as u8;
-            buffer[1..9].copy_from_slice(&count.to_le_bytes());
-            buffer[9..17].copy_from_slice(&time.to_bits().to_le_bytes());
-            stream.write_all(&buffer).unwrap();
+            println!("OPCODE={} COUNT={} TIME={}", opcode, count, time);
         }
+
+        // let mut stream = TcpStream::connect("127.0.0.1:5555").unwrap();
+        // for (opcode, (count, time)) in opcode_acc.into_iter().enumerate() {
+        //     if count == 0 {
+        //         continue; // Skip opcodes that were not executed
+        //     }
+        //     let mut buffer = [0; 1 + 8 * 2];
+        //     buffer[0] = opcode as u8;
+        //     buffer[1..9].copy_from_slice(&count.to_le_bytes());
+        //     buffer[9..17].copy_from_slice(&time.to_bits().to_le_bytes());
+        //     stream.write_all(&buffer).unwrap();
+        // }
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
