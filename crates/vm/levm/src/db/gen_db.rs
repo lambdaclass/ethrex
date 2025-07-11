@@ -71,6 +71,10 @@ impl GeneralizedDatabase {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
+        // If the account was destroyed then we cannot rely on the DB to obtain its previous value
+        if self.destroyed_accounts.contains(&address) {
+            return Ok(Default::default())
+        }
         let value = self.store.get_storage_value(address, key)?;
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
