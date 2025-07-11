@@ -7,9 +7,7 @@ use bytes::Bytes;
 use ethrex_common::types::batch::Batch;
 use ethrex_common::{
     H256, U256,
-    types::{
-        AccountState, Block, BlockBody, BlockHeader, Receipt, batch::Batch, validate_block_body,
-    },
+    types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
