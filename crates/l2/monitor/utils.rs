@@ -15,7 +15,7 @@ pub async fn get_logs(
     let last_block_number = client
         .get_block_number()
         .await
-        .expect("Failed to get latest L1 block");
+        .map_err(|_| MonitorError::GetLatestBlock)?;
 
     let mut batch_committed_logs = Vec::new();
     while *last_block_fetched < last_block_number {

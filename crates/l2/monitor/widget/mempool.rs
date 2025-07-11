@@ -7,8 +7,9 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::monitor::widget::{
-    ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS,
+use crate::{
+    monitor::widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    sequencer::errors::MonitorError,
 };
 
 pub struct MempoolTable {
@@ -18,22 +19,25 @@ pub struct MempoolTable {
 }
 
 impl MempoolTable {
-    pub async fn new(rollup_client: &EthClient) -> Self {
+    pub async fn new() -> Self {
         Self {
             state: TableState::default(),
-            items: Self::refresh_items(rollup_client).await,
+            items: vec![],
         }
     }
 
-    pub async fn on_tick(&mut self, rollup_client: &EthClient) {
-        self.items = Self::refresh_items(rollup_client).await;
+    pub async fn on_tick(&mut self, rollup_client: &EthClient) -> Result<(), MonitorError> {
+        self.items = Self::refresh_items(rollup_client).await?;
+        Ok(())
     }
 
-    async fn refresh_items(rollup_client: &EthClient) -> Vec<(String, String, String, String)> {
+    async fn refresh_items(
+        rollup_client: &EthClient,
+    ) -> Result<Vec<(String, String, String, String)>, MonitorError> {
         let mempool = rollup_client
             .tx_pool_content()
             .await
-            .expect("Failed to get mempool content");
+            .map_err(|_| MonitorError::TxPoolError)?;
 
         let mut pending_txs = mempool
             .pending
@@ -56,7 +60,7 @@ impl MempoolTable {
             },
         );
 
-        pending_txs
+        Ok(pending_txs)
     }
 }
 

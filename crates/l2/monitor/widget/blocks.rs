@@ -80,7 +80,7 @@ impl BlocksTable {
         let last_l2_block_number = store
             .get_latest_block_number()
             .await
-            .expect("Failed to get latest L2 block");
+            .map_err(|_| MonitorError::GetLatestBlock)?;
 
         let mut new_blocks = Vec::new();
         while *last_l2_block_known < last_l2_block_number {

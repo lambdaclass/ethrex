@@ -59,11 +59,13 @@ impl EthrexMonitor {
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
     ) -> Result<Self, MonitorError> {
-        let eth_client = EthClient::new(cfg.eth.rpc_url.first().expect("No RPC URLs provided"))
-            .expect("Failed to create EthClient");
+        let eth_client = EthClient::new(cfg.eth.rpc_url.first().ok_or(
+            MonitorError::ConfigError("RPC list can't be empty".to_string()),
+        )?)
+        .map_err(MonitorError::EthClientError)?;
         // TODO: De-hardcode the rollup client URL
         let rollup_client =
-            EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
+            EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
 
         Ok(EthrexMonitor {
             title: if cfg.based.based {
@@ -74,16 +76,10 @@ impl EthrexMonitor {
             should_quit: false,
             tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
-            global_chain_status: GlobalChainStatusTable::new(
-                &eth_client,
-                cfg,
-                &store,
-                &rollup_store,
-            )
-            .await,
+            global_chain_status: GlobalChainStatusTable::new(cfg).await,
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
-            mempool: MempoolTable::new(&rollup_client).await,
+            node_status: NodeStatusTable::new(sequencer_state.clone()).await,
+            mempool: MempoolTable::new().await,
             batches_table: BatchesTable::new(
                 cfg.l1_committer.on_chain_proposer_address,
                 &eth_client,
@@ -208,11 +204,11 @@ impl EthrexMonitor {
     }
 
     pub async fn on_tick(&mut self) -> Result<(), MonitorError> {
-        self.node_status.on_tick(&self.store).await;
+        self.node_status.on_tick(&self.store).await?;
         self.global_chain_status
             .on_tick(&self.eth_client, &self.store, &self.rollup_store)
-            .await;
-        self.mempool.on_tick(&self.rollup_client).await;
+            .await?;
+        self.mempool.on_tick(&self.rollup_client).await?;
         self.batches_table
             .on_tick(&self.eth_client, &self.rollup_store)
             .await?;

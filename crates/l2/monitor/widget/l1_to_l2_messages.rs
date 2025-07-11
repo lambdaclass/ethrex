@@ -43,18 +43,18 @@ impl L1ToL2MessageStatus {
         common_bridge_address: Address,
         eth_client: &EthClient,
         store: &Store,
-    ) -> Self {
+    ) -> Result<Self, MonitorError> {
         if let Ok(Some(_tx)) = store.get_transaction_by_hash(l2_tx_hash).await {
-            Self::ProcessedOnL2
+            Ok(Self::ProcessedOnL2)
         } else if eth_client
             .get_pending_privileged_transactions(common_bridge_address)
             .await
-            .expect("Failed to get pending L1 to L2 messages")
+            .map_err(|_| MonitorError::GetPendingPrivilegedTx)?
             .contains(&l2_tx_hash)
         {
-            Self::Pending
+            Ok(Self::Pending)
         } else {
-            Self::Unknown
+            Ok(Self::Unknown)
         }
     }
 }
@@ -105,7 +105,7 @@ impl L1ToL2MessagesTable {
         let mut last_l1_block_fetched = eth_client
             .get_last_fetched_l1_block(common_bridge_address)
             .await
-            .expect("Failed to get last fetched L1 block")
+            .map_err(|_| MonitorError::GetLastFetchedL1)?
             .into();
         let items = Self::fetch_new_items(
             &mut last_l1_block_fetched,
@@ -138,13 +138,17 @@ impl L1ToL2MessagesTable {
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(eth_client, store).await;
+        self.refresh_items(eth_client, store).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
         Ok(())
     }
 
-    async fn refresh_items(&mut self, eth_client: &EthClient, store: &Store) {
+    async fn refresh_items(
+        &mut self,
+        eth_client: &EthClient,
+        store: &Store,
+    ) -> Result<(), MonitorError> {
         for (_kind, status, _l1_tx_hash, l2_tx_hash, ..) in self.items.iter_mut() {
             *status = L1ToL2MessageStatus::for_tx(
                 *l2_tx_hash,
@@ -152,8 +156,9 @@ impl L1ToL2MessagesTable {
                 eth_client,
                 store,
             )
-            .await;
+            .await?;
         }
+        Ok(())
     }
 
     async fn fetch_new_items(
@@ -169,7 +174,7 @@ impl L1ToL2MessagesTable {
             eth_client,
         )
         .await?;
-        Ok(Self::process_logs(&logs, common_bridge_address, eth_client, store).await)
+        Self::process_logs(&logs, common_bridge_address, eth_client, store).await
     }
 
     async fn process_logs(
@@ -177,12 +182,12 @@ impl L1ToL2MessagesTable {
         common_bridge_address: Address,
         eth_client: &EthClient,
         store: &Store,
-    ) -> Vec<L1ToL2MessagesRow> {
+    ) -> Result<Vec<L1ToL2MessagesRow>, MonitorError> {
         let mut processed_logs = Vec::new();
 
         for log in logs {
             let l1_to_l2_message = PrivilegedTransactionData::from_log(log.log.clone())
-                .expect("Failed to parse PrivilegedTxSent log");
+                .map_err(|_| MonitorError::PrivilegedTxParseError)?;
 
             let l1_to_l2_message_hash = keccak(
                 [
@@ -204,14 +209,14 @@ impl L1ToL2MessagesTable {
                     eth_client,
                     store,
                 )
-                .await,
+                .await?,
                 log.transaction_hash,
                 l1_to_l2_message_hash,
                 l1_to_l2_message.value,
             ));
         }
 
-        processed_logs
+        Ok(processed_logs)
     }
 }
 
