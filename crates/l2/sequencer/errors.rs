@@ -3,6 +3,7 @@ use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
@@ -297,4 +298,6 @@ pub enum ConnectionHandlerError {
 pub enum MonitorError {
     #[error("Failed because of io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Failed to fetch {0:?} logs from {1}")]
+    LogsSignatures(Vec<String>, Address),
 }
