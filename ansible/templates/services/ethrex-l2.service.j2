@@ -13,7 +13,7 @@ ExecStart={{ ethrex_dir }}/bin/ethrex l2 init \
           --l1.on-chain-proposer-address {{ on_chain_proposer_address }} \
           --committer.l1-private-key {{ committer_pk }} \
           --proof-coordinator.l1-private-key {{ proof_sender_pk }} \
-          --proof-coordinator.addr 127.0.0.1 \
+          --proof-coordinator.addr 0.0.0.0 \
           --block-producer.coinbase-address {{ coinbase_address }} \
           --validium \
           --eth.maximum-allowed-max-fee-per-gas {{ eth_max_allowed_fee_per_gas }} \
