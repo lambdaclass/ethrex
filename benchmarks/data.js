@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752242731536,
+  "lastUpdate": 1752245408771,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3505,6 +3505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211607389389,
             "range": "± 491996718",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3ce704c7b243aadc1a332c50d92bb5699d5c80e0",
+          "message": "chore(levm): upgrade levm vs revm bench  (#3557)\n\n**Motivation**\n\n- Ci generated comment is not updating.\n- Using a porcentual difference higher than 10% for showing results is\nto high.\n\n**Description**\n\nThis pr tackles two minor issues. \n\n- It modifies the bash script that puts the comment together, so the\ncomment can be found and updated by the ci.\n- It also changes the margin of error for which the benchmarks should be\nshown. Now the benchmarks are shown for a porcentual difference higher\nthan 5%, otherwise you can check all the benchmarks on the Detailed\nResults drop-down tab. This change is introduced with the intention of\nsolving issue #3462\n\n---------\n\nCo-authored-by: Edgar Luque <git@edgl.dev>",
+          "timestamp": "2025-07-11T13:54:46Z",
+          "tree_id": "980ba59cfc5db764c33abdc4e5cd13bc2c7a9ccc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3ce704c7b243aadc1a332c50d92bb5699d5c80e0"
+        },
+        "date": 1752245397857,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208177377382,
+            "range": "± 575729139",
             "unit": "ns/iter"
           }
         ]
