@@ -62,11 +62,11 @@ localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Sta
 localnet-only-ethrex: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with only ethrex
 	cp crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_only_ethrex.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+	docker logs -f $$(docker ps -q --filter name=spamoor)
 
 localnet-only-reth: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with only reth
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_only_reth.yaml
-	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+	docker logs -f $$(docker ps -q --filter name=spamoor)
 
 localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	cp crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
@@ -88,6 +88,14 @@ localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-packag
 stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
+
+stop-localnet-spamoor: ## 🛑 Stop spamoor from the local network
+	@echo "Stopping spamoor from the local network..."
+	@docker stop $$(docker ps -q --filter name=spamoor) >/dev/null 2>&1 || true
+
+start-localnet-spamoor: ## 🚀 Start spamoor from the local network
+	@echo "Starting spamoor from the local network..."
+	@docker start $$(docker ps -aq --filter name=spamoor) >/dev/null 2>&1 || true
 
 stop-localnet-silent:
 	@echo "Double checking local net is not already started..."
