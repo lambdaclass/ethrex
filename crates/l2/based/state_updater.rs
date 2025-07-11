@@ -7,7 +7,8 @@ use ethrex_blockchain::{
     sequencer_state::{SequencerState, SequencerStatus},
 };
 use ethrex_common::{Address, H256, U256, types::Block};
-use ethrex_l2_sdk::calldata::{Value, encode_calldata};
+use ethrex_l2_common::calldata::Value;
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
@@ -366,8 +367,7 @@ async fn retrieve_latest_batch_committed_head(
 
     let decoded_bytes = hex::decode(hex_string).map_err(|e| {
         StateUpdaterError::CalldataParsingError(format!(
-            "Failed to decode batch commitment hex string: {}",
-            e
+            "Failed to decode batch commitment hex string: {e}"
         ))
     })?;
 
