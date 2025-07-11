@@ -85,10 +85,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-# Temporary branch to address bug in Hive related to docker containers.
-# Issue: https://github.com/ethereum/hive/issues/1306
-# TODO: Revert back to 'master' branch once the bug is resolved (syncing with upstream).
-HIVE_BRANCH ?= temporary_fix_docker
+HIVE_BRANCH ?= master
 
 setup-hive: ## 🐝 Set up Hive testing framework
 	if [ -d "hive" ]; then \
