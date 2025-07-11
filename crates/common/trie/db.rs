@@ -30,6 +30,7 @@ impl InMemoryTrieDB {
 
 impl TrieDB for InMemoryTrieDB {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        tracing::debug!(key = hex::encode(key.as_ref()), "[QUERYING TRIE NODE]",);
         let lock = self.inner.lock().map_err(|_| TrieError::LockError)?;
         Ok(lock.get(&key).map(|full| {
             let mut v = full.clone();
