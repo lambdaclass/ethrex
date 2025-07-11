@@ -4,7 +4,10 @@ use ethrex_common::Address;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
+    sequencer::{
+        configs::{AlignedConfig, MonitorConfig},
+        utils::resolve_aligned_network,
+    },
 };
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
@@ -62,6 +65,8 @@ pub struct SequencerOptions {
     pub based_opts: BasedOptions,
     #[command(flatten)]
     pub aligned_opts: AlignedOptions,
+    #[command(flatten)]
+    pub monitor_opts: MonitorOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -79,6 +84,14 @@ pub struct SequencerOptions {
         help_heading = "Based options"
     )]
     pub based: bool,
+    #[clap(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_MONITOR",
+        help_heading = "Sequencer options"
+    )]
+    pub monitor: bool,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -153,6 +166,10 @@ impl From<SequencerOptions> for SequencerConfig {
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
                 aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
+            },
+            monitor: MonitorConfig {
+                enabled: opts.monitor,
+                tick_rate: opts.monitor_opts.tick_rate,
             },
         }
     }
@@ -413,11 +430,12 @@ pub struct ProofCoordinatorOptions {
 
 impl Default for ProofCoordinatorOptions {
     fn default() -> Self {
+        let proof_coordinator_l1_private_key = utils::parse_private_key(
+            "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+        )
+        .unwrap();
         Self {
-            proof_coordinator_l1_private_key:
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-                    .parse()
-                    .unwrap(),
+            proof_coordinator_l1_private_key,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
@@ -547,4 +565,11 @@ pub struct BlockFetcherOptions {
         help_heading = "Based options"
     )]
     pub fetch_block_step: u64,
+}
+
+#[derive(Parser, Default)]
+pub struct MonitorOptions {
+    /// time in ms between two ticks.
+    #[arg(short, long, default_value_t = 1000)]
+    tick_rate: u64,
 }

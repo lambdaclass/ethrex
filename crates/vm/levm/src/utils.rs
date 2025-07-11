@@ -2,19 +2,19 @@ use crate::{
     EVMConfig,
     call_frame::CallFrameBackup,
     constants::*,
-    db::{cache, gen_db::GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
+    l2_precompiles,
     opcodes::Opcode,
     precompiles::{
-        SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
-        is_precompile,
+        self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    vm::{Substate, VM},
+    vm::{Substate, VM, VMType},
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
@@ -127,9 +127,7 @@ pub fn restore_cache_state(
     callframe_backup: CallFrameBackup,
 ) -> Result<(), VMError> {
     for (address, account) in callframe_backup.original_accounts_info {
-        if let Some(current_account) =
-            cache::get_account_mut(&mut db.current_accounts_state, &address)
-        {
+        if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
             current_account.code = account.code;
         }
@@ -139,7 +137,9 @@ pub fn restore_cache_state(
         // This call to `get_account_mut` should never return None, because we are looking up accounts
         // that had their storage modified, which means they should be in the cache. That's why
         // we return an internal error in case we haven't found it.
-        let account = cache::get_account_mut(&mut db.current_accounts_state, &address)
+        let account = db
+            .current_accounts_state
+            .get_mut(&address)
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
@@ -382,9 +382,8 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let (authority_account, _address_was_cold) = self
-                .db
-                .access_account(&mut self.substate, authority_address)?;
+            let authority_account = self.db.get_account(authority_address)?;
+            self.substate.accessed_addresses.insert(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -394,7 +393,7 @@ impl<'a> VM<'a> {
             }
 
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
-            // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
+            // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
             if authority_account.info.nonce != auth_tuple.nonce {
                 continue;
@@ -554,7 +553,10 @@ impl<'a> VM<'a> {
     }
 
     pub fn is_precompile(&self, address: &Address) -> bool {
-        is_precompile(address, self.env.config.fork)
+        match self.vm_type {
+            VMType::L1 => precompiles::is_precompile(address, self.env.config.fork),
+            VMType::L2 => l2_precompiles::is_precompile(address, self.env.config.fork),
+        }
     }
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
-use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_l2_common::prover::ProverType;
@@ -22,7 +22,7 @@ pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
 pub mod l1_proof_verifier;
-mod l1_watcher;
+pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
@@ -78,6 +78,7 @@ pub async fn start_l2(
     });
     let _ = L1Committer::spawn(
         store.clone(),
+        blockchain.clone(),
         rollup_store.clone(),
         cfg.clone(),
         shared_state.clone(),
@@ -146,11 +147,26 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(&cfg, store, rollup_store, blockchain, shared_state)
-            .await
-            .inspect_err(|err| {
-                error!("Error starting Block Fetcher: {err}");
-            });
+        let _ = BlockFetcher::spawn(
+            &cfg,
+            store.clone(),
+            rollup_store.clone(),
+            blockchain,
+            shared_state.clone(),
+        )
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Fetcher: {err}");
+        });
+    }
+
+    if cfg.monitor.enabled {
+        task_set.spawn(monitor::start_monitor(
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+            cfg.clone(),
+        ));
     }
 
     while let Some(res) = task_set.join_next().await {

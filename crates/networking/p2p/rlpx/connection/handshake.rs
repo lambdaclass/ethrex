@@ -1,11 +1,13 @@
-use std::net::SocketAddr;
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use crate::{
-    network::P2PContext,
     rlpx::{
-        connection::{LocalState, RLPxConnection, RemoteState},
+        connection::server::{Established, InnerState},
         error::RLPxError,
-        frame::RLPxCodec,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
@@ -21,6 +23,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
+use futures::{StreamExt, stream::SplitStream};
 use k256::{
     PublicKey, SecretKey,
     ecdsa::{self, RecoveryId, SigningKey, VerifyingKey},
@@ -28,71 +31,114 @@ use k256::{
 };
 use rand::Rng;
 use sha3::{Digest, Keccak256};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::{TcpSocket, TcpStream},
+    sync::Mutex,
+};
+use tokio_util::codec::Framed;
+
+use super::{
+    codec::RLPxCodec,
+    server::{Initiator, Receiver},
+};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
 pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
 
-pub(crate) async fn as_receiver<S>(
-    context: P2PContext,
-    peer_addr: SocketAddr,
-    mut stream: S,
-) -> Result<RLPxConnection<S>, RLPxError>
-where
-    S: AsyncRead + AsyncWrite + std::marker::Unpin,
-{
-    let remote_state = receive_auth(&context.signer, &mut stream).await?;
-    let local_state = send_ack(remote_state.public_key, &mut stream).await?;
-    let hashed_nonces: [u8; 32] =
-        Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-    let node = Node::new(
-        peer_addr.ip(),
-        peer_addr.port(),
-        peer_addr.port(),
-        remote_state.public_key,
-    );
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
-    log_peer_debug(&node, "Completed handshake as receiver!");
-    Ok(RLPxConnection::new(
-        context.signer,
-        node,
+pub(crate) struct RemoteState {
+    pub(crate) public_key: H512,
+    pub(crate) nonce: H256,
+    pub(crate) ephemeral_key: PublicKey,
+    pub(crate) init_message: Vec<u8>,
+}
+
+pub(crate) struct LocalState {
+    pub(crate) nonce: H256,
+    pub(crate) ephemeral_key: SecretKey,
+    pub(crate) init_message: Vec<u8>,
+}
+
+pub(crate) async fn perform(
+    state: InnerState,
+) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
+    let (context, node, framed, inbound) = match state {
+        InnerState::Initiator(Initiator { context, node }) => {
+            let addr = SocketAddr::new(node.ip, node.tcp_port);
+            let mut stream = match tcp_stream(addr).await {
+                Ok(result) => result,
+                Err(error) => {
+                    log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
+                    context.table.lock().await.replace_peer(node.node_id());
+                    return Err(error)?;
+                }
+            };
+            let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
+            let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
+            // Local node is initator
+            // keccak256(nonce || initiator-nonce)
+            let hashed_nonces: [u8; 32] =
+                Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            log_peer_debug(&node, "Completed handshake as initiator");
+            (context, node, Framed::new(stream, codec), false)
+        }
+        InnerState::Receiver(Receiver {
+            context,
+            peer_addr,
+            stream,
+        }) => {
+            let Some(mut stream) = Arc::into_inner(stream) else {
+                return Err(RLPxError::StateError("Cannot use the stream".to_string()));
+            };
+            let remote_state = receive_auth(&context.signer, &mut stream).await?;
+            let local_state = send_ack(remote_state.public_key, &mut stream).await?;
+            // Remote node is initiator
+            // keccak256(nonce || initiator-nonce)
+            let hashed_nonces: [u8; 32] =
+                Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
+            let node = Node::new(
+                peer_addr.ip(),
+                peer_addr.port(),
+                peer_addr.port(),
+                remote_state.public_key,
+            );
+            log_peer_debug(&node, "Completed handshake as receiver");
+            (context, node, Framed::new(stream, codec), true)
+        }
+        InnerState::Established(_) => {
+            return Err(RLPxError::StateError("Already established".to_string()));
+        }
+    };
+    let (sink, stream) = framed.split();
+    Ok((
+        Established {
+            signer: context.signer.clone(),
+            sink: Arc::new(Mutex::new(sink)),
+            node: node.clone(),
+            storage: context.storage.clone(),
+            blockchain: context.blockchain.clone(),
+            capabilities: vec![],
+            negotiated_eth_capability: None,
+            negotiated_snap_capability: None,
+            last_block_range_update_block: 0,
+            broadcasted_txs: HashSet::new(),
+            requested_pooled_txs: HashMap::new(),
+            client_version: context.client_version.clone(),
+            connection_broadcast_send: context.broadcast.clone(),
+            table: context.table.clone(),
+            backend_channel: None,
+            inbound,
+        },
         stream,
-        codec,
-        context.storage,
-        context.blockchain,
-        context.client_version,
-        context.broadcast,
     ))
 }
 
-pub(crate) async fn as_initiator<S>(
-    context: P2PContext,
-    node: Node,
-    mut stream: S,
-) -> Result<RLPxConnection<S>, RLPxError>
-where
-    S: AsyncRead + AsyncWrite + std::marker::Unpin,
-{
-    let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
-    let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
-    // Local node is initator
-    // keccak256(nonce || initiator-nonce)
-    let hashed_nonces: [u8; 32] =
-        Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
-    log_peer_debug(&node, "Completed handshake as initiator!");
-    Ok(RLPxConnection::new(
-        context.signer,
-        node,
-        stream,
-        codec,
-        context.storage,
-        context.blockchain,
-        context.client_version,
-        context.broadcast,
-    ))
+async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
+    TcpSocket::new_v4()?.connect(addr).await
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
@@ -534,7 +580,7 @@ mod tests {
     use hex_literal::hex;
     use k256::SecretKey;
 
-    use crate::rlpx::{handshake::decode_ack_message, utils::decompress_pubkey};
+    use crate::rlpx::{connection::handshake::decode_ack_message, utils::decompress_pubkey};
 
     #[test]
     fn test_ack_decoding() {

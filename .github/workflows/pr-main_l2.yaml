@@ -26,15 +26,10 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
-
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -61,14 +56,14 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
+      - name: Install solc
+        uses: pontem-network/get-solc@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -111,6 +106,7 @@ jobs:
 
       - name: Run test
         run: |
+          sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           docker logs --follow ethrex_l2 &
@@ -123,14 +119,14 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
+      - name: Install solc
+        uses: pontem-network/get-solc@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
@@ -197,6 +193,7 @@ jobs:
 
       - name: Run test
         run: |
+          sudo chmod -R a+rw crates/l2
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
@@ -208,14 +205,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Build L1 docker image
         uses: docker/build-push-action@v6
@@ -226,9 +217,10 @@ jobs:
           push: false
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum
-          sudo apt-get update && sudo apt-get -y install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Start L1 & Deploy contracts
         run: |

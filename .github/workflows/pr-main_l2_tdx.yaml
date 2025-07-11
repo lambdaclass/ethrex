@@ -22,21 +22,14 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install solc
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: "true"
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Build prover
         run: |
@@ -49,7 +42,7 @@ jobs:
 
       - name: Build L2
         run: |
-          cargo build --release --bin ethrex --features l2,rollup_storage_libmdbx,metrics
+          cargo build --release --bin ethrex --features rollup_storage_libmdbx,metrics
 
       - name: Install rex
         run: |
@@ -78,4 +71,3 @@ jobs:
           sleep 30
           ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          

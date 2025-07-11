@@ -40,7 +40,7 @@ The full state diff sent for each batch will then be a sequence of bytes encoded
   - Note that values `8` and `16` are mutually exclusive, and if `type` is greater or equal to `4`, then the address is a contract. Each address can only appear once in the list.
 - Next the `WithdrawalLogs` field:
   - First two bytes are the number of entries, then come the tuples `(to_u160, amount_u256, tx_hash_u256)`.
-- Next the `DepositLogs` field:
+- Next the `PrivilegedTransactionLogs` field:
   - First two bytes are the number of entries, then come the tuples `(to_u160, value_u256)`.
 - In case of the only changes on an account are produced by withdrawals, the `ModifiedAccounts` for that address field must be omitted. In this case, the state diff can be computed by incrementing the nonce in one unit and subtracting the amount from the balance.
 
@@ -63,8 +63,8 @@ number_of_modified_accounts_u16 ||
 // Withdraw Logs
 number_of_withdraw_logs_u16 ||
 (to_u160 || amount_u256 || tx_hash_u256) ...
-// Deposit Logs
-number_of_deposit_logs_u16 ||
+// Privileged Transactions Logs
+number_of_privileged_transaction_logs_u16 ||
 (to_u160 || value_u256) ...
 ```
 

@@ -256,6 +256,15 @@ pub struct DeployerOptions {
     pub sp1_vk_path: String,
     #[arg(
         long,
+        default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the Risc0 image id / verification key. This is used for proof verification."
+    )]
+    pub risc0_vk_path: String,
+    #[arg(
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
@@ -331,19 +340,25 @@ impl Default for DeployerOptions {
             ]),
             randomize_contract_deployment: false,
             validium: false,
-            // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
+            // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
+            // Private Key: 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+            // (also found on fixtures/keys/private_keys_l1.txt)
             on_chain_proposer_owner: H160([
-                0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
-                0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
+                0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
+                0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
-            // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
+            // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
             bridge_owner: H160([
-                0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
-                0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
+                0x44, 0x17, 0x09, 0x2b, 0x70, 0xa3, 0xe5, 0xf1, 0x0d, 0xc5, 0x04, 0xd0, 0x94, 0x7d,
+                0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: format!(
                 "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            risc0_vk_path: format!(
+                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             deploy_based_contracts: false,
