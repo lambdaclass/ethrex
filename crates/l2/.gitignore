@@ -6,3 +6,5 @@ solc_out
 
 # qpl-tool temp files
 out/
+
+*.redb

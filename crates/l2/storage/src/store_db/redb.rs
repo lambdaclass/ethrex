@@ -347,7 +347,13 @@ impl StoreEngineRollup for RedBStoreRollup {
     }
 
     async fn get_latest_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
-        Ok(None)
+        let read_txn = self.db.begin_read().map_err(Box::new)?;
+        let table = read_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
+
+        let last_entry = table.last()?;
+
+        Ok(last_entry.map(|entry| entry.0.value()))
+        // Ok(last_entry)
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
