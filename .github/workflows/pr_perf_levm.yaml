@@ -15,19 +15,12 @@ jobs:
     name: Benchmark for PR
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR
+      - name: Checkout sources
         uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          ref: ${{ github.head_ref }}
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.87.0
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Build main benchmark
         run: |
@@ -43,19 +36,12 @@ jobs:
     name: Benchmark for Main
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Checkout sources
         uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          ref: main
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.87.0
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Build main benchmark
         run: |

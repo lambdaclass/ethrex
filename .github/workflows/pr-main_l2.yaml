@@ -26,15 +26,10 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
-
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -61,14 +56,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install solc
         uses: pontem-network/get-solc@master
@@ -130,14 +119,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install solc
         uses: pontem-network/get-solc@master
@@ -222,14 +205,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Build L1 docker image
         uses: docker/build-push-action@v6

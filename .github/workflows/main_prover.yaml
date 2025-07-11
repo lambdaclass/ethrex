@@ -19,20 +19,11 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Check solc
         run: solc --version
-
-      - name: Set up Rust cache
-        # if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: "true"
 
       - name: RISC-V SP1 toolchain install
         # if: ${{ always() && github.event_name == 'merge_group' }}
