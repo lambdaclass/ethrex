@@ -72,6 +72,9 @@ impl LEVM {
             }
             let account = db.current_accounts_state.get(&PROBLEMATIC_ADDRESS);
             info!("Account before tx: {account:?}");
+            let d_c_addr = Address::from_str("0x20d50924b373978162df1afc079f0c9a62fcb669").unwrap();
+            let account = db.current_accounts_state.get(&d_c_addr);
+            info!("Account {d_c_addr} before tx: {account:?}");
             *X.lock().unwrap() = block.header.number == 3302799 && tx_idx == 13;
             
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
