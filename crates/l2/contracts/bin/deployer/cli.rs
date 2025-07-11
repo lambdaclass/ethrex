@@ -372,8 +372,6 @@ impl Default for DeployerOptions {
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 300,
-            inclusion_target: 20,
-            inclusion_tolerance: 5,
         }
     }
 }
