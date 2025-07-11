@@ -1,9 +1,8 @@
 # Summary
 
 - [Getting started](./getting-started/README.md)
-  - [Installing ethrex]()
-    - [Build from source]()
-  - [Running a node]()
+  - [Installing ethrex](./getting-started/installing.md)
+  - [Running a node](./getting-started/running.md)
   - [Migrating from another client]()
 
 - [Roadmap](./getting-started/roadmap.md)
