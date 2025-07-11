@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
 use crate::rlpx::l2::messages::{GetBatchSealed, GetBatchSealedResponse, L2Message};
 use bytes::Bytes;
-#[cfg(feature = "l2")]
 use ethrex_common::types::batch::Batch;
 use ethrex_common::{
     H256, U256,
