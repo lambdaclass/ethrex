@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752240570853,
+  "lastUpdate": 1752241141515,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7032,6 +7032,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006386277511961722,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f466fb8216f85442d763a8ed6a10a36f05e8c93f",
+          "message": "feat(l2): proxied l2 system contracts (#3421)\n\n**Motivation**\n\nWe want to be able to upgrade L2 system contracts.\n\n**Description**\n\nThis makes it so that the L2 contracts themselves are proxies. Their\ninitial implementations are kept in the genesis for ease of deployment\nand to avoid keeping them empty in the first blocks.\n\nSince the proxies need to be embedded in the genesis, they can't be\ndeployed with a constructor, so their\n[ERC-1967](https://eips.ethereum.org/EIPS/eip-1967) slots are set\ndirectly.\n\nA function is added to the L1 CommonBridge to allow upgrading the L2\ncontracts. A special address (0xf000) is used to authenticate the\nupgrade.\n\nCloses #3345",
+          "timestamp": "2025-07-11T12:27:27Z",
+          "tree_id": "5da2a6cdd7e6ca4748dd0f07fac5768e8cfe3540",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f466fb8216f85442d763a8ed6a10a36f05e8c93f"
+        },
+        "date": 1752241129775,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012324395198522623,
             "unit": "Mgas/s"
           }
         ]
