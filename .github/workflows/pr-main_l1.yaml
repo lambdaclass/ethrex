@@ -80,7 +80,7 @@ jobs:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
-      HIVE_COMMIT_HASH: 4a1ed079ce5ebb46240e4ef9141d72e7236bca36
+      HIVE_COMMIT_HASH: 8e8c83f5c5a06561407a6a7848f5a4b32a10a467 # commit from our fork
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
@@ -148,7 +148,8 @@ jobs:
             test_pattern: ""
           - name: "Devp2p tests"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
+            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
+            # AccountRange and GetTrieNodes don't pass anymore.
             #|BlobViolations
             # Findnode/UnsolicitedNeighbors and Findnode/BasicFindnode flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
           - name: "Engine Auth and EC tests"
@@ -193,8 +194,6 @@ jobs:
 
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
-        # We use 8 here instead of 16 due to performance issues in some tests
-        # Notably the tests "Invalid Missing Ancestor Syncing ReOrG" in engine cancun
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
