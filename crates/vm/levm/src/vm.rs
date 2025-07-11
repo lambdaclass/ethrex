@@ -173,7 +173,7 @@ impl<'a> VM<'a> {
         let context_result = self.run_execution(&mut acc);
         
         Self::send_results(acc);
-        
+
         let context_result= context_result?;
 
         let report = self.finalize_execution(context_result)?;
@@ -225,7 +225,7 @@ impl<'a> VM<'a> {
 
     // Sends results over a socket
     fn send_results(opcode_acc: [(u64,f64); 256]) {
-        let mut stream = TcpStream::connect("79.157.216.216:25565").unwrap();
+        let mut stream = TcpStream::connect("localhost:5555").unwrap();
         for (opcode, (count, time)) in opcode_acc.into_iter().enumerate() {
             if count == 0 {
                 continue; // Skip opcodes that were not executed
