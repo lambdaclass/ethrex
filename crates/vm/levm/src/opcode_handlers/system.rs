@@ -591,6 +591,7 @@ impl<'a> VM<'a> {
         } else {
             self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
+            self.get_account_mut(to)?.storage.clear();
 
             self.substate.selfdestruct_set.insert(to);
         }
