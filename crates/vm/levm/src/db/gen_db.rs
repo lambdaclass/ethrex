@@ -74,7 +74,7 @@ impl GeneralizedDatabase {
         // If the account was destroyed then we cannot rely on the DB to obtain its previous value
         // This is critical when executing block in batches, as an account may be destructed and created within the same batch
         if self.destroyed_accounts.contains(&address) {
-            return Ok(Default::default())
+            return Ok(Default::default());
         }
         let value = self.store.get_storage_value(address, key)?;
         // Account must already be in initial_accounts_state
