@@ -55,7 +55,7 @@
     - name: Download ethrex prover SP1
       become: false
       get_url:
-        url: http://localhost:8000/ethrex_prover_sp1-linux_{{ ansible_architecture }}
+        url: https://github.com/lambdaclass/ethrex/releases/download/{{ ethrex_version }}/ethrex_prover_sp1-linux_{{ ansible_architecture }}
         dest: "{{ ethrex_dir }}/bin/ethrex_prover"
         mode: "0744"
 

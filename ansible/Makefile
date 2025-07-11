@@ -6,7 +6,7 @@ help:
 all: inventory ethrex-l2
 
 inventory: ## Generates inventory for ansible
-	@if [ -n "$(DATABASE_IP)" ] || [ -n "$(EXPLORER_FRONTEND_IP)" ] || [ -n "$(EXPLORER_BACKEND_IP)" ] || [ -n "$(L1_IP)" ] || [ -n "$(L2_IP)" ] || [ -n "$(PROVER_SP1_IP)" ] || [ -n "$(MONITORING_IP)" ]; then \
+	@if [ -n "$(DATABASE_IP)" ] || [ -n "$(EXPLORER_FRONTEND_IP)" ] || [ -n "$(EXPLORER_BACKEND_IP)" ] || [ -n "$(L1_IP)" ] || [ -n "$(L2_IP)" ] || [ -n "$(PROVER_EXEC_IP)" ] || [ -n "$(PROVER_SP1_IP)" ] || [ -n "$(MONITORING_IP)" ]; then \
 		truncate -s0 inventory.ini; \
 		if [ -n "$(DATABASE_IP)" ]; then \
 			echo "[database]" >> inventory.ini; \
@@ -33,6 +33,11 @@ inventory: ## Generates inventory for ansible
 			for ip in $$(echo $(L2_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
+		if [ -n "$(PROVER_EXEC_IP)" ]; then \
+			echo "[prover_exec]" >> inventory.ini; \
+			for ip in $$(echo $(PROVER_EXEC_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			echo "" >> inventory.ini; \
+		fi; \
 		if [ -n "$(PROVER_SP1_IP)" ]; then \
 			echo "[prover_sp1]" >> inventory.ini; \
 			for ip in $$(echo $(PROVER_SP1_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=admin ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
@@ -44,7 +49,7 @@ inventory: ## Generates inventory for ansible
 			echo "" >> inventory.ini; \
 		fi; \
 	else \
-		echo "Error: At least one of DATABASE_IP, EXPLORER_FRONTEND_IP, EXPLORER_BACKEND_IP, L1_IP, L2_IP, or MONITORING_IP must be set." 1>&2; exit 1; \
+		echo "Error: At least one of DATABASE_IP, EXPLORER_FRONTEND_IP, EXPLORER_BACKEND_IP, L1_IP, L2_IP, PROVER_EXEC_IP, PROVER_SP1_IP, or MONITORING_IP must be set." 1>&2; exit 1; \
 	fi
 
 database: ## Installs Postgres database
@@ -66,6 +71,11 @@ ethrex-l2: ## Installs Ethrex L2
 	ETH_TESTNET_RPC=$(TESTNET_RPC)
 	INFURA_API_KEY=$(INFURA_API_KEY)
 	ansible-playbook -i inventory.ini ethrex-l2.yml
+
+ethrex-prover-exec: ## Installs ethrex prover exec
+	ETHREX_SEQUENCER_ADDRESS=$(ETHREX_SEQUENCER_ADDRESS)
+	ETHREX_SEQUENCER_PORT=$(ETHREX_SEQUENCER_PORT)
+	ansible-playbook -i inventory.ini ethrex-prover-exec.yml
 
 ethrex-prover-sp1: ## Installs ethrex prover SP1
 	ETHREX_SEQUENCER_ADDRESS=$(ETHREX_SEQUENCER_ADDRESS)
