@@ -56,35 +56,21 @@ jobs:
           - ubuntu-22.04
           - ubuntu-22.04-arm
           - macos-latest
+        binary:
+          - ethrex_prover
+          - ethrex_replay
         include:
           - platform: ubuntu-22.04
-            rustflags: -C target-cpu=native
-            binary: ethrex_prover
-            os: linux
-            arch: x86_64
-          - platform: ubuntu-22.04
-            rustflags: -C target-cpu=native
-            binary: ethrex_replay
             os: linux
             arch: x86_64
           - platform: ubuntu-22.04-arm
-            rustflags: -C target-cpu=native
-            binary: ethrex_prover
-            os: linux
-            arch: aarch64
-          - platform: ubuntu-22.04-arm
-            rustflags: -C target-cpu=native
-            binary: ethrex_replay
             os: linux
             arch: aarch64
           - platform: macos-latest
-            binary: ethrex_prover
             os: macos
             arch: aarch64
-          - platform: macos-latest
-            binary: ethrex_replay
-            os: macos
-            arch: aarch64
+          - os: linux
+            rustflags: -C target-cpu=native
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -121,23 +107,18 @@ jobs:
   build-prover-and-replay-sp1:
     strategy:
       matrix:
+        platform:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+        binary:
+          - ethrex_prover
+          - ethrex_replay
         include:
           - platform: ubuntu-22.04
-            binary: ethrex_prover
-            os: linux
-            arch: x86_64
-          - platform: ubuntu-22.04
-            binary: ethrex_replay
-            os: linux
             arch: x86_64
           - platform: ubuntu-22.04-arm
-            binary: ethrex_prover
-            os: linux
             arch: aarch64
-          - platform: ubuntu-22.04-arm
-            binary: ethrex_replay
-            os: linux
-            arch: aarch64
+          - os: linux # This property will be added to all matrix combinations
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -196,13 +177,11 @@ jobs:
   build-prover-and-replay-risc0:
     strategy:
       matrix:
+        binary:
+          - ethrex_prover
+          - ethrex_replay
         include:
           - platform: ubuntu-22.04
-            binary: ethrex_prover
-            os: linux
-            arch: x86_64
-          - platform: ubuntu-22.04
-            binary: ethrex_replay
             os: linux
             arch: x86_64
     runs-on: ${{ matrix.platform }}
