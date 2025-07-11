@@ -112,34 +112,34 @@ impl MemoryV2 {
             return Ok(Vec::new());
         }
 
-        let new_size = offset.checked_add(size).unwrap();
+        let new_size = offset.wrapping_add(size);
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).unwrap();
+        let true_offset = offset.wrapping_add(self.current_base);
 
         let buf = self.buffer.borrow();
         #[allow(unsafe_code, clippy::unwrap_used)]
         unsafe {
             Ok(buf
-                .get_unchecked(true_offset..(true_offset.checked_add(size).unwrap()))
+                .get_unchecked(true_offset..(true_offset.wrapping_add(size)))
                 .to_vec())
         }
     }
 
     #[inline]
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
-        let new_size = offset.checked_add(N).unwrap();
+        let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).unwrap();
+        let true_offset = offset.wrapping_add(self.current_base);
 
         let buf = self.buffer.borrow();
         #[allow(unsafe_code, clippy::unwrap_used)]
         unsafe {
             Ok(*buf
-                .get_unchecked(true_offset..(true_offset.checked_add(N).unwrap()))
-                .first_chunk::<N>()
-                .unwrap_unchecked())
+                .get_unchecked(true_offset..(true_offset.checked_add(N).ok_or(OutOfBounds)?))
+                .as_ptr()
+                .cast::<[u8; N]>())
         }
     }
 

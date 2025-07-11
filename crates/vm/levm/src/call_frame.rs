@@ -43,12 +43,19 @@ impl Stack {
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
         // check it again.
+
+        if self.offset < N {
+            Err(ExceptionalHalt::StackUnderflow)?;
+        }
+
         #[expect(unsafe_code)]
         let values = unsafe {
             self.values
                 .get_unchecked(self.offset..)
-                .first_chunk::<N>()
-                .ok_or(ExceptionalHalt::StackUnderflow)?
+                .as_ptr()
+                .cast::<[U256; N]>()
+                .as_ref()
+                .unwrap_unchecked()
         };
         self.offset = next_offset;
 
@@ -68,9 +75,11 @@ impl Stack {
         // `self.offset` is known to be within `STACK_LIMIT`.
         #[expect(unsafe_code)]
         unsafe {
-            self.values
+            let ptr = self
+                .values
                 .get_unchecked_mut(next_offset..self.offset)
-                .copy_from_slice(values);
+                .as_mut_ptr();
+            std::ptr::copy_nonoverlapping(values.as_ptr(), ptr, N);
         }
         self.offset = next_offset;
 
@@ -204,6 +213,7 @@ pub struct CallFrameBackup {
 }
 
 impl CallFrameBackup {
+    #[inline]
     pub fn backup_account_info(
         &mut self,
         address: Address,
@@ -225,6 +235,7 @@ impl CallFrameBackup {
         self.original_account_storage_slots.clear();
     }
 
+    #[inline]
     pub fn extend(&mut self, other: CallFrameBackup) {
         self.original_account_storage_slots
             .extend(other.original_account_storage_slots);
@@ -276,6 +287,7 @@ impl CallFrame {
         }
     }
 
+    #[inline(always)]
     pub fn next_opcode(&self) -> Opcode {
         self.bytecode
             .get(self.pc)
@@ -284,11 +296,13 @@ impl CallFrame {
             .unwrap_or(Opcode::STOP)
     }
 
+    #[inline]
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
         self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
+    #[inline]
     pub fn pc(&self) -> usize {
         self.pc
     }
@@ -303,6 +317,7 @@ impl CallFrame {
         Ok(())
     }
 
+    #[inline]
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
         self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
         self.bytecode = code;

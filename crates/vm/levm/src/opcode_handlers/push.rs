@@ -30,8 +30,8 @@ impl<'a> VM<'a> {
                 *current_call_frame
                     .bytecode
                     .get_unchecked(pc_offset..pc_offset_end)
-                    .first_chunk::<N>()
-                    .unwrap_unchecked()
+                    .as_ptr()
+                    .cast::<[u8; N]>()
             };
 
             let value = u256_from_big_endian_const(bytes);

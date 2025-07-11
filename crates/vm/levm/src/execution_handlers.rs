@@ -39,7 +39,7 @@ impl<'a> VM<'a> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
         match opcode {
             Opcode::PUSH32 => self.op_push::<32>(),
