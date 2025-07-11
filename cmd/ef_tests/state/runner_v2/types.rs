@@ -37,6 +37,7 @@ impl Display for Tests {
     }
 }
 
+
 #[derive(Debug)]
 pub struct Test {
     pub name: String,
@@ -113,12 +114,14 @@ impl<'de> Deserialize<'de> for Tests {
                     "error deserializing test \"{test_name}\", \"transaction\" field: {err}"
                 ))
             })?;
+
             let mut test_cases: Vec<TestCase> = Vec::new();
             for fork in post.forks.keys() {
                 let fork_test_cases = post.forks.get(fork).unwrap();
                 for case in fork_test_cases {
+                    let data_index = case.indexes.get("data").unwrap().as_usize();
                     let test_case = TestCase {
-                        data: possible_data[case.indexes.get("data").unwrap().as_usize()].clone(),
+                        data: possible_data[data_index].clone(),
                         value: possible_values[case.indexes.get("value").unwrap().as_usize()],
                         gas: possible_gas_limit[case.indexes.get("gas").unwrap().as_usize()],
                         tx_bytes: case.txbytes.clone(),
@@ -126,8 +129,19 @@ impl<'de> Deserialize<'de> for Tests {
                         nonce: raw_tx_field.nonce,
                         secret_key: raw_tx_field.secret_key,
                         sender: raw_tx_field.sender,
+                        max_fee_per_blob_gas: raw_tx_field.max_fee_per_blob_gas,
+                        max_fee_per_gas: raw_tx_field.max_fee_per_gas,
+                        max_priority_fee_per_gas: raw_tx_field.max_priority_fee_per_gas,
                         to: raw_tx_field.to.clone(),
                         fork: *fork,
+                        authorization_list: raw_tx_field.authorization_list.clone(),
+                        access_list: raw_tx_field.access_lists.clone().unwrap_or_default()
+                            [data_index]
+                            .clone(),
+                        blob_versioned_hashes: raw_tx_field
+                            .blob_versioned_hashes
+                            .clone()
+                            .unwrap_or_default(),
                         post: TestCasePost {
                             hash: case.hash,
                             logs: case.logs,
@@ -176,10 +190,7 @@ impl<'de> Deserialize<'de> for Tests {
                 })?,
                 test_cases,
             };
-            println!("A ver el prestate--");
-            for key in test.pre.keys() {
-                println!("Key: {}, state {}", key, test.pre.get(key).unwrap());
-            }
+
             ef_tests.push(test);
         }
         Ok(Self(ef_tests))
@@ -193,12 +204,27 @@ pub struct TestCase {
     pub value: U256,
     pub tx_bytes: Bytes,
     pub gas_price: Option<U256>,
+    pub max_fee_per_gas: Option<U256>,
+    pub max_priority_fee_per_gas: Option<U256>,
+    pub max_fee_per_blob_gas: Option<U256>,
     pub nonce: u64,
     pub secret_key: H256,
     pub sender: Address,
     pub to: TxKind,
     pub fork: Fork,
     pub post: TestCasePost,
+    pub blob_versioned_hashes: Vec<H256>,
+    pub access_list: Vec<EFTestAccessListItem>,
+    pub authorization_list: Option<Vec<EFTestAuthorizationListTuple>>,
+}
+impl TestCase {
+    pub fn expects_exception(&self) -> bool {
+        if let Some(_) = self.post.expected_exception {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Display for TestCase {
