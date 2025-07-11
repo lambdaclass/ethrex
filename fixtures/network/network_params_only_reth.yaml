@@ -22,7 +22,4 @@ spamoor_params:
   spammers:
     - scenario: eoatx
       config:
-        throughput: 10000   
-
-grafana_params:
-  additional_dashboards: ["./ethrex_l1_perf.json"]
+        throughput: 10000
