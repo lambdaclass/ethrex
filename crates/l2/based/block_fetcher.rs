@@ -36,7 +36,7 @@ pub enum BlockFetcherError {
     EthClientError(#[from] ethrex_rpc::clients::EthClientError),
     #[error("Block Fetcher failed due to a Store error: {0}")]
     StoreError(#[from] ethrex_storage::error::StoreError),
-    #[error("State Updater failed due to a RollupStore error: {0}")]
+    #[error("Block Fetcher failed due to a RollupStore error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
     #[error("Internal Error: {0}")]
     InternalError(String),

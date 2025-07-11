@@ -430,7 +430,17 @@ impl StoreEngineRollup for SQLStore {
     }
 
     async fn get_latest_batch_number(&self) -> Result<Option<u64>, RollupStoreError> {
-        Ok(None)
+        let mut row = self.query("SELECT MAX(batch) from blocks ", ()).await?;
+        let Some(row) = row.next().await? else {
+            return Ok(None);
+        };
+        let latest_batch_number = read_from_row_int(&row, 0)?;
+        println!("latest_batch_number {latest_batch_number:?}");
+        if latest_batch_number == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some(latest_batch_number))
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
