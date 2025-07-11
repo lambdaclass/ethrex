@@ -43,6 +43,7 @@ keccak-hash.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
+tui-logger.workspace = true
 
 cfg-if = "1.0.0"
 

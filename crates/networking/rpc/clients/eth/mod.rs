@@ -615,7 +615,7 @@ impl EthClient {
         from_block: U256,
         to_block: U256,
         address: Address,
-        topic: H256,
+        topics: Vec<H256>,
     ) -> Result<Vec<RpcLog>, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -626,7 +626,7 @@ impl EthClient {
                     "fromBlock": format!("{:#x}", from_block),
                     "toBlock": format!("{:#x}", to_block),
                     "address": format!("{:#x}", address),
-                    "topics": [format!("{:#x}", topic)]
+                    "topics": topics.iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>()
                 }
             )]),
         };
@@ -674,6 +674,34 @@ impl EthClient {
             jsonrpc: "2.0".to_string(),
             method: "eth_getBalance".to_string(),
             params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetBalanceError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetBalanceError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        block: BlockIdentifier,
+    ) -> Result<U256, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getStorageAt".to_string(),
+            params: Some(vec![
+                json!(format!("{:#x}", address)),
+                json!(format!("{:#x}", slot)),
+                block.into(),
+            ]),
         };
 
         match self.send_request(request).await {
