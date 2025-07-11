@@ -158,7 +158,7 @@ pub fn parse_ef_test_dir(
         })?;
         for test in tests.0.iter_mut() {
             test.dir = test_dir.path().to_str().unwrap().to_string();
-            let relative_path = get_test_directories_names(test_dir.path());
+            let relative_path = get_test_relative_path(test_dir.path());
             if !parsed_directory_tests.contains(&relative_path) {
                 parsed_directory_tests.push(relative_path);
             }
