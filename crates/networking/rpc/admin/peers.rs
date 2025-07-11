@@ -49,7 +49,7 @@ impl From<PeerData> for RpcPeer {
         let mut protocols = Protocols::default();
         // Fill protocol data
         for cap in &peer.supported_capabilities {
-            match cap.protocol {
+            match cap.protocol() {
                 "p2p" => {
                     protocols.p2p = Some(ProtocolData {
                         version: cap.version,
@@ -111,16 +111,7 @@ mod tests {
         // Set node capabilities and other relevant data
         peer.is_connected = true;
         peer.is_connection_inbound = false;
-        peer.supported_capabilities = vec![
-            Capability {
-                protocol: "eth",
-                version: 68,
-            },
-            Capability {
-                protocol: "snap",
-                version: 1,
-            },
-        ];
+        peer.supported_capabilities = vec![Capability::eth(68), Capability::snap(1)];
         peer.node.version = Some("ethrex/test".to_string());
         // The first serialized peer shown in geth's documentation example: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-admin#admin-peers
         // The fields "localAddress", "static", "trusted" and "name" were removed as we do not have the necessary information to show them
