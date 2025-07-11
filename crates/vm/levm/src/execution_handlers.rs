@@ -1,9 +1,5 @@
 use crate::{
-    constants::*,
-    errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
-    gas_cost::CODE_DEPOSIT_COST,
-    opcodes::Opcode,
-    vm::VM,
+    call_frame::X, constants::*, errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError}, gas_cost::CODE_DEPOSIT_COST, opcodes::Opcode, vm::VM
 };
 
 use bytes::Bytes;
@@ -41,7 +37,7 @@ impl<'a> VM<'a> {
     }
 
     pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
-        if self.debug_op_gas {
+        if *(X.lock().unwrap()) {
             info!("Executing opcode {opcode:?}");
         }
         match opcode {

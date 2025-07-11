@@ -72,12 +72,9 @@ impl LEVM {
             }
             let account = db.current_accounts_state.get(&PROBLEMATIC_ADDRESS);
             info!("Account before tx: {account:?}");
-            let report = if block.header.number == 3302799 && tx_idx == 13 {
-                *X.lock().unwrap() = true;
-                Self::execute_tx_debug_op_gas(tx, tx_sender, &block.header, db, vm_type.clone())?
-            } else {
-                Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?
-            };
+            *X.lock().unwrap() = block.header.number == 3302799 && tx_idx == 13;
+            
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -163,23 +160,6 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
-
-        vm.execute().map_err(VMError::into)
-    }
-
-    pub fn execute_tx_debug_op_gas(
-        // The transaction to execute.
-        tx: &Transaction,
-        // The transactions recovered address
-        tx_sender: Address,
-        // The block header for the current block.
-        block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
-        vm_type: VMType,
-    ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
-        vm.debug_op_gas = true;
 
         vm.execute().map_err(VMError::into)
     }
