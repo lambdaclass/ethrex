@@ -7,7 +7,6 @@ use crate::{
         account_info_log_entry::AccountInfoLogEntry,
         account_storage_log_entry::AccountStorageLogEntry, block_num_hash::BlockNumHash,
     },
-    trie_db::utils::node_hash_to_fixed_size,
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -18,7 +17,7 @@ use ethrex_common::types::{
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
     thread,
@@ -73,9 +72,9 @@ struct StoreInner {
     /// rewinding these logs.
     account_storage_logs: HashMap<BlockNumHash, Vec<(BlockNumHash, AccountStorageLogEntry)>>,
     /// State trie pruning log
-    state_trie_pruning_log: BTreeMap<BlockNumHash, Vec<[u8; 32]>>,
+    state_trie_pruning_log: BTreeMap<BlockNumHash, HashSet<[u8; 32]>>,
     /// Storage trie pruning log
-    storage_trie_pruning_log: BTreeMap<BlockNumHash, Vec<([u8; 32], NodeHash)>>,
+    storage_trie_pruning_log: BTreeMap<BlockNumHash, HashSet<([u8; 32], NodeHash)>>,
     /// Reference counters for state trie nodes
     state_trie_ref_counters: HashMap<NodeHash, u32>,
     /// Reference counters for storage trie nodes by address
@@ -154,7 +153,7 @@ impl StoreEngine for Store {
         let mut state_trie_updates = Vec::new();
         for (node_hash, node_data) in update_batch.account_updates {
             tracing::debug!(
-                node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                node_hash = hex::encode(node_hash),
                 parent_block_number = parent_block.block_number,
                 parent_block_hash = hex::encode(parent_block.block_hash),
                 final_block_number = final_block.block_number,
@@ -173,7 +172,7 @@ impl StoreEngine for Store {
             for (node_hash, node_data) in nodes {
                 tracing::debug!(
                     hashed_address = hex::encode(hashed_address.0),
-                    node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                    node_hash = hex::encode(node_hash),
                     parent_block_number = parent_block.block_number,
                     parent_block_hash = hex::encode(parent_block.block_hash),
                     final_block_number = final_block.block_number,
@@ -278,7 +277,7 @@ impl StoreEngine for Store {
                     .state_trie_pruning_log
                     .entry(final_block)
                     .or_default()
-                    .push(node_hash.0);
+                    .insert(node_hash.0);
             }
 
             // Code updates
@@ -325,7 +324,7 @@ impl StoreEngine for Store {
                         .storage_trie_pruning_log
                         .entry(final_block)
                         .or_default()
-                        .push((key_address, NodeHash::Hashed(node_hash)));
+                        .insert((key_address, NodeHash::Hashed(node_hash)));
                 }
             }
 
@@ -550,8 +549,6 @@ impl StoreEngine for Store {
             count
         };
 
-        let mut nodes_to_delete = Vec::new();
-
         // Get the block number of the last state trie pruning log entry
         if let Some(&max_block) = store.state_trie_pruning_log.keys().last() {
             let keep_from = max_block.block_number.saturating_sub(KEEP_BLOCKS);
@@ -573,60 +570,54 @@ impl StoreEngine for Store {
                 "[BLOCKS TO REMOVE]"
             );
 
-            // Process each block and decrement counters
+            // Process each block and decrement counters directly
             for block in blocks_to_remove {
                 let hashes = store
                     .state_trie_pruning_log
                     .remove(&block)
                     .ok_or(StoreError::LockError)?;
 
+                // Process reference counting directly for each unique hash
+                let mut nodes_to_delete: Vec<NodeHash> = Vec::new();
+
                 for h in hashes {
                     let node_hash = NodeHash::Hashed(h.into());
-                    nodes_to_delete.push(node_hash);
-                }
-            }
 
-            // Process reference counting and determine which nodes to actually delete
-            let mut nodes_to_actually_delete = Vec::new();
+                    // Decrement reference counter
+                    if let Some(counter) = store.state_trie_ref_counters.get_mut(&node_hash) {
+                        *counter -= 1;
 
-            for key in nodes_to_delete {
-                // Decrement reference counter
-                if let Some(counter) = store.state_trie_ref_counters.get_mut(&key) {
-                    *counter -= 1;
-
-                    // Only delete if reference count reaches 0
-                    if *counter == 0 {
-                        nodes_to_actually_delete.push(key);
-                        store.state_trie_ref_counters.remove(&key);
-                    } else {
-                        tracing::debug!(
-                            node = hex::encode(key),
-                            ref_count = *counter,
-                            "[STATE NODE STILL REFERENCED]"
-                        );
+                        // Only delete if reference count reaches 0
+                        if *counter == 0 {
+                            nodes_to_delete.push(node_hash);
+                            store.state_trie_ref_counters.remove(&node_hash);
+                        } else {
+                            tracing::debug!(
+                                node = hex::encode(node_hash),
+                                ref_count = *counter,
+                                "[STATE NODE STILL REFERENCED]"
+                            );
+                        }
                     }
-                } else {
-                    tracing::warn!(node = hex::encode(key), "[STATE NODE COUNTER NOT FOUND]");
                 }
-            }
 
-            // Now remove the nodes from the trie
-            {
-                let mut trie = store
-                    .state_trie_nodes
-                    .lock()
-                    .map_err(|_| StoreError::LockError)?;
+                // Remove nodes from trie
+                if !nodes_to_delete.is_empty() {
+                    let mut trie = store
+                        .state_trie_nodes
+                        .lock()
+                        .map_err(|_| StoreError::LockError)?;
 
-                for key in nodes_to_actually_delete {
-                    // Check if node exists before deleting
-                    if trie.contains_key(&key) {
-                        trie.remove(&key);
-                        tracing::debug!(
-                            node = hex::encode(key),
-                            block_number = max_block.block_number,
-                            block_hash = hex::encode(max_block.block_hash.0.as_ref()),
-                            "[REMOVED STATE NODE]"
-                        );
+                    for key in nodes_to_delete {
+                        if trie.contains_key(&key) {
+                            trie.remove(&key);
+                            tracing::debug!(
+                                node = hex::encode(key),
+                                block_number = max_block.block_number,
+                                block_hash = hex::encode(max_block.block_hash.0.as_ref()),
+                                "[REMOVED STATE NODE]"
+                            );
+                        }
                     }
                 }
             }
@@ -647,8 +638,6 @@ impl StoreEngine for Store {
                 "[KEEPING STORAGE TRIE PRUNING LOG]"
             );
 
-            let mut storage_nodes_to_remove = Vec::new();
-
             let blocks_to_remove: Vec<_> = store
                 .storage_trie_pruning_log
                 .iter()
@@ -667,63 +656,39 @@ impl StoreEngine for Store {
                     .remove(&block)
                     .ok_or(StoreError::LockError)?;
 
+                // Process reference counting directly for each unique entry
+                let mut storage_nodes_to_actually_delete = Vec::new();
+
                 for (addr_hash, node_hash) in entries {
-                    storage_nodes_to_remove.push((H256(addr_hash), node_hash));
-                }
-            }
+                    let addr = H256(addr_hash);
+                    let storage_key = (addr, node_hash);
 
-            // Process storage reference counting and determine which nodes to actually delete
-            let mut storage_nodes_to_actually_delete = Vec::new();
+                    // Decrement reference counter for storage node
+                    if let Some(counter) = store.storage_trie_ref_counters.get_mut(&storage_key) {
+                        *counter -= 1;
 
-            for (addr, key) in storage_nodes_to_remove {
-                // Decrement reference counter for storage node
-                let storage_key = (addr, key);
-                if let Some(counter) = store.storage_trie_ref_counters.get_mut(&storage_key) {
-                    *counter -= 1;
-
-                    // Only delete if reference count reaches 0
-                    if *counter == 0 {
-                        storage_nodes_to_actually_delete.push((addr, key));
-                        store.storage_trie_ref_counters.remove(&storage_key);
-                    } else {
-                        tracing::debug!(
-                            hashed_address = hex::encode(addr.0),
-                            node_hash = hex::encode(key),
-                            ref_count = *counter,
-                            "[STORAGE NODE STILL REFERENCED]"
-                        );
+                        // Only delete if reference count reaches 0
+                        if *counter == 0 {
+                            storage_nodes_to_actually_delete.push((addr, node_hash));
+                            store.storage_trie_ref_counters.remove(&storage_key);
+                        }
                     }
-                } else {
-                    tracing::warn!(
-                        hashed_address = hex::encode(addr.0),
-                        node_hash = hex::encode(key),
-                        "[STORAGE NODE COUNTER NOT FOUND]"
-                    );
                 }
-            }
 
-            // Now remove the storage nodes from tries
-            for (addr, key) in storage_nodes_to_actually_delete {
-                if let Some(storage_store) = store.storage_trie_nodes.get(&addr) {
-                    let mut trie = storage_store.lock().map_err(|_| StoreError::LockError)?;
+                // Remove storage nodes from tries
+                for (addr, key) in storage_nodes_to_actually_delete {
+                    if let Some(storage_store) = store.storage_trie_nodes.get(&addr) {
+                        let mut trie = storage_store.lock().map_err(|_| StoreError::LockError)?;
 
-                    // Check if node exists before deleting
-                    if trie.contains_key(&key) {
-                        trie.remove(&key);
-                        tracing::debug!(
-                            hashed_address = hex::encode(addr.0),
-                            node_hash = hex::encode(key),
-                            "[REMOVED STORAGE NODE]"
-                        );
+                        if trie.contains_key(&key) {
+                            trie.remove(&key);
+                            tracing::debug!(
+                                hashed_address = hex::encode(addr.0),
+                                node_hash = hex::encode(key),
+                                "[REMOVED STORAGE NODE]"
+                            );
+                        }
                     }
-                } else {
-                    tracing::warn!(
-                        block_number = max_block.block_number,
-                        block_hash = hex::encode(max_block.block_hash.0.as_ref()),
-                        addr = hex::encode(addr.0),
-                        node_hash = hex::encode(key),
-                        "[STORAGE TRIE NOT FOUND]"
-                    );
                 }
             }
 
