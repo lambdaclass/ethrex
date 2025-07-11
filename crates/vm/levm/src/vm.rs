@@ -62,6 +62,7 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+    pub debug_op_gas: bool,
 }
 
 impl<'a> VM<'a> {
@@ -87,6 +88,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            debug_op_gas: false
         }
     }
 

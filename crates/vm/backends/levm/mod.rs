@@ -37,6 +37,9 @@ lazy_static::lazy_static! {
     pub static ref PROBLEMATIC_ADDRESS: Address = Address::from_str("0x455e5aa18469bc6ccef49594645666c587a3a71b").unwrap();
 }
 
+
+use ethrex_levm::call_frame::X;
+
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
 /// The struct implements the following functions:
@@ -62,13 +65,19 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+
             info!("Executing Block {}; tx: {tx_idx}", block.header.number);
             if tx_sender == *PROBLEMATIC_ADDRESS {
                 info!("Tx sender is problematic address!!");
             }
             let account = db.current_accounts_state.get(&PROBLEMATIC_ADDRESS);
             info!("Account before tx: {account:?}");
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
+            let report = if block.header.number == 3302799 && tx_idx == 13 {
+                *X.lock().unwrap() = true;
+                Self::execute_tx_debug_op_gas(tx, tx_sender, &block.header, db, vm_type.clone())?
+            } else {
+                Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?
+            };
 
             cumulative_gas_used += report.gas_used;
             tx_idx += 1;
@@ -157,6 +166,24 @@ impl LEVM {
 
         vm.execute().map_err(VMError::into)
     }
+
+    pub fn execute_tx_debug_op_gas(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+        vm.debug_op_gas = true;
+
+        vm.execute().map_err(VMError::into)
+    }
+
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
         db.undo_last_transaction()?;

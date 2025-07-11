@@ -41,7 +41,9 @@ impl<'a> VM<'a> {
     }
 
     pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
-        info!("Executing opcode {opcode:?}");
+        if self.debug_op_gas {
+            info!("Executing opcode {opcode:?}");
+        }
         match opcode {
             Opcode::STOP => Ok(OpcodeResult::Halt),
             Opcode::ADD => self.op_add(),
