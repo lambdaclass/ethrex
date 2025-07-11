@@ -80,13 +80,15 @@ fn main() {
         Some(&remappings),
     );
 
-    compile_contract_to_bytecode(
+    ethrex_l2_sdk::compile_contract(
         &contracts_path,
-        &Path::new("src/l2"),
-        "L2Upgradeable",
+        &Path::new("src/l2/L2Upgradeable.sol"),
         true,
         Some(&remappings),
-    );
+    )
+    .unwrap();
+    println!("Successfully compiled L2Upgradeable contract");
+    decode_to_bytecode(&contracts_path, "UpgradeableSystemContract", true);
 
     // Compile based contracts
     compile_contract_to_bytecode(
