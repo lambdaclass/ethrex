@@ -113,20 +113,12 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        for prover_type in &self.needed_proof_types {
-            if self
-                .rollup_store
-                .get_proof_by_batch_and_type(first_batch_to_verify, *prover_type)
-                .await?
-                .is_none()
-            {
-                info!(
-                    ?first_batch_to_verify,
-                    ?prover_type,
-                    "Missing proof, skipping verification"
-                );
-                return Ok(());
-            };
+        if self.rollup_store.get_latest_sent_batch_proof() < first_batch_to_verify {
+            info!(
+                ?first_batch_to_verify,
+                "Batch to verify not sent to Aligned yet"
+            );
+            return Ok(());
         }
 
         match self
