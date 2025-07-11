@@ -253,7 +253,7 @@ contract CommonBridge is
         }
     }
 
-    /// @notice Checks that the sequencer hasn't exceeded it's processing deadlines
+    /// @inheritdoc ICommonBridge
     function withinProcessingDeadline() public returns (bool) {
         if (pendingTxHashes.length == 0) {
             return true;
