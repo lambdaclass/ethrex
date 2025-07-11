@@ -14,8 +14,8 @@ fn main() {
     get_contract_dependencies(&contracts_path);
 
     // Compile the ERC1967Proxy contract
-    let proxy_contract_path = "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-    ethrex_sdk_contract_utils::compile_contract(&contracts_path, proxy_contract_path, false)
+    let proxy_contract_path = contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    ethrex_sdk_contract_utils::compile_contract(&contracts_path, &proxy_contract_path, false, None)
         .expect("failed to compile ERC1967Proxy contract");
 
     let contract_bytecode_hex =

@@ -2,7 +2,7 @@
 name = "ethrex_l2-contracts"
 version = "0.1.0"
 edition = "2024"
-build = "./bin/deployer/build.rs"
+build = "./bin/build.rs"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

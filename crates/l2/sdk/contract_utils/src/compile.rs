@@ -9,8 +9,8 @@ pub enum ContractCompilationError {
 }
 
 pub fn compile_contract(
-    general_contracts_path: &Path,
-    contract_path: &str,
+    output_dir: &Path,
+    contract_path: &Path,
     runtime_bin: bool,
     remappings: Option<&[(&str, &Path)]>,
 ) -> Result<(), ContractCompilationError> {
@@ -26,15 +26,14 @@ pub fn compile_contract(
     apply_remappings(&mut cmd, remappings)?;
 
     cmd.arg(
-        general_contracts_path
-            .join(contract_path)
+        contract_path
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     )
     .arg("--via-ir")
     .arg("-o")
     .arg(
-        general_contracts_path
+        output_dir
             .join("solc_out")
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
@@ -42,7 +41,7 @@ pub fn compile_contract(
     .arg("--overwrite")
     .arg("--allow-paths")
     .arg(
-        general_contracts_path
+        output_dir
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     );
@@ -61,7 +60,7 @@ pub fn compile_contract(
     // Both the contract path and the output path are relative to where the Makefile is.
     if !cmd_succeeded {
         return Err(ContractCompilationError::CompilationError(
-            format!("Failed to compile {contract_path}").to_owned(),
+            format!("Failed to compile {contract_path:?}").to_owned(),
         ));
     }
 
