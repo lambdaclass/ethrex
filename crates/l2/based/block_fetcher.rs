@@ -97,8 +97,12 @@ impl BlockFetcherState {
                     let latest_store_block = store.get_latest_block_number().await?;
 
                     for block_number in last_l1_block_fetched + 1..=latest_store_block {
+                        info!("removing block {block_number}");
                         store.remove_block(block_number).await?;
                     }
+                    store
+                        .update_latest_block_number(last_l1_block_fetched)
+                        .await?;
                     (latest_safe_batch.number, last_l1_block_fetched)
                 }
                 None => (
@@ -108,6 +112,9 @@ impl BlockFetcherState {
                         .await?,
                 ),
             };
+
+        info!("_latest_safe_batch {_latest_safe_batch}");
+        info!("last_l1_block_fetched {last_l1_block_fetched}");
 
         Ok(Self {
             eth_client,
