@@ -1,13 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use ethrex_blockchain::{
-    Blockchain,
-    fork_choice::apply_fork_choice,
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
+use ethrex_common::{Address, H256, U256, types::Block};
+use ethrex_l2_common::{
+    calldata::Value,
     sequencer_state::{SequencerState, SequencerStatus},
 };
-use ethrex_common::{Address, H256, U256, types::Block};
-use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{EthClient, clients::Overrides};

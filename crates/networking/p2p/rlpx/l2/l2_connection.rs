@@ -5,8 +5,8 @@ use crate::rlpx::{connection::server::Established, error::RLPxError, message::Me
 use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
-use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_common::types::Block;
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;

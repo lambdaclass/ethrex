@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_common::{Address, U256};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},

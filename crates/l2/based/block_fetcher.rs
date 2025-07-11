@@ -1,11 +1,6 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
-use ethrex_blockchain::{
-    Blockchain,
-    fork_choice::apply_fork_choice,
-    sequencer_state::{SequencerState, SequencerStatus},
-    vm::StoreVmDatabase,
-};
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
@@ -15,6 +10,7 @@ use ethrex_common::{
 use ethrex_l2_common::{
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
     privileged_transactions::compute_privileged_transactions_hash,
+    sequencer_state::{SequencerState, SequencerStatus},
     state_diff::prepare_state_diff,
 };
 use ethrex_rlp::decode::RLPDecode;

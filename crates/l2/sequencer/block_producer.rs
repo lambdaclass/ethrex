@@ -9,10 +9,10 @@ use ethrex_blockchain::{
     Blockchain,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
-    sequencer_state::{SequencerState, SequencerStatus},
     validate_block,
 };
 use ethrex_common::Address;
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;

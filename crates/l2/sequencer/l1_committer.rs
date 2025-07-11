@@ -1,11 +1,7 @@
 use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::CommitterError};
 
 use bytes::Bytes;
-use ethrex_blockchain::{
-    Blockchain,
-    sequencer_state::{SequencerState, SequencerStatus},
-    vm::StoreVmDatabase,
-};
+use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -13,6 +9,7 @@ use ethrex_common::{
         MIN_BASE_FEE_PER_BLOB_GAS, batch::Batch, blobs_bundle, fake_exponential_checked,
     },
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::{
     calldata::Value,
     l1_messages::{get_block_l1_messages, get_l1_message_hash},

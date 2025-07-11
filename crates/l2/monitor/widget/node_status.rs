@@ -1,3 +1,4 @@
+use ethrex_l2_common::sequencer_state::SequencerState;
 use ethrex_storage::Store;
 use ratatui::{
     buffer::Buffer,
@@ -6,8 +7,6 @@ use ratatui::{
     text::Span,
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
-
-use crate::based::sequencer_state::SequencerState;
 
 pub struct NodeStatusTable {
     pub state: TableState,

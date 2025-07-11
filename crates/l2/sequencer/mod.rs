@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
-use ethrex_blockchain::sequencer_state::SequencerState;
 use ethrex_l2_common::prover::ProverType;
+use ethrex_l2_common::sequencer_state::SequencerState;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -161,7 +161,7 @@ pub async fn start_l2(
 
     if cfg.monitor.enabled {
         task_set.spawn(monitor::start_monitor(
-            shared_state.clone(),
+            sequencer_state.clone(),
             store.clone(),
             rollup_store.clone(),
             cfg.clone(),

@@ -11,7 +11,6 @@ use crate::{
 };
 use clap::Subcommand;
 use ethrex_blockchain::BlockchainType;
-use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -19,6 +18,7 @@ use ethrex_common::{
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
 use ethrex_p2p::{network::peer_table, peer_handler::PeerHandler, sync_manager::SyncManager};
