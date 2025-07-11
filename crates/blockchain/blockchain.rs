@@ -12,9 +12,9 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::{AccountInfo, MempoolTransaction};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
+use ethrex_common::types::{AccountInfo, MempoolTransaction};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
     Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
@@ -22,13 +22,15 @@ use ethrex_common::types::{
     validate_pre_cancun_header_fields,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
-use ethrex_common::{Address, TrieLogger, H256, U256};
+use ethrex_common::{Address, H256, TrieLogger, U256};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine, EvmError};
 use mempool::Mempool;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -64,7 +66,7 @@ pub struct Blockchain {
     pub r#type: BlockchainType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct AccountUpdateSimplified {
     pub removed: bool,
     pub info: Option<AccountInfo>,
@@ -530,8 +532,40 @@ impl Blockchain {
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
-        let account_u = BTreeMap::from_iter(account_updates.iter().map(|acc| (acc.address, AccountUpdateSimplified { removed: acc.removed, info: acc.info.clone(), added_storage: acc.added_storage.clone() })));
+        let account_u = BTreeMap::from_iter(account_updates.iter().map(|acc| {
+            (
+                acc.address,
+                AccountUpdateSimplified {
+                    removed: acc.removed,
+                    info: acc.info.clone(),
+                    added_storage: acc.added_storage.clone(),
+                },
+            )
+        }));
         info!("Account Updates: {account_u:?}");
+        let (this_filename, other_filename) = match self.evm_engine {
+            EvmEngine::LEVM => ("levm_state.json", "revm_state.json"),
+            EvmEngine::REVM => ("revm_state.json", "levm_state.json"),
+        };
+        let file = File::create(this_filename).unwrap();
+        serde_json::to_writer(file, &account_u).unwrap();
+        if let Ok(file) = File::open(other_filename) {
+            let other_account_u: BTreeMap<Address, AccountUpdateSimplified> =
+                serde_json::from_reader(file).unwrap();
+            if !other_account_u.is_empty() {
+                for (address, acc) in account_u {
+                    if let Some(other_acc) = other_account_u.get(&address) {
+                        if other_acc != &acc {
+                            warn!(
+                                "Account Diff: {this_filename}: {acc:?} vs {other_filename}: {other_acc:?}"
+                            );
+                        }
+                    } else {
+                        warn!("{this_filename} contains {address} but {other_filename} doesn't");
+                    }
+                }
+            }
+        }
 
         let last_block = blocks
             .last()
