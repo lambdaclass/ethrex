@@ -46,7 +46,7 @@ ETHEREUM_PACKAGE_REVISION := a94f305a534db672599341e06a0f4e6ed8b00703
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
 ethereum-package:
-	git clone --single-branch --branch ethrex-integration-pectra https://github.com/lambdaclass/ethereum-package
+	git clone --single-branch --branch spamoor-memory-upgrade https://github.com/lambdaclass/ethereum-package
 
 checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
 	cd ethereum-package && \
