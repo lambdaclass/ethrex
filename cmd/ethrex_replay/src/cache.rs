@@ -28,7 +28,11 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn new(blocks: Vec<Block>, witness: ExecutionWitnessResult, chain_config: ChainConfig) -> Self {
+    pub fn new(
+        blocks: Vec<Block>,
+        witness: ExecutionWitnessResult,
+        chain_config: ChainConfig,
+    ) -> Self {
         Self {
             blocks,
             witness,

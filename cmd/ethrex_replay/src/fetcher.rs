@@ -46,7 +46,6 @@ async fn fetch_rangedata_from_client(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-
     let cache = Cache::new(blocks, witness, chain_config);
     Ok(cache)
 }
