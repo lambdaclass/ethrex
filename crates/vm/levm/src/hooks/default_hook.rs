@@ -11,6 +11,7 @@ use ethrex_common::{
     Address, U256,
     types::{Account, Fork},
 };
+use tracing::info;
 
 use std::cmp::max;
 
@@ -130,9 +131,9 @@ impl Hook for DefaultHook {
         if !ctx_result.is_success() {
             undo_value_transfer(vm)?;
         }
-
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
         let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+        info!("[compute gas used] gas_used: {}, gas_refunded: {}", ctx_result.gas_used, gas_refunded);
         refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
 
         pay_coinbase(vm, actual_gas_used)?;
@@ -220,7 +221,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     let coinbase_fee = U256::from(gas_to_pay)
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
-
+    info!("Paying coinbase: fee: {coinbase_fee}, gas_to_pay: {gas_to_pay}, gas_price: {}, base_fee: {}", vm.env.gas_price, vm.env.base_fee_per_gas);
     vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
 
     Ok(())
