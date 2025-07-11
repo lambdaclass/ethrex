@@ -85,12 +85,16 @@ impl Hook for DefaultHook {
             vm.env.tx_max_fee_per_gas,
         ) {
             if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas.into());
+                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                    priority_fee: tx_max_priority_fee,
+                    max_fee_per_gas: tx_max_fee_per_gas,
+                }
+                .into());
             }
         }
 
         // (9) SENDER_NOT_EOA
-        validate_sender(vm.db.get_account(sender_address)?)?;
+        validate_sender(sender_address, vm.db.get_account(sender_address)?)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -263,20 +267,27 @@ pub fn validate_max_fee_per_blob_gas(
     vm: &mut VM<'_>,
     tx_max_fee_per_blob_gas: U256,
 ) -> Result<(), VMError> {
-    if tx_max_fee_per_blob_gas
-        < get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?
-    {
-        return Err(TxValidationError::InsufficientMaxFeePerBlobGas.into());
+    let base_fee_per_blob_gas =
+        get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?;
+    if tx_max_fee_per_blob_gas < base_fee_per_blob_gas {
+        return Err(TxValidationError::InsufficientMaxFeePerBlobGas {
+            base_fee_per_blob_gas,
+            tx_max_fee_per_blob_gas,
+        }
+        .into());
     }
     Ok(())
 }
 
 pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-    if vm.current_call_frame()?.calldata.len() > INIT_CODE_MAX_SIZE
-        && vm.env.config.fork >= Fork::Shanghai
-    {
-        return Err(TxValidationError::InitcodeSizeExceeded.into());
+    let code_size = vm.current_call_frame()?.calldata.len();
+    if code_size > INIT_CODE_MAX_SIZE && vm.env.config.fork >= Fork::Shanghai {
+        return Err(TxValidationError::InitcodeSizeExceeded {
+            max_size: INIT_CODE_MAX_SIZE,
+            actual_size: code_size,
+        }
+        .into());
     }
     Ok(())
 }
@@ -312,15 +323,20 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     }
 
     // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-    if blob_hashes.len()
-        > vm.env
-            .config
-            .blob_schedule
-            .max
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?
-    {
-        return Err(TxValidationError::Type3TxBlobCountExceeded.into());
+    let max_blob_count = vm
+        .env
+        .config
+        .blob_schedule
+        .max
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let blob_count = blob_hashes.len();
+    if blob_count > max_blob_count {
+        return Err(TxValidationError::Type3TxBlobCountExceeded {
+            max_blob_count,
+            actual_blob_count: blob_count,
+        }
+        .into());
     }
 
     // (15) TYPE_3_TX_CONTRACT_CREATION
@@ -369,16 +385,19 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
+pub fn validate_sender(sender_address: Address, sender_account: &Account) -> Result<(), VMError> {
     if sender_account.has_code() && !has_delegation(sender_account)? {
-        return Err(TxValidationError::SenderNotEOA.into());
+        return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
     Ok(())
 }
 
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
     if vm.env.gas_limit > vm.env.block_gas_limit {
-        return Err(TxValidationError::GasAllowanceExceeded);
+        return Err(TxValidationError::GasAllowanceExceeded {
+            block_gas_limit: vm.env.block_gas_limit,
+            tx_gas_limit: vm.env.gas_limit,
+        });
     }
     Ok(())
 }

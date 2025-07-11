@@ -1,6 +1,10 @@
 use crate::types::{BlockChainExpectedException, BlockExpectedException};
 use serde::{Deserialize, Deserializer};
 
+pub const SENDER_NOT_EOA_REGEX: &str = "Sender account .* shouldn't be a contract";
+pub const PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX: &str =
+    "Priority fee .* is greater than max fee per gas .*";
+
 pub fn deserialize_block_expected_exception<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<BlockChainExpectedException>>, D::Error>
@@ -45,12 +49,12 @@ where
                         "Insufficient account funds".to_string(),
                     )
                 }
-                "TransactionException.SENDER_NOT_EOA" => BlockChainExpectedException::TxtException(
-                    "Sender account shouldn't be a contract".to_string(),
-                ),
+                "TransactionException.SENDER_NOT_EOA" => {
+                    BlockChainExpectedException::TxtException(SENDER_NOT_EOA_REGEX.to_string())
+                }
                 "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
                     BlockChainExpectedException::TxtException(
-                        "Priority fee is greater than max fee per gas".to_string(),
+                        PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX.to_string(),
                     )
                 }
                 "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {

@@ -22,8 +22,7 @@ use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
-    EthClient,
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
+    EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -128,6 +127,8 @@ impl Command {
                     panic!("L2 Doesn't support REVM, use LEVM instead.");
                 }
 
+                l2::initializers::init_tracing(&opts);
+
                 let data_dir = set_datadir(&opts.node_opts.datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
@@ -176,7 +177,11 @@ impl Command {
                     l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
-                if opts.node_opts.p2p_enabled {
+                // TODO: This should be handled differently, the current problem
+                // with using opts.node_opts.p2p_enabled is that with the removal
+                // of the l2 feature flag, p2p_enabled is set to true by default
+                // prioritizing the L1 UX.
+                if opts.sequencer_opts.based {
                     init_network(
                         &opts.node_opts,
                         &network,
@@ -264,14 +269,14 @@ impl Command {
                             current_block,
                             current_block,
                             contract_address,
-                            event_signature,
+                            vec![event_signature],
                         )
                         .await?;
 
                     if !logs.is_empty() {
                         // Get parent beacon block root hash from block
                         let block = eth_client
-                            .get_block_by_number(BlockByNumber::Number(current_block.as_u64()))
+                            .get_block_by_number(BlockIdentifier::Number(current_block.as_u64()))
                             .await?;
                         let parent_beacon_hash = block
                             .header

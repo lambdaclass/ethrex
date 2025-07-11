@@ -21,10 +21,10 @@ pub fn run_with_revm(contract_code: &str, runs: u64, calldata: &str) {
 
     for _ in 0..runs - 1 {
         let result = black_box(evm.transact()).unwrap();
-        assert!(result.result.is_success());
+        assert!(result.result.is_success(), "{:?}", result.result);
     }
     let result = black_box(evm.transact()).unwrap();
-    assert!(result.result.is_success());
+    assert!(result.result.is_success(), "{:?}", result.result);
 
     println!("output: \t\t{}", result.result.into_output().unwrap());
 }

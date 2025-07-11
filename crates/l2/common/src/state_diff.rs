@@ -225,7 +225,6 @@ impl StateDiff {
 
         let mut l1messages = Vec::with_capacity(l1messages_len.into());
         for _ in 0..l1messages_len {
-            let tx = decoder.get_h256()?;
             let from = decoder.get_address()?;
             let data = decoder.get_h256()?;
             let index = decoder.get_u256()?;
@@ -233,7 +232,6 @@ impl StateDiff {
             l1messages.push(L1Message {
                 from,
                 data_hash: data,
-                tx_hash: tx,
                 message_id: index,
             });
         }

@@ -12,7 +12,7 @@ use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
 use ethrex_vm::{EvmError, ProverDBError};
-use spawned_concurrency::GenServerError;
+use spawned_concurrency::error::GenServerError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +43,8 @@ pub enum SequencerError {
     FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("Failed to resolve network")]
     AlignedNetworkError(String),
+    #[error("Failed to start EthrexMonitor: {0}")]
+    MonitorError(#[from] MonitorError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +63,8 @@ pub enum L1WatcherError {
     FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("{0}")]
     Custom(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -123,6 +127,8 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
@@ -189,6 +195,8 @@ pub enum BlockProducerError {
     FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -235,6 +243,8 @@ pub enum CommitterError {
     FailedToGetWithdrawals(#[from] UtilsError),
     #[error("Privileged Transaction error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -261,6 +271,8 @@ pub enum MetricsGathererError {
     EthClientError(#[from] EthClientError),
     #[error("MetricsGatherer: {0}")]
     TryInto(String),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -275,6 +287,14 @@ pub enum ExecutionCacheError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionHandlerError {
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MonitorError {
+    #[error("Failed because of io error: {0}")]
+    Io(#[from] std::io::Error),
 }

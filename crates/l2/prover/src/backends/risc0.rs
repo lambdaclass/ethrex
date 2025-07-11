@@ -9,7 +9,7 @@ use risc0_zkvm::{
 };
 use tracing::info;
 use zkvm_interface::{
-    io::ProgramInput,
+    io::{JSONProgramInput, ProgramInput},
     methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
 
@@ -28,7 +28,9 @@ pub enum Error {
 }
 
 pub fn execute(input: ProgramInput) -> Result<(), Error> {
-    let env = ExecutorEnv::builder().write(&input)?.build()?;
+    let env = ExecutorEnv::builder()
+        .write(&JSONProgramInput(input))?
+        .build()?;
 
     let executor = default_executor();
 
@@ -43,7 +45,7 @@ pub fn prove(input: ProgramInput, _aligned_mode: bool) -> Result<Receipt, Error>
 
     let env = ExecutorEnv::builder()
         .stdout(&mut stdout)
-        .write(&input)?
+        .write(&JSONProgramInput(input))?
         .build()?;
 
     let prover = default_prover();
