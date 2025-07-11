@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::CallFrame,
+    call_frame::{CallFrame, X},
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
@@ -12,6 +12,7 @@ use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
 use ethrex_common::{Address, U256, types::Fork};
+use tracing::info;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -651,6 +652,9 @@ impl<'a> VM<'a> {
             Some(salt) => calculate_create2_address(deployer, &code, salt)?,
             None => calculate_create_address(deployer, deployer_nonce)?,
         };
+        if *(X.lock().unwrap()) {
+            info!("[CREATE] new address: {new_address:?}");
+        }
 
         // Add new contract to accessed addresses
         self.substate.accessed_addresses.insert(new_address);
