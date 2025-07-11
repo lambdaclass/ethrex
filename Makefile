@@ -12,14 +12,8 @@ lint: ## 🧹 Linter check
 	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
 
 CRATE ?= *
-FEATURES ?= 
 test: ## 🧪 Run each crate's tests
-	@if [ "$(FEATURES)" = "l2" ]; then \
-		echo "Running tests with L2 features enabled"; \
-		cargo test -p '$(CRATE)' --workspace --features l2 --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation; \
-	else \
-		cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation; \
-	fi
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
 	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
@@ -127,7 +121,7 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
 	$(MAKE) view-hive
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode

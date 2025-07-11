@@ -90,17 +90,6 @@ impl Store {
         self.set_lastest_sent_batch_proof(0).await
     }
 
-    /// Stores the block numbers by a given batch_number
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_block_numbers_by_batch(batch_number, block_numbers)
-            .await
-    }
-
     /// Returns the block numbers by a given batch_number
     pub async fn get_block_numbers_by_batch(
         &self,
@@ -116,31 +105,11 @@ impl Store {
         self.engine.get_batch_number_by_block(block_number).await
     }
 
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_batch_number_by_block(block_number, batch_number)
-            .await
-    }
-
     pub async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         self.engine.get_message_hashes_by_batch(batch_number).await
-    }
-
-    pub async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        message_hashes: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_message_hashes_by_batch(batch_number, message_hashes)
-            .await
     }
 
     pub async fn get_privileged_transactions_hash_by_batch(
@@ -149,19 +118,6 @@ impl Store {
     ) -> Result<Option<H256>, RollupStoreError> {
         self.engine
             .get_privileged_transactions_hash_by_batch_number(batch_number)
-            .await
-    }
-
-    pub async fn store_privileged_transactions_hash_by_batch(
-        &self,
-        batch_number: u64,
-        privileged_transactions_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_privileged_transactions_hash_by_batch_number(
-                batch_number,
-                privileged_transactions_hash,
-            )
             .await
     }
 
@@ -174,32 +130,12 @@ impl Store {
             .await
     }
 
-    async fn store_state_root_by_batch(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_state_root_by_batch_number(batch_number, state_root)
-            .await
-    }
-
     pub async fn get_blobs_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         self.engine
             .get_blob_bundle_by_batch_number(batch_number)
-            .await
-    }
-
-    pub async fn store_blobs_by_batch(
-        &self,
-        batch_number: u64,
-        blobs: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_blob_bundle_by_batch_number(batch_number, blobs)
             .await
     }
 
@@ -299,38 +235,13 @@ impl Store {
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        // TODO: review this
         let actual_latest_batch_number = self.get_latest_batch_number().await?;
-
         let _write_guard = self.storage_lock.write().await;
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
-
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block(*block_number, batch.number)
-                .await?;
-        }
-        self.store_block_numbers_by_batch(batch.number, blocks)
-            .await?;
-        self.store_message_hashes_by_batch(batch.number, batch.message_hashes)
-            .await?;
-        self.store_privileged_transactions_hash_by_batch(
-            batch.number,
-            batch.privileged_transactions_hash,
-        )
-        .await?;
-        self.store_blobs_by_batch(batch.number, batch.blobs_bundle.blobs)
-            .await?;
-        self.store_state_root_by_batch(batch.number, batch.state_root)
-            .await?;
-        if let Some(commit_tx) = batch.commit_tx {
-            self.store_commit_tx_by_batch(batch.number, commit_tx)
-                .await?;
-        }
-        if let Some(verify_tx) = batch.verify_tx {
-            self.store_verify_tx_by_batch(batch.number, verify_tx)
-                .await?;
-        }
-        if actual_latest_batch_number < batch.number {
-            self.engine.set_latest_batch_number(batch.number).await?;
+        let batch_number = batch.number;
+        self.engine.seal_batch(batch).await?;
+        if actual_latest_batch_number < batch_number {
+            self.engine.set_latest_batch_number(batch_number).await?;
         }
         Ok(())
     }
@@ -375,6 +286,9 @@ impl Store {
     }
 
     /// Stores the sequencer signature for a given batch number.
+    /// When the lead sequencer sends a batch by P2P, it
+    /// should also sign it, this will map a batch number
+    /// to the batch's signature.
     pub async fn store_signature_by_batch(
         &self,
         batch_number: u64,
@@ -386,6 +300,8 @@ impl Store {
     }
 
     /// Returns the sequencer signature for a given batch number.
+    /// This is used mostly in P2P to avoid signing an
+    /// already known batch.
     pub async fn get_signature_by_batch(
         &self,
         batch_number: u64,

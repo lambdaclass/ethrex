@@ -4,6 +4,10 @@ use std::{
     sync::Arc,
 };
 
+use super::{
+    codec::RLPxCodec,
+    server::{Initiator, Receiver},
+};
 use crate::{
     rlpx::{
         connection::server::{Established, InnerState},
@@ -38,11 +42,6 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
-
-use super::{
-    codec::RLPxCodec,
-    server::{Initiator, Receiver},
-};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -133,11 +132,11 @@ pub(crate) async fn perform(
             table: context.table.clone(),
             backend_channel: None,
             inbound,
-            l2_state: if let Some(based_context) = context.based_context {
-                L2ConnState::Disconnected(based_context)
-            } else {
-                L2ConnState::Unsupported
-            },
+            l2_state: context
+                .based_context
+                .map_or(L2ConnState::Unsupported, |based_context| {
+                    L2ConnState::Disconnected(based_context)
+                }),
         },
         stream,
     ))

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::sequencer_state::SequencerState;
@@ -157,6 +157,15 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Block Fetcher: {err}");
         });
+    }
+
+    if cfg.monitor.enabled {
+        task_set.spawn(monitor::start_monitor(
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+            cfg.clone(),
+        ));
     }
 
     while let Some(res) = task_set.join_next().await {
