@@ -65,6 +65,7 @@ impl Store {
             #[cfg(feature = "sql")]
             EngineType::SQL => Self {
                 engine: Arc::new(SQLStore::new(_path)?),
+                storage_lock: Arc::new(RwLock::new(())),
             },
         };
         info!("Started l2 store engine");

@@ -406,7 +406,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|s| s.value()))
     }
 
-    async fn get_latest_batch_number(&self) -> Result<u64, StoreError> {
+    async fn get_latest_batch_number(&self) -> Result<u64, RollupStoreError> {
         Ok(self
             .read(LATEST_BATCH_NUMBER, 0)
             .await?
@@ -414,7 +414,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             .unwrap_or(0))
     }
 
-    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), StoreError> {
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.write(LATEST_BATCH_NUMBER, 0, batch_number).await
     }
     async fn get_account_updates_by_block_number(

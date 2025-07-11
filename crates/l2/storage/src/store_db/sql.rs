@@ -22,7 +22,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 15] = [
+const DB_SCHEMA: [&str; 17] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE privileged_transactions (batch INT PRIMARY KEY, transactions_hash BLOB)",
@@ -38,6 +38,8 @@ const DB_SCHEMA: [&str; 15] = [
     "CREATE TABLE batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
+    "CREATE TABLE latest_batch_number (_id INT PRIMARY KEY, batch INT)",
+    "INSERT INTO latest_batch_number VALUES (0, 0)",
 ];
 
 impl SQLStore {
@@ -632,6 +634,25 @@ impl StoreEngineRollup for SQLStore {
         }
         Ok(None)
     }
+
+    async fn get_latest_batch_number(&self) -> Result<u64, RollupStoreError> {
+        let mut rows = self.query("SELECT * FROM latest_batch_number ", ()).await?;
+        if let Some(row) = rows.next().await? {
+            return read_from_row_int(&row, 0);
+        }
+        Err(RollupStoreError::Custom(
+            "missing latest_batch_number row".to_string(),
+        ))
+    }
+
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.execute(
+            "UPDATE latest_batch_number SET batch = ?1",
+            (0, batch_number),
+        )
+        .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -653,6 +674,7 @@ mod tests {
             "batch_proofs",
             "block_signatures",
             "batch_signatures",
+            "latest_batch_number",
         ];
         let mut attributes = Vec::new();
         for table in tables {
@@ -697,6 +719,8 @@ mod tests {
                 ("block_signatures", "signature") => "BLOB",
                 ("batch_signatures", "batch") => "INT",
                 ("batch_signatures", "signature") => "BLOB",
+                ("latest_batch_number", "_id") => "INT",
+                ("latest_batch_number", "batch") => "INT",
                 _ => {
                     return Err(anyhow::Error::msg(
                         "unexpected attribute {name} in table {table}",
