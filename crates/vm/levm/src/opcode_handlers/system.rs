@@ -594,6 +594,7 @@ impl<'a> VM<'a> {
 
             self.substate.selfdestruct_set.insert(to);
         }
+        info!("[SELFDESTRUCT] to: {to:?}");
 
         self.tracer
             .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
