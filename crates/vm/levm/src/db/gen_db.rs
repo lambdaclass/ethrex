@@ -72,7 +72,7 @@ impl GeneralizedDatabase {
         key: H256,
     ) -> Result<U256, InternalError> {
         // If the account was destroyed then we cannot rely on the DB to obtain its previous value
-        // This is critical when executing block in batches, as an account may be destructed and created within the same batch
+        // This is critical when executing blocks in batches, as an account may be destroyed and created within the same batch
         if self.destroyed_accounts.contains(&address) {
             return Ok(Default::default());
         }
