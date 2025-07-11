@@ -66,10 +66,10 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
-    let link_block_number = match new_canonical_blocks.last() {
-        Some((number, _)) => *number,
-        None => head.number,
-    };
+    let link_block_number = new_canonical_blocks
+        .last()
+        .map(|(number, _)| *number)
+        .unwrap_or(head.number);
 
     // Check that finalized and safe blocks are part of the new canonical chain.
     if let Some(ref finalized) = finalized_res {
@@ -99,7 +99,6 @@ pub async fn apply_fork_choice(
     }
 
     // Finished all validations.
-
     // Make all ancestors to head canonical.
     for (number, hash) in new_canonical_blocks {
         store.set_canonical_block(number, hash).await?;
@@ -112,6 +111,11 @@ pub async fn apply_fork_choice(
 
     // Make head canonical and label all special blocks correctly.
     store.set_canonical_block(head.number, head_hash).await?;
+
+    store
+        .reconstruct_snapshots_for_new_canonical_chain(head_hash)
+        .await?;
+
     if let Some(finalized) = finalized_res {
         store
             .update_finalized_block_number(finalized.number)
@@ -176,10 +180,8 @@ async fn find_link_with_canonical_chain(
         let parent_hash = header.parent_hash;
 
         // Check that the parent exists.
-        let parent_header = match store.get_block_header_by_hash(parent_hash) {
-            Ok(Some(header)) => header,
-            Ok(None) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(parent_header) = store.get_block_header_by_hash(parent_hash)? else {
+            return Ok(None);
         };
 
         if is_canonical(store, block_number, parent_hash).await? {
