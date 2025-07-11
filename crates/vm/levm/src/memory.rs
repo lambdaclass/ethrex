@@ -82,11 +82,12 @@ impl MemoryV2 {
             .ok_or(OutOfBounds)?;
 
         let current_len = self.current_len();
-        let current_cap = self.current_cap();
 
         if new_memory_size <= current_len {
             return Ok(());
         }
+
+        let current_cap = self.current_cap();
 
         let mut buffer = self.buffer.borrow_mut();
 
@@ -179,6 +180,30 @@ impl MemoryV2 {
         Ok(())
     }
 
+    #[inline(always)]
+    pub fn store32(&self, data: [u8; 32], at_offset: usize) -> Result<(), VMError> {
+        let real_offset = self
+            .current_base
+            .checked_add(at_offset)
+            .ok_or(OutOfBounds)?;
+
+        let mut buffer = self.buffer.borrow_mut();
+
+        #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        #[allow(unsafe_code)]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                buffer
+                    .get_unchecked_mut(real_offset..(real_offset + 32))
+                    .as_mut_ptr(),
+                32,
+            );
+        }
+
+        Ok(())
+    }
+
     #[inline]
     pub fn store_data(&mut self, offset: usize, data: &[u8]) -> Result<(), VMError> {
         let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
@@ -197,14 +222,14 @@ impl MemoryV2 {
         self.store(data, offset, size)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {
         let new_size: usize = offset
             .checked_add(WORD_SIZE_IN_BYTES_USIZE)
             .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
-        self.store(&word.to_big_endian(), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        self.store32(word.to_big_endian(), offset)?;
         Ok(())
     }
 
