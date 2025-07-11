@@ -88,7 +88,7 @@ stop-localnet-silent:
 # Temporary branch to address bug in Hive related to docker containers.
 # Issue: https://github.com/ethereum/hive/issues/1306
 # TODO: Revert back to 'master' branch once the bug is resolved (syncing with upstream).
-HIVE_BRANCH ?= temporary_fix_docker
+HIVE_BRANCH ?= try_fix_engine
 
 setup-hive: ## 🐝 Set up Hive testing framework
 	if [ -d "hive" ]; then \
