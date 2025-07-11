@@ -1,4 +1,4 @@
-use crate::rlpx::{error::RLPxError, message as rlpx, utils::ecdh_xchng};
+use crate::rlpx::{error::RLPxError, message as rlpx, p2p::Capability, utils::ecdh_xchng};
 
 use super::handshake::{LocalState, RemoteState};
 use aes::{
@@ -17,13 +17,14 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 const MAX_MESSAGE_SIZE: usize = 0xFFFFFF;
 
 type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
-
+#[derive(Clone)]
 pub(crate) struct RLPxCodec {
     pub(crate) mac_key: H256,
     pub(crate) ingress_mac: Keccak256,
     pub(crate) egress_mac: Keccak256,
     pub(crate) ingress_aes: Aes256Ctr64BE,
     pub(crate) egress_aes: Aes256Ctr64BE,
+    pub(crate) eth_capability: Option<Capability>,
 }
 
 impl RLPxCodec {
@@ -67,7 +68,12 @@ impl RLPxCodec {
             egress_mac,
             ingress_aes,
             egress_aes,
+            eth_capability: None,
         })
+    }
+    
+    pub(crate) fn set_eth_capability(&mut self, cap:Capability) {
+        self.eth_capability = Some(cap);
     }
 }
 
@@ -193,7 +199,7 @@ impl Decoder for RLPxCodec {
         let (frame_data, _padding) = frame_ciphertext.split_at(frame_size);
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
-        Ok(Some(rlpx::Message::decode(msg_id, msg_data)?))
+        Ok(Some(rlpx::Message::decode(msg_id, msg_data,self.eth_capability.clone())?))
     }
 
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {

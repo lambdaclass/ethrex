@@ -2,6 +2,10 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
+use crate::rlpx::eth::eth68::receipts::Receipts68;
+use crate::rlpx::eth::eth69::receipts::Receipts69;
+use crate::rlpx::p2p::Capability;
+
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -95,7 +99,7 @@ impl Message {
             Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
         }
     }
-    pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
+    pub fn decode(msg_id: u8, data: &[u8],eth_capability: Option<Capability>) -> Result<Message, RLPDecodeError> {
         if msg_id < ETH_CAPABILITY_OFFSET {
             match msg_id {
                 HelloMessage::CODE => Ok(Message::Hello(HelloMessage::decode(data)?)),
@@ -127,7 +131,16 @@ impl Message {
                     PooledTransactions::decode(data)?,
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+                Receipts::CODE => 
+                if let Some(cap) = eth_capability {
+                    match cap.version {
+                        68 => Ok(Message::Receipts(Receipts::Receipts68(Receipts68::decode(data)?))),
+                        69 => Ok(Message::Receipts(Receipts::Receipts69(Receipts69::decode(data)?))),
+                        _ => Err(RLPDecodeError::IncompatibleProtocol),
+                    }
+                } else {
+                    Err(RLPDecodeError::IncompatibleProtocol)
+                },
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
@@ -170,7 +183,12 @@ impl Message {
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
-            Message::Receipts(msg) => msg.encode(buf),
+            Message::Receipts(msg) =>  {
+                match msg {
+                    Receipts::Receipts68(receipts68) => receipts68.encode(buf),
+                    Receipts::Receipts69(receipts69) => receipts69.encode(buf),
+                }
+            },
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),

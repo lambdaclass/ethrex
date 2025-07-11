@@ -64,7 +64,7 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
-    let (context, node, framed, inbound) = match state {
+    let (context, node, framed, inbound ,codec) = match state {
         InnerState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
@@ -83,7 +83,7 @@ pub(crate) async fn perform(
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
             log_peer_debug(&node, "Completed handshake as initiator");
-            (context, node, Framed::new(stream, codec), false)
+            (context, node, Framed::new(stream, codec.clone()), false,codec)
         }
         InnerState::Receiver(Receiver {
             context,
@@ -107,7 +107,7 @@ pub(crate) async fn perform(
                 remote_state.public_key,
             );
             log_peer_debug(&node, "Completed handshake as receiver");
-            (context, node, Framed::new(stream, codec), true)
+            (context, node, Framed::new(stream, codec.clone()), true,codec)
         }
         InnerState::Established(_) => {
             return Err(RLPxError::StateError("Already established".to_string()));
@@ -132,6 +132,7 @@ pub(crate) async fn perform(
             table: context.table.clone(),
             backend_channel: None,
             inbound,
+            codec
         },
         stream,
     ))
