@@ -9,6 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
+use tracing::info;
 use std::{collections::HashMap, fmt};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -283,6 +284,7 @@ impl CallFrame {
             .gas_remaining
             .checked_sub(gas)
             .ok_or(ExceptionalHalt::OutOfGas)?;
+        info!("Consumed {gas} gas; remaining: {}", self.gas_remaining);
         Ok(())
     }
 

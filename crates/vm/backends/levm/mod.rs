@@ -80,6 +80,10 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+            if block.header.number == 3302799 && tx_idx == 13 {
+                info!("Executed tx 13, gas_refunded: {}, Stopping execution", report.gas_refunded);
+                break;
+            }
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
