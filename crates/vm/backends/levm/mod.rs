@@ -80,7 +80,6 @@ impl LEVM {
             };
 
             cumulative_gas_used += report.gas_used;
-            tx_idx += 1;
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result.clone(), TxResult::Success),
@@ -93,6 +92,7 @@ impl LEVM {
                 info!("Executed tx 13, gas_refunded: {}, Stopping execution", report.gas_refunded);
                 break;
             }
+            tx_idx += 1;
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
