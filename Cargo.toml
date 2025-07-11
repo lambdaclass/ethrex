@@ -9,6 +9,7 @@ members = [
   "crates/common",
   "crates/common/rlp",
   "crates/common/trie",
+  "crates/common/crypto",
   "crates/l2/",
   "crates/l2/contracts",
   "crates/l2/common",
@@ -51,6 +52,7 @@ ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
+ethrex-crypto = { path = "./crates/common/crypto" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
