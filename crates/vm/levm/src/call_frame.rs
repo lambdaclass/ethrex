@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
-use std::{collections::HashMap, fmt};
+use std::{alloc::Layout, collections::HashMap, fmt};
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -133,8 +133,15 @@ impl Stack {
 
 impl Default for Stack {
     fn default() -> Self {
+        #[allow(unsafe_code)]
+        let values = unsafe {
+            // some systems have specialized zero alloc
+            // also this allocates without using the stack.
+            let ptr = std::alloc::alloc_zeroed(Layout::new::<[U256; STACK_LIMIT]>());
+            Box::from_raw(ptr.cast())
+        };
         Self {
-            values: Box::new([U256::zero(); STACK_LIMIT]),
+            values,
             offset: STACK_LIMIT,
         }
     }
