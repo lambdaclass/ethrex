@@ -189,7 +189,7 @@ pub fn parse_ef_test_dir(
     Ok(directory_tests)
 }
 
-fn get_test_directories_names(full_path: PathBuf) -> String {
+pub fn get_test_relative_path(full_path: PathBuf) -> String {
     let start_dir_name = "vectors";
     let mut path_prefix = PathBuf::new();
 
@@ -211,6 +211,6 @@ fn get_test_directories_names(full_path: PathBuf) -> String {
 
 fn print_parsed_directories(parsed_directory_tests: Vec<String>) {
     for dir in parsed_directory_tests {
-        println!("Parsing directory {}", dir);
+        println!("Parsed directory {}", dir);
     }
 }

@@ -1,3 +1,4 @@
+use crate::parser::get_test_relative_path;
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_common::{
@@ -279,7 +280,7 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
             let test_dir_summary = format!(
                 "{}: {}/{total_run} ({success_percentage:.2}%)\n",
-                dir.bold(),
+                get_test_relative_path(PathBuf::from(dir)).bold(),
                 if total_passed == total_run {
                     format!("{total_passed}").green()
                 } else if total_passed > 0 {
