@@ -29,10 +29,7 @@ use revm::{
         TxEnv as RevmTxEnv, TxKind as RevmTxKind,
     },
 };
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::format,
-};
+use std::collections::{HashMap, HashSet};
 
 fn levm_and_revm_logs_match(
     levm_logs: &Vec<ethrex_common::types::Log>,
