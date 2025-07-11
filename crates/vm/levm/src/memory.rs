@@ -38,6 +38,7 @@ impl MemoryV2 {
     }
 
     /// Cleans the memory from base onwards, this should be used in callframes when handling returns. On the callframe that is about to be dropped.
+    #[inline]
     pub fn clean_from_base(&self) {
         self.buffer.borrow_mut().truncate(self.current_base);
     }
@@ -48,6 +49,7 @@ impl MemoryV2 {
         self.current_len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -116,10 +118,12 @@ impl MemoryV2 {
         let true_offset = offset.checked_add(self.current_base).unwrap();
 
         let buf = self.buffer.borrow();
-        Ok(buf
-            .get(true_offset..(true_offset.checked_add(size).unwrap()))
-            .ok_or(OutOfBounds)?
-            .to_vec())
+        #[allow(unsafe_code, clippy::unwrap_used)]
+        unsafe {
+            Ok(buf
+                .get_unchecked(true_offset..(true_offset.checked_add(size).unwrap()))
+                .to_vec())
+        }
     }
 
     #[inline]
@@ -130,11 +134,13 @@ impl MemoryV2 {
         let true_offset = offset.checked_add(self.current_base).unwrap();
 
         let buf = self.buffer.borrow();
-        Ok(buf
-            .get(true_offset..(true_offset.checked_add(N).unwrap()))
-            .unwrap()
-            .try_into()
-            .unwrap())
+        #[allow(unsafe_code, clippy::unwrap_used)]
+        unsafe {
+            Ok(*buf
+                .get_unchecked(true_offset..(true_offset.checked_add(N).unwrap()))
+                .first_chunk::<N>()
+                .unwrap_unchecked())
+        }
     }
 
     #[inline]
@@ -143,6 +149,7 @@ impl MemoryV2 {
         Ok(u256_from_big_endian_const(value))
     }
 
+    #[inline]
     pub fn store(&self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
         if data_size == 0 {
             return Ok(());
@@ -158,8 +165,16 @@ impl MemoryV2 {
         let real_data_size = data_size.min(data.len());
 
         #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-        buffer[real_offset..(real_offset + real_data_size)]
-            .copy_from_slice(&data[..real_data_size]);
+        #[allow(unsafe_code)]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.get_unchecked(..real_data_size).as_ptr(),
+                buffer
+                    .get_unchecked_mut(real_offset..(real_offset + real_data_size))
+                    .as_mut_ptr(),
+                real_data_size,
+            );
+        }
 
         Ok(())
     }
@@ -232,6 +247,7 @@ impl MemoryV2 {
 }
 
 impl Default for MemoryV2 {
+    #[inline]
     fn default() -> Self {
         Self::new(0)
     }
@@ -244,9 +260,8 @@ pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Res
     let cost = if new_memory_size <= current_memory_size {
         0
     } else {
-        cost(new_memory_size)?
-            .checked_sub(cost(current_memory_size)?)
-            .ok_or(InternalError::Underflow)?
+        // higher memory size should always give higher cost, so we can avoid checked arith
+        cost(new_memory_size)?.wrapping_sub(cost(current_memory_size)?)
     };
     Ok(cost)
 }

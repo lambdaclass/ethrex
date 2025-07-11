@@ -294,6 +294,7 @@ impl CallFrame {
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
+    #[inline(always)]
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
         self.gas_remaining = self
             .gas_remaining
@@ -310,18 +311,22 @@ impl CallFrame {
 }
 
 impl<'a> VM<'a> {
+    #[inline]
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
         self.call_frames.last_mut().ok_or(InternalError::CallFrame)
     }
 
+    #[inline]
     pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
         self.call_frames.last().ok_or(InternalError::CallFrame)
     }
 
+    #[inline]
     pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
         self.call_frames.pop().ok_or(InternalError::CallFrame)
     }
 
+    #[inline]
     pub fn is_initial_call_frame(&self) -> bool {
         self.call_frames.len() == 1
     }
@@ -371,6 +376,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    #[inline]
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
         self.current_call_frame_mut()?.increment_pc_by(count)
     }
