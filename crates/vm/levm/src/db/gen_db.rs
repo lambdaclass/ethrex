@@ -293,7 +293,9 @@ impl<'a> VM<'a> {
         }
 
         let value = self.db.get_value_from_database(address, key)?;
-        info!("[SSTORE] get_value_from_database: {value}");
+        if *(X.lock().unwrap()) {
+            info!("[SSTORE] get_value_from_database: {value}");
+        }
 
         // Update the account with the fetched value
         let account = self.get_account_mut(address)?;
