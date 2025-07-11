@@ -304,4 +304,8 @@ pub enum MonitorError {
     RollupStore(u64, #[source] RollupStoreError),
     #[error("Batch {0} not found in the rollup store")]
     BatchNotFound(u64),
+    #[error("Failed to get block by number {0}")]
+    GetBlockByNumber(u64),
+    #[error("Block {0} not found in the store")]
+    BlockNotFound(u64),
 }
