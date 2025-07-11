@@ -21,7 +21,7 @@ use ethrex_common::{
 use std::{
     cell::RefCell,
     collections::{BTreeSet, HashMap, HashSet},
-    rc::Rc,
+    rc::Rc, time::Instant,
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -165,7 +165,13 @@ impl<'a> VM<'a> {
         }
 
         self.backup_substate();
-        let context_result = self.run_execution()?;
+        let mut acc = [(0,0f64); 256];
+
+        let context_result = self.run_execution(&mut acc);
+        
+        Self::send_results(acc);
+
+        let context_result= context_result?;
 
         let report = self.finalize_execution(context_result)?;
 
@@ -173,16 +179,25 @@ impl<'a> VM<'a> {
     }
 
     /// Main execution loop.
-    pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+    pub fn run_execution(&mut self, acc: &mut [(u64, f64); 256]) -> Result<ContextResult, VMError> {
         if self.is_precompile(&self.current_call_frame()?.to) {
             return self.execute_precompile();
         }
+        // Define start and end instant variables
+        let mut start: Instant;
+        let mut end: Instant;
 
+        // Accumulator that saves number of execution times and total execution time for each opcode.
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
 
+            start = Instant::now();
             let op_result = self.execute_opcode(opcode);
+            end = Instant::now();
 
+            acc[opcode as usize].0 += 1; // Increment execution count for this opcode
+            acc[opcode as usize].1 += (end - start).as_secs_f64(); // Increment execution count for this opcode
+            
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
                     self.increment_pc_by(pc_increment)?;
@@ -200,6 +215,16 @@ impl<'a> VM<'a> {
 
             // Handle interaction between child and parent callframe.
             self.handle_return(&result)?;
+        }
+    }
+
+    fn send_results(opcode_acc: [(u64,f64); 256]) {
+        //print all opcodes
+        for (opcode, (count, time)) in opcode_acc.into_iter().enumerate() {
+            if count == 0 {
+                continue; // Skip opcodes that were not executed
+            }
+            println!("OPCODE={} COUNT={} TIME={}", opcode, count, time);
         }
     }
 
