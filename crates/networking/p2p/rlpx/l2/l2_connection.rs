@@ -198,11 +198,7 @@ pub(crate) async fn handle_based_capability_message(
             send(established, response.into()).await?;
         }
         L2Message::GetBatchSealedResponse(_req) => {
-            if established.blockchain.is_synced() {
-                return Ok(());
-            }
-            // TODO: send to backend
-            // sender.send(Message::GetBatchSealedResponse(_req)).await?;
+            return Err(RLPxError::InternalError("Unexpected GetBatchSealedResponse message received, this message should had been sent to the backend".to_string()));
         }
     }
     Ok(())
