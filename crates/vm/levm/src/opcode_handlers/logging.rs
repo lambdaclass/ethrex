@@ -1,7 +1,7 @@
 use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     vm::VM,
 };
 use bytes::Bytes;
@@ -27,6 +27,10 @@ impl<'a> VM<'a> {
             .pop::<N_TOPICS>()?
             .map(|topic| H256(U256::to_big_endian(&topic)));
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+
         let new_memory_size = calculate_memory_size(offset, size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::log(
@@ -39,9 +43,7 @@ impl<'a> VM<'a> {
         let log = Log {
             address: current_call_frame.to,
             topics: topics.to_vec(),
-            data: Bytes::from(
-                memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),
-            ),
+            data: Bytes::from(current_call_frame.memory.load_range(offset, size)?),
         };
 
         self.tracer.log(&log)?;
