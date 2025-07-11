@@ -25,7 +25,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
@@ -206,6 +206,7 @@ impl GenServer for RLPxConnection {
             .await;
             Err(RLPxError::Disconnected())
         } else {
+            info!("RLPx connection established with peer");
             // New state
             state.0 = InnerState::Established(established_state);
             Ok(state)
@@ -285,9 +286,12 @@ where
     // Updating the state to establish the backend channel
     state.backend_channel = Some(sender);
 
+    init_capabilities(state, &mut stream).await?;
+
     // NOTE: if the peer came from the discovery server it will already be inserted in the table
     // but that might not always be the case, so we try to add it to the table
     // Note: we don't ping the node we let the validation service do its job
+    info!("Adding peer to table after exchange");
     {
         let mut table_lock = state.table.lock().await;
         table_lock.insert_node_forced(state.node.clone());
@@ -298,7 +302,6 @@ where
             state.inbound,
         );
     }
-    init_capabilities(state, &mut stream).await?;
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start

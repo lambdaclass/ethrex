@@ -66,7 +66,7 @@ pub(crate) async fn perform(
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator { context, node }) => {
-            let addr = SocketAddr::new(node.ip, node.tcp_port);
+            let addr = node.tcp_addr();
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {

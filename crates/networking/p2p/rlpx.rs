@@ -1,7 +1,9 @@
 pub mod connection;
 pub mod error;
 pub mod eth;
+pub mod lookup;
 pub mod message;
 pub mod p2p;
+pub mod server;
 pub mod snap;
 pub mod utils;
