@@ -25,9 +25,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
-
       # Required for build scripts
       - name: Install solc
         uses: pontem-network/get-solc@master
