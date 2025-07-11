@@ -35,7 +35,7 @@ pub async fn start_l1_proof_verifier(
     rollup_store: StoreRollup,
 ) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
-        &cfg.proof_coordinator,
+        cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
         &cfg.aligned,
@@ -59,7 +59,7 @@ struct L1ProofVerifier {
 
 impl L1ProofVerifier {
     async fn new(
-        proof_coordinator_cfg: &ProofCoordinatorConfig,
+        proof_coordinator_cfg: ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
         aligned_cfg: &AlignedConfig,
@@ -76,7 +76,7 @@ impl L1ProofVerifier {
             eth_client,
             beacon_urls,
             network: aligned_cfg.network.clone(),
-            l1_signer: proof_coordinator_cfg.signer.clone(),
+            l1_signer: proof_coordinator_cfg.signer,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
