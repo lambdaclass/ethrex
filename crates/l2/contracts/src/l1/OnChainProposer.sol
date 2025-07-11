@@ -278,7 +278,7 @@ contract OnChainProposer is
 
         if (REQUIRE_SP1_PROOF) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues[8:]);
+            _verifyPublicData(batchNumber, sp1PublicValues);
             ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(
                 SP1_VERIFICATION_KEY,
                 sp1PublicValues,
@@ -352,7 +352,7 @@ contract OnChainProposer is
             );
 
             // Verify public data for the batch
-            _verifyPublicData(batchNumber, publicInputsList[i][8:]);
+            _verifyPublicData(batchNumber, publicInputsList[i]);
 
             // Verify inclusion in aggregated Aligned proof
             if (REQUIRE_SP1_PROOF) {
