@@ -10,12 +10,13 @@ use bytes::Bytes;
 use clap::Parser;
 use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
-use ethrex_common::{
-    Address, U256,
-    types::signer::{LocalSigner, Signer},
-};
+use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::{
+    clients::send_eip1559_transaction,
+    signer::{LocalSigner, Signer},
+};
 use ethrex_l2_sdk::{
     calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
     initialize_contract,
@@ -468,9 +469,7 @@ async fn initialize_contracts(
                     Overrides::default(),
                 )
                 .await?;
-            let accept_tx_hash = eth_client
-                .send_eip1559_transaction(&accept_tx, &signer)
-                .await?;
+            let accept_tx_hash = send_eip1559_transaction(eth_client, &accept_tx, &signer).await?;
 
             eth_client
                 .wait_for_transaction_receipt(accept_tx_hash, 100)
@@ -568,7 +567,7 @@ async fn make_deposits(
             .build_eip1559_transaction(bridge, signer.address(), Bytes::new(), overrides)
             .await?;
 
-        match eth_client.send_eip1559_transaction(&build, &signer).await {
+        match send_eip1559_transaction(eth_client, &build, &signer).await {
             Ok(hash) => {
                 info!(
                     address =? signer.address(),

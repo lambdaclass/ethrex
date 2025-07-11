@@ -22,7 +22,6 @@ members = [
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
-  "crates/web3signer",
   "crates/vm/levm/bench/revm_comparison",
   "tooling/genesis",
   "tooling/hive_report",
@@ -57,7 +56,6 @@ ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
-web3signer = { path = "./crates/web3signer" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 

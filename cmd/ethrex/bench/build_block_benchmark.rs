@@ -16,11 +16,11 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H160,
     types::{
-        Block, EIP1559Transaction, Genesis, GenesisAccount, Signable, Transaction, TxKind,
+        Block, EIP1559Transaction, Genesis, GenesisAccount, Transaction, TxKind,
         payload::PayloadBundle,
-        signer::{LocalSigner, Signer},
     },
 };
+use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;

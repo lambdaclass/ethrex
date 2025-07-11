@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, Signature, U256};
+use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{Message, ecdsa::RecoveryId};
@@ -18,8 +18,6 @@ use ethrex_rlp::{
 };
 
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
-
-use super::signer::{Signer, SignerError};
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
@@ -274,27 +272,6 @@ impl From<TxType> for u8 {
             TxType::Privileged => 0x7e,
         }
     }
-}
-
-pub trait Signable {
-    fn sign(
-        &self,
-        signer: &Signer,
-    ) -> impl std::future::Future<Output = Result<Self, SignerError>> + Send
-    where
-        Self: Sized + Sync + Send + Clone,
-    {
-        async {
-            let mut signable = self.clone();
-            signable.sign_inplace(signer).await?;
-            Ok(signable)
-        }
-    }
-
-    fn sign_inplace(
-        &mut self,
-        signer: &Signer,
-    ) -> impl std::future::Future<Output = Result<(), SignerError>> + Send;
 }
 
 impl Transaction {
@@ -882,86 +859,6 @@ impl RLPDecode for PrivilegedL2Transaction {
         };
         Ok((tx, decoder.finish()?))
     }
-}
-
-impl Signable for Transaction {
-    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
-        match self {
-            Transaction::LegacyTransaction(tx) => tx.sign_inplace(signer).await,
-            Transaction::EIP2930Transaction(tx) => tx.sign_inplace(signer).await,
-            Transaction::EIP1559Transaction(tx) => tx.sign_inplace(signer).await,
-            Transaction::EIP4844Transaction(tx) => tx.sign_inplace(signer).await,
-            Transaction::EIP7702Transaction(tx) => tx.sign_inplace(signer).await,
-            Transaction::PrivilegedL2Transaction(_) => Err(SignerError::PrivilegedL2TxUnsupported), // Privileged Transactions are not signed
-        }
-    }
-}
-
-impl Signable for LegacyTransaction {
-    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
-        let signature = signer.sign(self.encode_payload_to_vec().into()).await?;
-
-        self.v = U256::from(signature[64]);
-        (self.r, self.s, _) = parse_signature(signature);
-
-        Ok(())
-    }
-}
-
-impl Signable for EIP1559Transaction {
-    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
-        let mut payload = vec![TxType::EIP1559 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-
-        let signature = signer.sign(payload.into()).await?;
-        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
-
-        Ok(())
-    }
-}
-
-impl Signable for EIP2930Transaction {
-    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
-        let mut payload = vec![TxType::EIP2930 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-
-        let signature = signer.sign(payload.into()).await?;
-        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
-
-        Ok(())
-    }
-}
-
-impl Signable for EIP4844Transaction {
-    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
-        let mut payload = vec![TxType::EIP4844 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-
-        let signature = signer.sign(payload.into()).await?;
-        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
-
-        Ok(())
-    }
-}
-
-impl Signable for EIP7702Transaction {
-    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
-        let mut payload = vec![TxType::EIP7702 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-
-        let signature = signer.sign(payload.into()).await?;
-        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
-
-        Ok(())
-    }
-}
-
-fn parse_signature(signature: Signature) -> (U256, U256, bool) {
-    let r = U256::from_big_endian(&signature[..32]);
-    let s = U256::from_big_endian(&signature[32..64]);
-    let y_parity = signature[64] != 0 && signature[64] != 27;
-
-    (r, s, y_parity)
 }
 
 impl Transaction {

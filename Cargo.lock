@@ -3849,7 +3849,6 @@ dependencies = [
  "tinyvec",
  "tracing",
  "url",
- "web3signer",
 ]
 
 [[package]]
@@ -3888,6 +3887,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-dev",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -3942,14 +3942,19 @@ version = "0.1.0"
 dependencies = [
  "axum 0.8.4",
  "bytes",
+ "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
  "ethrex-p2p",
+ "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-storage-rollup",
+ "hex",
  "keccak-hash",
+ "reqwest 0.12.22",
+ "rustc-hex",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3957,6 +3962,7 @@ dependencies = [
  "tokio",
  "tower-http 0.6.6",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4164,6 +4170,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rlp",
  "ethrex-rpc",
  "eyre",
@@ -4291,6 +4298,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rpc",
  "ethrex-sdk",
  "eyre",
@@ -6437,6 +6445,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rpc",
  "ethrex-sdk",
  "eyre",
@@ -12648,20 +12657,6 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "web3signer"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "ethereum-types 0.15.1",
- "hex",
- "reqwest 0.12.22",
- "rustc-hex",
- "secp256k1",
- "thiserror 2.0.12",
- "url",
 ]
 
 [[package]]

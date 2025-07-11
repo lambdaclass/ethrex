@@ -36,7 +36,7 @@ const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,b
 #[derive(Clone)]
 pub struct L1ProofSenderState {
     eth_client: EthClient,
-    signer: ethrex_common::types::signer::Signer,
+    signer: ethrex_l2_rpc::signer::Signer,
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,

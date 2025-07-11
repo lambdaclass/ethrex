@@ -13,7 +13,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ethereum-types.workspace = true
-ethrex-common = { workspace = true, features = ["web3sign"] }
+ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
@@ -23,6 +23,7 @@ ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-l2-common.workspace = true
+ethrex-l2-rpc.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 ethrex-sdk = { path = "./sdk" }
