@@ -75,7 +75,7 @@ struct StoreInner {
     /// State trie pruning log
     state_trie_pruning_log: BTreeMap<BlockNumHash, BTreeSet<[u8; 32]>>,
     /// Storage trie pruning log
-    storage_trie_pruning_log: BTreeMap<BlockNumHash, BTreeSet<([u8; 32], [u8; 33])>>,
+    storage_trie_pruning_log: BTreeMap<BlockNumHash, BTreeSet<([u8; 32], NodeHash)>>,
 }
 
 #[derive(Default, Debug)]
@@ -300,20 +300,11 @@ impl StoreEngine for Store {
             for (hashed_address, invalid_nodes) in storage_invalidations_by_address {
                 let key_address: [u8; 32] = hashed_address.into();
                 for node_hash in invalid_nodes {
-                    let original_node_hash = NodeHash::Hashed(node_hash);
-                    let key_hash = node_hash_to_fixed_size(original_node_hash);
-
-                    tracing::warn!(
-                        original_node_hash = hex::encode(node_hash.0),
-                        fixed_size_hash = hex::encode(key_hash),
-                        "[INVALIDATION DEBUG]"
-                    );
-
                     store
                         .storage_trie_pruning_log
                         .entry(final_block)
                         .or_default()
-                        .insert((key_address, key_hash));
+                        .insert((key_address, NodeHash::Hashed(node_hash)));
                 }
             }
 
@@ -620,19 +611,8 @@ impl StoreEngine for Store {
                     .remove(&block)
                     .ok_or(StoreError::LockError)?;
 
-                for (addr_hash, node_hash_fixed) in entries {
-                    let reconstructed_key = NodeHash::from_encoded_raw(&node_hash_fixed);
-                    let back_to_fixed = node_hash_to_fixed_size(reconstructed_key);
-
-                    tracing::warn!(
-                        original_hash = hex::encode(node_hash_fixed),
-                        reconstructed_key = hex::encode(reconstructed_key),
-                        back_to_fixed = hex::encode(back_to_fixed),
-                        round_trip_match = node_hash_fixed == back_to_fixed,
-                        "[KEY RECONSTRUCTION DEBUG]"
-                    );
-
-                    storage_nodes_to_remove.push((H256(addr_hash), reconstructed_key));
+                for (addr_hash, node_hash) in entries {
+                    storage_nodes_to_remove.push((H256(addr_hash), node_hash));
                 }
             }
 
