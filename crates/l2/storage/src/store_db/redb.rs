@@ -353,7 +353,6 @@ impl StoreEngineRollup for RedBStoreRollup {
         let last_entry = table.last()?;
 
         Ok(last_entry.map(|entry| entry.0.value()))
-        // Ok(last_entry)
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
