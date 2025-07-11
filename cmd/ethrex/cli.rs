@@ -240,6 +240,14 @@ pub enum Subcommand {
         removedb: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         l2: bool,
+        #[arg(
+            long = "max-blocks",
+            short = 'n',
+            value_name = "MAX_BLOCKS",
+            help = "Limit the number of blocks to import for each provided chain",
+            default_value = usize::MAX.to_string()
+        )]
+        max_blocks: usize,
     },
     #[command(
         name = "export",
@@ -288,7 +296,12 @@ impl Subcommand {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
-            Subcommand::Import { path, removedb, l2 } => {
+            Subcommand::Import {
+                path,
+                removedb,
+                l2,
+                max_blocks,
+            } => {
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
@@ -308,7 +321,15 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    opts.evm,
+                    blockchain_type,
+                    max_blocks,
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -357,6 +378,7 @@ pub async fn import_blocks(
     genesis: Genesis,
     evm: EvmEngine,
     blockchain_type: BlockchainType,
+    max_blocks: usize,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
@@ -388,9 +410,10 @@ pub async fn import_blocks(
     };
 
     for blocks in chains {
-        let size = blocks.len();
+        let size = blocks.len().min(max_blocks);
         // Execute block by block
-        for block in &blocks {
+        let blocks = &blocks[..size];
+        for block in blocks {
             let hash = block.hash();
             let number = block.header.number;
             info!("Adding block {number} with hash {hash:#x}.");
@@ -413,7 +436,7 @@ pub async fn import_blocks(
         }
 
         _ = store
-            .mark_chain_as_canonical(&blocks)
+            .mark_chain_as_canonical(blocks)
             .await
             .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 

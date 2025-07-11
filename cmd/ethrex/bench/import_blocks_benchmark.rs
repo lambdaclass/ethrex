@@ -29,6 +29,7 @@ fn block_import() {
         genesis,
         evm_engine,
         blockchain_type,
+        usize::MAX,
     ))
     .expect("Failed to import blocks on the Tokio runtime");
 }
