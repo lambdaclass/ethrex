@@ -86,6 +86,7 @@ pub struct Established {
     pub(crate) signer: SigningKey,
     // Sending part of the TcpStream to connect with the remote peer
     // The receiving part is owned by the stream listen loop task
+    pub(crate) codec: RLPxCodec,
     pub(crate) sink: Arc<Mutex<SplitSink<Framed<TcpStream, RLPxCodec>, Message>>>,
     pub(crate) node: Node,
     pub(crate) storage: Store,
@@ -567,7 +568,8 @@ where
             }
 
             state.node.version = Some(hello_message.client_id);
-
+            // Check if this works or updating the sink is necessary
+            state.codec.set_eth_capability(Capability::eth(negotiated_eth_version));
             Ok(())
         }
         Message::Disconnect(disconnect) => Err(RLPxError::DisconnectReceived(disconnect.reason())),
