@@ -13,7 +13,7 @@ use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]
 use std::env;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::{Duration, Instant}};
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::Mutex,
@@ -61,6 +61,7 @@ async fn server_shutdown(
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    let start = Instant::now();
     let CLI { opts, command } = CLI::parse();
 
     init_tracing(&opts);
@@ -142,7 +143,9 @@ async fn main() -> eyre::Result<()> {
         }
     }
 
+    let setup_time = Instant::now();
     let mut signal_terminate = signal(SignalKind::terminate())?;
+    info!("Total main setup {} seconds", (setup_time - start).as_secs_f64());
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -153,5 +156,7 @@ async fn main() -> eyre::Result<()> {
         }
     }
 
+    let end = Instant::now();
+    info!("Total main execution {} seconds", (end - start).as_secs_f64());
     Ok(())
 }

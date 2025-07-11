@@ -75,8 +75,7 @@ impl<'a> VM<'a> {
         vm_type: VMType,
     ) -> Self {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
-        let start = Instant::now();
-        let ret = Self {
+        Self {
             call_frames: vec![],
             env,
             substate: Substate::default(),
@@ -89,13 +88,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
-        };
-
-        let end = Instant::now();
-
-        println!("VM initialized in {} seconds", (end - start).as_secs_f64());
-
-        ret
+        }
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
@@ -153,20 +146,17 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        let t0 = Instant::now();
         self.setup_vm()?;
-        let t1 = Instant::now();
 
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
             return Err(e);
         }
-        let t2 = Instant::now();
+
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame_mut()?.call_frame_backup.clear();
-        let t3 = Instant::now();
 
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
@@ -176,37 +166,10 @@ impl<'a> VM<'a> {
             }
         }
 
-        let t4 = Instant::now();
-
         self.backup_substate();
-
-        let t5 = Instant::now();
-
         let context_result = self.run_execution()?;
-
-        let t6 = Instant::now();
-
         let report = self.finalize_execution(context_result)?;
 
-        let t7 = Instant::now();
-
-        println!(
-            "Execution times: \
-            Setup: {} \
-            Prepare: {} \
-            Call frame: {} \
-            Create: {} \
-            Backup: {} \
-            Run: {} \
-            Finalize: {} ",
-            (t1 - t0).as_secs_f64(),
-            (t2 - t1).as_secs_f64(),
-            (t3 - t2).as_secs_f64(),
-            (t4 - t3).as_secs_f64(),
-            (t5 - t4).as_secs_f64(),
-            (t6 - t5).as_secs_f64(),
-            (t7 - t6).as_secs_f64(),
-        );
         Ok(report)
     }
 
