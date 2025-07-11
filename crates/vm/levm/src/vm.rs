@@ -192,12 +192,14 @@ impl<'a> VM<'a> {
             "Execution times: \
             Setup: {} \
             Prepare: {} \
+            Call frame: {} \
             Create: {} \
             Backup: {} \
             Run: {} \
             Finalize: {} ",
             (t1 - t0).as_secs_f64(),
             (t2 - t1).as_secs_f64(),
+            (t3 - t2).as_secs_f64(),
             (t4 - t3).as_secs_f64(),
             (t5 - t4).as_secs_f64(),
             (t6 - t5).as_secs_f64(),
