@@ -130,7 +130,7 @@ contract CommonBridge is
     uint256 internal constant EIP7702_CODE_LENGTH = 23;
 
     /// This is intentionally different from the constant Optimism uses, but arbitrary.
-    uint160 internal constant ADDRESS_ALIASING = uint160(0xee110000000000000000000000000000000011ff);
+    uint160 internal constant ADDRESS_ALIASING = uint160(0xEe110000000000000000000000000000000011Ff);
 
     /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
     /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
