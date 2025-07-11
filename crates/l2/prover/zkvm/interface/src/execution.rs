@@ -93,6 +93,7 @@ pub enum StatelessExecutionError {
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
+    let chain_id = input.db.chain_config.chain_id;
     let ProgramInput {
         blocks,
         mut db,
@@ -110,16 +111,17 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
+            chain_id,
         );
     }
-    stateless_validation_l1(&blocks, &mut db, elasticity_multiplier)
+    stateless_validation_l1(&blocks, &mut db, elasticity_multiplier, chain_id)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
     db: &mut ExecutionWitnessResult,
-
     elasticity_multiplier: u64,
+    chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
         initial_state_hash,
@@ -137,6 +139,7 @@ pub fn stateless_validation_l1(
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
         last_block_hash,
+        chain_id: chain_id.into(),
     })
 }
 
@@ -147,6 +150,7 @@ pub fn stateless_validation_l2(
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
+    chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let mut initial_db = db.clone();
 
@@ -194,6 +198,7 @@ pub fn stateless_validation_l2(
         privileged_transactions_hash,
         blob_versioned_hash,
         last_block_hash,
+        chain_id: chain_id.into(),
     })
 }
 
