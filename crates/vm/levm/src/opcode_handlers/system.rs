@@ -3,7 +3,7 @@ use crate::{
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
-    memory::{self, calculate_memory_size},
+    memory::{self, calculate_memory_size, try_resize},
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -78,6 +78,10 @@ impl<'a> VM<'a> {
                 eip7702_gas_consumed,
                 callee,
             )?;
+        // Make sure we have enough memory to write the return data
+        // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
+        try_resize(&mut self.current_call_frame_mut()?.memory, new_memory_size)?;
+
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
