@@ -127,6 +127,11 @@ build-revm-comparison:
 		CARGO_TARGET_DIR=../../target \
 		cargo build --release --bin benchmark
 
+build-revm-comparison-debuginfo:
+	cd bench/revm_comparison && \
+		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=../../target \
+		cargo build --release --bin benchmark
+
 ###### Build Client with LEVM ######
 EFTEST_DIR := ../../../cmd/ef_tests/state
 VECTORS_DIR := $(EFTEST_DIR)/vectors

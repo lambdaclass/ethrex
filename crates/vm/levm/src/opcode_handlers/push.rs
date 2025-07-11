@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::CallFrame,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -16,10 +15,30 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
-        let read_n_bytes = read_bytcode_slice::<N>(current_call_frame)?;
+        // Do bounds checks
+        let pc_offset = current_call_frame
+            .pc
+            .checked_add(1)
+            .ok_or(InternalError::Overflow)?;
 
-        let value = u256_from_big_endian_const(read_n_bytes);
-        current_call_frame.stack.push(&[value])?;
+        let pc_offset_end = pc_offset.checked_add(N).ok_or(OutOfBounds)?;
+
+        if current_call_frame.bytecode.len() >= pc_offset_end {
+            // SAFETY: bounds have been checked beforehand.
+            #[allow(unsafe_code)]
+            let bytes = unsafe {
+                *current_call_frame
+                    .bytecode
+                    .get_unchecked(pc_offset..pc_offset_end)
+                    .as_ptr()
+                    .cast::<[u8; N]>()
+            };
+
+            let value = u256_from_big_endian_const(bytes);
+            current_call_frame.stack.push(&[value])?;
+        } else {
+            current_call_frame.stack.push(&[U256::zero()])?;
+        }
 
         // The n_bytes that you push to the stack + 1 for the next instruction
         let increment_pc_by = N.wrapping_add(1);
@@ -42,28 +61,5 @@ impl<'a> VM<'a> {
         current_call_frame.stack.push(&[U256::zero()])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
-    }
-}
-
-// Like `read_bytcode_slice` but using a const generic and returning a fixed size array.
-fn read_bytcode_slice<const N: usize>(current_call_frame: &CallFrame) -> Result<[u8; N], VMError> {
-    let current_pc = current_call_frame.pc;
-    let pc_offset = current_pc
-        // Add 1 to the PC because we don't want to include the
-        // Bytecode of the current instruction in the data we're about
-        // to read. We only want to read the data _NEXT_ to that
-        // bytecode
-        .checked_add(1)
-        .ok_or(InternalError::Overflow)?;
-
-    if let Some(slice) = current_call_frame
-        .bytecode
-        .get(pc_offset..pc_offset.checked_add(N).ok_or(OutOfBounds)?)
-    {
-        Ok(slice
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?)
-    } else {
-        Ok([0; N])
     }
 }

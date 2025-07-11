@@ -1,7 +1,7 @@
 use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
-    memory::Memory,
+    memory::MemoryV2,
     opcodes::Opcode,
     utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
-use std::{collections::HashMap, fmt};
+use std::{alloc::Layout, collections::HashMap, fmt};
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -28,6 +28,7 @@ pub struct Stack {
 }
 
 impl Stack {
+    #[inline]
     pub fn pop<const N: usize>(&mut self) -> Result<&[U256; N], ExceptionalHalt> {
         // Compile-time check for stack underflow.
         if N > STACK_LIMIT {
@@ -42,15 +43,26 @@ impl Stack {
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
         // check it again.
-        #[expect(clippy::indexing_slicing)]
-        let values = self.values[self.offset..]
-            .first_chunk::<N>()
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+
+        if self.offset < N {
+            Err(ExceptionalHalt::StackUnderflow)?;
+        }
+
+        #[expect(unsafe_code)]
+        let values = unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .as_ptr()
+                .cast::<[U256; N]>()
+                .as_ref()
+                .unwrap_unchecked()
+        };
         self.offset = next_offset;
 
         Ok(values)
     }
 
+    #[inline]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
@@ -61,8 +73,14 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[next_offset..self.offset].copy_from_slice(values);
+        #[expect(unsafe_code)]
+        unsafe {
+            let ptr = self
+                .values
+                .get_unchecked_mut(next_offset..self.offset)
+                .as_mut_ptr();
+            std::ptr::copy_nonoverlapping(values.as_ptr(), ptr, N);
+        }
         self.offset = next_offset;
 
         Ok(())
@@ -81,15 +99,20 @@ impl Stack {
         self.offset == self.values.len()
     }
 
+    #[inline]
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
         // The following index cannot fail because `self.offset` is known to be within
         // `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[self.offset..]
-            .get(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)
+        #[expect(unsafe_code)]
+        unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .get(index)
+                .ok_or(ExceptionalHalt::StackUnderflow)
+        }
     }
 
+    #[inline]
     pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
         let index = self
             .offset
@@ -110,8 +133,15 @@ impl Stack {
 
 impl Default for Stack {
     fn default() -> Self {
+        #[allow(unsafe_code)]
+        let values = unsafe {
+            // some systems have specialized zero alloc
+            // also this allocates without using the stack.
+            let ptr = std::alloc::alloc_zeroed(Layout::new::<[U256; STACK_LIMIT]>());
+            Box::from_raw(ptr.cast())
+        };
         Self {
-            values: Box::new([U256::zero(); STACK_LIMIT]),
+            values,
             offset: STACK_LIMIT,
         }
     }
@@ -134,7 +164,7 @@ impl fmt::Debug for Stack {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.
@@ -157,7 +187,7 @@ pub struct CallFrame {
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
-    pub memory: Memory,
+    pub memory: MemoryV2,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
@@ -190,6 +220,7 @@ pub struct CallFrameBackup {
 }
 
 impl CallFrameBackup {
+    #[inline]
     pub fn backup_account_info(
         &mut self,
         address: Address,
@@ -211,6 +242,7 @@ impl CallFrameBackup {
         self.original_account_storage_slots.clear();
     }
 
+    #[inline]
     pub fn extend(&mut self, other: CallFrameBackup) {
         self.original_account_storage_slots
             .extend(other.original_account_storage_slots);
@@ -236,6 +268,7 @@ impl CallFrame {
         ret_offset: U256,
         ret_size: usize,
         stack: Stack,
+        memory: MemoryV2,
     ) -> Self {
         let invalid_jump_destinations =
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
@@ -256,10 +289,12 @@ impl CallFrame {
             ret_offset,
             ret_size,
             stack,
+            memory,
             ..Default::default()
         }
     }
 
+    #[inline(always)]
     pub fn next_opcode(&self) -> Opcode {
         self.bytecode
             .get(self.pc)
@@ -268,16 +303,19 @@ impl CallFrame {
             .unwrap_or(Opcode::STOP)
     }
 
+    #[inline]
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
         self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
+    #[inline]
     pub fn pc(&self) -> usize {
         self.pc
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
+    #[inline(always)]
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
         self.gas_remaining = self
             .gas_remaining
@@ -286,6 +324,7 @@ impl CallFrame {
         Ok(())
     }
 
+    #[inline]
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
         self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
         self.bytecode = code;
@@ -294,18 +333,22 @@ impl CallFrame {
 }
 
 impl<'a> VM<'a> {
+    #[inline]
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
         self.call_frames.last_mut().ok_or(InternalError::CallFrame)
     }
 
+    #[inline]
     pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
         self.call_frames.last().ok_or(InternalError::CallFrame)
     }
 
+    #[inline]
     pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
         self.call_frames.pop().ok_or(InternalError::CallFrame)
     }
 
+    #[inline]
     pub fn is_initial_call_frame(&self) -> bool {
         self.call_frames.len() == 1
     }
@@ -355,6 +398,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    #[inline]
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
         self.current_call_frame_mut()?.increment_pc_by(count)
     }
