@@ -88,19 +88,6 @@ contract OnChainProposer is
 
     bytes32 public RISC0_VERIFICATION_KEY;
 
-    /// @notice Maximum time the sequencer can take without sending privileged transactions
-    /// @notice Specified in seconds.
-    uint256 public PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
-    /// @notice Minimum of privileged transactions that must be included to reset the deadline
-    /// @dev If there aren't that many pending, pendingTxHashes.length is used
-    uint16 public PRIVILEGED_TX_INCLUSION_TARGET;
-    /// @notice A batch is still accepted if's short of {PRIVILEGED_TX_INCLUSION_TARGET} by only a few transactions
-    /// @dev This avoids having to discard a batch due to a last-minute transaction
-    uint16 public PRIVILEGED_TX_TOLERANCE;
-
-    /// @notice Deadline for including the next batch of privileged transactions, if any are pending
-    uint256 public txInclusionDeadline = block.timestamp;
-
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -126,10 +113,7 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        address[] calldata sequencerAddresses,
-        uint256 privilegedMaxWait,
-        uint16 privilegedInclusionTarget,
-        uint16 privilegedTolerance
+        address[] calldata sequencerAddresses
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -176,10 +160,6 @@ contract OnChainProposer is
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
-
-        PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = privilegedMaxWait;
-        PRIVILEGED_TX_INCLUSION_TARGET = privilegedInclusionTarget;
-        PRIVILEGED_TX_TOLERANCE = privilegedTolerance;
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -333,7 +313,10 @@ contract OnChainProposer is
             );
         }
 
-        _checkAndUpdateInclusionQuota(privileged_transaction_count);
+        require(
+                ICommonBridge(BRIDGE).withinProcessingDeadline(),
+                "OnChainProposer: exceeded privileged transaction inclusion deadline"
+            );
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -402,7 +385,10 @@ contract OnChainProposer is
                 );
             }
 
-            _checkAndUpdateInclusionQuota(privileged_transaction_count);
+            require(
+                ICommonBridge(BRIDGE).withinProcessingDeadline(),
+                "OnChainProposer: exceeded privileged transaction inclusion deadline"
+            );
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
@@ -412,32 +398,6 @@ contract OnChainProposer is
         }
 
         emit BatchVerified(lastVerifiedBatch);
-    }
-
-    function _checkAndUpdateInclusionQuota(
-        uint16 privileged_transaction_count
-    ) private {
-        uint256 pending_count = ICommonBridge(BRIDGE)
-            .getPendingTransactionHashes()
-            .length;
-        uint16 inclusion_target = PRIVILEGED_TX_INCLUSION_TARGET > pending_count
-            ? uint16(pending_count)
-            : PRIVILEGED_TX_INCLUSION_TARGET;
-        uint16 mimimum_to_include = PRIVILEGED_TX_TOLERANCE >
-            inclusion_target
-            ? 0
-            : inclusion_target - PRIVILEGED_TX_TOLERANCE;
-        if (block.timestamp > txInclusionDeadline) {
-            require(
-                privileged_transaction_count >= mimimum_to_include,
-                "OnChainProposer: batch does not include enough privileged transactions"
-            );
-        }
-        if (privileged_transaction_count >= mimimum_to_include) {
-            txInclusionDeadline =
-                block.timestamp +
-                PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
-        }
     }
 
     function _verifyPublicData(

@@ -287,25 +287,9 @@ pub struct DeployerOptions {
         default_value = "300",
         env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
         help_heading = "Deployer options",
-        help = "Max time in seconds that can pass without enough deposits being processed."
+        help = "Deadline in seconds for the sequencer to process a privileged transaction."
     )]
     pub inclusion_max_wait: u64,
-    #[arg(
-        long,
-        default_value = "20",
-        env = "ETHREX_ON_CHAIN_PROPOSER_INCLUSION_TARGET",
-        help_heading = "Deployer options",
-        help = "Privileged transactions expected to be included per batch, if there are enough."
-    )]
-    pub inclusion_target: u64,
-    #[arg(
-        long,
-        default_value = "5",
-        env = "ETHREX_ON_CHAIN_PROPOSER_INCLUSION_TOLERANCE",
-        help_heading = "Deployer options",
-        help = "Allow a batch if it is within N privileged transactions of the target."
-    )]
-    pub inclusion_tolerance: u64,
 }
 
 impl Default for DeployerOptions {
