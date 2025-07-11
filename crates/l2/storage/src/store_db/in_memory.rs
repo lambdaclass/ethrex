@@ -38,6 +38,8 @@ struct StoreInner {
     signatures_by_block: HashMap<H256, [u8; 68]>,
     /// Map of signatures from the sequencer by batch numbers
     signatures_by_batch: HashMap<u64, [u8; 68]>,
+    /// Latest batch number stored
+    latest_batch_number: u64,
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
@@ -225,6 +227,14 @@ impl StoreEngineRollup for Store {
         Ok(())
     }
 
+    async fn get_latest_batch_number(&self) -> Result<u64, RollupStoreError> {
+        Ok(self.inner()?.latest_batch_number)
+    }
+
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.inner()?.latest_batch_number = batch_number;
+        Ok(())
+    }
     async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,

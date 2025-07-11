@@ -139,4 +139,10 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<Option<BatchProof>, RollupStoreError>;
 
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError>;
+
+    /// Get latest batch number
+    async fn get_latest_batch_number(&self) -> Result<u64, RollupStoreError>;
+
+    /// Set latest batch number
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 }

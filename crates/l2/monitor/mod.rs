@@ -11,8 +11,8 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 
 use crate::SequencerConfig;
-use crate::based::sequencer_state::SequencerState;
 use crate::sequencer::errors::SequencerError;
+use ethrex_l2_common::sequencer_state::SequencerState;
 
 pub async fn start_monitor(
     sequencer_state: SequencerState,

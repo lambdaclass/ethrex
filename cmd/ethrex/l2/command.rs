@@ -18,10 +18,11 @@ use ethrex_common::{
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
-use ethrex_p2p::network::peer_table;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
+use ethrex_p2p::{network::peer_table, peer_handler::PeerHandler, sync_manager::SyncManager};
+use ethrex_p2p::{rlpx::l2::l2_connection::P2PBasedContext, sync_manager::SyncManagerBasedContext};
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
@@ -180,6 +181,14 @@ impl Command {
 
                 let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
+                let initial_status = if l2_sequencer_cfg.based.enabled {
+                    SequencerStatus::default()
+                } else {
+                    SequencerStatus::Sequencing
+                };
+
+                let shared_state = SequencerState::from(initial_status);
+
                 // TODO: This should be handled differently, the current problem
                 // with using opts.node_opts.p2p_enabled is that with the removal
                 // of the l2 feature flag, p2p_enabled is set to true by default
@@ -199,6 +208,7 @@ impl Command {
                         Some(P2PBasedContext {
                             store_rollup: rollup_store.clone(),
                             committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
+                            sequencer_state: shared_state.clone(),
                         }),
                     )
                     .await;
@@ -206,11 +216,23 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
+                let peer_handler = PeerHandler::new(peer_table.clone());
+                let sync_manager = SyncManager::new(
+                    peer_handler,
+                    ethrex_p2p::sync::SyncMode::Full,
+                    cancel_token.clone(),
+                    blockchain.clone(),
+                    store.clone(),
+                    Some(SyncManagerBasedContext::new(rollup_store.clone())),
+                );
+
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
                     blockchain,
                     l2_sequencer_cfg,
+                    sync_manager.await,
+                    shared_state,
                     #[cfg(feature = "metrics")]
                     format!(
                         "http://{}:{}",
@@ -220,7 +242,6 @@ impl Command {
                 .into_future();
 
                 tracker.spawn(l2_sequencer);
-
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Server shut down started...");

@@ -6,6 +6,7 @@ use std::sync::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use tokio::{
     sync::Mutex,
     time::{Duration, sleep},
@@ -18,8 +19,24 @@ use crate::{
     sync::{SyncMode, Syncer},
 };
 
+#[derive(Debug, Clone)]
+pub struct SyncManagerBasedContext {
+    pub rollup_store: StoreRollup,
+    /// The batch number to be synced to
+    pub next_batch_head: Arc<Mutex<u64>>,
+}
+
+impl SyncManagerBasedContext {
+    pub fn new(rollup_store: StoreRollup) -> Self {
+        Self {
+            rollup_store,
+            next_batch_head: Arc::new(Mutex::new(1)), // Default value
+        }
+    }
+}
+
 /// Abstraction to interact with the active sync process without disturbing it
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SyncManager {
     /// This is also held by the Syncer and allows tracking it's latest syncmode
     /// It is a READ_ONLY value, as modifications will disrupt the current active sync progress
@@ -27,6 +44,7 @@ pub struct SyncManager {
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
+    based_context: Option<SyncManagerBasedContext>,
 }
 
 impl SyncManager {
@@ -36,6 +54,7 @@ impl SyncManager {
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         store: Store,
+        based_context: Option<SyncManagerBasedContext>,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
@@ -49,9 +68,10 @@ impl SyncManager {
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
+            based_context,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
-        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
+        // Otherwise we will incorrectly assume the node is already synced and work on invalid state
         if store
             .get_header_download_checkpoint()
             .await
@@ -71,12 +91,14 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
                 .expect("Failed to start Storage Engine"),
+            based_context: None,
         }
     }
 
     /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
-    pub fn sync_to_head(&self, fcu_head: H256) {
+    pub fn sync_to_head(&self, fcu_head: H256, batch_number: u64) {
         self.set_head(fcu_head);
+        self.set_batch_number(batch_number);
         if !self.is_active() {
             self.start_sync();
         }
@@ -100,8 +122,19 @@ impl SyncManager {
         }
     }
 
+    /// Updates the last batch number. This may be used on the next sync cycle if needed
+    fn set_batch_number(&self, batch_number: u64) {
+        if let Some(based_context) = &self.based_context {
+            if let Ok(mut new_batch_head) = based_context.next_batch_head.try_lock() {
+                *new_batch_head = batch_number;
+            } else {
+                warn!("Failed to update latest batch number for syncing")
+            }
+        }
+    }
+
     /// Returns true is the syncer is active
-    fn is_active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         self.syncer.try_lock().is_err()
     }
 
@@ -112,6 +145,7 @@ impl SyncManager {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
         let sync_head = self.last_fcu_head.clone();
+        let based_context = self.based_context.clone();
 
         tokio::spawn(async move {
             let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
@@ -140,7 +174,12 @@ impl SyncManager {
                 }
                 // Start the sync cycle
                 syncer
-                    .start_sync(current_head, sync_head, store.clone())
+                    .start_sync(
+                        current_head,
+                        sync_head,
+                        store.clone(),
+                        based_context.clone(),
+                    )
                     .await;
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
