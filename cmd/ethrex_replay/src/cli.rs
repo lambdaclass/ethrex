@@ -5,12 +5,13 @@ use ethrex_common::{
 };
 use ethrex_rpc::types::block_identifier::BlockTag;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
+use reqwest::Url;
 
-use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata};
 use crate::plot_composition::plot;
 use crate::run::{exec, prove, run_tx};
+use crate::{bench::run_and_measure, fetcher::get_batchdata};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
@@ -29,7 +30,7 @@ enum SubcommandExecute {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
         #[arg(
             long,
             default_value = "mainnet",
@@ -48,7 +49,7 @@ enum SubcommandExecute {
         #[arg(help = "Ending block. (Inclusive)")]
         end: usize,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
         #[arg(
             long,
             default_value = "mainnet",
@@ -65,7 +66,7 @@ enum SubcommandExecute {
         #[arg(help = "Transaction hash.")]
         tx_hash: H256,
         #[arg(long, env = "RPC_URL", required = true)]
-        rpc_url: String,
+        rpc_url: Url,
         #[arg(
             long,
             default_value = "mainnet",
@@ -76,6 +77,22 @@ enum SubcommandExecute {
         network: String,
         #[arg(long, required = false)]
         l2: bool,
+    },
+    #[command(about = "Execute an L2 batch.")]
+    Batch {
+        #[arg(help = "Batch number to use.")]
+        batch: u64,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: Url,
+        #[arg(
+            long,
+            env = "NETWORK",
+            required = true,
+            help = "ChainID of the network to use"
+        )]
+        network: String,
+        #[arg(long, required = false)]
+        bench: bool,
     },
 }
 
@@ -89,7 +106,7 @@ impl SubcommandExecute {
                 bench,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
@@ -112,7 +129,7 @@ impl SubcommandExecute {
                     ));
                 }
                 let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
@@ -128,7 +145,7 @@ impl SubcommandExecute {
                 l2,
             } => {
                 let chain_config = get_chain_config(&network)?;
-                let eth_client = EthClient::new(&rpc_url)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
 
                 // Get the block number of the transaction
                 let tx = eth_client
@@ -149,6 +166,22 @@ impl SubcommandExecute {
                 for transition in transitions {
                     print_transition(transition);
                 }
+            }
+            SubcommandExecute::Batch {
+                batch,
+                rpc_url,
+                network,
+                bench,
+            } => {
+                let chain_config = get_chain_config(&network)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
+                let cache = get_batchdata(eth_client, chain_config, batch).await?;
+                let future = async {
+                    let gas_used = get_total_gas_used(&cache.blocks);
+                    exec(cache).await?;
+                    Ok(gas_used)
+                };
+                run_and_measure(future, bench).await?;
             }
         }
         Ok(())
@@ -193,6 +226,22 @@ enum SubcommandProve {
         #[arg(long, required = false)]
         bench: bool,
     },
+    #[command(about = "Proves an L2 batch.")]
+    Batch {
+        #[arg(help = "Batch number to use.")]
+        batch: u64,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: Url,
+        #[arg(
+            long,
+            env = "NETWORK",
+            required = true,
+            help = "ChainID of the network to use"
+        )]
+        network: String,
+        #[arg(long, required = false)]
+        bench: bool,
+    },
 }
 
 impl SubcommandProve {
@@ -230,6 +279,22 @@ impl SubcommandProve {
                 let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(&rpc_url)?;
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
+                let future = async {
+                    let gas_used = get_total_gas_used(&cache.blocks);
+                    prove(cache).await?;
+                    Ok(gas_used)
+                };
+                run_and_measure(future, bench).await?;
+            }
+            SubcommandProve::Batch {
+                batch,
+                rpc_url,
+                network,
+                bench,
+            } => {
+                let chain_config = get_chain_config(&network)?;
+                let eth_client = EthClient::new(rpc_url.as_str())?;
+                let cache = get_batchdata(eth_client, chain_config, batch).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
                     prove(cache).await?;

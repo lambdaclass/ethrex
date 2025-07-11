@@ -15,7 +15,7 @@ use ratatui::{
 
 use crate::{
     monitor::{self, widget::HASH_LENGTH_IN_DIGITS},
-    sequencer::l1_watcher::PrivilegedTransactionData,
+    sequencer::{errors::MonitorError, l1_watcher::PrivilegedTransactionData},
 };
 
 // kind | status | L1 tx hash | L2 tx hash | amount
@@ -101,7 +101,7 @@ impl L1ToL2MessagesTable {
         common_bridge_address: Address,
         eth_client: &EthClient,
         store: &Store,
-    ) -> Self {
+    ) -> Result<Self, MonitorError> {
         let mut last_l1_block_fetched = eth_client
             .get_last_fetched_l1_block(common_bridge_address)
             .await
@@ -113,23 +113,27 @@ impl L1ToL2MessagesTable {
             eth_client,
             store,
         )
-        .await;
-        Self {
+        .await?;
+        Ok(Self {
             state: TableState::default(),
             items,
             last_l1_block_fetched,
             common_bridge_address,
-        }
+        })
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient, store: &Store) {
+    pub async fn on_tick(
+        &mut self,
+        eth_client: &EthClient,
+        store: &Store,
+    ) -> Result<(), MonitorError> {
         let mut new_l1_to_l2_messages = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.common_bridge_address,
             eth_client,
             store,
         )
-        .await;
+        .await?;
         new_l1_to_l2_messages.truncate(50);
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
@@ -137,6 +141,7 @@ impl L1ToL2MessagesTable {
         self.refresh_items(eth_client, store).await;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
+        Ok(())
     }
 
     async fn refresh_items(&mut self, eth_client: &EthClient, store: &Store) {
@@ -156,15 +161,15 @@ impl L1ToL2MessagesTable {
         common_bridge_address: Address,
         eth_client: &EthClient,
         store: &Store,
-    ) -> Vec<L1ToL2MessagesRow> {
+    ) -> Result<Vec<L1ToL2MessagesRow>, MonitorError> {
         let logs = monitor::utils::get_logs(
             last_l1_block_fetched,
             common_bridge_address,
             vec!["PrivilegedTxSent(address,address,uint256,uint256,uint256,bytes)"],
             eth_client,
         )
-        .await;
-        Self::process_logs(&logs, common_bridge_address, eth_client, store).await
+        .await?;
+        Ok(Self::process_logs(&logs, common_bridge_address, eth_client, store).await)
     }
 
     async fn process_logs(
