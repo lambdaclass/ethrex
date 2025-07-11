@@ -1,5 +1,5 @@
 //! Build script for the contract deployer binary.
-//! This script downloads dependencies and compiles contracts to be embedded as constants in the SDK.
+//! This script downloads dependencies and compiles contracts to be embedded as constants in the deployer.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::env;
 use std::path::Path;
@@ -40,6 +40,7 @@ fn main() {
         ),
     ];
 
+    // Compile the L1 contracts
     compile_contract_to_bytecode(
         &contracts_path,
         "src/l1",
@@ -49,7 +50,6 @@ fn main() {
     compile_contract_to_bytecode(&contracts_path, "src/l1", "CommonBridge", Some(&remappings));
 
     // Compile based contracts
-    // Based OnChainProposer is renamed to OnChainProposerBased
     compile_contract_to_bytecode(
         &contracts_path,
         "src/l1/based",
@@ -71,6 +71,7 @@ fn main() {
     .unwrap();
     let contract_bytecode = hex::decode(contract_bytecode_hex.trim()).unwrap();
 
+    // To avoid colision with the original OnChainProposer bytecode, we rename it to OnChainProposerBased
     std::fs::write(
         contracts_path
             .join("solc_out")
