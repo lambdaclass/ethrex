@@ -31,6 +31,8 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+const SCROLL_DEBOUNCE_DURATION: u64 = 700; // milliseconds
+
 pub struct EthrexMonitor {
     pub title: String,
     pub should_quit: bool,
@@ -50,6 +52,7 @@ pub struct EthrexMonitor {
     pub rollup_client: EthClient,
     pub store: Store,
     pub rollup_store: StoreRollup,
+    pub last_scroll: Instant,
 }
 
 impl EthrexMonitor {
@@ -107,6 +110,7 @@ impl EthrexMonitor {
             rollup_client,
             store,
             rollup_store,
+            last_scroll: Instant::now(),
         })
     }
 
@@ -196,6 +200,15 @@ impl EthrexMonitor {
     }
 
     pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
+        let scroll_delay = Duration::from_millis(SCROLL_DEBOUNCE_DURATION);
+
+        let now = Instant::now();
+        if now.duration_since(self.last_scroll) < scroll_delay {
+            return; // Ignore the scroll — too soon
+        }
+
+        self.last_scroll = now;
+
         match (&self.tabs, kind) {
             (TabsState::Logs, MouseEventKind::ScrollDown) => {
                 self.logger.transition(TuiWidgetEvent::NextPageKey)
