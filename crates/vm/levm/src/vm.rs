@@ -225,7 +225,7 @@ impl<'a> VM<'a> {
 
     // Sends results over a socket
     fn send_results(opcode_acc: [(u64,f64); 256]) {
-        let mut stream = TcpStream::connect("localhost:5555").unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:5555").unwrap();
         for (opcode, (count, time)) in opcode_acc.into_iter().enumerate() {
             if count == 0 {
                 continue; // Skip opcodes that were not executed
