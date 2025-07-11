@@ -89,7 +89,7 @@ impl BlocksTable {
             let new_block = store
                 .get_block_by_number(new_last_l1_fetched_block)
                 .await
-                .map_err(|_| MonitorError::GetBlockByNumber(new_last_l1_fetched_block))?
+                .map_err(|e| MonitorError::GetBlockByNumber(new_last_l1_fetched_block, e))?
                 .ok_or(MonitorError::BlockNotFound(new_last_l1_fetched_block))?;
 
             // Update the last L1 block fetched.

@@ -298,14 +298,14 @@ pub enum ConnectionHandlerError {
 pub enum MonitorError {
     #[error("Failed because of io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Failed to fetch {0:?} logs from {1}")]
-    LogsSignatures(Vec<String>, Address),
+    #[error("Failed to fetch {0:?} logs from {1}, {2}")]
+    LogsSignatures(Vec<String>, Address, #[source] EthClientError),
     #[error("Failed to get batch by number {0}: {1}")]
     RollupStore(u64, #[source] RollupStoreError),
     #[error("Batch {0} not found in the rollup store")]
     BatchNotFound(u64),
-    #[error("Failed to get block by number {0}")]
-    GetBlockByNumber(u64),
+    #[error("Failed to get block by number {0}, {1}")]
+    GetBlockByNumber(u64, #[source] StoreError),
     #[error("Block {0} not found in the store")]
     BlockNotFound(u64),
 }

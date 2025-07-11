@@ -33,10 +33,11 @@ pub async fn get_logs(
                     .collect(),
             )
             .await
-            .map_err(|_| {
+            .map_err(|e| {
                 MonitorError::LogsSignatures(
                     logs_signatures.iter().map(|s| s.to_string()).collect(),
                     emitter,
+                    e,
                 )
             })?;
 
