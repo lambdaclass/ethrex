@@ -312,4 +312,6 @@ pub enum MonitorError {
     LogsTopics(usize),
     #[error("Failed to get logs data from {0}")]
     LogsData(usize),
+    #[error("Failed to get logs data, data is too short: {0}")]
+    LogsDataTooShort(usize),
 }

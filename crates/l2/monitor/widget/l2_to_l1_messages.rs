@@ -192,6 +192,12 @@ impl L2ToL1MessagesTable {
                 eth_client,
             )
             .await;
+            let start = log
+                .log
+                .data
+                .len()
+                .checked_sub(32)
+                .ok_or(MonitorError::LogsDataTooShort(log.log.data.len()))?;
             match *log.log.topics.first().ok_or(MonitorError::LogsTopics(0))? {
                 topic if topic == eth_withdrawal_topic => {
                     processed_logs.push((
@@ -230,8 +236,8 @@ impl L2ToL1MessagesTable {
                         U256::from_big_endian(
                             log.log
                                 .data
-                                .get(log.log.data.len() - 32..)
-                                .ok_or(MonitorError::LogsData(log.log.data.len() - 32))?,
+                                .get(start..)
+                                .ok_or(MonitorError::LogsData(start))?,
                         ),
                         Address::from_slice(
                             &log.log
