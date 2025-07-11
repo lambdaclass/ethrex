@@ -281,6 +281,9 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<U256, InternalError> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
+            if *(X.lock().unwrap()) {
+                info!("[SSTORE] get_storage_value current account state: {account:?}");
+            }
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }
@@ -290,6 +293,7 @@ impl<'a> VM<'a> {
         }
 
         let value = self.db.get_value_from_database(address, key)?;
+        info!("[SSTORE] get_value_from_database: {value}");
 
         // Update the account with the fetched value
         let account = self.get_account_mut(address)?;
