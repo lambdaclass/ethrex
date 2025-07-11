@@ -44,6 +44,12 @@ use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
+use std::str::FromStr;
+
+lazy_static::lazy_static! {
+    pub static ref PROBLEMATIC_ADDRESS: Address = Address::from_str("0x455e5aa18469bc6ccef49594645666c587a3a71b").unwrap();
+}
+
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 

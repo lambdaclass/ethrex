@@ -31,6 +31,13 @@ use ethrex_levm::{
 use std::cmp::min;
 use std::collections::HashMap;
 
+use std::str::FromStr;
+
+lazy_static::lazy_static! {
+    pub static ref PROBLEMATIC_ADDRESS: Address = Address::from_str("0x455e5aa18469bc6ccef49594645666c587a3a71b").unwrap();
+}
+
+
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
 /// The struct implements the following functions:
@@ -174,6 +181,7 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.current_accounts_state.iter() {
+            let is_addr = address == &*PROBLEMATIC_ADDRESS;
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
                 db.initial_accounts_state
@@ -181,7 +189,13 @@ impl LEVM {
                     .ok_or(EvmError::Custom(format!(
                         "Failed to get account {address} from immutable cache",
                     )))?;
-
+            if is_addr {
+                info!("[get_state_transitions] initial account: {initial_state_account:?}");
+                info!("[get_state_transitions] new state account: {new_state_account:?}");
+            }
+            if db.destroyed_accounts.contains(address) && is_addr {
+                info!("[get_state_transitions] account was destroyed");
+            }
             // Edge case: Account was destroyed and created again afterwards with CREATE2.
             if db.destroyed_accounts.contains(address) && !new_state_account.is_empty() {
                 // Push to account updates the removal of the account and then push the new state of the account.
