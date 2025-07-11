@@ -20,15 +20,10 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
 
       # Required for build scripts
       - name: Install solc
@@ -57,14 +52,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       # Required for build scripts
       - name: Install solc

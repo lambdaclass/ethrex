@@ -80,6 +80,14 @@ fn main() {
         Some(&remappings),
     );
 
+    compile_contract_to_bytecode(
+        &contracts_path,
+        &Path::new("src/l2"),
+        "L2Upgradeable",
+        true,
+        Some(&remappings),
+    );
+
     // Compile based contracts
     compile_contract_to_bytecode(
         &contracts_path,
