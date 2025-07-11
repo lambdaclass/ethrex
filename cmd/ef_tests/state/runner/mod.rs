@@ -262,6 +262,7 @@ async fn re_run_with_revm(
                 )));
             }
             non_re_run_internal_errors => {
+                println!("{} \n{failed_test_report}", "Failing Test:".bold());
                 return Err(EFTestRunnerError::Internal(
                     InternalError::MainRunnerInternal(format!(
                         "Non-internal error raised when executing revm. This should not happen: {non_re_run_internal_errors:?}"
