@@ -377,7 +377,7 @@ impl Store {
 
         // contracts bytecode to update
         let code_updates: Vec<_> = account_updates
-            .par_iter()
+            .iter()
             .filter_map(|update| {
                 update
                     .info
@@ -428,21 +428,17 @@ impl Store {
             })
             .collect::<Result<_, StoreError>>()?;
 
-        account_states
-            .par_iter_mut()
-            .zip_eq(account_updates.par_iter())
-            .for_each(|(state, update)| {
-                if let Some(info) = &update.info {
-                    state.nonce = info.nonce;
-                    state.code_hash = info.code_hash;
-                    state.balance = info.balance;
-                }
-                if update.removed {
-                    *state = AccountState::default();
-                }
-            });
-        for (address, state) in hashed_addresses.iter().zip(account_states.iter()) {
-            if *state == AccountState::default() {
+        for ((address, state), update) in hashed_addresses
+            .iter()
+            .zip(account_states.iter_mut())
+            .zip(account_updates.iter())
+        {
+            if let Some(info) = &update.info {
+                state.nonce = info.nonce;
+                state.code_hash = info.code_hash;
+                state.balance = info.balance;
+            }
+            if update.removed {
                 state_trie.remove(address.0.to_vec())?;
             } else {
                 state_trie.insert(address.0.to_vec(), state.encode_to_vec())?;
