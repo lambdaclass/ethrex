@@ -1,6 +1,6 @@
 // TODO: Handle this expects
 #![expect(clippy::expect_used)]
-#[allow(clippy::result_large_err)]
+#[expect(clippy::result_large_err)]
 pub(crate) mod app;
 pub(crate) mod utils;
 pub(crate) mod widget;
