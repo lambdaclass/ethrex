@@ -360,6 +360,11 @@ contract OnChainProposer is
             );
         }
 
+        require(
+                ICommonBridge(BRIDGE).withinProcessingDeadline(),
+                "OnChainProposer: exceeded privileged transaction inclusion deadline"
+            );
+
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
 
@@ -415,17 +420,22 @@ contract OnChainProposer is
             );
 
             // The first 2 bytes are the number of privileged transactions.
-            uint16 transaction_count = uint16(
+            uint16 privileged_transaction_count = uint16(
                 bytes2(
                     batchCommitments[batchNumber]
                         .processedPrivilegedTransactionsRollingHash
                 )
             );
-            if (transaction_count > 0) {
+            if (privileged_transaction_count > 0) {
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                    transaction_count
+                    privileged_transaction_count
                 );
             }
+
+            require(
+                ICommonBridge(BRIDGE).withinProcessingDeadline(),
+                "OnChainProposer: exceeded privileged transaction inclusion deadline"
+            );
 
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];

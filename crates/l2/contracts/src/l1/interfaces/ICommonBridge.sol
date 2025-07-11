@@ -142,4 +142,7 @@ interface ICommonBridge {
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;
+
+    /// @notice Checks that the sequencer hasn't exceeded it's processing deadlines
+    function withinProcessingDeadline() external returns (bool);
 }

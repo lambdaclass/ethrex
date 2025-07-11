@@ -239,3 +239,7 @@ keccak256(
     )
 )
 ```
+
+## Forced Inclusion
+
+Each transaction is given a deadline for processing. If the sequencer is unwilling to include a privileged transaction before this timer expires, batches stop being processed and the network halts until the sequencer processes every expired transaction.
