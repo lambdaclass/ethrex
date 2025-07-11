@@ -13,9 +13,12 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::monitor::{
-    self,
-    widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+use crate::{
+    monitor::{
+        self,
+        widget::{ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    },
+    sequencer::errors::MonitorError,
 };
 
 #[derive(Debug, Clone)]
@@ -107,7 +110,7 @@ impl L2ToL1MessagesTable {
         common_bridge_address: Address,
         eth_client: &EthClient,
         rollup_client: &EthClient,
-    ) -> Self {
+    ) -> Result<Self, MonitorError> {
         let mut last_l2_block_fetched = U256::zero();
         let items = Self::fetch_new_items(
             &mut last_l2_block_fetched,
@@ -115,23 +118,27 @@ impl L2ToL1MessagesTable {
             eth_client,
             rollup_client,
         )
-        .await;
-        Self {
+        .await?;
+        Ok(Self {
             state: TableState::default(),
             items,
             last_l2_block_fetched,
             common_bridge_address,
-        }
+        })
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_client: &EthClient) {
+    pub async fn on_tick(
+        &mut self,
+        eth_client: &EthClient,
+        rollup_client: &EthClient,
+    ) -> Result<(), MonitorError> {
         let mut new_l1_to_l2_messages = Self::fetch_new_items(
             &mut self.last_l2_block_fetched,
             self.common_bridge_address,
             eth_client,
             rollup_client,
         )
-        .await;
+        .await?;
         new_l1_to_l2_messages.truncate(50);
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
@@ -139,6 +146,8 @@ impl L2ToL1MessagesTable {
         self.refresh_items(eth_client).await;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
+
+        Ok(())
     }
 
     async fn refresh_items(&mut self, eth_client: &EthClient) {
@@ -154,15 +163,15 @@ impl L2ToL1MessagesTable {
         common_bridge_address: Address,
         eth_client: &EthClient,
         rollup_client: &EthClient,
-    ) -> Vec<L2ToL1MessageRow> {
+    ) -> Result<Vec<L2ToL1MessageRow>, MonitorError> {
         let logs = monitor::utils::get_logs(
             last_l2_block_fetched,
             COMMON_BRIDGE_L2_ADDRESS,
             vec![],
             rollup_client,
         )
-        .await;
-        Self::process_logs(&logs, common_bridge_address, eth_client).await
+        .await?;
+        Ok(Self::process_logs(&logs, common_bridge_address, eth_client).await)
     }
 
     async fn process_logs(
