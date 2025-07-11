@@ -58,14 +58,14 @@ impl EthrexMonitor {
         store: Store,
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
-    ) -> Self {
+    ) -> Result<Self, MonitorError> {
         let eth_client = EthClient::new(cfg.eth.rpc_url.first().expect("No RPC URLs provided"))
             .expect("Failed to create EthClient");
         // TODO: De-hardcode the rollup client URL
         let rollup_client =
             EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
 
-        EthrexMonitor {
+        Ok(EthrexMonitor {
             title: if cfg.based.based {
                 "Based Ethrex Monitor".to_string()
             } else {
@@ -89,25 +89,25 @@ impl EthrexMonitor {
                 &eth_client,
                 &rollup_store,
             )
-            .await,
-            blocks_table: BlocksTable::new(&store).await,
+            .await?,
+            blocks_table: BlocksTable::new(&store).await?,
             l1_to_l2_messages: L1ToL2MessagesTable::new(
                 cfg.l1_watcher.bridge_address,
                 &eth_client,
                 &store,
             )
-            .await,
+            .await?,
             l2_to_l1_messages: L2ToL1MessagesTable::new(
                 cfg.l1_watcher.bridge_address,
                 &eth_client,
                 &rollup_client,
             )
-            .await,
+            .await?,
             eth_client,
             rollup_client,
             store,
             rollup_store,
-        }
+        })
     }
 
     pub async fn start(mut self) -> Result<(), MonitorError> {
@@ -147,7 +147,7 @@ impl EthrexMonitor {
 
             let timeout = Duration::from_millis(self.tick_rate).saturating_sub(last_tick.elapsed());
             if !event::poll(timeout)? {
-                self.on_tick().await;
+                self.on_tick().await?;
                 last_tick = Instant::now();
                 continue;
             }
@@ -207,7 +207,7 @@ impl EthrexMonitor {
         }
     }
 
-    pub async fn on_tick(&mut self) {
+    pub async fn on_tick(&mut self) -> Result<(), MonitorError> {
         self.node_status.on_tick(&self.store).await;
         self.global_chain_status
             .on_tick(&self.eth_client, &self.store, &self.rollup_store)
@@ -215,14 +215,16 @@ impl EthrexMonitor {
         self.mempool.on_tick(&self.rollup_client).await;
         self.batches_table
             .on_tick(&self.eth_client, &self.rollup_store)
-            .await;
-        self.blocks_table.on_tick(&self.store).await;
+            .await?;
+        self.blocks_table.on_tick(&self.store).await?;
         self.l1_to_l2_messages
             .on_tick(&self.eth_client, &self.store)
-            .await;
+            .await?;
         self.l2_to_l1_messages
             .on_tick(&self.eth_client, &self.rollup_client)
-            .await;
+            .await?;
+
+        Ok(())
     }
 }
 

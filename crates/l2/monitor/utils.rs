@@ -4,12 +4,14 @@ use ethrex_common::{Address, U256};
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use keccak_hash::keccak;
 
+use crate::sequencer::errors::MonitorError;
+
 pub async fn get_logs(
     last_block_fetched: &mut U256,
     emitter: Address,
     logs_signatures: Vec<&str>,
     client: &EthClient,
-) -> Vec<RpcLog> {
+) -> Result<Vec<RpcLog>, MonitorError> {
     let last_block_number = client
         .get_block_number()
         .await
@@ -31,7 +33,13 @@ pub async fn get_logs(
                     .collect(),
             )
             .await
-            .unwrap_or_else(|_| panic!("Failed to fetch {logs_signatures:?} logs from {emitter}"));
+            .map_err(|e| {
+                MonitorError::LogsSignatures(
+                    logs_signatures.iter().map(|s| s.to_string()).collect(),
+                    emitter,
+                    e,
+                )
+            })?;
 
         // Update the last L1 block fetched.
         *last_block_fetched = new_last_l1_fetched_block;
@@ -39,5 +47,5 @@ pub async fn get_logs(
         batch_committed_logs.extend_from_slice(&logs);
     }
 
-    batch_committed_logs
+    Ok(batch_committed_logs)
 }

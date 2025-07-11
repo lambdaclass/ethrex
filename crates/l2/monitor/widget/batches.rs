@@ -9,7 +9,10 @@ use ratatui::{
     widgets::{Block, Row, StatefulWidget, Table, TableState},
 };
 
-use crate::monitor::widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS};
+use crate::{
+    monitor::widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    sequencer::errors::MonitorError,
+};
 
 pub struct BatchesTable {
     pub state: TableState,
@@ -25,7 +28,7 @@ impl BatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
-    ) -> Self {
+    ) -> Result<Self, MonitorError> {
         let mut last_l1_block_fetched = 0;
         let items = Self::fetch_new_items(
             &mut last_l1_block_fetched,
@@ -33,35 +36,41 @@ impl BatchesTable {
             eth_client,
             rollup_store,
         )
-        .await;
-        Self {
+        .await?;
+        Ok(Self {
             state: TableState::default(),
             items,
             last_l1_block_fetched,
             on_chain_proposer_address,
-        }
+        })
     }
 
-    pub async fn on_tick(&mut self, eth_client: &EthClient, rollup_store: &StoreRollup) {
+    pub async fn on_tick(
+        &mut self,
+        eth_client: &EthClient,
+        rollup_store: &StoreRollup,
+    ) -> Result<(), MonitorError> {
         let mut new_latest_batches = Self::fetch_new_items(
             &mut self.last_l1_block_fetched,
             self.on_chain_proposer_address,
             eth_client,
             rollup_store,
         )
-        .await;
+        .await?;
         new_latest_batches.truncate(50);
 
         let n_new_latest_batches = new_latest_batches.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(rollup_store).await;
+        self.refresh_items(rollup_store).await?;
         self.items.extend_from_slice(&new_latest_batches);
         self.items.rotate_right(n_new_latest_batches);
+
+        Ok(())
     }
 
-    async fn refresh_items(&mut self, rollup_store: &StoreRollup) {
+    async fn refresh_items(&mut self, rollup_store: &StoreRollup) -> Result<(), MonitorError> {
         if self.items.is_empty() {
-            return;
+            return Ok(());
         }
 
         let mut from = self.items.last().expect("Expected items in the table").0 - 1;
@@ -71,11 +80,13 @@ impl BatchesTable {
             self.items.first().expect("Expected items in the table").0,
             rollup_store,
         )
-        .await;
+        .await?;
 
         let refreshed_items = Self::process_batches(refreshed_batches).await;
 
         self.items = refreshed_items;
+
+        Ok(())
     }
 
     async fn fetch_new_items(
@@ -83,36 +94,38 @@ impl BatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
-    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+    ) -> Result<Vec<(u64, u64, usize, Option<H256>, Option<H256>)>, MonitorError> {
         let last_l2_batch_number = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
             .expect("Failed to get latest L2 batch");
 
         let new_batches =
-            Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await;
+            Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
 
-        Self::process_batches(new_batches).await
+        Ok(Self::process_batches(new_batches).await)
     }
 
-    async fn get_batches(from: &mut u64, to: u64, rollup_store: &StoreRollup) -> Vec<Batch> {
+    async fn get_batches(
+        from: &mut u64,
+        to: u64,
+        rollup_store: &StoreRollup,
+    ) -> Result<Vec<Batch>, MonitorError> {
         let mut new_batches = Vec::new();
 
         for batch_number in *from + 1..=to {
             let batch = rollup_store
                 .get_batch(batch_number)
                 .await
-                .unwrap_or_else(|err| {
-                    panic!("Failed to get batch by number ({batch_number}): {err}")
-                })
-                .unwrap_or_else(|| panic!("Batch {batch_number} not found in the rollup store"));
+                .map_err(|e| MonitorError::RollupStore(batch_number, e))?
+                .ok_or(MonitorError::BatchNotFound(batch_number))?;
 
             *from = batch_number;
 
             new_batches.push(batch);
         }
 
-        new_batches
+        Ok(new_batches)
     }
 
     async fn process_batches(
