@@ -27,16 +27,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: "true"
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: RISC-V Risc0 toolchain install
         if: matrix.backend == 'risc0'
