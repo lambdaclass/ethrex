@@ -31,6 +31,8 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+const SCROLL_DEBOUNCE_DURATION: u64 = 700; // milliseconds
+
 pub struct EthrexMonitor {
     pub title: String,
     pub should_quit: bool,
@@ -198,7 +200,7 @@ impl EthrexMonitor {
     }
 
     pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
-        let scroll_delay = Duration::from_millis(700);
+        let scroll_delay = Duration::from_millis(SCROLL_DEBOUNCE_DURATION);
 
         let now = Instant::now();
         if now.duration_since(self.last_scroll) < scroll_delay {
