@@ -69,7 +69,11 @@ fn build_sp1_program() {
     // ref: https://github.com/succinctlabs/sp1/blob/dev/crates/cli/src/commands/vkey.rs
     let elf = std::fs::read("./sp1/out/riscv32im-succinct-zkvm-elf")
         .expect("could not read SP1 elf file");
-    let prover = ProverClient::from_env();
+    let prover = if cfg!(feature = "gpu") {
+        ProverClient::builder().cuda().build()
+    } else {
+        ProverClient::builder().cpu().build()
+    };
     let (_, vk) = prover.setup(&elf);
 
     std::fs::write(

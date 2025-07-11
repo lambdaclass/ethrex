@@ -52,8 +52,18 @@ name = "ethrex_prover_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ethrex_prover"
+name = "ethrex_prover_exec"
 path = "src/main.rs"
+
+[[bin]]
+name = "ethrex_prover_risc0"
+path = "src/main.rs"
+required-features = ["risc0"]
+
+[[bin]]
+name = "ethrex_prover_sp1"
+path = "src/main.rs"
+required-features = ["sp1"]
 
 [features]
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct

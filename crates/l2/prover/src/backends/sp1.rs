@@ -21,7 +21,11 @@ struct ProverSetup {
 }
 
 static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
-    let client = ProverClient::from_env();
+    let client = if cfg!(feature = "gpu") {
+        ProverClient::builder().cuda().build()
+    } else {
+        ProverClient::builder().cpu().build()
+    };
     let (pk, vk) = client.setup(PROGRAM_ELF);
     ProverSetup { client, pk, vk }
 });

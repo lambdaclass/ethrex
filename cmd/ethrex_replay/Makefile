@@ -9,9 +9,9 @@ REPLAY_ARGS += --rpc-url ${RPC_URL} --network ${NETWORK} --bench
 
 # Execution only
 sp1:
-	SP1_PROVER=cpu cargo r -r --features sp1 -- execute block ${REPLAY_ARGS}
+	cargo r -r --features sp1 -- execute block ${REPLAY_ARGS}
 sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- execute block ${REPLAY_ARGS}
+	cargo r -r --features "sp1,gpu" -- execute block ${REPLAY_ARGS}
 risc0:
 	cargo r -r --no-default-features --features risc0 -- execute block ${REPLAY_ARGS}
 risc0-gpu:
@@ -19,11 +19,11 @@ risc0-gpu:
 
 # Proving
 prove-sp1:
-	SP1_PROVER=cpu cargo r -r --features sp1 -- prove block ${REPLAY_ARGS}
+	cargo r -r --features sp1 -- prove block ${REPLAY_ARGS}
 prove-sp1-gpu:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- prove block ${REPLAY_ARGS}
+	cargo r -r --features "sp1,gpu" -- prove block ${REPLAY_ARGS}
 prove-sp1-gpu-ci:
-	SP1_PROVER=cuda cargo r -r --features "sp1,gpu,ci" -- prove block ${REPLAY_ARGS}
+	cargo r -r --features "sp1,gpu,ci" -- prove block ${REPLAY_ARGS}
 prove-risc0:
 	cargo r -r --no-default-features --features risc0 -- prove block ${REPLAY_ARGS}
 prove-risc0-gpu:

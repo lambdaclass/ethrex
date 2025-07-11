@@ -158,38 +158,38 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-PROVER_SRC_FILES := $(shell find prover/src -type f)
-
-init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	../../target/release/ethrex_prover \
-	--http.addr 127.0.0.1 \
-  	--http.port 3900 \
-
-	cargo r -r --features "l2,risc0,gpu" --manifest-path ./prover/Cargo.toml -- --http.addr 127.0.0.1 --http.port 3900
-
 build-prover:
-	rm -f ../../target/release/ethrex_prover
-	$(MAKE) ../../target/release/ethrex_prover
-
-../../target/release/ethrex_prover: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
-		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
-		echo "Please provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
-		echo "The prover can also be run with GPU (G)"; \
+		echo "Error: ProverType (PROVER) is missing. Running with 'exec' backend (no proving)."; \
+		echo "You may a different backend by:"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1)>"; \
+		exit 1; \
 	fi; \
-
-	@if [ -z "$$G" ]; then \
-		GPU=""; \
-	else \
-		GPU=",gpu"; \
+	FEATURES="$$PROVER,l2"; \
+	if [ -n "$$GPU" ]; then \
+		FEATURES="$$FEATURES,gpu"; \
 	fi; \
 
 	RUSTFLAGS='-C target-cpu=native' \
-	cargo build --release --features "$$PROVER$$GPU,l2" \
-	--manifest-path ./prover/Cargo.toml  \
-	--bin ethrex_prover
+	cargo build --release --features "$$FEATURES" --manifest-path ./prover/Cargo.toml  \
+
+init-prover:
+	@if [ -z "$$PROVER" ]; then \
+		echo "Error: ProverType (PROVER) is missing. Running with 'exec' backend (no proving)."; \
+		echo "You may a different backend by:"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1)>"; \
+		exit 1; \
+	fi; \
+	FEATURES="$$PROVER,l2"; \
+	if [ -n "$$GPU" ]; then \
+		FEATURES="$$FEATURES,gpu"; \
+	fi; \
+
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	RUSTFLAGS='-C target-cpu=native' \
+	cargo run --release --features "$$FEATURES" --manifest-path ./prover/Cargo.toml -- \
+	--http.addr 127.0.0.1 \
+	--http.port 3900
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
