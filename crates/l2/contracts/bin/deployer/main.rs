@@ -146,13 +146,13 @@ async fn deploy_contracts(
     };
 
     trace!("Attempting to deploy OnChainProposer contract");
-    let on_chain_proposer_deployment = deploy_with_proxy(
-        opts.private_key,
-        eth_client,
-        &opts.contracts_path.join("solc_out/OnChainProposer.bin"),
-        &salt,
-    )
-    .await?;
+    let bytecode = if opts.deploy_based_contracts {
+        ON_CHAIN_PROPOSER_BASED_BYTECODE.to_vec()
+    } else {
+        ON_CHAIN_PROPOSER_BYTECODE.to_vec()
+    };
+    let on_chain_proposer_deployment =
+        deploy_with_proxy_from_bytecode(opts.private_key, eth_client, &bytecode, &salt).await?;
 
     info!(
         "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",

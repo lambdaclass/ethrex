@@ -8,8 +8,8 @@ use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, L1ToL2TransactionData,
     calldata::{self, encode_calldata},
-    claim_erc20withdraw, claim_withdraw, compile_contract, deposit_erc20, download_contract_deps,
-    get_address_from_secret_key, get_erc1967_slot, wait_for_transaction_receipt,
+    claim_erc20withdraw, claim_withdraw, compile_contract, deposit_erc20,
+    get_address_from_secret_key, get_erc1967_slot, git_clone, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
     clients::eth::{EthClient, eth_sender::Overrides, from_hex_string_to_u256},
@@ -165,8 +165,22 @@ async fn test_upgrade(
     let private_key = l1_rich_wallet_private_key();
 
     let contracts_path = Path::new("contracts");
-    download_contract_deps(contracts_path).unwrap();
-    compile_contract(contracts_path, "src/l2/CommonBridgeL2.sol", false)?;
+    get_contract_dependencies(&contracts_path);
+    let remappings_raw = vec![(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    let remappings: Vec<(&str, &Path)> = remappings_raw
+        .iter()
+        .map(|(s, p)| (*s, p.as_path()))
+        .collect();
+    compile_contract(
+        contracts_path,
+        Path::new("contracts/src/l2/CommonBridgeL2.sol"),
+        false,
+        Some(&remappings),
+    )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
     let deploy_address = test_deploy(&bridge_code, &private_key, l2_client).await?;
@@ -345,8 +359,23 @@ async fn test_erc20_roundtrip(
     let token_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
 
     let contracts_path = Path::new("contracts");
-    ethrex_l2_sdk::download_contract_deps(contracts_path)?;
-    compile_contract(contracts_path, "src/example/L2ERC20.sol", false)?;
+
+    get_contract_dependencies(contracts_path);
+    let remappings_raw = vec![(
+        "@openzeppelin/contracts",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    let remappings: Vec<(&str, &Path)> = remappings_raw
+        .iter()
+        .map(|(s, p)| (*s, p.as_path()))
+        .collect();
+    compile_contract(
+        contracts_path,
+        Path::new("contracts/src/example/L2ERC20.sol"),
+        false,
+        Some(&remappings),
+    )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
     )?)?)?;
@@ -1645,4 +1674,18 @@ pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
         Some(s) => hex::decode(s).map(Into::into),
         None => hex::decode(s).map(Into::into),
     }
+}
+
+fn get_contract_dependencies(contracts_path: &Path) {
+    std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
+    git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable")
+            .to_str()
+            .expect("Failed to convert path to str"),
+        None,
+        true,
+    )
+    .unwrap();
 }
