@@ -31,22 +31,18 @@ impl InMemoryTrieDB {
 impl TrieDB for InMemoryTrieDB {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         tracing::debug!(key = hex::encode(key.as_ref()), "[QUERYING TRIE NODE]",);
-        let lock = self.inner.lock().map_err(|_| TrieError::LockError)?;
-        Ok(lock.get(&key).map(|full| {
-            let mut v = full.clone();
-            if v.len() >= 8 {
-                v.truncate(v.len() - 8);
-            }
-            v
-        }))
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| TrieError::LockError)?
+            .get(&key)
+            .cloned())
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
-        for (key, mut value) in key_values {
-            // Add 8 extra bytes to store the block number
-            value.extend_from_slice(&[0u8; 8]);
+        for (key, value) in key_values {
             db.insert(key, value);
         }
 
