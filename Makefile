@@ -40,7 +40,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 6a896a15e6d686b0a60adf4ee97954065bc82435
+ETHEREUM_PACKAGE_REVISION := a94f305a534db672599341e06a0f4e6ed8b00703
 
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
@@ -57,6 +57,14 @@ ENCLAVE ?= lambdanet
 
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+localnet-only-ethrex: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with only ethrex
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_only_ethrex.yaml
+	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
+
+localnet-only-reth: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with only reth
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_only_reth.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network

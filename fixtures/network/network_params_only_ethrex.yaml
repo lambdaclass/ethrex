@@ -1,0 +1,28 @@
+participants:
+  - el_type: ethrex
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    validator_count: 32
+    count: 3
+
+ethereum_metrics_exporter_enabled: true
+
+network_params:
+  # The address of the staking contract address on the Eth1 chain
+  deposit_contract_address: "0x4242424242424242424242424242424242424242"
+  genesis_gaslimit: 60000000 # 60M gas limit for genesis block
+  electra_fork_epoch: 0
+
+additional_services:
+  - dora
+  - spamoor
+  - prometheus_grafana
+
+spamoor_params:
+  spammers:
+    - scenario: eoatx
+      config:
+        throughput: 3000
+
+grafana_params:
+  additional_dashboards: ["./ethrex_l1_perf.json"]
