@@ -1,0 +1,6 @@
+[alerting]
+{% for alert in grafana_alerts %}
+provisioning_path = {{ alert.path }}
+{% endfor %}
+
+

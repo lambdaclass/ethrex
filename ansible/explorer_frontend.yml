@@ -1,0 +1,119 @@
+- name: Explorer Frontend Setup
+  hosts: explorer_frontend
+  vars:
+    yarn_version: "1.22.22"
+    nodejs_version: "22.11.0"
+    explorer_url: "https://github.com/lambdaclass/sovra-explorer-frontend.git"
+    explorer_dir: "/home/{{ ansible_user }}/sovra-explorer-frontend"
+
+  tasks:
+    - name: Check if nodejs is installed
+      stat:
+        path: /usr/local/bin/node
+      register: nodejs_check
+
+    - name: Get architecture
+      set_fact:
+        architecture: "{{ 'x64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
+      when: not nodejs_check.stat.exists
+
+    - name: Download NodeJS
+      get_url:
+        url: "https://nodejs.org/dist/v{{ nodejs_version }}/node-v{{ nodejs_version }}-linux-{{ architecture }}.tar.xz"
+        dest: "/tmp/nodejs-{{ nodejs_version }}.tar.xz"
+        mode: '0644'
+      when: not nodejs_check.stat.exists
+
+    - name: Extract NodeJS
+      unarchive:
+        src: "/tmp/nodejs-{{ nodejs_version }}.tar.xz"
+        dest: /tmp/
+        remote_src: yes
+      when: not nodejs_check.stat.exists
+
+    - name: Move NodeJS
+      become: true
+      shell: "sudo cp -r /tmp/node-v{{ nodejs_version }}-linux-{{ architecture }}/* /usr/local/"
+      vars:
+        ansible_ssh_user: admin
+      when: not nodejs_check.stat.exists
+
+    - name: Install jq
+      become: true
+      apt:
+        name: jq
+        state: present
+        update_cache: yes
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Enable corepack
+      become: true
+      command: corepack enable
+      args:
+        creates: /usr/local/bin/yarn
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Clone Explorer repository
+      git:
+        repo: "{{ explorer_url }}"
+        dest: "{{ explorer_dir }}"
+        version: stable
+        force: yes
+
+    - name: Create .env file
+      copy:
+        content: |
+          NEXT_PUBLIC_API_HOST={{ lookup('env', 'NEXT_PUBLIC_API_HOST') }}
+          NEXT_PUBLIC_API_PORT={{ lookup('env', 'NEXT_PUBLIC_API_PORT') }}
+          NEXT_PUBLIC_API_PROTOCOL={{ lookup('env', 'NEXT_PUBLIC_API_PROTOCOL') }}
+          NEXT_PUBLIC_APP_HOST={{ lookup('env', 'NEXT_PUBLIC_APP_HOST') }}
+          NEXT_PUBLIC_APP_PORT={{ lookup('env', 'NEXT_PUBLIC_APP_PORT') }}
+          NEXT_PUBLIC_APP_PROTOCOL={{ lookup('env', 'NEXT_PUBLIC_APP_PROTOCOL') }}
+          NEXT_PUBLIC_APP_ENV={{ lookup('env', 'NEXT_PUBLIC_APP_ENV') }}
+          NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL={{ lookup('env', 'NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL') }}
+          NEXT_PUBLIC_NETWORK_NAME={{ lookup('env', 'NEXT_PUBLIC_NETWORK_NAME') }}
+          NEXT_PUBLIC_NETWORK_ID={{ lookup('env', 'NEXT_PUBLIC_NETWORK_ID') }}
+          NEXT_PUBLIC_AD_BANNER_PROVIDER={{ lookup('env', 'NEXT_PUBLIC_AD_BANNER_PROVIDER') }}
+          NEXT_PUBLIC_AD_TEXT_PROVIDER={{ lookup('env', 'NEXT_PUBLIC_AD_TEXT_PROVIDER') }}
+          NEXT_PUBLIC_MARKETPLACE_ENABLED={{ lookup('env', 'NEXT_PUBLIC_MARKETPLACE_ENABLED') }}
+          NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE={{ lookup('env', 'NEXT_PUBLIC_PROMOTE_BLOCKSCOUT_IN_TITLE') }}
+          NEXT_PUBLIC_NETWORK_LOGO={{ lookup('env', 'NEXT_PUBLIC_NETWORK_LOGO') }}
+          NEXT_PUBLIC_NETWORK_LOGO_DARK={{ lookup('env', 'NEXT_PUBLIC_NETWORK_LOGO_DARK') }}
+          NEXT_PUBLIC_NETWORK_ICON={{ lookup('env', 'NEXT_PUBLIC_NETWORK_ICON') }}
+          NEXT_PUBLIC_NETWORK_ICON_DARK={{ lookup('env', 'NEXT_PUBLIC_NETWORK_ICON_DARK') }}
+          NEXT_PUBLIC_STATS_API_HOST={{ lookup('env', 'NEXT_PUBLIC_STATS_API_HOST') }}:3000
+          NEXT_PUBLIC_GRAPHIQL_TRANSACTION={{ lookup('env', 'NEXT_PUBLIC_GRAPHIQL_TRANSACTION') }}
+          NEXT_PUBLIC_API_SPEC_URL={{ lookup('env', 'NEXT_PUBLIC_API_SPEC_URL') }}
+          NEXT_PUBLIC_NAVIGATION_HIDDEN_LINKS={{ lookup('env', 'NEXT_PUBLIC_NAVIGATION_HIDDEN_LINKS') }}
+        dest: "{{ explorer_dir }}/.env"
+        mode: '0644'
+      ignore_errors: true
+
+    - name: Install yarn
+      command: corepack prepare yarn@{{ yarn_version }} --activate
+      args:
+        creates: /usr/local/lib/node_modules/corepack/shims/yarn
+
+    - name: Install yarn dependencies
+      command: yarn install
+      args:
+        chdir: "{{ explorer_dir }}"
+
+    - name: Build Next.js application
+      command: yarn build:next
+      args:
+        chdir: "{{ explorer_dir }}"
+
+    - name: Install Explorer service
+      template:
+        src: services/explorer-frontend.service.j2
+        dest: "/home/{{ ansible_user }}/.config/systemd/user/explorer-frontend.service"
+
+    - name: Start Explorer
+      systemd:
+        name: explorer-frontend
+        state: started
+        enabled: true
+        daemon_reload: true
