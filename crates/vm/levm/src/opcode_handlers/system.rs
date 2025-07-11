@@ -694,6 +694,9 @@ impl<'a> VM<'a> {
 
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
+        if *(X.lock().unwrap()) {
+            info!("[CREATE] new account: {new_account:?}");
+        }
         if new_account.has_code_or_nonce() {
             self.current_call_frame_mut()?.stack.push(&[FAIL])?;
             self.tracer
