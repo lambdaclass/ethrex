@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752241141515,
+  "lastUpdate": 1752242731536,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3475,6 +3475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207065743006,
             "range": "± 451079847",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fa4246853cf52292fce47ca6cb405e538adee68c",
+          "message": "ci(l1, l2): create reusable step to install rust (#3591)\n\nContinuation of https://github.com/lambdaclass/ethrex/pull/3318\n\n**Motivation**\n\nGitHub Variables are excluded from workflow runs triggered by PRs from\nforks, so we need to remove this variable dependency in order for\nexternal collaborators to send PRs and run the CI properly\n\n**Description**\n\n* The `Extract Rust version from rust-toolchain.toml` step (`id:\nrustver`) uses `grep` and `sed` to extract the rust version from the\n`rust-toolchain.toml` file that is in the root of the repository.\n* The `Install Rust` step utilizes the output of the previous step to\nsend the version to the `toolchain` parameter\n* Note that in some cases, I had to move the `Checkout` step further up\n(it's also good practice to put it as high up as possible) so the\n`rust-toolchain.toml` file is available to be read.\n\n---------\n\nCo-authored-by: Klaus Lungwitz <klaus.lungwitz@lambdaclass.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-07-11T13:02:23Z",
+          "tree_id": "cc5d86727f7ab3a3c8d9b086fd654abe55abcbad",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fa4246853cf52292fce47ca6cb405e538adee68c"
+        },
+        "date": 1752242720516,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211607389389,
+            "range": "± 491996718",
             "unit": "ns/iter"
           }
         ]
