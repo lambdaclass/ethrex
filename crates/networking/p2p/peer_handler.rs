@@ -1,11 +1,15 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
+use crate::rlpx::l2::messages::{GetBatchSealed, GetBatchSealedResponse, L2Message};
 use bytes::Bytes;
 #[cfg(feature = "l2")]
 use ethrex_common::types::batch::Batch;
 use ethrex_common::{
     H256, U256,
-    types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
+    types::{
+        AccountState, Block, BlockBody, BlockHeader, Receipt, batch::Batch, validate_block_body,
+    },
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
@@ -181,10 +185,7 @@ impl PeerHandler {
         None
     }
 
-    #[cfg(feature = "l2")]
     pub async fn request_batch(&self, first_batch: u64, last_batch: u64) -> Option<Vec<Batch>> {
-        use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
-        use crate::rlpx::l2::messages::{GetBatchSealed, GetBatchSealedResponse, L2Message};
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request = RLPxMessage::L2(L2Message::GetBatchSealed(GetBatchSealed {
                 first_batch,

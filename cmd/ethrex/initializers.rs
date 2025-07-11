@@ -3,7 +3,7 @@ use crate::{
     networks::{self, Network, PublicNetwork},
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
-use ethrex_blockchain::{Blockchain, BlockchainType, sequencer_state::SequencerState};
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -119,7 +119,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        rollup_store.clone(),
+        None,
     )
     .await;
 

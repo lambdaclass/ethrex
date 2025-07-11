@@ -6,7 +6,6 @@ use std::sync::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
-#[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
 use tokio::{
     sync::Mutex,
@@ -20,6 +19,22 @@ use crate::{
     sync::{SyncMode, Syncer},
 };
 
+#[derive(Debug, Clone)]
+pub struct SyncManagerBasedContext {
+    pub rollup_store: StoreRollup,
+    /// The batch number to be synced to
+    pub next_batch_head: Arc<Mutex<u64>>,
+}
+
+impl SyncManagerBasedContext {
+    pub fn new(rollup_store: StoreRollup) -> Self {
+        Self {
+            rollup_store,
+            next_batch_head: Arc::new(Mutex::new(1)), // Default value
+        }
+    }
+}
+
 /// Abstraction to interact with the active sync process without disturbing it
 #[derive(Debug, Clone)]
 pub struct SyncManager {
@@ -29,10 +44,7 @@ pub struct SyncManager {
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
-    #[cfg(feature = "l2")]
-    rollup_store: StoreRollup,
-    /// The batch number to be synced to
-    new_batch_head: Arc<Mutex<u64>>,
+    based_context: Option<SyncManagerBasedContext>,
 }
 
 impl SyncManager {
@@ -42,7 +54,7 @@ impl SyncManager {
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         store: Store,
-        #[cfg(feature = "l2")] rollup_store: StoreRollup,
+        based_context: Option<SyncManagerBasedContext>,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
@@ -56,9 +68,7 @@ impl SyncManager {
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
-            #[cfg(feature = "l2")]
-            rollup_store,
-            new_batch_head: Arc::new(Mutex::new(1)),
+            based_context,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorrectly assume the node is already synced and work on invalid state
@@ -81,9 +91,7 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
                 .expect("Failed to start Storage Engine"),
-            #[cfg(feature = "l2")]
-            rollup_store: StoreRollup::default(),
-            new_batch_head: Arc::new(Mutex::new(1)),
+            based_context: None,
         }
     }
 
@@ -116,10 +124,12 @@ impl SyncManager {
 
     /// Updates the last batch number. This may be used on the next sync cycle if needed
     fn set_batch_number(&self, batch_number: u64) {
-        if let Ok(mut new_batch_head) = self.new_batch_head.try_lock() {
-            *new_batch_head = batch_number;
-        } else {
-            warn!("Failed to update latest batch number for syncing")
+        if let Some(based_context) = &self.based_context {
+            if let Ok(mut new_batch_head) = based_context.next_batch_head.try_lock() {
+                *new_batch_head = batch_number;
+            } else {
+                warn!("Failed to update latest batch number for syncing")
+            }
         }
     }
 
@@ -135,10 +145,7 @@ impl SyncManager {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
         let sync_head = self.last_fcu_head.clone();
-        #[cfg(feature = "l2")]
-        let rollup_store = self.rollup_store.clone();
-        #[cfg(feature = "l2")]
-        let new_batch_head = self.new_batch_head.clone();
+        let based_context = self.based_context.clone();
 
         tokio::spawn(async move {
             let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
@@ -165,30 +172,13 @@ impl SyncManager {
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
-                #[cfg(feature = "l2")]
-                let last_batch_number_value =
-                    rollup_store.get_latest_batch_number().await.unwrap_or(1);
-
-                #[cfg(feature = "l2")]
-                let new_batch_head = {
-                    let Ok(new_batch_head) = new_batch_head.try_lock() else {
-                        error!("Failed to read new batch head, unable to sync");
-                        return;
-                    };
-                    *new_batch_head
-                };
                 // Start the sync cycle
                 syncer
                     .start_sync(
                         current_head,
                         sync_head,
                         store.clone(),
-                        #[cfg(feature = "l2")]
-                        rollup_store.clone(),
-                        #[cfg(feature = "l2")]
-                        last_batch_number_value,
-                        #[cfg(feature = "l2")]
-                        new_batch_head,
+                        based_context.clone(),
                     )
                     .await;
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)

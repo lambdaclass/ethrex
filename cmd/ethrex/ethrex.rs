@@ -8,9 +8,8 @@ use ethrex::{
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use ethrex_blockchain::BlockchainType;
-use ethrex_blockchain::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_p2p::network::peer_table;
-use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
+use ethrex_p2p::{kademlia::KademliaTable, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]

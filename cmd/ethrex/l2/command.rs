@@ -21,8 +21,8 @@ use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
-use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_p2p::{network::peer_table, peer_handler::PeerHandler, sync_manager::SyncManager};
+use ethrex_p2p::{rlpx::l2::l2_connection::P2PBasedContext, sync_manager::SyncManagerBasedContext};
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
@@ -179,7 +179,7 @@ impl Command {
 
                 let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
-                let initial_status = if l2_sequencer_cfg.based.based {
+                let initial_status = if l2_sequencer_cfg.based.enabled {
                     SequencerStatus::default()
                 } else {
                     SequencerStatus::Sequencing
@@ -221,7 +221,7 @@ impl Command {
                     cancel_token.clone(),
                     blockchain.clone(),
                     store.clone(),
-                    rollup_store.clone(),
+                    Some(SyncManagerBasedContext::new(rollup_store.clone())),
                 );
 
                 let l2_sequencer = ethrex_l2::start_l2(

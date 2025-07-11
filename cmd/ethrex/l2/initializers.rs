@@ -5,7 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
 use ethrex_p2p::kademlia::KademliaTable;
 use ethrex_p2p::peer_handler::PeerHandler;
-use ethrex_p2p::sync_manager::SyncManager;
+use ethrex_p2p::sync_manager::{SyncManager, SyncManagerBasedContext};
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -41,6 +41,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        Some(SyncManagerBasedContext::new(rollup_store.clone())),
     )
     .await;
 
