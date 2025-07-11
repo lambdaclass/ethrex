@@ -37,7 +37,6 @@ lazy_static::lazy_static! {
     pub static ref PROBLEMATIC_ADDRESS: Address = Address::from_str("0x455e5aa18469bc6ccef49594645666c587a3a71b").unwrap();
 }
 
-
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
 /// The struct implements the following functions:
@@ -63,10 +62,13 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            info!("Executing Block {}; tx: {tx_idx}", block.header.number);
+            if tx_sender == *PROBLEMATIC_ADDRESS {
+                info!("Tx sender is problematic address!!");
+            }
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
 
             cumulative_gas_used += report.gas_used;
-            //info!("Tx: {tx_idx}; gas used: {}", report.gas_used);
             tx_idx += 1;
             let receipt = Receipt::new(
                 tx.tx_type(),

@@ -15,4 +15,11 @@ pub mod tracing;
 pub mod utils;
 pub mod vm;
 pub use environment::*;
+use ethrex_common::Address;
 pub mod l2_precompiles;
+
+use std::str::FromStr;
+
+lazy_static::lazy_static! {
+    pub static ref PROBLEMATIC_ADDRESS: Address = Address::from_str("0x455e5aa18469bc6ccef49594645666c587a3a71b").unwrap();
+}

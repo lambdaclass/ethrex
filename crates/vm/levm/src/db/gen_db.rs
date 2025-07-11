@@ -6,7 +6,9 @@ use ethrex_common::Address;
 use ethrex_common::U256;
 use ethrex_common::types::Account;
 use keccak_hash::H256;
+use tracing::info;
 
+use crate::PROBLEMATIC_ADDRESS;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
@@ -152,6 +154,9 @@ impl<'a> VM<'a> {
         address: Address,
         increase: U256,
     ) -> Result<(), InternalError> {
+        if address == *PROBLEMATIC_ADDRESS {
+            info!("Increasing Balance by {increase}");
+        }
         let account = self.get_account_mut(address)?;
         account.info.balance = account
             .info
@@ -166,6 +171,9 @@ impl<'a> VM<'a> {
         address: Address,
         decrease: U256,
     ) -> Result<(), InternalError> {
+        if address == *PROBLEMATIC_ADDRESS {
+            info!("Decreasing Balance by {decrease}");
+        }
         let account = self.get_account_mut(address)?;
         account.info.balance = account
             .info
