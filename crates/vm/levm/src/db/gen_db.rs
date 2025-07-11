@@ -8,6 +8,7 @@ use ethrex_common::types::Account;
 use keccak_hash::H256;
 use tracing::info;
 
+use crate::call_frame::X;
 use crate::PROBLEMATIC_ADDRESS;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
@@ -240,6 +241,9 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<U256, InternalError> {
         if let Some(value) = self.storage_original_values.get(&(address, key)) {
+            if *(X.lock().unwrap()) {
+                info!("[SSTORE] original value found in VMDB");
+            }
             return Ok(*value);
         }
 

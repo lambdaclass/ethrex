@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::CallFrame,
+    call_frame::{CallFrame, X},
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
@@ -8,6 +8,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::{H256, U256, types::Fork};
+use tracing::info;
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -171,6 +172,9 @@ impl<'a> VM<'a> {
             let to = current_call_frame.to;
             (storage_slot_key, new_storage_slot_value, to)
         };
+        if *(X.lock().unwrap()) {
+            info!("[SSTORE] to: {to:?}, storage_slot_key: {storage_slot_key:?}, new_storage_slot_value: {new_storage_slot_value:?}");
+        }
 
         // EIP-2200
         let gas_left = self.current_call_frame()?.gas_remaining;
