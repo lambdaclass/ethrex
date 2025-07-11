@@ -1,9 +1,10 @@
 use crate::{
-    call_frame::CallFrame,
+    call_frame::{CallFrame, X},
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_U64},
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     memory,
 };
+use tracing::info;
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
@@ -401,6 +402,9 @@ pub fn sstore(
     new_value: U256,
     storage_slot_was_cold: bool,
 ) -> Result<u64, VMError> {
+    if *(X.lock().unwrap()) {
+        info!("[SSTORE] original_value: {original_value:?}, new_value: {new_value:?}, current_value: {current_value:?}, storage_slot_was_cold: {storage_slot_was_cold:?}");
+    }
     let static_gas = SSTORE_STATIC;
 
     let mut base_dynamic_gas = if new_value == current_value {
