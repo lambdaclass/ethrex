@@ -89,7 +89,7 @@ impl EthrexMonitor {
                 &eth_client,
                 &rollup_store,
             )
-            .await,
+            .await?,
             blocks_table: BlocksTable::new(&store).await,
             l1_to_l2_messages: L1ToL2MessagesTable::new(
                 cfg.l1_watcher.bridge_address,
@@ -215,7 +215,7 @@ impl EthrexMonitor {
         self.mempool.on_tick(&self.rollup_client).await;
         self.batches_table
             .on_tick(&self.eth_client, &self.rollup_store)
-            .await;
+            .await?;
         self.blocks_table.on_tick(&self.store).await;
         self.l1_to_l2_messages
             .on_tick(&self.eth_client, &self.store)
