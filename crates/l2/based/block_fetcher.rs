@@ -113,9 +113,6 @@ impl BlockFetcherState {
                 ),
             };
 
-        info!("_latest_safe_batch {_latest_safe_batch}");
-        info!("last_l1_block_fetched {last_l1_block_fetched}");
-
         Ok(Self {
             eth_client,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,

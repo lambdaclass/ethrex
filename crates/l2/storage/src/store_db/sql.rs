@@ -435,11 +435,9 @@ impl StoreEngineRollup for SQLStore {
             return Ok(None);
         };
         let latest_batch_number = read_from_row_int(&row, 0)?;
-        println!("latest_batch_number {latest_batch_number:?}");
         if latest_batch_number == 0 {
             return Ok(None);
         }
-
         Ok(Some(latest_batch_number))
     }
 
