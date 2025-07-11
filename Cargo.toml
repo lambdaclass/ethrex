@@ -27,6 +27,7 @@ members = [
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
+  "tooling/archive_sync"
 ]
 resolver = "2"
 
@@ -55,6 +56,7 @@ ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
+ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 
 tracing = { version = "0.1", features = ["log"] }
@@ -100,6 +102,7 @@ futures = "0.3.31"
 spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
 spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.2-alpha"}
 lambdaworks-crypto = "0.11.0"
+tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }

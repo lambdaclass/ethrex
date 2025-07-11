@@ -20,15 +20,10 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
-
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -50,14 +45,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Run tests
         run: |
@@ -162,7 +151,7 @@ jobs:
             test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
             # AccountRange and GetTrieNodes don't pass anymore.
             #|BlobViolations
-            # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
+            # Findnode/UnsolicitedNeighbors and Findnode/BasicFindnode flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
