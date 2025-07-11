@@ -343,6 +343,9 @@ async fn initialize_contracts(
             Value::FixedBytes(risc0_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
+            Value::Uint(opts.inclusion_max_wait.into()),
+            Value::Uint(opts.inclusion_target.into()),
+            Value::Uint(opts.inclusion_tolerance.into())
         ];
 
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
@@ -397,6 +400,9 @@ async fn initialize_contracts(
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
             ]),
+            Value::Uint(opts.inclusion_max_wait.into()),
+            Value::Uint(opts.inclusion_target.into()),
+            Value::Uint(opts.inclusion_tolerance.into())
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
