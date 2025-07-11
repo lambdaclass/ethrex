@@ -149,14 +149,18 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
+            let end = Instant::now();
+            info!("Total main execution {} seconds", (end - start).as_secs_f64());
+
             server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
         _ = signal_terminate.recv() => {
+            let end = Instant::now();
+            info!("Total main execution {} seconds", (end - start).as_secs_f64());
+
             server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
     }
 
-    let end = Instant::now();
-    info!("Total main execution {} seconds", (end - start).as_secs_f64());
     Ok(())
 }
