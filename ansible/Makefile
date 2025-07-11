@@ -53,6 +53,8 @@ inventory: ## Generates inventory for ansible
 	fi
 
 database: ## Installs Postgres database
+	PGUSER=$(PGUSER)
+	PGPASSWORD=$(PGPASSWORD)
 	ansible-playbook -i inventory.ini database.yml
 
 ethrex-l1: ## Installs Ethrex L1

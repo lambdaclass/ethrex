@@ -3,7 +3,10 @@ Description=Ethereum Metrics Exporter
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/ethereum-metrics-exporter
+ExecStart=/usr/local/bin/ethereum-metrics-exporter \
+          --metrics-port 8081
+          --consensus-url localhost:5052
+          --execution-url localhost:8545
 Restart=on-failure
 
 [Install]

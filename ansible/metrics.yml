@@ -30,26 +30,29 @@
     - name: Reset connection
       meta: reset_connection
 
+    - name: Check if Grafana is installed
+      stat:
+        path: /usr/sbin/grafana-server
+      register: grafana
+
     - name: Clone monitoring stack repository
       git:
         repo: "git@github.com:lambdaclass/monitoring-stack.git"
         dest: /home/{{ ansible_user}}/monitoring-stack
         version: main
         accept_hostkey: true
+      when: not grafana.stat.exists
 
     - name: Add localhost as known hosts
       shell: ssh-keyscan localhost >> /home/{{ ansible_user }}/.ssh/known_hosts
+      when: not grafana.stat.exists
 
     - name: Install ansible on server
       become: true
       apt:
         name: ansible
         state: present
-
-    - name: Check if Grafana is installed
-      stat:
-        path: /usr/sbin/grafana-server
-      register: grafana
+      when: not grafana.stat.exists
 
     - name: Run monitoring stack deployment
       make:
@@ -93,6 +96,20 @@
         owner: grafana
         group: grafana
         mode: '0644'
+
+    - name: Add Ethereum Metrics Exporter scrape config
+      become: true
+      blockinfile:
+        path: /etc/prometheus/prometheus.yml
+        insertafter: "scrape_configs:"
+        block: |
+          {{ text | indent(2, first=true) }}
+        state: present
+      vars:
+        text: |
+          - job_name: 'ethereum_metrics_exporter'
+            static_configs:
+              - targets: ['localhost:8081']
 
     - name: Add alerts
       become: true

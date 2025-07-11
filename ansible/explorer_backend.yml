@@ -56,15 +56,16 @@
         - { repo: "deb https://binaries2.erlang-solutions.com/ubuntu/ jammy-esl-erlang-25 contrib", name: "erlang" }
         - { repo: "deb https://binaries2.erlang-solutions.com/debian/ bullseye-elixir-1.15 contrib", name: "elixir" }
 
-    - name: Add Docker’s official GPG key
-      apt_key:
+    - name: Get Docker GPG keyring
+      get_url:
         url: https://download.docker.com/linux/debian/gpg
-        keyring: /etc/apt/trusted.gpg.d/docker.gpg
-        state: present
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
 
-    - name: Add Docker repository
+    - name: Add Docker APT repository
       apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/debian bookworm stable
+        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable"
+        filename: docker
         state: present
 
     - name: Install Docker packages
