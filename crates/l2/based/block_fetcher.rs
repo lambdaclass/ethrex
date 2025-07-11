@@ -266,7 +266,7 @@ async fn get_logs(
                 state.last_l1_block_fetched + 1,
                 new_last_l1_fetched_block,
                 state.on_chain_proposer_address,
-                keccak(b"BatchCommitted(uint256,bytes32)"),
+                vec![keccak(b"BatchCommitted(uint256,bytes32)")],
             )
             .await?;
 
@@ -277,7 +277,7 @@ async fn get_logs(
                 state.last_l1_block_fetched + 1,
                 new_last_l1_fetched_block,
                 state.on_chain_proposer_address,
-                keccak(b"BatchVerified(uint256)"),
+                vec![keccak(b"BatchVerified(uint256)")],
             )
             .await?;
 
