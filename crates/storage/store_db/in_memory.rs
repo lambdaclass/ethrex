@@ -111,15 +111,15 @@ impl Store {
 
         let store_for_pruning = store.clone();
 
-        // let _join = thread::Builder::new()
-        //     .name("trie_pruner🗑️".to_string())
-        //     .spawn(move || {
-        //         loop {
-        //             thread::sleep(std::time::Duration::from_secs(1));
-        //             #[allow(clippy::unwrap_used)]
-        //             store_for_pruning.prune_state_and_storage_log().unwrap();
-        //         }
-        //     });
+        let _join = thread::Builder::new()
+            .name("trie_pruner🗑️".to_string())
+            .spawn(move || {
+                loop {
+                    thread::sleep(std::time::Duration::from_secs(1));
+                    #[allow(clippy::unwrap_used)]
+                    store_for_pruning.prune_state_and_storage_log().unwrap();
+                }
+            });
 
         store
     }
@@ -336,8 +336,9 @@ impl StoreEngine for Store {
                 }
             }
         }
+        Ok(())
 
-        self.prune_state_and_storage_log()
+        // self.prune_state_and_storage_log()
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
@@ -572,7 +573,14 @@ impl StoreEngine for Store {
                     block_hash = hex::encode(max_block.block_hash.0.as_ref()),
                     "[DELETING STATE NODE]"
                 );
-                trie.remove(&key);
+                match trie.remove(&key) {
+                    Some(value) => {
+                        tracing::debug!(key = hex::encode(key), "[REMOVED STATE NODE]");
+                    }
+                    None => {
+                        tracing::debug!(key = hex::encode(key), "[STATE NODE NOT FOUND]");
+                    }
+                }
             }
 
             tracing::debug!(
