@@ -112,7 +112,8 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        address sequencer_registry
+        address sequencer_registry,
+        uint256 chainId
     ) public initializer {
         VALIDIUM = _validium;
 
