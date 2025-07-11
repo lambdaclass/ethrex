@@ -21,6 +21,7 @@ use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
 use ethrex_p2p::network::peer_table;
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
@@ -177,11 +178,13 @@ impl Command {
                     l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
+                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+
                 // TODO: This should be handled differently, the current problem
                 // with using opts.node_opts.p2p_enabled is that with the removal
                 // of the l2 feature flag, p2p_enabled is set to true by default
                 // prioritizing the L1 UX.
-                if opts.sequencer_opts.based {
+                if l2_sequencer_cfg.based.enabled {
                     init_network(
                         &opts.node_opts,
                         &network,
@@ -193,13 +196,15 @@ impl Command {
                         store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
+                        Some(P2PBasedContext {
+                            store_rollup: rollup_store.clone(),
+                            committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
+                        }),
                     )
                     .await;
                 } else {
                     info!("P2P is disabled");
                 }
-
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,

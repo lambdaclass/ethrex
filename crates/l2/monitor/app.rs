@@ -66,7 +66,7 @@ impl EthrexMonitor {
             EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
 
         Ok(EthrexMonitor {
-            title: if cfg.based.based {
+            title: if cfg.based.enabled {
                 "Based Ethrex Monitor".to_string()
             } else {
                 "Ethrex Monitor".to_string()

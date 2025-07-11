@@ -250,6 +250,49 @@ impl Store {
         self.engine.contains_batch(batch_number).await
     }
 
+    /// Stores the sequencer signature for a given block hash.
+    pub async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_block(block_hash, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given block hash.
+    pub async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+        self.engine.get_signature_by_block(block_hash).await
+    }
+
+    /// Stores the sequencer signature for a given batch number.
+    /// When the lead sequencer sends a batch by P2P, it
+    /// should also sign it, this will map a batch number
+    /// to the batch's signature.
+    pub async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_signature_by_batch(batch_number, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given batch number.
+    /// This is used mostly in P2P to avoid signing an
+    /// already known batch.
+    pub async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+        self.engine.get_signature_by_batch(batch_number).await
+    }
+
     /// Returns the lastest sent batch proof
     pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         self.engine.get_lastest_sent_batch_proof().await

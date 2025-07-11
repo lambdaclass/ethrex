@@ -21,6 +21,7 @@ contract SequencerRegistry is
 
     mapping(address => uint256) public collateral;
     address[] public sequencers;
+    mapping(uint256 => address) public sequencerForBatch;
 
     function initialize(
         address owner,
@@ -33,12 +34,17 @@ contract SequencerRegistry is
 
         ON_CHAIN_PROPOSER = onChainProposer;
 
-        require(
-            owner != address(0),
-            "SequencerRegistry: Invalid owner"
-        );
+        require(owner != address(0), "SequencerRegistry: Invalid owner");
 
         OwnableUpgradeable.__Ownable_init(owner);
+    }
+
+    function pushSequencer(uint256 batchNumber, address sequencer) external {
+        require(
+            msg.sender == ON_CHAIN_PROPOSER,
+            "SequencerRegistry: Only onChainProposer can push sequencer"
+        );
+        sequencerForBatch[batchNumber] = sequencer;
     }
 
     function register(address sequencer) public payable {
@@ -80,24 +86,26 @@ contract SequencerRegistry is
     }
 
     function leaderSequencer() public view returns (address) {
-        return futureLeaderSequencer(0);
+        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
+            .lastCommittedBatch() + 1;
+        return leadSequencerForBatch(_currentBatch);
     }
 
-    function futureLeaderSequencer(
-        uint256 nBatchesInTheFuture
+    function leadSequencerForBatch(
+        uint256 batchNumber
     ) public view returns (address) {
+        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
+            .lastCommittedBatch() + 1;
+        if (batchNumber < _currentBatch) {
+            return sequencerForBatch[batchNumber];
+        }
         uint256 _sequencers = sequencers.length;
 
         if (_sequencers == 0) {
             return address(0);
         }
 
-        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
-            .lastCommittedBatch() + 1;
-
-        uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
-
-        uint256 _id = _targetBatch / BATCHES_PER_SEQUENCER;
+        uint256 _id = batchNumber / BATCHES_PER_SEQUENCER;
 
         address _leader = sequencers[_id % _sequencers];
 

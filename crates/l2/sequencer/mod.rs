@@ -39,7 +39,7 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    let initial_status = if cfg.based.based {
+    let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
     } else {
         SequencerStatus::Sequencing
@@ -135,10 +135,11 @@ pub async fn start_l2(
             rollup_store.clone(),
         ));
     }
-    if cfg.based.based {
+    if cfg.based.enabled {
         let _ = StateUpdater::spawn(
             cfg.clone(),
             shared_state.clone(),
+            blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
         )
