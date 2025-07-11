@@ -1,5 +1,5 @@
+mod clone;
 mod compile;
-mod deps;
 
+pub use clone::*;
 pub use compile::*;
-pub use deps::*;

@@ -2,6 +2,8 @@
 name = "ethrex_l2-contracts"
 version = "0.1.0"
 edition = "2024"
+build = "./bin/deployer/build.rs"
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -28,6 +30,10 @@ ethrex-common = { path = "../../common" }
 ethrex-l2-common = { path = "../common" }
 ethrex-rpc = { path = "../../networking/rpc" }
 genesis-tool = { path = "../../../tooling/genesis" }
+
+[build-dependencies]
+ethrex-sdk = { path = "../../l2/sdk" }
+hex.workspace = true
 
 [[bin]]
 name = "ethrex_l2_l1_deployer"

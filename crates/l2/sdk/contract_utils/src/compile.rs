@@ -12,6 +12,7 @@ pub fn compile_contract(
     general_contracts_path: &Path,
     contract_path: &str,
     runtime_bin: bool,
+    remappings: Option<&[(&str, &Path)]>,
 ) -> Result<(), ContractCompilationError> {
     let bin_flag = if runtime_bin {
         "--bin-runtime"
@@ -20,48 +21,31 @@ pub fn compile_contract(
     };
 
     let mut cmd = Command::new("solc");
-    cmd.arg(bin_flag)
-        .arg(
-            "@openzeppelin/contracts=".to_string()
-                + general_contracts_path
-                    .join("lib")
-                    .join("openzeppelin-contracts-upgradeable")
-                    .join("lib")
-                    .join("openzeppelin-contracts")
-                    .join("contracts")
-                    .to_str()
-                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg(
-            "@openzeppelin/contracts-upgradeable=".to_string()
-                + general_contracts_path
-                    .join("lib")
-                    .join("openzeppelin-contracts-upgradeable")
-                    .join("contracts")
-                    .to_str()
-                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg(
-            general_contracts_path
-                .join(contract_path)
-                .to_str()
-                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg("--via-ir")
-        .arg("-o")
-        .arg(
-            general_contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            general_contracts_path
-                .to_str()
-                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        );
+    cmd.arg(bin_flag);
+
+    apply_remappings(&mut cmd, remappings)?;
+
+    cmd.arg(
+        general_contracts_path
+            .join(contract_path)
+            .to_str()
+            .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+    )
+    .arg("--via-ir")
+    .arg("-o")
+    .arg(
+        general_contracts_path
+            .join("solc_out")
+            .to_str()
+            .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+    )
+    .arg("--overwrite")
+    .arg("--allow-paths")
+    .arg(
+        general_contracts_path
+            .to_str()
+            .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+    );
 
     let cmd_succeeded = cmd
         .spawn()
@@ -81,5 +65,21 @@ pub fn compile_contract(
         ));
     }
 
+    Ok(())
+}
+
+/// Optional remapping helper
+fn apply_remappings(
+    cmd: &mut Command,
+    remappings: Option<&[(&str, &Path)]>,
+) -> Result<(), ContractCompilationError> {
+    if let Some(remaps) = remappings {
+        for (prefix, path) in remaps {
+            let path_str = path
+                .to_str()
+                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?;
+            cmd.arg(format!("{prefix}={path_str}"));
+        }
+    }
     Ok(())
 }

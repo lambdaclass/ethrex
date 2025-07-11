@@ -14,8 +14,14 @@ mod error;
 
 fn main() -> Result<(), SystemContractsUpdaterError> {
     let opts = SystemContractsUpdaterOptions::parse();
+
     compile_contract(&opts.contracts_path, "src/l2/CommonBridgeL2.sol", true)?;
-    compile_contract(&opts.contracts_path, "src/l2/L2ToL1Messenger.sol", true)?;
+    compile_contract(
+        &opts.contracts_path,
+        "src/l2/L2ToL1Messenger.sol",
+        true,
+        None,
+    )?;
     update_genesis_file(&opts.l2_genesis_path)?;
     Ok(())
 }

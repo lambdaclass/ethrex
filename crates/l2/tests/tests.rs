@@ -283,8 +283,19 @@ async fn test_erc20_roundtrip(
     let token_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
 
     let contracts_path = Path::new("contracts");
-    ethrex_l2_sdk::download_contract_deps(contracts_path)?;
-    compile_contract(contracts_path, "src/example/L2ERC20.sol", false)?;
+
+    get_contract_dependencies(contracts_path)?;
+    let remappings = vec![(
+        "@openzeppelin/contracts",
+        &contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
+    )];
+    compile_contract(
+        contracts_path,
+        "src/example/L2ERC20.sol",
+        false,
+        Some(remappings),
+    )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",
     )?)?)?;
@@ -1486,4 +1497,18 @@ pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
         Some(s) => hex::decode(s).map(Into::into),
         None => hex::decode(s).map(Into::into),
     }
+}
+
+fn get_contract_dependencies(contract_path: Path) {
+    std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
+    git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable")
+            .to_str()
+            .expect("Failed to convert path to str"),
+        None,
+        true,
+    )
+    .unwrap();
 }
