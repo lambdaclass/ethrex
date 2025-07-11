@@ -190,7 +190,6 @@ pub struct EFTestPre(pub HashMap<Address, EFTestPreValue>);
 
 #[derive(Debug, Deserialize)]
 pub struct EFTestPreValue {
-    #[serde(deserialize_with = "deserialize_u256_safe")]
     pub balance: U256,
     #[serde(deserialize_with = "deserialize_hex_bytes")]
     pub code: Bytes,

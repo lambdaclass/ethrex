@@ -40,7 +40,6 @@ pub struct Environment {
     pub is_privileged: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
 /// This struct holds special configuration variables specific to the
 /// EVM. In most cases, at least at the time of writing (February
 /// 2025), you want to use the default blob_schedule values for the
@@ -49,6 +48,7 @@ pub struct Environment {
 /// However, that function should NOT be used IF you want to use a
 /// custom `ForkBlobSchedule`, like it's described in [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840)
 /// Values are determined by [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification)
+#[derive(Debug, Clone, Copy)]
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,

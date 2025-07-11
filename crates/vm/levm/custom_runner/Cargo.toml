@@ -14,3 +14,4 @@ hex.workspace = true
 bytes.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
+json5 = "0.4.1"
