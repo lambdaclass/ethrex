@@ -11,8 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
-    types::{Fork, Genesis, GenesisAccount, TxKind},
+    types::{AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind}, Address, H160, H256, U256
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -217,7 +216,11 @@ pub struct EFTestAccessListItem {
     pub address: Address,
     pub storage_keys: Vec<H256>,
 }
-
+impl Into<(H160, Vec<H256>)> for EFTestAccessListItem {
+    fn into(self) -> (H160, Vec<H256>) {
+        (self.address.clone(), self.storage_keys.clone())
+    }
+}
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EFTestAuthorizationListTuple {
@@ -233,6 +236,12 @@ pub struct EFTestAuthorizationListTuple {
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub s: U256,
     pub signer: Option<Address>,
+}
+
+impl EFTestAuthorizationListTuple {
+    pub fn into_authorization_tuple(self) -> AuthorizationTuple {
+        AuthorizationTuple { chain_id: self.chain_id, address: self.address, nonce: self.nonce, y_parity: self.v, r_signature: self.r, s_signature: self.s }
+    }
 }
 
 #[derive(Debug, Deserialize)]
