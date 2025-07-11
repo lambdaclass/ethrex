@@ -6,6 +6,7 @@ on:
     paths:
       - "crates/vm/levm/**"
       - ".github/workflows/pr_perf_levm.yaml"
+  workflow_dispatch:
 
 permissions:
   pull-requests: write

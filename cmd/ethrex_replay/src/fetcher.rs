@@ -2,7 +2,7 @@ use ethrex_common::types::ChainConfig;
 use ethrex_rpc::{EthClient, types::block_identifier::BlockIdentifier};
 use eyre::WrapErr;
 
-use crate::cache::{Cache, load_cache, write_cache};
+use crate::cache::{Cache, L2Fields, load_cache, write_cache};
 
 pub async fn get_blockdata(
     eth_client: EthClient,
@@ -23,25 +23,18 @@ pub async fn get_blockdata(
         ));
     }
 
-    let cache = Cache {
-        blocks: vec![block],
-        witness,
-    };
+    let cache = Cache::new(vec![block], witness);
     write_cache(&cache, &file_name).expect("failed to write cache");
     Ok(cache)
 }
 
-pub async fn get_rangedata(
+async fn fetch_rangedata_from_client(
     eth_client: EthClient,
     chain_config: ChainConfig,
     from: usize,
     to: usize,
 ) -> eyre::Result<Cache> {
-    let file_name = format!("cache_{from}-{to}.json");
-    if let Ok(cache) = load_cache(&file_name) {
-        return Ok(cache);
-    }
-    let mut blocks = Vec::with_capacity(to - from);
+    let mut blocks = Vec::with_capacity(to - from + 1);
     for block_number in from..=to {
         let block = eth_client
             .get_raw_block(BlockIdentifier::Number(block_number.try_into()?))
@@ -64,7 +57,51 @@ pub async fn get_rangedata(
         ));
     }
 
-    let cache = Cache { blocks, witness };
+    let cache = Cache::new(blocks, witness);
+    Ok(cache)
+}
+
+pub async fn get_rangedata(
+    eth_client: EthClient,
+    chain_config: ChainConfig,
+    from: usize,
+    to: usize,
+) -> eyre::Result<Cache> {
+    let file_name = format!("cache_{from}-{to}.json");
+    if let Ok(cache) = load_cache(&file_name) {
+        return Ok(cache);
+    }
+    let cache = fetch_rangedata_from_client(eth_client, chain_config, from, to).await?;
+
+    write_cache(&cache, &file_name).expect("failed to write cache");
+
+    Ok(cache)
+}
+
+pub async fn get_batchdata(
+    eth_client: EthClient,
+    chain_config: ChainConfig,
+    batch_number: u64,
+) -> eyre::Result<Cache> {
+    let file_name = format!("cache_batch_{batch_number}.json");
+    if let Ok(cache) = load_cache(&file_name) {
+        return Ok(cache);
+    }
+
+    let rpc_batch = eth_client.get_batch_by_number(batch_number).await?;
+
+    let mut cache = fetch_rangedata_from_client(
+        eth_client,
+        chain_config,
+        rpc_batch.batch.first_block as usize,
+        rpc_batch.batch.last_block as usize,
+    )
+    .await?;
+
+    cache.l2_fields = Some(L2Fields {
+        blob_commitment: rpc_batch.batch.blobs_bundle.commitments[0],
+        blob_proof: rpc_batch.batch.blobs_bundle.proofs[0],
+    });
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 
