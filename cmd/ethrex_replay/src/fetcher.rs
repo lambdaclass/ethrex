@@ -17,13 +17,8 @@ pub async fn get_blockdata(
 
     println!("populating rpc db cache");
     let witness = eth_client.get_witness(block_number, None).await?;
-    if witness.chain_config.chain_id != chain_config.chain_id {
-        return Err(eyre::eyre!(
-            "Rpc endpoint returned a different chain id than the one set by --network"
-        ));
-    }
 
-    let cache = Cache::new(vec![block], witness);
+    let cache = Cache::new(vec![block], witness, chain_config);
     write_cache(&cache, &file_name).expect("failed to write cache");
     Ok(cache)
 }
@@ -51,13 +46,7 @@ async fn fetch_rangedata_from_client(
         .await
         .wrap_err("Failed to get execution witness for range")?;
 
-    if witness.chain_config.chain_id != chain_config.chain_id {
-        return Err(eyre::eyre!(
-            "Rpc endpoint returned a different chain id than the one set by --network"
-        ));
-    }
-
-    let cache = Cache::new(blocks, witness);
+    let cache = Cache::new(blocks, witness, chain_config);
     Ok(cache)
 }
 

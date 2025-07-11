@@ -2,12 +2,12 @@
 
 use std::str::FromStr;
 
+use crate::networks::Network;
 use ethrex_common::{
     H160,
     types::{BlobSchedule, ChainConfig},
 };
 
-// Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork
 pub fn make_chainconfig(chain_id: u64) -> ChainConfig {
     ChainConfig {
         chain_id,
@@ -41,21 +41,14 @@ pub fn make_chainconfig(chain_id: u64) -> ChainConfig {
 }
 
 pub fn get_chain_config(name: &str) -> eyre::Result<ChainConfig> {
-    Ok(match name {
-        "mainnet" => make_chainconfig(1),
-        "cancun" => ChainConfig {
-            prague_time: None,
-            ..make_chainconfig(1)
-        },
-        "holesky" => make_chainconfig(17000),
-        "hoodi" => make_chainconfig(560048),
-        "sepolia" => make_chainconfig(11155111),
-        _ => {
-            if let Ok(num) = u64::from_str(name) {
-                make_chainconfig(num)
-            } else {
-                return Err(eyre::Error::msg("Network name not known."));
-            }
+    Ok(match name.parse::<u64>() {
+        Ok(num) => make_chainconfig(num),
+        Err(_) => {
+            Network::from_network_name(name)
+                .map_err(|_| eyre::Error::msg("Network isn't known and isn't a chain number"))?
+                .get_genesis()
+                .map_err(|_| eyre::Error::msg("Network file not found"))?
+                .config
         }
     })
 }

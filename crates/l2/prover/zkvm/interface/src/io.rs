@@ -1,6 +1,6 @@
 use ethrex_common::{
     H256,
-    types::{Block, block_execution_witness::ExecutionWitnessResult},
+    types::{Block, ChainConfig, block_execution_witness::ExecutionWitnessResult},
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeAs, SerializeAs, serde_as};
@@ -14,8 +14,10 @@ use ethrex_common::types::blobs_bundle;
 pub struct ProgramInput {
     /// blocks to execute
     pub blocks: Vec<Block>,
-    /// database containing all the data necessary to execute
+    /// database containing all the data necessary to execute - except chainconfig
     pub db: ExecutionWitnessResult,
+    /// Chain configuration, needed to properly execute
+    pub chain_config: ChainConfig,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
@@ -40,6 +42,7 @@ impl Default for ProgramInput {
         Self {
             blocks: Default::default(),
             db: Default::default(),
+            chain_config: Default::default(),
             elasticity_multiplier: Default::default(),
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],
