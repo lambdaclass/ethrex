@@ -113,14 +113,6 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        if self.rollup_store.get_latest_sent_batch_proof().await? < first_batch_to_verify {
-            info!(
-                ?first_batch_to_verify,
-                "Batch to verify not sent to Aligned yet"
-            );
-            return Ok(());
-        }
-
         match self
             .verify_proofs_aggregation(first_batch_to_verify)
             .await?
