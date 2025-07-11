@@ -308,4 +308,10 @@ pub enum MonitorError {
     GetBlockByNumber(u64, #[source] StoreError),
     #[error("Block {0} not found in the store")]
     BlockNotFound(u64),
+    #[error("Failed to get logs topics {0}")]
+    LogsTopics(usize),
+    #[error("Failed to get logs data from {0}")]
+    LogsData(usize),
+    #[error("Failed to get logs data, data is too short: {0}")]
+    LogsDataTooShort(usize),
 }
