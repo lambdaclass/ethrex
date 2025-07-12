@@ -522,33 +522,6 @@ impl StoreEngine for Store {
         const KEEP_BLOCKS: u64 = 128;
         let mut store = self.inner()?;
 
-        // Get stats pre pruning
-        let stats_pre_state_log: usize = store
-            .state_trie_pruning_log
-            .values()
-            .map(|set| set.len())
-            .sum();
-        let stats_pre_state_nodes: usize = {
-            let map = store
-                .state_trie_nodes
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            map.len()
-        };
-        let stats_pre_storage_log: usize = store
-            .storage_trie_pruning_log
-            .values()
-            .map(|set| set.len())
-            .sum();
-        let stats_pre_storage_nodes: usize = {
-            let mut count = 0;
-            for (_, map) in store.storage_trie_nodes.iter() {
-                let map = map.lock().map_err(|_| StoreError::LockError)?;
-                count += map.len();
-            }
-            count
-        };
-
         // Get the block number of the last state trie pruning log entry
         if let Some(&max_block) = store.state_trie_pruning_log.keys().last() {
             let keep_from = max_block.block_number.saturating_sub(KEEP_BLOCKS);
@@ -600,15 +573,13 @@ impl StoreEngine for Store {
                         .map_err(|_| StoreError::LockError)?;
 
                     for key in nodes_to_delete {
-                        if trie.contains_key(&key) {
-                            trie.remove(&key);
-                            tracing::debug!(
-                                node = hex::encode(key),
-                                block_number = max_block.block_number,
-                                block_hash = hex::encode(max_block.block_hash.0.as_ref()),
-                                "[DELETING STATE NODE]"
-                            );
-                        }
+                        trie.remove(&key);
+                        tracing::debug!(
+                            node = hex::encode(key),
+                            block_number = max_block.block_number,
+                            block_hash = hex::encode(max_block.block_hash.0.as_ref()),
+                            "[DELETING STATE NODE]"
+                        );
                     }
                 }
             }
@@ -669,14 +640,12 @@ impl StoreEngine for Store {
                     if let Some(storage_store) = store.storage_trie_nodes.get(&addr) {
                         let mut trie = storage_store.lock().map_err(|_| StoreError::LockError)?;
 
-                        if trie.contains_key(&key) {
-                            trie.remove(&key);
-                            tracing::debug!(
-                                hashed_address = hex::encode(addr.0),
-                                node_hash = hex::encode(key),
-                                "[DELETING STORAGE NODE]"
-                            );
-                        }
+                        trie.remove(&key);
+                        tracing::debug!(
+                            hashed_address = hex::encode(addr.0),
+                            node_hash = hex::encode(key),
+                            "[DELETING STORAGE NODE]"
+                        );
                     }
                 }
             }
@@ -687,49 +656,6 @@ impl StoreEngine for Store {
                 "[STOPPING STORAGE TRIE PRUNING]"
             );
         }
-
-        // Get stats post pruning
-        let stats_post_state_log: usize = store
-            .state_trie_pruning_log
-            .values()
-            .map(|set| set.len())
-            .sum();
-
-        let stats_post_state_nodes: usize = {
-            let map = store
-                .state_trie_nodes
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            map.len()
-        };
-        let stats_post_storage_log: usize = store
-            .storage_trie_pruning_log
-            .values()
-            .map(|set| set.len())
-            .sum();
-        let stats_post_storage_nodes: usize = {
-            let mut count = 0;
-            for (_, map) in store.storage_trie_nodes.iter() {
-                let map = map.lock().map_err(|_| StoreError::LockError)?;
-                count += map.len();
-            }
-            count
-        };
-
-        // Get deltas
-        let delta_state_nodes = stats_post_state_nodes as isize - stats_pre_state_nodes as isize;
-        let delta_state_log = stats_post_state_log as isize - stats_pre_state_log as isize;
-        let delta_storage_nodes =
-            stats_post_storage_nodes as isize - stats_pre_storage_nodes as isize;
-        let delta_storage_log = stats_post_storage_log as isize - stats_pre_storage_log as isize;
-
-        tracing::info!(
-            state_trie_entries_delta = delta_state_nodes,
-            state_trie_log_entries_delta = delta_state_log,
-            storage_trie_entries_delta = delta_storage_nodes,
-            storage_trie_log_entries_delta = delta_storage_log,
-            "[PRUNING METRICS]",
-        );
 
         Ok(())
     }
