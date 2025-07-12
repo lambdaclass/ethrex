@@ -179,7 +179,7 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
 fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
-	solc ./fixtures/contracts/ERC20/ERC20.sol -o $@
+	solc --optimize ./fixtures/contracts/ERC20/ERC20.sol -o $@
 
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
