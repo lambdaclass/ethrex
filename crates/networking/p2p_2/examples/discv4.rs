@@ -8,24 +8,19 @@ use std::{
 use ethrex_common::H512;
 use ethrex_p2p_2::{
     discv4::{server::DiscoveryServer, side_car::DiscoverySideCar},
+    monitor::{app::Monitor, init_terminal},
     types::Node,
 };
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
 use rand::rngs::OsRng;
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{error, info, level_filters::LevelFilter};
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
+use tracing::{error, info};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt};
+use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 
 #[tokio::main]
 async fn main() {
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set global subscriber");
+    init_tracing();
 
     let signer = SigningKey::random(&mut OsRng);
 
@@ -70,12 +65,29 @@ async fn main() {
         }
     });
 
+    let mut terminal = init_terminal().expect("Failed to initialize terminal");
+
+    let mut monitor = Monitor::new("Ethrex P2P");
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("Received Ctrl+C, shutting down...");
             kademlia_counter_handle.abort();
         }
+        _ = monitor.start(&mut terminal) => {
+            println!("Monitor has exited, shutting down...");
+            kademlia_counter_handle.abort();
+        }
     }
+}
+
+pub fn init_tracing() {
+    let level_filter = EnvFilter::builder().parse_lossy("debug");
+    let subscriber = tracing_subscriber::registry()
+        .with(TuiTracingSubscriberLayer)
+        .with(level_filter);
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 }
 
 pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {

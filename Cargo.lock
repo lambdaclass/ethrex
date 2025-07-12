@@ -4177,7 +4177,9 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "bytes",
+ "color-eyre",
  "concat-kdf",
+ "crossterm 0.29.0",
  "ctr",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
@@ -4193,18 +4195,24 @@ dependencies = [
  "keccak-hash",
  "lazy_static",
  "rand 0.8.5",
+ "ratatui",
  "serde",
  "serde_json",
  "sha3",
  "snap",
  "spawned-concurrency",
  "spawned-rt",
+ "tabwriter",
  "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "tui-big-text",
+ "tui-input",
+ "tui-logger",
+ "tui-scrollview",
 ]
 
 [[package]]
@@ -12297,6 +12305,16 @@ dependencies = [
  "font8x8",
  "itertools 0.14.0",
  "ratatui",
+]
+
+[[package]]
+name = "tui-input"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "911e93158bf80bbc94bad533b2b16e3d711e1132d69a6a6980c3920a63422c19"
+dependencies = [
+ "ratatui",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
