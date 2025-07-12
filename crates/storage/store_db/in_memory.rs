@@ -75,9 +75,19 @@ struct StoreInner {
     state_trie_pruning_log: BTreeMap<BlockNumHash, HashSet<[u8; 32]>>,
     /// Storage trie pruning log
     storage_trie_pruning_log: BTreeMap<BlockNumHash, HashSet<([u8; 32], NodeHash)>>,
-    /// Reference counters for state trie nodes
+    /// Reference counters for [`state_trie_nodes`](`StoreInner::state_trie_nodes`)
+    /// Used to keep track of the number of times a node is referenced and avoid deleting it
+    /// when it is still referenced by the state trie.
+    /// This counter is incremented when a node is inserted into the state trie
+    /// and decremented when a node is removed from the state trie. When the counter reaches 0,
+    /// the node is deleted.
     state_trie_ref_counters: HashMap<NodeHash, u32>,
-    /// Reference counters for storage trie nodes by address
+    /// Reference counters for [`storage_trie_nodes`](`StoreInner::storage_trie_nodes`)
+    /// Used to keep track of the number of times a node is referenced and avoid deleting it
+    /// when it is still referenced by the storage trie.
+    /// This counter is incremented when a node is inserted into the storage trie
+    /// and decremented when a node is removed from the storage trie. When the counter reaches 0,
+    /// the node is deleted.
     storage_trie_ref_counters: HashMap<(H256, NodeHash), u32>,
 }
 
