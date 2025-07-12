@@ -62,6 +62,7 @@ async fn main() {
             error!("Failed to start discovery side car: {e}");
         });
 
+    // Barrani kademlia contacts counter
     let kademlia_counter_handle = tokio::spawn(async move {
         loop {
             info!(contacts = kademlia.lock().await.len());
