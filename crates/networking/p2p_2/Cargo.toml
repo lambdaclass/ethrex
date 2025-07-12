@@ -13,6 +13,7 @@ ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethereum-types.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec"] }
 bytes.workspace = true

@@ -25,7 +25,7 @@ pub enum PacketDecodeErr {
     InvalidSignature,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Packet {
     hash: H256,
     signature: H520,
@@ -205,7 +205,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PingMessage {
     /// The Ping message version. Should be set to 4, but mustn't be enforced.
     pub version: u8,

@@ -1,19 +1,125 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use k256::ecdsa::SigningKey;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
 };
-use tokio::sync::Mutex;
+use tokio::{net::UdpSocket, sync::Mutex};
+use tracing::{error, info};
+
+use crate::{
+    discv4::{
+        Kademlia,
+        messages::{FindNodeMessage, Message, PingMessage},
+    },
+    types::{Endpoint, Node, NodeRecord},
+    utils::get_msg_expiration_from_seconds,
+};
 
 #[derive(Debug, thiserror::Error)]
-pub enum DiscoverySideCarError {}
+pub enum DiscoverySideCarError {
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+    #[error("Failed to send message")]
+    MessageSendFailure(std::io::Error),
+    #[error("Only partial message was sent")]
+    PartialMessageSent,
+}
 
 #[derive(Debug, Clone)]
 pub struct DiscoverySideCarState {
-    kademlia: Arc<Mutex<HashMap<String, String>>>,
-    revalidation_period: std::time::Duration,
-    lookup_period: std::time::Duration,
+    local_node: Node,
+    local_node_record: Arc<Mutex<NodeRecord>>,
+    signer: SigningKey,
+    udp_socket: Arc<UdpSocket>,
+
+    revalidation_period: Duration,
+    lookup_period: Duration,
+
+    kademlia: Kademlia,
+}
+
+impl DiscoverySideCarState {
+    pub fn new(
+        local_node: Node,
+        local_node_record: Arc<Mutex<NodeRecord>>,
+        signer: SigningKey,
+        udp_socket: Arc<UdpSocket>,
+        kademlia: Kademlia,
+    ) -> Self {
+        Self {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            kademlia,
+
+            revalidation_period: Duration::from_secs(5),
+            lookup_period: Duration::from_secs(5),
+        }
+    }
+
+    async fn ping(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
+        let mut buf = Vec::new();
+
+        // TODO: Parametrize this expiration.
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
+
+        let from = Endpoint {
+            ip: self.local_node.ip,
+            udp_port: self.local_node.udp_port,
+            tcp_port: self.local_node.tcp_port,
+        };
+
+        let to = Endpoint {
+            ip: node.ip,
+            udp_port: node.udp_port,
+            tcp_port: node.tcp_port,
+        };
+
+        let enr_seq = self.local_node_record.lock().await.seq;
+
+        let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
+
+        ping.encode_with_header(&mut buf, &self.signer);
+
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoverySideCarError::PartialMessageSent);
+        }
+
+        info!(sent = "Ping", to = %format!("{:#x}", node.public_key));
+
+        Ok(())
+    }
+
+    async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
+
+        let msg = Message::FindNode(FindNodeMessage::new(node.public_key, expiration));
+
+        let mut buf = Vec::new();
+        msg.encode_with_header(&mut buf, &self.signer);
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoverySideCarError::PartialMessageSent);
+        }
+
+        info!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +135,33 @@ pub enum OutMessage {
 }
 
 pub struct DiscoverySideCar;
+
+impl DiscoverySideCar {
+    pub async fn spawn(
+        local_node: Node,
+        signer: SigningKey,
+        udp_socket: Arc<UdpSocket>,
+        kademlia: Kademlia,
+    ) -> Result<(), DiscoverySideCarError> {
+        info!("Starting Discovery Side Car");
+
+        let local_node_record = Arc::new(Mutex::new(
+            NodeRecord::from_node(&local_node, 1, &signer)
+                .expect("Failed to create local node record"),
+        ));
+
+        let state =
+            DiscoverySideCarState::new(local_node, local_node_record, signer, udp_socket, kademlia);
+
+        let mut server = DiscoverySideCar::start(state.clone());
+
+        let _ = server.cast(InMessage::Revalidate).await;
+
+        let _ = server.cast(InMessage::Lookup).await;
+
+        Ok(())
+    }
+}
 
 impl GenServer for DiscoverySideCar {
     type CallMsg = Unused;
@@ -49,22 +182,30 @@ impl GenServer for DiscoverySideCar {
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Revalidate => {
+                info!(received = "Revalidate");
+
+                revalidate(&state).await;
+
                 send_after(
                     state.revalidation_period,
                     handle.clone(),
                     Self::CastMsg::Revalidate,
                 );
+
                 CastResponse::NoReply(state)
             }
             Self::CastMsg::Lookup => {
-                send_after(
-                    state.lookup_period,
-                    handle.clone(),
-                    Self::CastMsg::Revalidate,
-                );
+                info!(received = "Lookup");
+
+                lookup(&state).await;
+
+                send_after(state.lookup_period, handle.clone(), Self::CastMsg::Lookup);
+
                 CastResponse::NoReply(state)
             }
             Self::CastMsg::Prune => {
+                info!(received = "Prune");
+
                 // Once we have a pruning strategy, we can implement it here.
                 // For now, no one is pruned.
                 CastResponse::NoReply(state)
@@ -74,11 +215,19 @@ impl GenServer for DiscoverySideCar {
 }
 
 async fn revalidate(state: &DiscoverySideCarState) {
-    // Ping all known nodes and tag as disposable if they do not respond in time.
+    for node in state.kademlia.lock().await.values() {
+        let _ = state.ping(node).await.inspect_err(
+            |e| error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?e),
+        );
+    }
 }
 
 async fn lookup(state: &DiscoverySideCarState) {
-    // Ask neighbors for their neighbors and add them to the routing table.
+    for node in state.kademlia.lock().await.values() {
+        let _ = state.send_find_node(node).await.inspect_err(
+            |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
+        );
+    }
 }
 
 async fn prune(state: &DiscoverySideCarState) {
