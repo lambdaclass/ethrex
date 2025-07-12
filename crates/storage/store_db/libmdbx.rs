@@ -875,7 +875,6 @@ impl StoreEngine for Store {
             _,
         )) = cursor_state_trie_pruning_log.last()?
         {
-            // We keep the last 1024 blocks
             let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
             tracing::debug!(keep_from, last_num, "[KEEPING STATE TRIE PRUNING LOG]");
 
@@ -891,7 +890,7 @@ impl StoreEngine for Store {
                     break;
                 }
 
-                // Delete the node from the trie
+                // Delete the node from the state trie and the pruning log
                 let k_delete = NodeHash::Hashed(node_hash.into());
                 if let Some((key, _)) = cursor_state_trie.seek_exact(k_delete)?
                     && key == k_delete

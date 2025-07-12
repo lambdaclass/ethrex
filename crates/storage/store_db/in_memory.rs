@@ -575,7 +575,7 @@ impl StoreEngine for Store {
                     }
                 }
 
-                // Remove nodes from trie
+                // Delete nodes from the state trie and the pruning log
                 if !nodes_to_delete.is_empty() {
                     let mut trie = store
                         .state_trie_nodes

@@ -885,13 +885,13 @@ impl StoreEngine for RedBStore {
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
         let txn = self.db.begin_write().map_err(Box::new)?;
 
-        // ——————————— Prune State Trie ———————————
         {
-            let mut log = txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
-            let mut nodes = txn.open_table(STATE_TRIE_NODES_TABLE)?;
+            let mut state_trie_pruning_log =
+                txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
+            let mut state_trie_nodes = txn.open_table(STATE_TRIE_NODES_TABLE)?;
 
-            // 1) Último bloque
-            let mut iter = log.iter()?;
+            // Get the block number of the last state trie pruning log entry
+            let mut iter = state_trie_pruning_log.iter()?;
             let last_block = if let Some(Ok((key_guard, _))) = iter.next_back() {
                 key_guard.value().to()?.block_number
             } else {
@@ -899,62 +899,79 @@ impl StoreEngine for RedBStore {
             };
             let keep_from = last_block.saturating_sub(KEEP_BLOCKS);
 
-            // 2) Recolectar entradas únicas a podar
+            tracing::debug!(keep_from, last_block, "[KEEPING STATE TRIE PRUNING LOG]");
+
+            // Collect unique entries to prune
             let mut entries_to_remove = Vec::new();
-            let mut seen = HashSet::new(); // (block_number, node_hash)
-            let mut forward = log.iter()?;
-            while let Some(Ok((k, mut v))) = forward.next() {
-                let block = k.value().to()?;
+            let mut seen = HashSet::new();
+            let mut iter_state_trie_pruning = state_trie_pruning_log.iter()?;
+
+            // Iterate over the first entries of the pruning log and delete the nodes from the trie
+            // until we reach the keep from block number
+            while let Some(Ok((key_guard, mut nodes))) = iter_state_trie_pruning.next() {
+                let block = key_guard.value().to()?;
+                // If the block number is higher than the keep from, we can stop
+                // since we reached the keep from block number
                 if block.block_number >= keep_from {
                     tracing::debug!(keep_from, last_block, "[STOPPING STATE TRIE PRUNING]");
                     break;
                 }
-                // para cada hash en este bloque
-                while let Some(Ok(node_hash_guard)) = v.next() {
+
+                // Get the nodes to delete from the state trie
+                while let Some(Ok(node_hash_guard)) = nodes.next() {
                     let node_hash = node_hash_guard.value();
-                    // solo la primera vez que veamos este par
+                    // Only add the node to the list if we haven't seen it before
                     if seen.insert((block.block_number, node_hash)) {
                         entries_to_remove.push((block, node_hash));
                     }
                 }
             }
 
-            // 3) Borrar
+            // Delete the nodes from the state trie and the pruning log
             for (block, node_hash) in entries_to_remove {
+                let block_rlp: BlockNumHashRLP = block.into();
+                state_trie_pruning_log.remove_all(block_rlp)?;
+
                 let k_delete = NodeHash::Hashed(node_hash.into());
-                if nodes.get(k_delete.as_ref())?.is_some() {
-                    let block_rlp: BlockNumHashRLP = block.into();
-                    nodes.remove(k_delete.as_ref())?;
-                    log.remove(block_rlp, node_hash)?;
+                if state_trie_nodes.get(k_delete.as_ref())?.is_some() {
+                    state_trie_nodes.remove(k_delete.as_ref())?;
                     tracing::debug!(
                         node_hash = hex::encode(node_hash.as_ref()),
                         block_number = block.block_number,
+                        block_hash = hex::encode(block.block_hash.0.as_ref()),
                         "[DELETING STATE NODE]"
                     );
                 }
             }
         }
 
-        // —————— Prune Storage Trie ——————
         {
-            let mut storage_log = txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
-            let mut storage_nodes = txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+            let mut storage_trie_pruning_log =
+                txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
+            let mut storage_trie_nodes = txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
 
-            // 1) Último bloque
-            let mut storage_iter = storage_log.iter()?;
-            let last_storage_block = if let Some(Ok((key_guard, _))) = storage_iter.next_back() {
-                key_guard.value().to()?.block_number
-            } else {
-                return Ok(());
-            };
+            // Get the block number of the last storage trie pruning log entry
+            let mut iter_storage_trie_pruning = storage_trie_pruning_log.iter()?;
+            let last_storage_block =
+                if let Some(Ok((key_guard, _))) = iter_storage_trie_pruning.next_back() {
+                    key_guard.value().to()?.block_number
+                } else {
+                    return Ok(());
+                };
             let keep_from = last_storage_block.saturating_sub(KEEP_BLOCKS);
 
-            // 2) Recolectar entradas únicas a podar
+            tracing::debug!(
+                keep_from,
+                last_storage_block,
+                "[KEEPING STORAGE TRIE PRUNING LOG]"
+            );
+
+            // Collect unique entries to prune
             let mut storage_entries_to_remove = Vec::new();
-            let mut seen = HashSet::new(); // (block_number, addr_hash, node_hash)
-            let mut storage_forward = storage_log.iter()?;
-            while let Some(Ok((k, mut v))) = storage_forward.next() {
-                let block = k.value().to()?;
+            let mut seen = HashSet::new();
+            let mut iter_storage_trie_pruning = storage_trie_pruning_log.iter()?;
+            while let Some(Ok((key_guard, mut values))) = iter_storage_trie_pruning.next() {
+                let block = key_guard.value().to()?;
                 if block.block_number >= keep_from {
                     tracing::debug!(
                         keep_from,
@@ -963,27 +980,28 @@ impl StoreEngine for RedBStore {
                     );
                     break;
                 }
-                // para cada hash en este bloque
-                while let Some(Ok(storage_hash_guard)) = v.next() {
+                // Get the nodes to delete from the storage trie
+                while let Some(Ok(storage_hash_guard)) = values.next() {
                     let (addr_hash, node_hash): ([u8; 32], [u8; 33]) = storage_hash_guard.value();
-                    // solo la primera vez que veamos este triple
+                    // Only add the node to the list if we haven't seen it before
                     if seen.insert((block.block_number, addr_hash, node_hash)) {
                         storage_entries_to_remove.push((block, addr_hash, node_hash));
                     }
                 }
             }
 
-            // 3) Borrar
+            // Delete the nodes from the storage trie and the pruning log
             for (block, addr_hash, node_hash) in storage_entries_to_remove {
                 let block_rlp: BlockNumHashRLP = block.into();
+                storage_trie_pruning_log.remove_all(block_rlp)?;
+
                 let key = (addr_hash, node_hash);
-                if storage_nodes.get(&key)?.next().is_some() {
-                    storage_nodes.remove_all(key)?;
-                    storage_log.remove(block_rlp, (addr_hash, node_hash))?;
+                if storage_trie_nodes.get(&key)?.next().is_some() {
+                    storage_trie_nodes.remove(&key, node_hash.as_ref())?;
                     tracing::debug!(
-                        hashed_address = hex::encode(addr_hash.as_ref()),
                         node_hash = hex::encode(node_hash.as_ref()),
                         block_number = block.block_number,
+                        block_hash = hex::encode(block.block_hash.0.as_ref()),
                         "[DELETING STORAGE NODE]"
                     );
                 }
