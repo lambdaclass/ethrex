@@ -1,7 +1,3 @@
-use std::collections::HashSet;
-use std::thread;
-use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
-
 use crate::error::StoreError;
 use crate::rlp::{
     AccountAddressRLP, AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountInfoLogEntryRLP,
@@ -30,6 +26,8 @@ use redb::{
     AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable,
     TableDefinition, TypeName, Value,
 };
+use std::thread;
+use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -96,6 +94,10 @@ const STORAGE_TRIE_PRUNING_LOG_TABLE: MultimapTableDefinition<
     BlockNumHashRLP,
     ([u8; 32], [u8; 33]),
 > = MultimapTableDefinition::new("StorageTriePruningLog");
+const STATE_TRIE_REF_COUNTERS_TABLE: TableDefinition<&[u8], u32> =
+    TableDefinition::new("StateTrieRefCounters");
+const STORAGE_TRIE_REF_COUNTERS_TABLE: TableDefinition<([u8; 32], [u8; 33]), u32> =
+    TableDefinition::new("StorageTrieRefCounters");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -760,6 +762,8 @@ impl StoreEngine for RedBStore {
                 // we store account info changes in the table StateWriteBatch
                 // store account updates
                 let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
+                let mut state_ref_counters = write_txn.open_table(STATE_TRIE_REF_COUNTERS_TABLE)?;
+
                 for (node_hash, mut node_data) in update_batch.account_updates {
                     tracing::debug!(
                         node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
@@ -771,6 +775,13 @@ impl StoreEngine for RedBStore {
                     );
                     node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                     state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
+
+                    // Increment reference counter for state node
+                    let current_count = state_ref_counters
+                        .get(node_hash.as_ref())?
+                        .map(|v| v.value())
+                        .unwrap_or(0);
+                    state_ref_counters.insert(node_hash.as_ref(), current_count + 1)?;
                 }
 
                 let mut state_trie_pruning_log_table =
@@ -794,6 +805,9 @@ impl StoreEngine for RedBStore {
                 let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
                 let mut storage_trie_pruning_log_table =
                     write_txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
+                let mut storage_ref_counters =
+                    write_txn.open_table(STORAGE_TRIE_REF_COUNTERS_TABLE)?;
+
                 for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
                     let key_address: [u8; 32] = hashed_address.into();
                     for (node_hash, mut node_data) in nodes {
@@ -812,6 +826,14 @@ impl StoreEngine for RedBStore {
                         node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                         addr_store.remove_all((key_address, key_node))?;
                         addr_store.insert((key_address, key_node), &*node_data)?;
+
+                        // Increment reference counter for storage node
+                        let storage_key = (key_address, key_node);
+                        let current_count = storage_ref_counters
+                            .get(storage_key)?
+                            .map(|v| v.value())
+                            .unwrap_or(0);
+                        storage_ref_counters.insert(storage_key, current_count + 1)?;
                     }
 
                     for node_hash in invalidated_nodes {
@@ -889,6 +911,7 @@ impl StoreEngine for RedBStore {
             let mut state_trie_pruning_log =
                 txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
             let mut state_trie_nodes = txn.open_table(STATE_TRIE_NODES_TABLE)?;
+            let mut state_ref_counters = txn.open_table(STATE_TRIE_REF_COUNTERS_TABLE)?;
 
             // Get the block number of the last state trie pruning log entry
             let mut iter = state_trie_pruning_log.iter()?;
@@ -901,34 +924,50 @@ impl StoreEngine for RedBStore {
 
             tracing::debug!(keep_from, last_block, "[KEEPING STATE TRIE PRUNING LOG]");
 
-            // Collect unique entries to prune
-            let mut entries_to_remove = Vec::new();
-            let mut seen = HashSet::new();
+            // Collect entries to process
+            let mut entries_to_process = Vec::new();
             let mut iter_state_trie_pruning = state_trie_pruning_log.iter()?;
 
-            // Iterate over the first entries of the pruning log and delete the nodes from the trie
-            // until we reach the keep from block number
+            // Iterate over the first entries of the pruning log
             while let Some(Ok((key_guard, mut nodes))) = iter_state_trie_pruning.next() {
                 let block = key_guard.value().to()?;
                 // If the block number is higher than the keep from, we can stop
-                // since we reached the keep from block number
                 if block.block_number >= keep_from {
                     tracing::debug!(keep_from, last_block, "[STOPPING STATE TRIE PRUNING]");
                     break;
                 }
 
-                // Get the nodes to delete from the state trie
+                // Get the nodes to process
                 while let Some(Ok(node_hash_guard)) = nodes.next() {
                     let node_hash = node_hash_guard.value();
-                    // Only add the node to the list if we haven't seen it before
-                    if seen.insert((block.block_number, node_hash)) {
-                        entries_to_remove.push((block, node_hash));
-                    }
+                    entries_to_process.push((block, node_hash));
                 }
             }
 
-            // Delete the nodes from the state trie and the pruning log
-            for (block, node_hash) in entries_to_remove {
+            // Process each entry with reference counting
+            let mut nodes_to_delete = Vec::new();
+            for (block, node_hash) in entries_to_process {
+                let k_delete = NodeHash::Hashed(node_hash.into());
+
+                // Get current reference count first
+                let current_count = state_ref_counters
+                    .get(k_delete.as_ref())?
+                    .map(|v| v.value())
+                    .unwrap_or(0);
+
+                if current_count > 1 {
+                    // Still has references, just decrement
+                    state_ref_counters.insert(k_delete.as_ref(), current_count - 1)?;
+                } else if current_count == 1 {
+                    // No more references, mark for deletion
+                    state_ref_counters.remove(k_delete.as_ref())?;
+                    nodes_to_delete.push((block, node_hash));
+                }
+                // If current_count is 0, the node was already deleted or never had references
+            }
+
+            // Delete nodes that have no more references
+            for (block, node_hash) in nodes_to_delete {
                 let block_rlp: BlockNumHashRLP = block.into();
                 state_trie_pruning_log.remove_all(block_rlp)?;
 
@@ -949,6 +988,7 @@ impl StoreEngine for RedBStore {
             let mut storage_trie_pruning_log =
                 txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
             let mut storage_trie_nodes = txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+            let mut storage_ref_counters = txn.open_table(STORAGE_TRIE_REF_COUNTERS_TABLE)?;
 
             // Get the block number of the last storage trie pruning log entry
             let mut iter_storage_trie_pruning = storage_trie_pruning_log.iter()?;
@@ -966,9 +1006,9 @@ impl StoreEngine for RedBStore {
                 "[KEEPING STORAGE TRIE PRUNING LOG]"
             );
 
-            // Collect unique entries to prune
-            let mut storage_entries_to_remove = Vec::new();
-            let mut seen = HashSet::new();
+            // Collect entries to process
+            let mut storage_entries_to_process = Vec::new();
+
             let mut iter_storage_trie_pruning = storage_trie_pruning_log.iter()?;
             while let Some(Ok((key_guard, mut values))) = iter_storage_trie_pruning.next() {
                 let block = key_guard.value().to()?;
@@ -980,18 +1020,37 @@ impl StoreEngine for RedBStore {
                     );
                     break;
                 }
-                // Get the nodes to delete from the storage trie
+                // Get the nodes to process
                 while let Some(Ok(storage_hash_guard)) = values.next() {
                     let (addr_hash, node_hash): ([u8; 32], [u8; 33]) = storage_hash_guard.value();
-                    // Only add the node to the list if we haven't seen it before
-                    if seen.insert((block.block_number, addr_hash, node_hash)) {
-                        storage_entries_to_remove.push((block, addr_hash, node_hash));
-                    }
+                    storage_entries_to_process.push((block, addr_hash, node_hash));
                 }
             }
 
-            // Delete the nodes from the storage trie and the pruning log
-            for (block, addr_hash, node_hash) in storage_entries_to_remove {
+            // Process each entry with reference counting
+            let mut storage_nodes_to_delete = Vec::new();
+            for (block, addr_hash, node_hash) in storage_entries_to_process {
+                let storage_key = (addr_hash, node_hash);
+
+                // Get current reference count first
+                let current_count = storage_ref_counters
+                    .get(storage_key)?
+                    .map(|v| v.value())
+                    .unwrap_or(0);
+
+                if current_count > 1 {
+                    // Still has references, just decrement
+                    storage_ref_counters.insert(storage_key, current_count - 1)?;
+                } else if current_count == 1 {
+                    // No more references, mark for deletion
+                    storage_ref_counters.remove(storage_key)?;
+                    storage_nodes_to_delete.push((block, addr_hash, node_hash));
+                }
+                // If current_count is 0, the node was already deleted or never had references
+            }
+
+            // Delete nodes that have no more references
+            for (block, addr_hash, node_hash) in storage_nodes_to_delete {
                 let block_rlp: BlockNumHashRLP = block.into();
                 storage_trie_pruning_log.remove_all(block_rlp)?;
 
@@ -2222,6 +2281,8 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
     table_creation_txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
     table_creation_txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
+    table_creation_txn.open_table(STATE_TRIE_REF_COUNTERS_TABLE)?;
+    table_creation_txn.open_table(STORAGE_TRIE_REF_COUNTERS_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)

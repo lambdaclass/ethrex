@@ -72,23 +72,21 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
 /// Opens a Pre-exsisting Store or creates a new one
 pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
-    // if path.ends_with("memory") {
-    //     Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
-    // } else {
-    //     cfg_if::cfg_if! {
-    //         if #[cfg(feature = "redb")] {
-    //             let engine_type = EngineType::RedB;
-    //         } else if #[cfg(feature = "libmdbx")] {
-    //             let engine_type = EngineType::Libmdbx;
-    //         } else {
-    //             error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
-    //             panic!("Specify the desired database engine.");
-    //         }
-    //     }
-    //     Store::new(data_dir, engine_type).expect("Failed to create Store")
-    // }
-
-    Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+    if path.ends_with("memory") {
+        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+    } else {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "redb")] {
+                let engine_type = EngineType::RedB;
+            } else if #[cfg(feature = "libmdbx")] {
+                let engine_type = EngineType::Libmdbx;
+            } else {
+                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                panic!("Specify the desired database engine.");
+            }
+        }
+        Store::new(data_dir, engine_type).expect("Failed to create Store")
+    }
 }
 
 pub fn init_blockchain(
