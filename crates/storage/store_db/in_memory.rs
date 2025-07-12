@@ -557,7 +557,7 @@ impl StoreEngine for Store {
                     .remove(&block)
                     .ok_or(StoreError::LockError)?;
 
-                let mut nodes_to_delete: Vec<NodeHash> = Vec::new();
+                let mut nodes_to_delete = Vec::new();
 
                 // Get the nodes to delete from the state trie
                 for hash in hashes {
