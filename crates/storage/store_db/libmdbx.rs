@@ -877,11 +877,7 @@ impl StoreEngine for Store {
         {
             // We keep the last 1024 blocks
             let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
-            tracing::debug!(
-                keep_from = keep_from,
-                last_num = last_num,
-                "[KEEPING STATE TRIE PRUNING LOG]"
-            );
+            tracing::debug!(keep_from, last_num, "[KEEPING STATE TRIE PRUNING LOG]");
 
             let mut cursor_state_trie = tx.cursor::<StateTrieNodes>()?;
             let mut kv_state_trie_pruning = cursor_state_trie_pruning_log.first()?;
@@ -891,11 +887,7 @@ impl StoreEngine for Store {
                 // If the block number is higher than the keep from, we can stop
                 // since we reached the keep from block number
                 if block.block_number >= keep_from {
-                    tracing::debug!(
-                        keep_from = keep_from,
-                        last_num = last_num,
-                        "[STOPPING STATE TRIE PRUNING]"
-                    );
+                    tracing::debug!(keep_from, last_num, "[STOPPING STATE TRIE PRUNING]");
                     break;
                 }
 
@@ -928,6 +920,7 @@ impl StoreEngine for Store {
         )) = cursor_storage_trie_pruning_log.last()?
         {
             let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
+            tracing::debug!(keep_from, last_num, "[KEEPING STORAGE TRIE PRUNING LOG]");
 
             let mut cursor_storage_trie = tx.cursor::<StorageTriesNodes>()?;
             let mut kv_storage_trie_pruning = cursor_storage_trie_pruning_log.first()?;
