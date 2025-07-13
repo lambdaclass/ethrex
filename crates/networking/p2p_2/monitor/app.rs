@@ -13,7 +13,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Tabs, Widget},
 };
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, error::TryRecvError};
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::monitor::widgets::tabs::TabsState;
@@ -63,19 +63,13 @@ impl<'title> Monitor<'title> {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         mut rx: mpsc::UnboundedReceiver<Event>,
     ) {
-        let mut last_tick = Instant::now();
         loop {
             self.draw(terminal);
 
-            let timeout = Duration::from_millis(100).saturating_sub(last_tick.elapsed());
-
-            if !event::poll(timeout).expect("Failed to poll event") {
-                last_tick = Instant::now();
-                continue;
-            }
-
-            let Some(event) = rx.recv().await else {
-                continue;
+            let event = match rx.try_recv() {
+                Ok(event) => event,
+                Err(TryRecvError::Empty) => continue,
+                Err(TryRecvError::Disconnected) => panic!("Event channel disconnected"),
             };
 
             self.handle_event(event);
