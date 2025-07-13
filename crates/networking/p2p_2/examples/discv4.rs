@@ -8,7 +8,7 @@ use std::{
 use ethrex_common::H512;
 use ethrex_p2p_2::{
     discv4::{server::DiscoveryServer, side_car::DiscoverySideCar},
-    monitor::{app::Monitor, init_terminal},
+    monitor::{app::Monitor, init_terminal, restore_terminal},
     types::Node,
 };
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
@@ -77,10 +77,12 @@ async fn main() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("Received Ctrl+C, shutting down...");
+            restore_terminal(&mut terminal).expect("Failed to restore terminal");
             kademlia_counter_handle.abort();
         }
         _ = monitor.start(&mut terminal) => {
             println!("Monitor has exited, shutting down...");
+            restore_terminal(&mut terminal).expect("Failed to restore terminal");
             kademlia_counter_handle.abort();
         }
     }
