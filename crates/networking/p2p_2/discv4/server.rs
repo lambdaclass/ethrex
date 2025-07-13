@@ -8,7 +8,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, GenServerHandle},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     discv4::{
@@ -112,7 +112,7 @@ impl DiscoveryServerState {
             return Err(DiscoveryServerError::PartialMessageSent);
         }
 
-        info!(sent = "Ping", to = %format!("{:#x}", node.public_key));
+        debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -141,7 +141,7 @@ impl DiscoveryServerState {
             return Err(DiscoveryServerError::PartialMessageSent);
         }
 
-        info!(sent = "Pong", to = %format!("{:#x}", node.public_key));
+        debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
 
         let _ = self.send_enr_request(node).await.inspect_err(
             |e| error!(received = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
@@ -174,7 +174,7 @@ impl DiscoveryServerState {
             return Err(DiscoveryServerError::PartialMessageSent);
         }
 
-        info!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
+        debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -196,7 +196,7 @@ impl DiscoveryServerState {
             return Err(DiscoveryServerError::PartialMessageSent);
         }
 
-        info!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
+        debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -354,7 +354,7 @@ impl GenServer for ConnectionHandler {
                 hash,
                 sender_public_key,
             } => {
-                info!(received = "Ping", from = %format!("{sender_public_key:#x}"));
+                debug!(received = "Ping", from = %format!("{sender_public_key:#x}"));
 
                 let node = Node::new(
                     msg.from.ip,
@@ -368,31 +368,33 @@ impl GenServer for ConnectionHandler {
                 });
             }
             Self::CastMsg::Pong(packet) => {
-                info!(received = "Pong", from = %format!("{:#x}", packet.get_public_key()));
+                debug!(received = "Pong", from = %format!("{:#x}", packet.get_public_key()));
             }
             Self::CastMsg::FindNode(packet) => {
-                info!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
+                debug!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
             }
             Self::CastMsg::Neighbors {
                 message: msg,
                 sender_public_key,
             } => {
-                info!(received = "Neighbors", from = %format!("{sender_public_key:#x}"));
+                debug!(received = "Neighbors", from = %format!("{sender_public_key:#x}"));
+
+                let mut kademlia = state.kademlia.lock().await;
 
                 for node in msg.nodes {
-                    state.kademlia.lock().await.insert(node.node_id(), node);
+                    kademlia.entry(node.node_id()).or_insert(node);
                 }
             }
             Self::CastMsg::ENRRequest(packet) => {
-                info!(received = "ENRRequest", from = %format!("{:#x}", packet.get_public_key()));
+                debug!(received = "ENRRequest", from = %format!("{:#x}", packet.get_public_key()));
 
-                info!(packet = ?packet);
+                debug!(packet = ?packet);
             }
             Self::CastMsg::ENRResponse {
                 message: _msg,
                 sender_public_key,
             } => {
-                info!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"));
+                debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"));
             }
         }
         CastResponse::NoReply(state)

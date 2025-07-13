@@ -6,7 +6,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, send_after},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     discv4::{
@@ -94,7 +94,7 @@ impl DiscoverySideCarState {
             return Err(DiscoverySideCarError::PartialMessageSent);
         }
 
-        info!(sent = "Ping", to = %format!("{:#x}", node.public_key));
+        debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -116,7 +116,7 @@ impl DiscoverySideCarState {
             return Err(DiscoverySideCarError::PartialMessageSent);
         }
 
-        info!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
+        debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -182,7 +182,7 @@ impl GenServer for DiscoverySideCar {
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Revalidate => {
-                info!(received = "Revalidate");
+                debug!(received = "Revalidate");
 
                 revalidate(&state).await;
 
@@ -195,7 +195,7 @@ impl GenServer for DiscoverySideCar {
                 CastResponse::NoReply(state)
             }
             Self::CastMsg::Lookup => {
-                info!(received = "Lookup");
+                debug!(received = "Lookup");
 
                 lookup(&state).await;
 
@@ -204,7 +204,7 @@ impl GenServer for DiscoverySideCar {
                 CastResponse::NoReply(state)
             }
             Self::CastMsg::Prune => {
-                info!(received = "Prune");
+                debug!(received = "Prune");
 
                 // Once we have a pruning strategy, we can implement it here.
                 // For now, no one is pruned.
