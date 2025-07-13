@@ -68,7 +68,11 @@ impl DiscoveryServerState {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
         loop {
             let (read, _from) = self.udp_socket.recv_from(&mut buf).await?;
-            let packet = Packet::decode(&buf[..read]).expect("Failed to decode packet");
+            let Ok(packet) = Packet::decode(&buf[..read])
+                .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
+            else {
+                continue;
+            };
             let mut conn_handle = ConnectionHandler::spawn(self.clone()).await;
             let _ = conn_handle.cast(packet.into()).await;
         }
