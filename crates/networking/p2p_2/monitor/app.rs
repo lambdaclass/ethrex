@@ -1,6 +1,6 @@
 use std::io;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEventKind};
 use ratatui::{
     Terminal,
     buffer::Buffer,
@@ -109,8 +109,13 @@ impl<'title> Monitor<'title> {
     }
 
     fn handle_mouse_event(&mut self, mouse_event: crossterm::event::MouseEvent) {
-        #[expect(clippy::match_single_binding)]
-        match mouse_event.kind {
+        match (&self.tabs, mouse_event.kind) {
+            (TabsState::Logs, MouseEventKind::ScrollDown) => {
+                self.logger.transition(TuiWidgetEvent::NextPageKey)
+            }
+            (TabsState::Logs, MouseEventKind::ScrollUp) => {
+                self.logger.transition(TuiWidgetEvent::PrevPageKey)
+            }
             _ => {}
         }
     }
