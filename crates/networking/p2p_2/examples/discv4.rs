@@ -7,7 +7,7 @@ use std::{
 
 use ethrex_common::H512;
 use ethrex_p2p_2::{
-    discv4::{server::DiscoveryServer, side_car::DiscoverySideCar},
+    discv4::{metrics::METRICS, server::DiscoveryServer, side_car::DiscoverySideCar},
     monitor::{app::Monitor, init_terminal, restore_terminal},
     types::Node,
 };
@@ -64,7 +64,8 @@ async fn main() {
         loop {
             let elapsed = start.elapsed();
             info!(
-                contacts = kademlia_clone.lock().await.len(),
+                contacts = kademlia.lock().await.len(),
+                rate = %format!("{} contacts/s", METRICS.contacts_rate.get().round()),
                 elapsed = format_duration(elapsed)
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
