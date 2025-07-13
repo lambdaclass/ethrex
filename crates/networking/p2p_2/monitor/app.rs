@@ -1,4 +1,7 @@
-use std::io;
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEventKind};
 use ratatui::{
@@ -60,8 +63,16 @@ impl<'title> Monitor<'title> {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         mut rx: mpsc::UnboundedReceiver<Event>,
     ) {
+        let mut last_tick = Instant::now();
         loop {
             self.draw(terminal);
+
+            let timeout = Duration::from_millis(100).saturating_sub(last_tick.elapsed());
+
+            if !event::poll(timeout).expect("Failed to poll event") {
+                last_tick = Instant::now();
+                continue;
+            }
 
             let Some(event) = rx.recv().await else {
                 continue;
@@ -152,6 +163,7 @@ impl<'title> Widget for &mut Monitor<'title> {
             TabsState::Logs => {
                 let chunks =
                     Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(chunks[1]);
+
                 let log_widget = TuiLoggerSmartWidget::default()
                     .style_error(Style::default().fg(Color::Red))
                     .style_debug(Style::default().fg(Color::LightBlue))
