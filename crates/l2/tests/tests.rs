@@ -8,8 +8,8 @@ use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS,
     calldata::{self, encode_calldata},
-    claim_erc20withdraw, claim_withdraw, compile_contract, deposit_erc20,
-    get_address_from_secret_key,
+    claim_erc20withdraw, claim_withdraw, compile_contract, deposit_erc20, download_contract_deps,
+    get_address_from_secret_key, get_erc1967_slot,
     l1_to_l2_tx_data::L1ToL2TransactionData,
     wait_for_transaction_receipt,
 };
@@ -95,6 +95,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let deposit_recipient_address = get_address_from_secret_key(&rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
 
+    test_upgrade(&eth_client, &proposer_client).await?;
+
     test_deposit(
         &rich_wallet_private_key,
         bridge_address,
@@ -158,6 +160,54 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn test_upgrade(
+    l1_client: &EthClient,
+    l2_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let private_key = l1_rich_wallet_private_key();
+
+    let contracts_path = Path::new("contracts");
+    download_contract_deps(contracts_path).unwrap();
+    compile_contract(contracts_path, "src/l2/CommonBridgeL2.sol", false)?;
+
+    let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
+    let deploy_address = test_deploy(&bridge_code, &private_key, l2_client).await?;
+
+    let impl_slot = get_erc1967_slot("eip1967.proxy.implementation");
+    let initial_impl = l2_client
+        .get_storage_at(
+            COMMON_BRIDGE_L2_ADDRESS,
+            impl_slot,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+    let tx_receipt = test_send(
+        l1_client,
+        &private_key,
+        common_bridge_address(),
+        "upgradeL2Contract(address,address,uint256,bytes)",
+        &[
+            Value::Address(COMMON_BRIDGE_L2_ADDRESS),
+            Value::Address(deploy_address),
+            Value::Uint(U256::from(100_000)),
+            Value::Bytes(Bytes::new()),
+        ],
+    )
+    .await;
+    let _ = wait_for_l2_deposit_receipt(tx_receipt.block_info.block_number, l1_client, l2_client)
+        .await?;
+    let final_impl = l2_client
+        .get_storage_at(
+            COMMON_BRIDGE_L2_ADDRESS,
+            impl_slot,
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+    println!("upgraded {initial_impl:#x} -> {final_impl:#x}");
+    assert_ne!(initial_impl, final_impl);
+    Ok(())
+}
+
 /// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
 /// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
 /// The deposit will trigger the call to the contract.
@@ -204,7 +254,12 @@ async fn test_privileged_tx_with_contract_call(
     let topic = keccak(b"NumberSet(uint256)");
 
     while proposer_client
-        .get_logs(first_block, block_number, deployed_contract_address, topic)
+        .get_logs(
+            first_block,
+            block_number,
+            deployed_contract_address,
+            vec![topic],
+        )
         .await
         .is_ok_and(|logs| logs.is_empty())
     {
@@ -214,7 +269,12 @@ async fn test_privileged_tx_with_contract_call(
     }
 
     let logs = proposer_client
-        .get_logs(first_block, block_number, deployed_contract_address, topic)
+        .get_logs(
+            first_block,
+            block_number,
+            deployed_contract_address,
+            vec![topic],
+        )
         .await?;
 
     let number_emitted = U256::from_big_endian(
@@ -1496,7 +1556,7 @@ async fn wait_for_l2_deposit_receipt(
             U256::from(l1_receipt_block_number),
             U256::from(l1_receipt_block_number),
             common_bridge_address(),
-            topic,
+            vec![topic],
         )
         .await?;
     let data = PrivilegedTransactionData::from_log(logs.first().unwrap().log.clone())?;
