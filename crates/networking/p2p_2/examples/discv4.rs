@@ -58,12 +58,13 @@ async fn main() {
         });
 
     // Barrani kademlia contacts counter
+    let kademlia_clone = kademlia.clone();
     let kademlia_counter_handle = tokio::spawn(async move {
         let start = std::time::Instant::now();
         loop {
             let elapsed = start.elapsed();
             info!(
-                contacts = kademlia.lock().await.len(),
+                contacts = kademlia_clone.lock().await.len(),
                 elapsed = format_duration(elapsed)
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -72,7 +73,7 @@ async fn main() {
 
     let mut terminal = init_terminal().expect("Failed to initialize terminal");
 
-    let mut monitor = Monitor::new("Ethrex P2P");
+    let mut monitor = Monitor::new("Ethrex P2P", kademlia);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {

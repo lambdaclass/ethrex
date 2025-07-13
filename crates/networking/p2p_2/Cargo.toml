@@ -45,7 +45,7 @@ keccak-hash.workspace = true
 crossterm = "0.29.0"
 ratatui = "0.29.0"
 tui-big-text = "0.7.1"
-tui-scrollview = "0.5.1"
+tui-widgets = "0.4.1"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 tui-input = "0.14.0"
 tabwriter = "1.4.1"

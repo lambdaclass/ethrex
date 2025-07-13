@@ -1,7 +1,4 @@
-use std::{
-    io,
-    time::{Duration, Instant},
-};
+use std::io;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEventKind};
 use ratatui::{
@@ -11,12 +8,15 @@ use ratatui::{
     prelude::CrosstermBackend,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Tabs, Widget},
+    widgets::{Block, StatefulWidget, Tabs, Widget},
 };
 use tokio::sync::mpsc::{self, error::TryRecvError};
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::monitor::widgets::tabs::TabsState;
+use crate::{
+    discv4::Kademlia,
+    monitor::widgets::{contacts::ContactsTable, tabs::TabsState},
+};
 
 pub async fn input_thread(tx_event: mpsc::UnboundedSender<Event>) -> color_eyre::Result<()> {
     while let Ok(event) = event::read() {
@@ -29,15 +29,17 @@ pub struct Monitor<'title> {
     title: &'title str,
     tabs: TabsState,
     logger: TuiWidgetState,
+    contacts_table: ContactsTable,
     should_exit: bool,
 }
 
 impl<'title> Monitor<'title> {
-    pub fn new(title: &'title str) -> Self {
+    pub fn new(title: &'title str, kademlia: Kademlia) -> Self {
         Self {
             title,
             tabs: TabsState::default(),
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
+            contacts_table: ContactsTable::new(kademlia),
             should_exit: false,
         }
     }
@@ -66,6 +68,8 @@ impl<'title> Monitor<'title> {
         loop {
             self.draw(terminal);
 
+            self.on_tick().await;
+
             let event = match rx.try_recv() {
                 Ok(event) => event,
                 Err(TryRecvError::Empty) => continue,
@@ -79,6 +83,10 @@ impl<'title> Monitor<'title> {
                 break;
             }
         }
+    }
+
+    async fn on_tick(&mut self) {
+        self.contacts_table.on_tick().await;
     }
 
     fn handle_event(&mut self, event: Event) {
@@ -107,8 +115,10 @@ impl<'title> Monitor<'title> {
             (TabsState::Logs, KeyCode::Char('-')) => {
                 self.logger.transition(TuiWidgetEvent::MinusKey)
             }
-            (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_exit = true,
-            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
+            (_any_tab_state, KeyCode::Char('Q')) => self.should_exit = true,
+            (_any_tab_state, KeyCode::Tab) => self.tabs.next(),
+            (TabsState::Contacts, KeyCode::Down) => self.contacts_table.state.scroll_down(),
+            (TabsState::Contacts, KeyCode::Up) => self.contacts_table.state.scroll_up(),
             _ => {}
         }
     }
@@ -138,7 +148,11 @@ impl<'title> Widget for &mut Monitor<'title> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
         let tabs = Tabs::default()
-            .titles([TabsState::Overview.to_string(), TabsState::Logs.to_string()])
+            .titles([
+                TabsState::Overview.to_string(),
+                TabsState::Logs.to_string(),
+                TabsState::Contacts.to_string(),
+            ])
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(Color::Cyan))
@@ -153,7 +167,14 @@ impl<'title> Widget for &mut Monitor<'title> {
         tabs.render(chunks[0], buf);
 
         match self.tabs {
-            TabsState::Overview => {}
+            TabsState::Overview => {
+                let chunks =
+                    Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(chunks[1]);
+
+                let help = Line::raw("tab: switch tab |  Q: quit").centered();
+
+                help.render(chunks[1], buf);
+            }
             TabsState::Logs => {
                 let chunks =
                     Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(chunks[1]);
@@ -176,6 +197,19 @@ impl<'title> Widget for &mut Monitor<'title> {
                 log_widget.render(chunks[0], buf);
 
                 let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
+
+                help.render(chunks[1], buf);
+            }
+            TabsState::Contacts => {
+                let chunks =
+                    Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(chunks[1]);
+
+                let mut contacts_table_state = self.contacts_table.state;
+
+                self.contacts_table
+                    .render(chunks[0], buf, &mut contacts_table_state);
+
+                let help = Line::raw("tab: switch tab |  Q: quit").centered();
 
                 help.render(chunks[1], buf);
             }
