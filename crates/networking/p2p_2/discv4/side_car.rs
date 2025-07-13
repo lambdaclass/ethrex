@@ -14,7 +14,7 @@ use crate::{
         messages::{FindNodeMessage, Message, PingMessage},
     },
     types::{Endpoint, Node, NodeRecord},
-    utils::get_msg_expiration_from_seconds,
+    utils::{get_msg_expiration_from_seconds, public_key_from_signing_key},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -102,7 +102,10 @@ impl DiscoverySideCarState {
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let msg = Message::FindNode(FindNodeMessage::new(node.public_key, expiration));
+        let random_priv_key = SigningKey::random(&mut rand::rngs::OsRng);
+        let random_pub_key = public_key_from_signing_key(&random_priv_key);
+
+        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);

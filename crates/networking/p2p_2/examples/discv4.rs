@@ -5,13 +5,13 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::H512;
 use ethrex_p2p_2::{
     discv4::{metrics::METRICS, server::DiscoveryServer, side_car::DiscoverySideCar},
     monitor::{app::Monitor, init_terminal, restore_terminal},
     types::Node,
+    utils::public_key_from_signing_key,
 };
-use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
+use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{error, info};
@@ -57,8 +57,11 @@ async fn main() {
             error!("Failed to start discovery side car: {e}");
         });
 
+    let mut terminal = init_terminal().expect("Failed to initialize terminal");
+
+    let mut monitor = Monitor::new("Ethrex P2P", kademlia.clone());
+
     // Barrani kademlia contacts counter
-    let kademlia_clone = kademlia.clone();
     let kademlia_counter_handle = tokio::spawn(async move {
         let start = std::time::Instant::now();
         loop {
@@ -71,10 +74,6 @@ async fn main() {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
-
-    let mut terminal = init_terminal().expect("Failed to initialize terminal");
-
-    let mut monitor = Monitor::new("Ethrex P2P", kademlia);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -97,12 +96,6 @@ pub fn init_tracing() {
         .with(level_filter);
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
     tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
-}
-
-pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
-    let public_key = PublicKey::from(signer.verifying_key());
-    let encoded = public_key.to_encoded_point(false);
-    H512::from_slice(&encoded.as_bytes()[1..])
 }
 
 pub fn bootnode() -> Node {
