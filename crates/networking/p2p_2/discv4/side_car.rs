@@ -1,6 +1,8 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use k256::ecdsa::SigningKey;
+use ethrex_common::H512;
+use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
+use rand::rngs::OsRng;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
@@ -99,10 +101,19 @@ impl DiscoverySideCarState {
         Ok(())
     }
 
+    pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
+        let public_key = PublicKey::from(signer.verifying_key());
+        let encoded = public_key.to_encoded_point(false);
+        H512::from_slice(&encoded.as_bytes()[1..])
+    }
+
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let msg = Message::FindNode(FindNodeMessage::new(node.public_key, expiration));
+        let random_priv_key = SigningKey::random(&mut OsRng);
+        let random_pub_key = Self::public_key_from_signing_key(&random_priv_key);
+
+        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);
@@ -215,7 +226,7 @@ impl GenServer for DiscoverySideCar {
 }
 
 async fn revalidate(state: &DiscoverySideCarState) {
-    for node in state.kademlia.lock().await.values() {
+    for node in state.kademlia.table.lock().await.values() {
         let _ = state.ping(node).await.inspect_err(
             |e| error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?e),
         );
@@ -223,7 +234,12 @@ async fn revalidate(state: &DiscoverySideCarState) {
 }
 
 async fn lookup(state: &DiscoverySideCarState) {
-    for node in state.kademlia.lock().await.values() {
+    {
+        if state.kademlia.table.lock().await.len() >= 18000 {
+            return;
+        }
+    }
+    for node in state.kademlia.table.lock().await.values() {
         let _ = state.send_find_node(node).await.inspect_err(
             |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
         );

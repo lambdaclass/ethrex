@@ -379,7 +379,7 @@ impl GenServer for ConnectionHandler {
             } => {
                 debug!(received = "Neighbors", from = %format!("{sender_public_key:#x}"));
 
-                let mut kademlia = state.kademlia.lock().await;
+                let mut kademlia = state.kademlia.table.lock().await;
 
                 for node in msg.nodes {
                     kademlia.entry(node.node_id()).or_insert(node);
@@ -394,6 +394,13 @@ impl GenServer for ConnectionHandler {
                 message: _msg,
                 sender_public_key,
             } => {
+                /*
+                    - Look up in kademlia the peer associated with this message
+                    - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
+                    - Check that the seq number matches the one we have in our table (this requires setting it).
+                    - Check valid signature
+                    - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
+                */
                 debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"));
             }
         }
