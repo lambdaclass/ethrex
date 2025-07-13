@@ -59,9 +59,14 @@ async fn main() {
 
     // Barrani kademlia contacts counter
     let kademlia_counter_handle = tokio::spawn(async move {
+        let start = std::time::Instant::now();
         loop {
-            info!(contacts = kademlia.lock().await.len());
-            tokio::time::sleep(Duration::from_secs(6)).await;
+            let elapsed = start.elapsed();
+            info!(
+                contacts = kademlia.lock().await.len(),
+                elapsed = format_duration(elapsed)
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 
@@ -100,4 +105,13 @@ pub fn bootnode() -> Node {
     Node::from_enode_url(
         "enode://ac906289e4b7f12df423d654c5a962b6ebe5b3a74cc9e06292a85221f9a64a6f1cfdd6b714ed6dacef51578f92b34c60ee91e9ede9c7f8fadc4d347326d95e2b@146.190.13.128:30303",
     ).expect("Failed to parse bootnode enode URL")
+}
+
+fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
 }
