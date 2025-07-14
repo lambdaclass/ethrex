@@ -45,7 +45,7 @@ ethereum_foundation_tests = []
 debug = []
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "warn"
 warnings = "warn"
 rust_2018_idioms = "warn"
 

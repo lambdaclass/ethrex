@@ -100,17 +100,21 @@ impl Memory {
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
+        let true_offset = offset.wrapping_add(self.current_base);
 
         let buf = self.buffer.borrow();
-        Ok(buf
-            .get(true_offset..(true_offset.checked_add(size).ok_or(OutOfBounds)?))
-            .ok_or(OutOfBounds)?
-            .to_vec())
+
+        // SAFETY: resize already makes sure bounds are correct.
+        #[allow(unsafe_code)]
+        unsafe {
+            Ok(buf
+                .get_unchecked(true_offset..(true_offset.wrapping_add(size)))
+                .to_vec())
+        }
     }
 
     /// Load N bytes from the given offset.
-    #[inline]
+    #[inline(always)]
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
         let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
@@ -118,11 +122,14 @@ impl Memory {
         let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
 
         let buf = self.buffer.borrow();
-        Ok(buf
-            .get(true_offset..(true_offset.checked_add(N).ok_or(OutOfBounds)?))
-            .ok_or(OutOfBounds)?
-            .try_into()
-            .map_err(|_| OutOfBounds)?)
+        // SAFETY: resize already makes sure bounds are correct.
+        #[allow(unsafe_code)]
+        unsafe {
+            Ok(*buf
+                .get_unchecked(true_offset..(true_offset.wrapping_add(N)))
+                .as_ptr()
+                .cast::<[u8; N]>())
+        }
     }
 
     /// Load a word from at the given offset.
@@ -140,18 +147,24 @@ impl Memory {
             return Ok(());
         }
 
-        let real_offset = self
-            .current_base
-            .checked_add(at_offset)
-            .ok_or(OutOfBounds)?;
+        let real_offset = self.current_base.wrapping_add(at_offset);
 
         let mut buffer = self.buffer.borrow_mut();
 
         let real_data_size = data_size.min(data.len());
 
+        // SAFETY: Used internally, resize always called before this function.
         #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
-        buffer[real_offset..(real_offset + real_data_size)]
-            .copy_from_slice(&data[..real_data_size]);
+        #[allow(unsafe_code)]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.get_unchecked(..real_data_size).as_ptr(),
+                buffer
+                    .get_unchecked_mut(real_offset..(real_offset + real_data_size))
+                    .as_mut_ptr(),
+                real_data_size,
+            );
+        }
 
         Ok(())
     }
@@ -255,15 +268,11 @@ pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Res
 #[inline]
 fn cost(memory_size: usize) -> Result<u64, VMError> {
     let memory_size_word = memory_size
-        .checked_add(
-            WORD_SIZE_IN_BYTES_USIZE
-                .checked_sub(1)
-                .ok_or(InternalError::Underflow)?,
-        )
+        .checked_add(WORD_SIZE_IN_BYTES_USIZE.wrapping_sub(1))
         .ok_or(OutOfGas)?
         / WORD_SIZE_IN_BYTES_USIZE;
 
-    let gas_cost = (memory_size_word.checked_pow(2).ok_or(OutOfGas)? / MEMORY_EXPANSION_QUOTIENT)
+    let gas_cost = (memory_size_word.checked_mul(memory_size_word).ok_or(OutOfGas)? / MEMORY_EXPANSION_QUOTIENT)
         .checked_add(3usize.checked_mul(memory_size_word).ok_or(OutOfGas)?)
         .ok_or(OutOfGas)?;
 
