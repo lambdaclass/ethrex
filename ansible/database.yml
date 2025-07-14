@@ -8,6 +8,10 @@
     pg_db: "blockscout"
 
   tasks:
+    - name: debug
+      debug:
+        msg: "user {{pg_user }} with pw {{ pg_pass }}"
+
     - name: Add PostgreSQL GPG key
       apt_key:
         url: https://www.postgresql.org/media/keys/ACCC4CF8.asc

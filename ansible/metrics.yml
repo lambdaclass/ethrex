@@ -3,16 +3,20 @@
 
   vars:
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
-    grafana_dashboards:
-      - name: l1_dashboards
-        path: "{{ ethrex_dir }}/crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/"
-      - name: l2_dashboards
-        path: "{{ ethrex_dir }}/crates/blockchain/metrics/praovisioning/grafana_provisioning/dashboards/l2_dashboards/"
+    local_grafana_dashboards: "{{ playbook_dir }}/../crates/blockchain/metrics/provisioning/grafana_provisioning/"
+    remote_grafana_dashboards: "/etc/grafana/provisioning/"
     grafana_alerts:
       - name: alerts
         path: "{{ ethrex_dir }}/crates/blockchain/metrics/provisioning/grafana_provisioning/alerting"
 
   tasks:
+    - name: Install rsync
+      become: true
+      apt:
+        name:
+          - rsync
+        state: present
+
     - name: Enable SSH agent forwarding
       become: true
       lineinfile:
@@ -63,6 +67,38 @@
           TARGET: localhost
       when: not grafana.stat.exists
 
+    - name: Synchronize Grafana dashboards (recursive copy of all folders and files)
+      become: true
+      synchronize:
+        src: "{{ local_grafana_dashboards }}{{ item.path }}"
+        dest: "{{ remote_grafana_dashboards }}{{ item.path }}"
+        rsync_opts:
+          - "-avz"
+      loop:
+        - name: l1_dashboards
+          path: "dashboards/"
+        - name: l2_dashboards
+          path: "dashboards/l2_dashboards/"
+        - name: common_dashboards
+          path: "dashboards/common_dashboards/"
+
+    - name: Update grafana provisioning for dashboards
+      become: true
+      template:
+        src: templates/config/dashboards.yml.j2
+        dest: /etc/grafana/provisioning/dashboards/dashboards.yml
+        owner: grafana
+        group: grafana
+        mode: '0644'
+      vars:
+        grafana_dashboards:
+          - name: l1_dashboards
+            path: "{{ remote_grafana_dashboards }}"
+          - name: l2_dashboards
+            path: "{{ remote_grafana_dashboards }}l2_dashboards/"
+          - name: common_dashboards
+            path: "{{ remote_grafana_dashboards }}common_dashboards/"
+
     - name: Remove ProtectHome=true from grafana-server.service
       become: true
       lineinfile:
@@ -88,15 +124,6 @@
         backrefs: yes
       when: uid_check.found == 0
 
-    - name: Update grafana provisioning for dashboards
-      become: true
-      template:
-        src: templates/config/dashboards.yml.j2
-        dest: /etc/grafana/provisioning/dashboards/dashboards.yml
-        owner: grafana
-        group: grafana
-        mode: '0644'
-
     - name: Add Ethereum Metrics Exporter scrape config
       become: true
       blockinfile:
@@ -115,7 +142,7 @@
       become: true
       template:
         src: templates/config/grafana.ini.j2
-        dest: /etc/grafana/provisioning/dashboards/dashboards.yml
+        dest: /etc/grafana/grafana.ini
         owner: grafana
         group: grafana
         mode: '0644'
