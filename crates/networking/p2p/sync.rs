@@ -443,16 +443,24 @@ impl Syncer {
         // Spawn a blocking task to not block the tokio runtime
         let res = {
             let blockchain = self.blockchain.clone();
-            Self::add_blocks(blockchain, blocks, sync_head_found).await
+            Self::add_blocks(
+                blockchain,
+                blocks,
+                sync_head_found,
+                self.cancel_token.clone(),
+            )
+            .await
         };
 
         if let Err((error, failure)) = res {
-            warn!("Failed to add block during FullSync: {error}");
             if let Some(BatchBlockProcessingFailure {
                 failed_block_hash,
                 last_valid_hash,
             }) = failure
             {
+                warn!(
+                    "Failed to add block with hash {failed_block_hash} during FullSync - error: {error}"
+                );
                 store
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
@@ -492,6 +500,7 @@ impl Syncer {
         blockchain: Arc<Blockchain>,
         blocks: Vec<Block>,
         sync_head_found: bool,
+        cancel_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
@@ -510,7 +519,7 @@ impl Syncer {
             }
             Ok(())
         } else {
-            blockchain.add_blocks_in_batch(blocks).await
+            blockchain.add_blocks_in_batch(blocks, cancel_token).await
         }
     }
 }

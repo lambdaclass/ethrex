@@ -5,7 +5,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -17,13 +17,13 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
 
-        let block_number = current_call_frame.stack.pop()?;
+        let [block_number] = *current_call_frame.stack.pop()?;
 
         // If the block number is not valid, return zero
         if block_number < current_block.saturating_sub(LAST_AVAILABLE_BLOCK_LIMIT)
             || block_number >= current_block
         {
-            current_call_frame.stack.push(U256::zero())?;
+            current_call_frame.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -34,7 +34,7 @@ impl<'a> VM<'a> {
         let block_hash = self.db.store.get_block_hash(block_number)?;
         self.current_call_frame_mut()?
             .stack
-            .push(U256::from_big_endian(block_hash.as_bytes()))?;
+            .push(&[u256_from_big_endian_const(block_hash.to_fixed_bytes())])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -45,7 +45,9 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::COINBASE)?;
 
-        current_call_frame.stack.push(address_to_word(coinbase))?;
+        current_call_frame
+            .stack
+            .push(&[address_to_word(coinbase)])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -56,7 +58,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
-        current_call_frame.stack.push(timestamp)?;
+        current_call_frame.stack.push(&[timestamp])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -67,7 +69,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
 
-        current_call_frame.stack.push(block_number)?;
+        current_call_frame.stack.push(&[block_number])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -76,11 +78,12 @@ impl<'a> VM<'a> {
     pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-4399
         // After Paris the prev randao is the prev_randao (or current_random) field
-        let randao = U256::from_big_endian(self.env.prev_randao.unwrap_or_default().0.as_slice());
+        let randao =
+            u256_from_big_endian_const(self.env.prev_randao.unwrap_or_default().to_fixed_bytes());
 
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
-        current_call_frame.stack.push(randao)?;
+        current_call_frame.stack.push(&[randao])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -91,7 +94,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
 
-        current_call_frame.stack.push(block_gas_limit.into())?;
+        current_call_frame.stack.push(&[block_gas_limit.into()])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -102,7 +105,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
-        current_call_frame.stack.push(chain_id)?;
+        current_call_frame.stack.push(&[chain_id])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -118,7 +121,7 @@ impl<'a> VM<'a> {
             .info
             .balance;
 
-        self.current_call_frame_mut()?.stack.push(balance)?;
+        self.current_call_frame_mut()?.stack.push(&[balance])?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -129,7 +132,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
-        current_call_frame.stack.push(base_fee_per_gas)?;
+        current_call_frame.stack.push(&[base_fee_per_gas])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -144,11 +147,11 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
 
-        let index = self.current_call_frame_mut()?.stack.pop()?;
+        let [index] = *self.current_call_frame_mut()?.stack.pop()?;
 
         let blob_hashes = &self.env.tx_blob_hashes;
         if index >= blob_hashes.len().into() {
-            self.current_call_frame_mut()?.stack.push(U256::zero())?;
+            self.current_call_frame_mut()?.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -158,9 +161,9 @@ impl<'a> VM<'a> {
 
         //This should never fail because we check if the index fits above
         let blob_hash = blob_hashes.get(index).ok_or(InternalError::Slicing)?;
-        let hash = U256::from_big_endian(blob_hash.as_bytes());
+        let hash = u256_from_big_endian_const(blob_hash.to_fixed_bytes());
 
-        self.current_call_frame_mut()?.stack.push(hash)?;
+        self.current_call_frame_mut()?.stack.push(&[hash])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -178,7 +181,9 @@ impl<'a> VM<'a> {
         let blob_base_fee =
             get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
 
-        self.current_call_frame_mut()?.stack.push(blob_base_fee)?;
+        self.current_call_frame_mut()?
+            .stack
+            .push(&[blob_base_fee])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

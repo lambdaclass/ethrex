@@ -13,6 +13,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -71,24 +72,15 @@ impl Store {
             first_block: 0,
             last_block: 0,
             state_root: H256::zero(),
-            deposit_logs_hash: H256::zero(),
+            privileged_transactions_hash: H256::zero(),
             message_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
+            commit_tx: None,
+            verify_tx: None,
         })
         .await?;
         // Sets the lastest sent batch proof to 0
         self.set_lastest_sent_batch_proof(0).await
-    }
-
-    /// Stores the block numbers by a given batch_number
-    pub async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_block_numbers_by_batch(batch_number, block_numbers)
-            .await
     }
 
     /// Returns the block numbers by a given batch_number
@@ -105,15 +97,6 @@ impl Store {
     ) -> Result<Option<u64>, RollupStoreError> {
         self.engine.get_batch_number_by_block(block_number).await
     }
-    pub async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_batch_number_by_block(block_number, batch_number)
-            .await
-    }
 
     pub async fn get_message_hashes_by_batch(
         &self,
@@ -122,32 +105,12 @@ impl Store {
         self.engine.get_message_hashes_by_batch(batch_number).await
     }
 
-    pub async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        message_hashes: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_message_hashes_by_batch(batch_number, message_hashes)
-            .await
-    }
-
-    pub async fn get_deposit_logs_hash_by_batch(
+    pub async fn get_privileged_transactions_hash_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         self.engine
-            .get_deposit_logs_hash_by_batch_number(batch_number)
-            .await
-    }
-
-    pub async fn store_deposit_logs_hash_by_batch(
-        &self,
-        batch_number: u64,
-        deposit_logs_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_deposit_logs_hash_by_batch_number(batch_number, deposit_logs_hash)
+            .get_privileged_transactions_hash_by_batch_number(batch_number)
             .await
     }
 
@@ -160,16 +123,6 @@ impl Store {
             .await
     }
 
-    pub async fn store_state_root_by_batch(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.engine
-            .store_state_root_by_batch_number(batch_number, state_root)
-            .await
-    }
-
     pub async fn get_blobs_by_batch(
         &self,
         batch_number: u64,
@@ -179,13 +132,37 @@ impl Store {
             .await
     }
 
-    pub async fn store_blobs_by_batch(
+    pub async fn get_commit_tx_by_batch(
         &self,
         batch_number: u64,
-        blobs: Vec<Blob>,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        self.engine.get_commit_tx_by_batch(batch_number).await
+    }
+
+    pub async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .store_blob_bundle_by_batch_number(batch_number, blobs)
+            .store_commit_tx_by_batch(batch_number, commit_tx)
+            .await
+    }
+
+    pub async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        self.engine.get_verify_tx_by_batch(batch_number).await
+    }
+
+    pub async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_verify_tx_by_batch(batch_number, verify_tx)
             .await
     }
 
@@ -224,16 +201,17 @@ impl Store {
         let message_hashes = self
             .get_message_hashes_by_batch(batch_number)
             .await?
-            .ok_or(RollupStoreError::Custom(
-            "Failed while trying to retrieve the message hashes of a known batch. This is a bug."
-                .to_owned(),
-        ))?;
-        let deposit_logs_hash = self
-            .get_deposit_logs_hash_by_batch(batch_number)
+            .unwrap_or_default();
+        let privileged_transactions_hash = self
+            .get_privileged_transactions_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
             "Failed while trying to retrieve the deposit logs hash of a known batch. This is a bug."
                 .to_owned(),
         ))?;
+
+        let commit_tx = self.get_commit_tx_by_batch(batch_number).await?;
+
+        let verify_tx = self.get_verify_tx_by_batch(batch_number).await?;
 
         Ok(Some(Batch {
             number: batch_number,
@@ -242,38 +220,24 @@ impl Store {
             state_root,
             blobs_bundle,
             message_hashes,
-            deposit_logs_hash,
+            privileged_transactions_hash,
+            commit_tx,
+            verify_tx,
         }))
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
-        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
-
-        for block_number in blocks.iter() {
-            self.store_batch_number_by_block(*block_number, batch.number)
-                .await?;
-        }
-        self.store_block_numbers_by_batch(batch.number, blocks)
-            .await?;
-        self.store_message_hashes_by_batch(batch.number, batch.message_hashes)
-            .await?;
-        self.store_deposit_logs_hash_by_batch(batch.number, batch.deposit_logs_hash)
-            .await?;
-        self.store_blobs_by_batch(batch.number, batch.blobs_bundle.blobs)
-            .await?;
-        self.store_state_root_by_batch(batch.number, batch.state_root)
-            .await?;
-        Ok(())
+        self.engine.seal_batch(batch).await
     }
 
     pub async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         self.engine
-            .update_operations_count(transaction_inc, deposits_inc, messages_inc)
+            .update_operations_count(transaction_inc, privileged_tx_inc, messages_inc)
             .await
     }
 
@@ -317,6 +281,27 @@ impl Store {
     ) -> Result<(), RollupStoreError> {
         self.engine
             .store_account_updates_by_block_number(block_number, account_updates)
+            .await
+    }
+
+    pub async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_proof_by_batch_and_type(batch_number, proof_type, proof)
+            .await
+    }
+
+    pub async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
+        self.engine
+            .get_proof_by_batch_and_type(batch_number, proof_type)
             .await
     }
 

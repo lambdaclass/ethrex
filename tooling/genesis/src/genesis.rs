@@ -62,9 +62,9 @@ fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value
 
 pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String> {
     let genesis_json = serde_json::to_string(&genesis)
-        .map_err(|e| format!("Could not convert genesis to string: {}", e))?;
+        .map_err(|e| format!("Could not convert genesis to string: {e}"))?;
     let mut genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
-        .map_err(|e| format!("Failed to de-serialize genesis file: {}", e))?;
+        .map_err(|e| format!("Failed to de-serialize genesis file: {e}"))?;
     // Keys sorting based off this ethpandaops example:
     // https://github.com/ethpandaops/ethereum-genesis-generator/blob/master/apps/el-gen/mainnet/genesis.json
     // We actually want 'config' as the first key, but we sort that
@@ -101,7 +101,7 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
     );
     for k in keys {
         let Some(v) = genesis_as_map.get(k) else {
-            return Err(format!("Missing key in read genesis file: {}", k));
+            return Err(format!("Missing key in read genesis file: {k}"));
         };
         if *v != Value::Null {
             ordered_map.insert(k.to_owned(), v.clone());
@@ -120,7 +120,7 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
         if expected != Some(&Value::Null)
             && ordered_map.contains_key(k) != genesis_as_map.contains_key(k)
         {
-            return Err(format!("Genesis serialization is missing a key: {}", k));
+            return Err(format!("Genesis serialization is missing a key: {k}"));
         }
     }
     // Check 2: the new ordered map can be turned into a genesis struct.
@@ -130,14 +130,13 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
         .map_err(|e| format!("Could not turn map into json: {e}"))?;
     std::fs::write(path, &to_write).map_err(|e| {
         format!(
-            "Could not write genesis json to path: {}, error: {}",
-            path.display(),
-            e
+            "Could not write genesis json to path: {}, error: {e}",
+            path.display()
         )
     })
 }
 pub fn main() -> Result<(), String> {
-    let genesis_files = read_dir("../../test_data").unwrap();
+    let genesis_files = read_dir("../../fixtures/genesis").unwrap();
     for file in genesis_files {
         let file = file.unwrap();
         let path = file.path();

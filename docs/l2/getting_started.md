@@ -23,4 +23,4 @@ More information is available in [the documentation for each component](./compon
 
 ## Guides
 
-For more information on how to perform certain operations, go to [Guides](./guides/README.md).
+For more information on how to perform certain operations, go to [Guides](./guides).

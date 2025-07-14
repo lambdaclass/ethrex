@@ -47,8 +47,5 @@ hex-literal = "0.4.1"
 [lib]
 path = "./lib.rs"
 
-[features]
-l2 = ["ethrex-storage-rollup", "ethrex-l2-common"]
-
-[lints.clippy] 
-unwrap_used = "deny" 
+[lints.clippy]
+unwrap_used = "deny"

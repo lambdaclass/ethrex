@@ -120,7 +120,7 @@ impl std::fmt::Display for Message {
             Message::ENRRequest(_) => "ENRRequest",
             Message::ENRResponse(_) => "ENRResponse",
         };
-        write!(f, "{}", variant)
+        write!(f, "{variant}")
     }
 }
 

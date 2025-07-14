@@ -41,14 +41,14 @@ interface IOnChainProposer {
     /// @param newStateRoot the new state root of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
-    /// @param processedDepositLogsRollingHash the rolling hash of the processed
-    /// deposits logs of the batch to be committed.
+    /// @param processedPrivilegedTransactionsRollingHash the rolling hash of the processed
+    /// privileged transactions of the batch to be committed.
     /// @param lastBlockHash the hash of the last block of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash,
+        bytes32 processedPrivilegedTransactionsRollingHash,
         bytes32 lastBlockHash
     ) external;
 
@@ -58,7 +58,6 @@ interface IOnChainProposer {
     /// @param batchNumber is the number of the batch to be verified.
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
-    /// @param risc0ImageId Digest of the zkVM imageid.
     /// @param risc0Journal public_inputs aka journal
     /// ----------------------------------------------------------------------
     /// @param sp1PublicValues Values used to perform the execution
@@ -70,7 +69,6 @@ interface IOnChainProposer {
         uint256 batchNumber,
         //risc0
         bytes memory risc0BlockProof,
-        bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,
@@ -82,13 +80,15 @@ interface IOnChainProposer {
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 
-    /// @notice Method used to verify a batch of L2 blocks in Aligned.
-    /// @param alignedPublicInputs The public inputs bytes of the proof.
-    /// @param alignedMerkleProof  The Merkle proof (sibling hashes) needed to reconstruct the Merkle root.
-    function verifyBatchAligned(
-        uint256 batchNumber,
-        bytes calldata alignedPublicInputs,
-        bytes32[] calldata alignedMerkleProof
+    /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
+    /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
+    /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
+    /// @param alignedPublicInputsList An array of public input bytes, one per proof.
+    /// @param alignedMerkleProofsList An array of Merkle proofs (sibling hashes), one per proof.
+    function verifyBatchesAligned(
+        uint256 firstBatchNumber,
+        bytes[] calldata alignedPublicInputsList,
+        bytes32[][] calldata alignedMerkleProofsList
     ) external;
 
     /// @notice Allows unverified batches to be reverted

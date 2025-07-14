@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -14,22 +14,11 @@ impl<'a> VM<'a> {
         // Increase the consumed gas
         current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
 
-        // Ensure the stack has enough elements to duplicate
-        if current_call_frame.stack.len() < depth {
-            return Err(ExceptionalHalt::StackUnderflow.into());
-        }
-
         // Get the value at the specified depth
-        let value_at_depth = current_call_frame.stack.get(
-            current_call_frame
-                .stack
-                .len()
-                .checked_sub(depth)
-                .ok_or(ExceptionalHalt::StackUnderflow)?,
-        )?;
+        let value_at_depth = *current_call_frame.stack.get(depth)?;
 
         // Push the duplicated value onto the stack
-        current_call_frame.stack.push(*value_at_depth)?;
+        current_call_frame.stack.push(&[value_at_depth])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

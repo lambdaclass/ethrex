@@ -7,8 +7,9 @@ use std::{
 use crate::error::RollupStoreError;
 use ethrex_common::{
     H256,
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber, batch::Batch},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 
 use crate::api::StoreEngineRollup;
 
@@ -24,7 +25,7 @@ struct StoreInner {
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
     /// Map of batch number to deposit logs hash
-    deposit_logs_hashes: HashMap<u64, H256>,
+    privileged_transactions_hashes: HashMap<u64, H256>,
     /// Map of batch number to state root
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
@@ -35,6 +36,12 @@ struct StoreInner {
     operations_counts: [u64; 3],
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
+    /// Map of (ProverType, batch_number) to batch proof data
+    batch_proofs: HashMap<(ProverType, u64), BatchProof>,
+    /// Map of batch number to commit transaction hash
+    commit_txs: HashMap<u64, H256>,
+    /// Map of batch number to verify transaction hash
+    verify_txs: HashMap<u64, H256>,
 }
 
 impl Store {
@@ -57,17 +64,6 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.batches_by_block.get(&block_number).copied())
     }
 
-    async fn store_batch_number_by_block(
-        &self,
-        block_number: BlockNumber,
-        batch_number: u64,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .batches_by_block
-            .insert(block_number, batch_number);
-        Ok(())
-    }
-
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
@@ -77,29 +73,6 @@ impl StoreEngineRollup for Store {
             .message_hashes_by_batch
             .get(&batch_number)
             .cloned())
-    }
-
-    async fn store_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-        messages: Vec<H256>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .message_hashes_by_batch
-            .insert(batch_number, messages);
-        Ok(())
-    }
-
-    /// Returns the block numbers for a given batch_number
-    async fn store_block_numbers_by_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .block_numbers_by_batch
-            .insert(batch_number, block_numbers);
-        Ok(())
     }
 
     /// Returns the block numbers for a given batch_number
@@ -115,35 +88,15 @@ impl StoreEngineRollup for Store {
         Ok(block_numbers)
     }
 
-    async fn store_deposit_logs_hash_by_batch_number(
-        &self,
-        batch_number: u64,
-        deposit_logs_hash: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?
-            .deposit_logs_hashes
-            .insert(batch_number, deposit_logs_hash);
-        Ok(())
-    }
-
-    async fn get_deposit_logs_hash_by_batch_number(
+    async fn get_privileged_transactions_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
             .inner()?
-            .deposit_logs_hashes
+            .privileged_transactions_hashes
             .get(&batch_number)
             .cloned())
-    }
-
-    async fn store_state_root_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_root: H256,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.state_roots.insert(batch_number, state_root);
-        Ok(())
     }
 
     async fn get_state_root_by_batch_number(
@@ -153,20 +106,43 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.state_roots.get(&batch_number).cloned())
     }
 
-    async fn store_blob_bundle_by_batch_number(
-        &self,
-        batch_number: u64,
-        state_diff: Vec<Blob>,
-    ) -> Result<(), RollupStoreError> {
-        self.inner()?.blobs.insert(batch_number, state_diff);
-        Ok(())
-    }
-
     async fn get_blob_bundle_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         Ok(self.inner()?.blobs.get(&batch_number).cloned())
+    }
+
+    async fn get_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self.inner()?.commit_txs.get(&batch_number).cloned())
+    }
+
+    async fn store_commit_tx_by_batch(
+        &self,
+        batch_number: u64,
+        commit_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.commit_txs.insert(batch_number, commit_tx);
+        Ok(())
+    }
+
+    async fn get_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, RollupStoreError> {
+        Ok(self.inner()?.verify_txs.get(&batch_number).cloned())
+    }
+
+    async fn store_verify_tx_by_batch(
+        &self,
+        batch_number: u64,
+        verify_tx: H256,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.verify_txs.insert(batch_number, verify_tx);
+        Ok(())
     }
 
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
@@ -179,12 +155,12 @@ impl StoreEngineRollup for Store {
     async fn update_operations_count(
         &self,
         transaction_inc: u64,
-        deposits_inc: u64,
+        privileged_tx_inc: u64,
         messages_inc: u64,
     ) -> Result<(), RollupStoreError> {
         let mut values = self.inner()?.operations_counts;
         values[0] += transaction_inc;
-        values[1] += deposits_inc;
+        values[1] += privileged_tx_inc;
         values[2] += messages_inc;
         Ok(())
     }
@@ -227,6 +203,30 @@ impl StoreEngineRollup for Store {
         Ok(())
     }
 
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .batch_proofs
+            .insert((proof_type, batch_number), proof);
+        Ok(())
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .batch_proofs
+            .get(&(proof_type, batch_number))
+            .cloned())
+    }
+
     async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         let mut store = self.inner()?;
         store
@@ -239,10 +239,41 @@ impl StoreEngineRollup for Store {
             .block_numbers_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
-            .deposit_logs_hashes
+            .privileged_transactions_hashes
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
+        Ok(())
+    }
+
+    async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+        let mut inner = self.inner()?;
+        let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
+
+        for block_number in blocks.iter() {
+            inner.batches_by_block.insert(*block_number, batch.number);
+        }
+
+        inner.block_numbers_by_batch.insert(batch.number, blocks);
+
+        inner
+            .message_hashes_by_batch
+            .insert(batch.number, batch.message_hashes);
+
+        inner
+            .privileged_transactions_hashes
+            .insert(batch.number, batch.privileged_transactions_hash);
+
+        inner.blobs.insert(batch.number, batch.blobs_bundle.blobs);
+
+        inner.state_roots.insert(batch.number, batch.state_root);
+
+        if let Some(commit_tx) = batch.commit_tx {
+            inner.commit_txs.insert(batch.number, commit_tx);
+        }
+        if let Some(verify_tx) = batch.verify_tx {
+            inner.verify_txs.insert(batch.number, verify_tx);
+        }
         Ok(())
     }
 }

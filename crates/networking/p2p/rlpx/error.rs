@@ -18,9 +18,11 @@ pub enum CryptographyError {
 
 // TODO improve errors
 #[derive(Debug, Error)]
-pub(crate) enum RLPxError {
+pub enum RLPxError {
     #[error("{0}")]
     HandshakeError(String),
+    #[error("Invalid connection state: {0}")]
+    StateError(String),
     #[error("No matching capabilities")]
     NoMatchingCapabilities(),
     #[error("Peer disconnected")]
