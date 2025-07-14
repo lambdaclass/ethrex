@@ -180,6 +180,7 @@ async fn test_upgrade(
         Path::new("contracts/src/l2/CommonBridgeL2.sol"),
         false,
         Some(&remappings),
+        &[contracts_path],
     )?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
@@ -375,6 +376,7 @@ async fn test_erc20_roundtrip(
         Path::new("contracts/src/example/L2ERC20.sol"),
         false,
         Some(&remappings),
+        &[contracts_path],
     )?;
     let init_code_l2_inner = hex::decode(String::from_utf8(std::fs::read(
         "contracts/solc_out/TestTokenL2.bin",

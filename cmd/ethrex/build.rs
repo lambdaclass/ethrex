@@ -1,5 +1,5 @@
 //! This script downloads dependencies and compiles contracts to be embedded as constants in the deployer.
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::error::Error;
 use std::{env, fs, path::Path};
 use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
@@ -25,9 +25,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         .add_instructions(&git2)?
         .emit()?;
 
-    println!("cargo::rerun-if-changed=../../../crates/l2/contracts/*");
+    rerun_if_changed();
     compile_contracts();
     Ok(())
+}
+
+fn rerun_if_changed() {
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l1/OnChainProposer.sol");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l1/OnChainProposer.sol");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l1/based/OnChainProposer.sol");
+    println!(
+        "cargo::rerun-if-changed=../../crates/l2/contracts/src/l1//based/SequencerRegistry.sol"
+    );
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l1/CommonBridge.sol");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l2/CommonBridgeL2.sol");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l2/L2ToL1Messenger.sol");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l2/CommonBridgeL2.sol");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l2/L2Upgradeable.sol");
+    println!("cargo::rerun-if-changed=../../crates/l2/contracts/src/l1/based");
 }
 
 fn compile_contracts() {
@@ -89,7 +106,7 @@ fn compile_contracts() {
             name,
             false,
             Some(&remappings),
-            &[&contracts_path],
+            &[contracts_path],
         );
     }
     // L2 contracts
@@ -110,7 +127,7 @@ fn compile_contracts() {
             name,
             true,
             Some(&remappings),
-            &[&contracts_path],
+            &[contracts_path],
         );
     }
 
@@ -120,7 +137,7 @@ fn compile_contracts() {
         "UpgradeableSystemContract",
         true,
         Some(&remappings),
-        &[&contracts_path],
+        &[contracts_path],
     );
 
     // Based contracts
@@ -130,14 +147,14 @@ fn compile_contracts() {
         "SequencerRegistry",
         false,
         Some(&remappings),
-        &[&contracts_path],
+        &[contracts_path],
     );
     ethrex_l2_sdk::compile_contract(
         &output_contracts_path,
         &contracts_path.join("l1/based/OnChainProposer.sol"),
         false,
         Some(&remappings),
-        &[&contracts_path],
+        &[contracts_path],
     )
     .unwrap();
 
