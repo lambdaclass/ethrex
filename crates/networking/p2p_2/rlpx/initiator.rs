@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 use crate::{
-    discv4::Kademlia,
+    discv4::{Kademlia, metrics::METRICS},
     network::P2PContext,
     types::{Node, NodeRecord},
 };
