@@ -138,7 +138,7 @@ jobs:
       - name: Build prover
         run: |
           cd crates/l2
-          make build-prover
+          make build-prover-exec
           mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Start L1 & Deploy contracts

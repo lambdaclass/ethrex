@@ -21,7 +21,6 @@ jobs:
     name: Prove an L1 block with ${{ matrix.backend }} backend
     runs-on: gpu
     strategy:
-      fail-fast: true
       matrix:
         backend: ["sp1", "risc0"]
     steps:
