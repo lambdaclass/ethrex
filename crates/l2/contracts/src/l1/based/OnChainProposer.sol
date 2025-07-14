@@ -476,7 +476,7 @@ contract OnChainProposer is
         );
         uint256 nonPrivilegedTransactions = uint256(bytes32(publicData[160:192]));
         require(
-            ICommonBridge(BRIDGE).withinProcessingDeadline() || nonPrivilegedTransactions != 0,
+            ICommonBridge(BRIDGE).withinProcessingDeadline() || nonPrivilegedTransactions == 0,
             "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
         );
     }
