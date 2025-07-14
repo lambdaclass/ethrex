@@ -33,9 +33,10 @@ pub struct DiscoverySideCarState {
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
     udp_socket: Arc<UdpSocket>,
-    udp6_socket: Arc<UdpSocket>,
+
     revalidation_period: Duration,
     lookup_period: Duration,
+
     kademlia: Kademlia,
 }
 
@@ -45,7 +46,6 @@ impl DiscoverySideCarState {
         local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
-        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
         Self {
@@ -54,24 +54,9 @@ impl DiscoverySideCarState {
             signer,
             udp_socket,
             kademlia,
-            udp6_socket,
+
             revalidation_period: Duration::from_secs(12 * 60 * 60), // 12 hours
             lookup_period: Duration::from_millis(500),
-        }
-    }
-
-    async fn send_to_udp(&self, buf: &[u8], node: &Node) -> Result<usize, DiscoverySideCarError> {
-        match node.ip {
-            std::net::IpAddr::V4(ipv4_addr) => self
-                .udp_socket
-                .send_to(buf, node.udp_addr())
-                .await
-                .map_err(DiscoverySideCarError::MessageSendFailure),
-            std::net::IpAddr::V6(ipv6_addr) => self
-                .udp6_socket
-                .send_to(buf, node.udp_addr())
-                .await
-                .map_err(DiscoverySideCarError::MessageSendFailure),
         }
     }
 
@@ -99,7 +84,11 @@ impl DiscoverySideCarState {
 
         ping.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self.send_to_udp(&buf, node).await?;
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoverySideCarError::PartialMessageSent);
@@ -126,8 +115,11 @@ impl DiscoverySideCarState {
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.signer);
-
-        let bytes_sent = self.send_to_udp(&buf, node).await?;
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoverySideCarError::PartialMessageSent);
@@ -144,7 +136,11 @@ impl DiscoverySideCarState {
         let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));
         enr_req.encode_with_header(&mut buf, &self.signer);
 
-        let bytes_sent = self.send_to_udp(&buf, node).await?;
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
         if bytes_sent != buf.len() {
             return Err(DiscoverySideCarError::PartialMessageSent);
         }
@@ -174,7 +170,6 @@ impl DiscoverySideCar {
         local_node: Node,
         signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
-        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Result<(), DiscoverySideCarError> {
         info!("Starting Discovery Side Car");
@@ -184,14 +179,8 @@ impl DiscoverySideCar {
                 .expect("Failed to create local node record"),
         ));
 
-        let state = DiscoverySideCarState::new(
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket,
-            udp6_socket,
-            kademlia,
-        );
+        let state =
+            DiscoverySideCarState::new(local_node, local_node_record, signer, udp_socket, kademlia);
 
         let mut server = DiscoverySideCar::start(state.clone());
 

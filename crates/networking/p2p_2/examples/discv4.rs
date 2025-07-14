@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr},
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -69,23 +69,10 @@ async fn main() {
         public_key_from_signing_key(&signer),
     );
 
-    let local_node_ip6 = Node::new(
-        IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)),
-        30303,
-        30303,
-        public_key_from_signing_key(&signer),
-    );
-
     let kademlia = Kademlia::new();
 
     let udp_socket = Arc::new(
         UdpSocket::bind(local_node.udp_addr())
-            .await
-            .expect("Failed to bind udp socket"),
-    );
-
-    let udp6_socket = Arc::new(
-        UdpSocket::bind(local_node_ip6.udp_addr())
             .await
             .expect("Failed to bind udp socket"),
     );
@@ -106,7 +93,6 @@ async fn main() {
         local_node.clone(),
         signer.clone(),
         udp_socket,
-        udp6_socket,
         kademlia.clone(),
     )
     .await

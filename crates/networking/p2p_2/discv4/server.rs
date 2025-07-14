@@ -278,13 +278,8 @@ impl DiscoveryServer {
                 .expect("Failed to create local node record"),
         ));
 
-        let state = DiscoveryServerState::new(
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket,
-            kademlia,
-        );
+        let state =
+            DiscoveryServerState::new(local_node, local_node_record, signer, udp_socket, kademlia);
 
         let mut server = DiscoveryServer::start(state.clone());
 

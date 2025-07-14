@@ -307,15 +307,15 @@ impl NodeRecord {
                 record
                     .pairs
                     .push(("ip".into(), ipv4_addr.encode_to_vec().into()));
-            }
-            IpAddr::V6(ipv6_addr) => {
+            },
+            IpAddr::V6(ipv6_addr) =>{ 
                 record
                     .pairs
                     .push(("id".into(), "v6".encode_to_vec().into()));
                 record
                     .pairs
                     .push(("ip6".into(), ipv6_addr.encode_to_vec().into()));
-            }
+            },
         };
         record.pairs.push((
             "secp256k1".into(),
