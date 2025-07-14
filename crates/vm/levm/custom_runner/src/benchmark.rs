@@ -5,18 +5,10 @@ use crate::deserialize::{
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_common::types::{Account, AccountInfo, code_hash};
-use ethrex_common::{Address, H160, U256, types::Fork};
+use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
+use std::str::FromStr;
 use std::{collections::HashMap, u64};
-
-pub const DEFAULT_SENDER: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x99,
-]);
-pub const DEFAULT_CONTRACT: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x42,
-]);
 
 #[derive(Deserialize, Debug)]
 pub struct ExecutionInput {
@@ -62,11 +54,7 @@ impl From<BenchAccount> for Account {
 
 impl Default for BenchAccount {
     fn default() -> Self {
-        Self {
-            balance: high_u256(),
-            code: Default::default(),
-            storage: Default::default(),
-        }
+        serde_json::from_str("{}").unwrap()
     }
 }
 
@@ -118,11 +106,11 @@ impl From<BenchTransaction> for ethrex_common::types::LegacyTransaction {
 }
 
 pub fn default_sender() -> Address {
-    DEFAULT_SENDER
+    Address::from_str("0x000000000000000000000000000000000000dead").unwrap()
 }
 
 pub fn default_recipient() -> Option<Address> {
-    Some(DEFAULT_CONTRACT)
+    Some(Address::from_str("0x000000000000000000000000000000000000beef").unwrap())
 }
 
 pub fn one_u256() -> U256 {

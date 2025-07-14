@@ -2,7 +2,7 @@ use bytes::Bytes;
 use custom_runner::benchmark::{BenchAccount, BenchTransaction, ExecutionInput};
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H160, H256, U256,
     types::{Account, LegacyTransaction, Transaction},
 };
 use ethrex_levm::{
@@ -20,6 +20,8 @@ use std::{
     sync::Arc,
     u64,
 };
+
+const COINBASE: H160 = H160([0x77; 20]);
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -49,7 +51,7 @@ fn main() {
         gas_price: benchmark.transaction.gas_price,
         block_gas_limit: u64::MAX,
         config: EVMConfig::new(benchmark.fork, EVMConfig::canonical_values(benchmark.fork)),
-        coinbase: Address::from_low_u64_be(50), // Using origin as coinbase for now
+        coinbase: COINBASE,
         ..Default::default()
     };
 
@@ -79,8 +81,11 @@ fn main() {
 
     let callframe = vm.pop_call_frame().unwrap();
     println!(
-        "Final Stack (top to bottom): {:?}",
+        "Final Stack (bottom to top): {:?}",
         &callframe.stack.values[callframe.stack.offset - 1..]
+            .iter()
+            .rev()
+            .collect::<Vec<_>>()
     );
     println!("Final Memory: 0x{}", hex::encode(callframe.memory));
 
@@ -108,6 +113,8 @@ fn compare_initial_and_current_accounts(
             println!("\n Checking Sender Account: {:#x}", addr);
         } else if transaction.to.map_or(false, |to| to == addr) {
             println!("\n Checking Recipient Account: {:#x}", addr);
+        } else if addr == COINBASE {
+            println!("\n Checking Coinbase Account: {:#x}", addr);
         } else {
             println!("\n Checking Account: {:#x}", addr);
         };
