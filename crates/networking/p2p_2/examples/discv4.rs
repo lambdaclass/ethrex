@@ -224,7 +224,11 @@ async fn store_peers_in_file(kademlia: Kademlia) {
         .cloned()
         .collect::<Vec<_>>();
 
-    info!("Storing {} new peers", new_peers.len());
+    info!(
+        already_known_peers = already_known_peers.len(),
+        new_peers = new_peers.len(),
+        "Storing peers to file"
+    );
 
     let peers = [already_known_peers, new_peers].concat();
 
