@@ -171,7 +171,9 @@ pub async fn start_l2(
 
     while let Some(res) = task_set.join_next().await {
         match res {
-            Ok(Ok(_)) => {}
+            Ok(Ok(_)) => {
+                break;
+            }
             Ok(Err(err)) => {
                 error!("Error starting Proposer: {err}");
                 task_set.abort_all();
