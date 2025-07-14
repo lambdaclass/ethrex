@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752522250442,
+  "lastUpdate": 1752525546503,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3595,6 +3595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208952753552,
             "range": "± 489334814",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "318d68b1ad651c4df08ba03a8b65b27fe50adbff",
+          "message": "fix(l1, l2): logs not appearing on subcommands (#3631)\n\n**Motivation**\n\nQuick bug fix that makes logs not appear\n\n**Description**\n\nThe function ```init_tracing(&opts)``` was being called after any\nsubcommands (import, export, etc) were read, causing these (specially\nthe import) not to output logs. This PR fixes that.",
+          "timestamp": "2025-07-14T19:43:28Z",
+          "tree_id": "21db8e93a6ae21ed8dea0b94c61966566a2010d4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/318d68b1ad651c4df08ba03a8b65b27fe50adbff"
+        },
+        "date": 1752525535836,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209780533571,
+            "range": "± 422501665",
             "unit": "ns/iter"
           }
         ]
