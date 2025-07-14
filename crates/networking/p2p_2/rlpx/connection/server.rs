@@ -194,9 +194,9 @@ impl GenServer for RLPxConnection {
 
         let (mut established_state, stream) = match handshake::perform(state.0).await {
             Ok(result) => result,
-            Err(err) => {
-                METRICS.record_new_rlpx_conn_failed().await;
-                return Err(err);
+            Err(reason) => {
+                METRICS.record_new_rlpx_conn_failure(reason).await;
+                return Err(RLPxError::Disconnected());
             }
         };
 
@@ -206,11 +206,11 @@ impl GenServer for RLPxConnection {
             connection_failed(
                 &mut established_state,
                 "Failed to initialize RLPx connection",
-                reason,
+                &reason,
             )
             .await;
 
-            METRICS.record_new_rlpx_conn_failed().await;
+            METRICS.record_new_rlpx_conn_failure(reason).await;
 
             Err(RLPxError::Disconnected())
         } else {
@@ -463,7 +463,7 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
         });
 }
 
-async fn connection_failed(state: &mut Established, error_text: &str, error: RLPxError) {
+async fn connection_failed(state: &mut Established, error_text: &str, error: &RLPxError) {
     log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
 
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested

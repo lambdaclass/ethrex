@@ -11,6 +11,10 @@ use ethrex_p2p_2::{
     discv4::{server::DiscoveryServer, side_car::DiscoverySideCar},
     kademlia::Kademlia,
     metrics::METRICS,
+<<<<<<< HEAD
+=======
+    monitor::{app::Monitor, init_terminal, restore_terminal},
+>>>>>>> @{-1}
     network::P2PContext,
     rlpx::initiator::RLPxInitiator,
     types::{Node, NodeRecord},
@@ -54,6 +58,30 @@ pub const HOODI_BOOTNODES_ENODES: [&str; 16] = [
     "enode://fd2760f45525b1e3a6d7d87e457f7f158540716da3755dcc4be6664d34ab50dea3a552414a60eb8787349faf45d68eb8081116aa42a6746fde616e5b6e934d82@202.137.165.13:47500",
 ];
 
+pub const MAINNET_GENESIS_CONTENTS: &str =
+    include_str!("../../../../cmd/ethrex/networks/mainnet/genesis.json");
+pub const MAINNET_BOOTNODES_ENODES: [&str; 16] = [
+    // Ethereum Foundation Go Bootnodes
+    "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
+    "enode://2b252ab6a1d0f971d9722cb839a42cb81db019ba44c08754628ab4a823487071b5695317c8ccd085219c3a03af063495b2f1da8d18218da2d6a82981b45e6ffc@65.108.70.101:30303",
+    "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303", // bootnode-aws-ap-southeast-1-001
+    "enode://22a8232c3abc76a16ae9d6c3b164f98775fe226f0917b0ca871128a74a8e9630b458460865bab457221f1d448dd9791d24c4e5d88786180ac185df813a68d4de@3.209.45.79:30303", // bootnode-aws-us-east-1-001
+    "enode://ca6de62fce278f96aea6ec5a2daadb877e51651247cb96ee310a318def462913b653963c155a0ef6c7d50048bba6e6cea881130857413d9f50a621546b590758@34.255.23.113:30303", // bootnode-aws-eu-west-1-001
+    "enode://279944d8dcd428dffaa7436f25ca0ca43ae19e7bcf94a8fb7d1641651f92d121e972ac2e8f381414b80cc8e5555811c2ec6e1a99bb009b3f53c4c69923e11bd8@35.158.244.151:30303", // bootnode-aws-eu-central-1-001
+    "enode://8499da03c47d637b20eee24eec3c356c9a2e6148d6fe25ca195c7949ab8ec2c03e3556126b0d7ed644675e78c4318b08691b7b57de10e5f0d40d05b09238fa0a@52.187.207.27:30303", // bootnode-azure-australiaeast-001
+    "enode://103858bdb88756c71f15e9b5e09b56dc1be52f0a5021d46301dbbfb7e130029cc9d0d6f73f693bc29b665770fff7da4d34f3c6379fe12721b5d7a0bcb5ca1fc1@191.234.162.198:30303", // bootnode-azure-brazilsouth-001
+    "enode://715171f50508aba88aecd1250af392a45a330af91d7b90701c436b618c86aaa1589c9184561907bebbb56439b8f8787bc01f49a7c77276c58c1b09822d75e8e8@52.231.165.108:30303", // bootnode-azure-koreasouth-001
+    "enode://5d6d7cd20d6da4bb83a1d28cadb5d409b64edf314c0335df658c1a54e32c7c4a7ab7823d57c39b6a757556e68ff1df17c748b698544a55cb488b52479a92b60f@104.42.217.25:30303", // bootnode-azure-westus-001
+    // Ethereum Foundation Go Bootnodes (legacy)
+    "enode://a979fb575495b8d6db44f750317d0f4622bf4c2aa3365d6af7c284339968eef29b69ad0dce72a4d8db5ebb4968de0e3bec910127f134779fbcb0cb6d3331163c@52.16.188.185:30303", // IE
+    "enode://3f1d12044546b76342d59d4a05532c14b85aa669704bfe1f864fe079415aa2c02d743e03218e57a33fb94523adb54032871a6c51b2cc5514cb7c7e35b3ed0a99@13.93.211.84:30303", // US-WEST
+    "enode://78de8a0916848093c73790ead81d1928bec737d565119932b98c6b100d944b7a95e94f847f689fc723399d2e31129d182f7ef3863f2b4c820abbf3ab2722344d@191.235.84.50:30303", // BR
+    "enode://158f8aab45f6d19c6cbf4a089c2670541a8da11978a2f90dbf6a502a4a3bab80d288afdbeb7ec0ef6d92de563767f3b1ea9e8e334ca711e9f8e2df5a0385e8e6@13.75.154.138:30303", // AU
+    "enode://1118980bf48b0a3640bdba04e0fe78b1add18e1cd99bf22d53daac1fd9972ad650df52176e7c7d89d1114cfef2bc23a2959aa54998a46afcf7d91809f0855082@52.74.57.123:30303", // SG
+    // Ethereum Foundation C++ Bootnodes
+    "enode://979b7fa28feeb35a4741660a16076f1943202cb72b6af70d327f053e248bab9ba81760f39d0701ef1d8f89cc1fbd2cacba0710a12cd5314d5e0c9021aa3637f9@5.1.83.226:30303", // DE
+];
+
 #[tokio::main]
 async fn main() {
     init_tracing();
@@ -80,7 +108,7 @@ async fn main() {
         signer.clone(),
         udp_socket.clone(),
         kademlia.clone(),
-        bootnodes(&HOLESKY_BOOTNODES_ENODES),
+        bootnodes(&MAINNET_BOOTNODES_ENODES),
     )
     .await
     .inspect_err(|e| {
@@ -105,7 +133,7 @@ async fn main() {
         Store::new("./db", ethrex_storage::EngineType::InMemory).expect("Failed to create store");
 
     let genesis =
-        serde_json::from_str(HOLESKY_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
+        serde_json::from_str(MAINNET_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
     store
         .add_initial_state(genesis)
         .await
@@ -139,7 +167,8 @@ elapsed: {}
 {} contacts ({} contacts/s)
 {} peers ({} new peers/s)
 {} connection attempts ({} new connection attempts/s)
-{} failed connections"#,
+{} failed connections
+failures: {:#?}"#,
                 format_duration(start.elapsed()),
                 METRICS.contacts.get(),
                 METRICS.new_contacts_rate.get().floor(),
@@ -148,6 +177,7 @@ elapsed: {}
                 METRICS.rlpx_conn_attempts.get(),
                 METRICS.rlpx_conn_attempts_rate.get().floor(),
                 METRICS.rlpx_conn_failures.get(),
+                METRICS.rlpx_conn_failures_reasons_counts.lock().await,
             );
             // info!(
             //     contacts = kademlia_clone.table.lock().await.len(),
