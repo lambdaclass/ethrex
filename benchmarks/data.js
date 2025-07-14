@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752519298933,
+  "lastUpdate": 1752520330971,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3565,6 +3565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208847344258,
             "range": "± 444468116",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "sfroment42@gmail.com",
+            "name": "Sacha Froment",
+            "username": "sfroment"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "053237663e3be3dd9eb02dbacba88d6e0ce54610",
+          "message": "feat(l1): add From for Transaction -> GenericTransaction (#3227)\n\n**Motivation**\n\nAdding an easy way to get a GenericTransaction from any Transaction\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdding the 2 missing From and one for the enum\nThis will allow people who use the ethClient to make estimate_gas and\neth_call request, more easily and maybe other request in the future\nmight benefit from it\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n\nBTW I don't know which scope I shall use\n\nSigned-off-by: Sacha Froment <sfroment42@gmail.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-07-14T18:08:45Z",
+          "tree_id": "b0c6b8443312ff2002a0844abe8e0d7579e19ce8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/053237663e3be3dd9eb02dbacba88d6e0ce54610"
+        },
+        "date": 1752520320572,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208952753552,
+            "range": "± 489334814",
             "unit": "ns/iter"
           }
         ]
