@@ -153,6 +153,7 @@ jobs:
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
+          COMPOSE_BAKE=true \
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Install rex
