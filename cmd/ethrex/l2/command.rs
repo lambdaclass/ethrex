@@ -5,7 +5,15 @@ use crate::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_network, init_store,
     },
-    l2::{self, options::Options},
+    l2::{
+        self,
+        deployer::{
+            deploy_contracts, initialize_contracts, make_deposits, options::DeployerOptions,
+            write_contract_addresses_to_env,
+        },
+        options::Options,
+        system_contracts_updater::{options::SystemContractsUpdaterOptions, update_genesis_file},
+    },
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
@@ -29,7 +37,7 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
-use keccak_hash::keccak;
+use keccak_hash::{H256, keccak};
 use reqwest::Url;
 use secp256k1::SecretKey;
 use std::{
@@ -41,7 +49,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{Level, info, trace, warn};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
@@ -116,6 +124,14 @@ pub enum Command {
             env = "ETHREX_DATADIR"
         )]
         datadir: String,
+    },
+    DeployContracts {
+        #[command(flatten)]
+        opts: DeployerOptions,
+    },
+    UpdateSystemContracts {
+        #[command(flatten)]
+        opts: SystemContractsUpdaterOptions,
     },
 }
 
@@ -228,6 +244,42 @@ impl Command {
                         info!("Server shutting down!");
                     }
                 }
+            }
+            Command::DeployContracts { opts } => {
+                tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+
+                trace!("Starting deployer binary");
+                let eth_client = EthClient::new_with_config(
+                    vec![&opts.rpc_url],
+                    opts.max_number_of_retries,
+                    opts.backoff_factor,
+                    opts.min_retry_delay,
+                    opts.max_retry_delay,
+                    Some(opts.maximum_allowed_max_fee_per_gas),
+                    Some(opts.maximum_allowed_max_fee_per_blob_gas),
+                )?;
+
+                let contract_addresses = deploy_contracts(&eth_client, &opts).await?;
+
+                initialize_contracts(contract_addresses, &eth_client, &opts).await?;
+
+                if opts.deposit_rich {
+                    let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
+                        .await
+                        .inspect_err(|err| {
+                            warn!("Failed to make deposits: {err}");
+                        });
+                }
+
+                write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
+                trace!("Deployer binary finished successfully");
+
+                lazy_static::lazy_static! {
+                    static ref SALT: std::sync::Mutex<H256>  = std::sync::Mutex::new(H256::zero());
+                }
+            }
+            Command::UpdateSystemContracts { opts } => {
+                update_genesis_file(&opts.l2_genesis_path)?;
             }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {

@@ -3894,6 +3894,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
+ "genesis-tool",
  "hex",
  "itertools 0.14.0",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3907,6 +3908,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempdir",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tracing",
@@ -4408,33 +4410,6 @@ dependencies = [
  "sha3",
  "thiserror 2.0.12",
  "tracing",
-]
-
-[[package]]
-name = "ethrex_l2-contracts"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap 4.5.40",
- "clap_complete",
- "colored",
- "ethereum-types 0.15.1",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-l2-common",
- "ethrex-rpc",
- "ethrex-sdk",
- "eyre",
- "genesis-tool",
- "hex",
- "keccak-hash",
- "lazy_static",
- "secp256k1",
- "serde_json",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.19",
 ]
 
 [[package]]

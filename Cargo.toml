@@ -10,7 +10,6 @@ members = [
   "crates/common/rlp",
   "crates/common/trie",
   "crates/l2/",
-  "crates/l2/contracts",
   "crates/l2/common",
   "crates/l2/prover",
   "crates/l2/prover/zkvm/interface",
