@@ -221,6 +221,9 @@ impl CallFrameBackup {
 
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
+    // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
+    // because passing so much data is costly. Verified with samply.
+    #[inline(always)]
     pub fn new(
         msg_sender: Address,
         to: Address,
@@ -240,6 +243,7 @@ impl CallFrame {
     ) -> Self {
         let invalid_jump_destinations =
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
+        // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
             gas_limit,
             gas_remaining: gas_limit,
@@ -258,7 +262,10 @@ impl CallFrame {
             ret_size,
             stack,
             memory,
-            ..Default::default()
+            call_frame_backup: CallFrameBackup::default(),
+            output: Bytes::default(),
+            pc: 0,
+            sub_return_data: Bytes::default(),
         }
     }
 

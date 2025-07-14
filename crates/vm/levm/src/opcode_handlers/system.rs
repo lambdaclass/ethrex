@@ -754,6 +754,10 @@ impl<'a> VM<'a> {
     /// This (should) be the only function where gas is used as a
     /// U256. This is because we have to use the values that are
     /// pushed to the stack.
+    ///
+    // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
+    // because passing so much data is costly. Verified with samply.
+    #[inline(always)]
     pub fn generic_call(
         &mut self,
         gas_limit: u64,
