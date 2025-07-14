@@ -17,7 +17,6 @@ pub struct Memory {
     current_base: usize,
 }
 
-#[allow(clippy::unwrap_used)]
 impl Memory {
     #[inline]
     pub fn new(current_base: usize) -> Self {
@@ -98,14 +97,14 @@ impl Memory {
             return Ok(Vec::new());
         }
 
-        let new_size = offset.checked_add(size).unwrap();
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).unwrap();
+        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
 
         let buf = self.buffer.borrow();
         Ok(buf
-            .get(true_offset..(true_offset.checked_add(size).unwrap()))
+            .get(true_offset..(true_offset.checked_add(size).ok_or(OutOfBounds)?))
             .ok_or(OutOfBounds)?
             .to_vec())
     }
@@ -113,17 +112,17 @@ impl Memory {
     /// Load N bytes from the given offset.
     #[inline]
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
-        let new_size = offset.checked_add(N).unwrap();
+        let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).unwrap();
+        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
 
         let buf = self.buffer.borrow();
         Ok(buf
-            .get(true_offset..(true_offset.checked_add(N).unwrap()))
-            .unwrap()
+            .get(true_offset..(true_offset.checked_add(N).ok_or(OutOfBounds)?))
+            .ok_or(OutOfBounds)?
             .try_into()
-            .unwrap())
+            .map_err(|_| OutOfBounds)?)
     }
 
     /// Load a word from at the given offset.
