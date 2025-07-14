@@ -224,23 +224,24 @@ impl GenServer for DiscoverySideCar {
 }
 
 async fn revalidate(state: &DiscoverySideCarState) {
-    for node in state.kademlia.table.lock().await.values() {
-        let _ = state.ping(node).await.inspect_err(
-            |e| error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?e),
+    for contact in state.kademlia.table.lock().await.values() {
+        let _ = state.ping(&contact.node).await.inspect_err(
+            |e| error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?e),
         );
     }
 }
 
 async fn lookup(state: &DiscoverySideCarState) {
-    {
-        if state.kademlia.table.lock().await.len() >= 18000 {
-            return;
+    for contact in state.kademlia.table.lock().await.values_mut() {
+        if contact.n_find_node_sent == 20 {
+            continue;
         }
-    }
-    for node in state.kademlia.table.lock().await.values() {
-        let _ = state.send_find_node(node).await.inspect_err(
-            |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
+
+        let _ = state.send_find_node(&contact.node).await.inspect_err(
+            |e| error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?e),
         );
+
+        contact.n_find_node_sent += 1;
     }
 }
 

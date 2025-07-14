@@ -15,7 +15,7 @@ use crate::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
         PacketDecodeErr, PingMessage, PongMessage,
     },
-    kademlia::Kademlia,
+    kademlia::{Contact, Kademlia},
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::get_msg_expiration_from_seconds,
@@ -386,7 +386,7 @@ impl GenServer for ConnectionHandler {
 
                 for node in msg.nodes {
                     if let Entry::Vacant(vacant_entry) = kademlia.entry(node.node_id()) {
-                        vacant_entry.insert(node);
+                        vacant_entry.insert(Contact::from(node));
                         METRICS.record_new_contact().await;
                     };
                 }
