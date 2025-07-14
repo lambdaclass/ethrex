@@ -258,7 +258,7 @@ contract CommonBridge is
         if (pendingTxHashes.length == 0) {
             return true;
         }
-        return privilegedTxDeadline[pendingTxHashes[0]] < block.timestamp;
+        return privilegedTxDeadline[pendingTxHashes[0]] > block.timestamp;
     }
 
     /// @inheritdoc ICommonBridge
