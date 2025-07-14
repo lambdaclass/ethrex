@@ -68,6 +68,7 @@ pub struct Node {
     pub public_key: H512,
     pub version: Option<String>,
     node_id: OnceLock<H256>,
+    pub fork_id: Option<ForkId>,
 }
 
 impl RLPDecode for Node {
@@ -123,6 +124,7 @@ impl Node {
             public_key,
             version: None,
             node_id: OnceLock::new(),
+            fork_id: None,
         }
     }
 

@@ -19,7 +19,7 @@ use crate::{
         },
     },
     types::{Endpoint, Node, NodeRecord},
-    utils::get_msg_expiration_from_seconds,
+    utils::{get_msg_expiration_from_seconds, node_id},
 };
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
@@ -395,7 +395,7 @@ impl GenServer for ConnectionHandler {
                 debug!(packet = ?packet);
             }
             Self::CastMsg::ENRResponse {
-                message: _msg,
+                message: msg,
                 sender_public_key,
             } => {
                 /*
@@ -406,6 +406,15 @@ impl GenServer for ConnectionHandler {
                     - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
                 */
                 debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"));
+
+                let node_id = node_id(&sender_public_key);
+                let mut table = state.kademlia.table.lock().await;
+
+                if let Some(node) = table.get_mut(&node_id) {
+                    node.fork_id = msg.node_record.decode_pairs().eth;
+                } else {
+                    error!(sent = "ENRResponse from unknown node", to = %format!("{:#x}", sender_public_key));
+                }
             }
         }
         CastResponse::NoReply(state)
