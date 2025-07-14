@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use clap::Parser;
 use custom_runner::benchmark::{BenchAccount, BenchTransaction, ExecutionInput};
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
@@ -23,28 +24,50 @@ use std::{
 
 const COINBASE: H160 = H160([0x77; 20]);
 
+#[derive(Parser)]
+struct Cli {
+    #[arg(long)]
+    input: Option<String>,
+
+    #[arg(long)]
+    code: Option<String>,
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let (input_file_path, bytecode_file_path) = if args.len() == 3 {
-        (args[1].clone(), args[2].clone())
+    let cli = Cli::parse();
+
+    if cli.input.is_none() && cli.code.is_none() {
+        println!("Error: Either --input or --code must be provided.");
+        return;
+    }
+
+    // Mutable just to assign the code to the transaction if necessary
+    let mut benchmark: ExecutionInput = if let Some(input_file_path) = cli.input {
+        let input_file = File::open(&input_file_path)
+            .unwrap_or_else(|_| panic!("Input file '{}' not found", input_file_path));
+        let reader = BufReader::new(input_file);
+        serde_json::from_reader(reader).expect("Failed to parse input file")
     } else {
-        ("input.json".to_string(), "bytecode.txt".to_string())
+        ExecutionInput::default()
     };
 
-    let input_file = File::open(&input_file_path).expect("Failed to open input file");
-    let reader = BufReader::new(input_file);
-    let mut benchmark: ExecutionInput = serde_json::from_reader(reader).unwrap();
+    // Code can be implicitely provided in the input so we don't have this as requirement.
+    let code: Option<Bytes> = if let Some(code_file_path) = cli.code {
+        let code = fs::read_to_string(&code_file_path)
+            .expect("Failed to read bytecode file")
+            .trim_start_matches("0x")
+            .to_string();
+        Some(
+            hex::decode(code.trim_end())
+                .expect("Failed to decode hex string into bytes")
+                .into(),
+        )
+    } else {
+        None
+    };
 
-    let bytecode = fs::read_to_string(&bytecode_file_path)
-        .expect("Failed to read bytecode file")
-        .trim_start_matches("0x")
-        .to_string();
-    let bytecode: Bytes = hex::decode(bytecode.trim_end())
-        .expect("Failed to decode hex string into bytes")
-        .into();
-
-    // Now we want to initialize the VM, so we set up the environment, database and transaction.
-
+    // Now we want to initialize the VM, so we set up the environment and database.
+    // Env
     let env = Environment {
         origin: benchmark.transaction.sender,
         gas_limit: benchmark.transaction.gas_limit,
@@ -55,12 +78,13 @@ fn main() {
         ..Default::default()
     };
 
-    let initial_state = setup_initial_state(&mut benchmark, bytecode);
-
+    // DB
+    let initial_state = setup_initial_state(&mut benchmark, code);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
     let mut db = GeneralizedDatabase::new(Arc::new(store), initial_state);
 
+    // Initialize VM
     let mut vm = VM::new(
         env,
         &mut db,
@@ -70,15 +94,26 @@ fn main() {
     )
     .expect("Failed to initialize VM");
 
-    //TODO: See what to do with stack pool... Is it necessary to do sth with that?
+    // Set initial stack and memory
+    println!("Setting initial stack: {:?}", benchmark.initial_stack);
     let stack = &mut vm.current_call_frame_mut().unwrap().stack;
     for elem in benchmark.initial_stack {
         stack.push(&[elem]).expect("Stack Overflow");
     }
+    println!("Setting initial memory: 0x{:x}", benchmark.initial_memory);
     vm.current_call_frame_mut().unwrap().memory = benchmark.initial_memory.into();
 
+    // Execute Transaction
     let result = vm.execute();
 
+    // Print execution result
+    print!("\n\nResult:");
+    match result {
+        Ok(report) => println!(" {:?}\n", report),
+        Err(e) => println!(" Error: {}\n", e.to_string()),
+    }
+
+    // Print final stack and memory
     let callframe = vm.pop_call_frame().unwrap();
     println!(
         "Final Stack (bottom to top): {:?}",
@@ -89,11 +124,7 @@ fn main() {
     );
     println!("Final Memory: 0x{}", hex::encode(callframe.memory));
 
-    match result {
-        Ok(report) => println!("{:?}", report),
-        Err(e) => println!("Error: {}", e.to_string()),
-    }
-
+    // Print Accounts diff
     compare_initial_and_current_accounts(
         db.initial_accounts_state,
         db.current_accounts_state,
@@ -107,7 +138,7 @@ fn compare_initial_and_current_accounts(
     current_accounts: HashMap<Address, Account>,
     transaction: &BenchTransaction,
 ) {
-    println!("Account Diffs:");
+    println!("\nState Diff:");
     for (addr, acc) in current_accounts {
         if transaction.sender == addr {
             println!("\n Checking Sender Account: {:#x}", addr);
@@ -166,7 +197,7 @@ fn compare_initial_and_current_accounts(
 ///   - Create contract: Code becomes transaction calldata
 fn setup_initial_state(
     benchmark: &mut ExecutionInput,
-    bytecode: Bytes,
+    bytecode: Option<Bytes>,
 ) -> HashMap<Address, Account> {
     // Default state has sender with some balance to send Tx, it can be overwritten though.
     let mut initial_state = HashMap::from([(
@@ -180,13 +211,15 @@ fn setup_initial_state(
         .collect();
     initial_state.extend(benchmark_pre_state);
     // Contract bytecode or initcode
-    if let Some(to) = benchmark.transaction.to {
-        // Contract Bytecode, set code of recipient.
-        let acc = initial_state.entry(to).or_default();
-        acc.code = bytecode;
-    } else {
-        // Initcode should be data of transaction
-        benchmark.transaction.data = bytecode;
+    if let Some(code) = bytecode {
+        if let Some(to) = benchmark.transaction.to {
+            // Contract Bytecode, set code of recipient.
+            let acc = initial_state.entry(to).or_default();
+            acc.code = code;
+        } else {
+            // Initcode should be data of transaction
+            benchmark.transaction.data = code;
+        }
     }
 
     initial_state

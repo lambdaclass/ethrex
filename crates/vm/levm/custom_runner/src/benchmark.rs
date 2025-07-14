@@ -24,6 +24,12 @@ pub struct ExecutionInput {
     pub initial_stack: Vec<U256>,
 }
 
+impl Default for ExecutionInput {
+    fn default() -> Self {
+        serde_json::from_str("{}").unwrap()
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct BenchAccount {
     #[serde(default = "high_u256", deserialize_with = "deserialize_u256_str")]

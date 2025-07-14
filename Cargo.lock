@@ -2682,6 +2682,7 @@ name = "custom_runner"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.40",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-levm",
