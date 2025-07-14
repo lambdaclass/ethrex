@@ -21,13 +21,13 @@ jobs:
         include:
           - platform: ubuntu-22.04
             os: linux
-            arch: x86-64
+            arch: x86_64
           - platform: ubuntu-22.04-arm
             os: linux
-            arch: arm64
+            arch: aarch64
           - platform: macos-latest
             os: macos
-            arch: arm64
+            arch: aarch64
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -56,35 +56,21 @@ jobs:
           - ubuntu-22.04
           - ubuntu-22.04-arm
           - macos-latest
+        binary:
+          - ethrex_prover
+          - ethrex_replay
         include:
           - platform: ubuntu-22.04
-            rustflags: -C target-cpu=native
-            binary: ethrex_prover
             os: linux
-            arch: x86-64
-          - platform: ubuntu-22.04
+            arch: x86_64
             rustflags: -C target-cpu=native
-            binary: ethrex_replay
-            os: linux
-            arch: x86-64
           - platform: ubuntu-22.04-arm
-            rustflags: -C target-cpu=native
-            binary: ethrex_prover
             os: linux
-            arch: arm64
-          - platform: ubuntu-22.04-arm
+            arch: aarch64
             rustflags: -C target-cpu=native
-            binary: ethrex_replay
-            os: linux
-            arch: arm64
           - platform: macos-latest
-            binary: ethrex_prover
             os: macos
-            arch: arm64
-          - platform: macos-latest
-            binary: ethrex_replay
-            os: macos
-            arch: arm64
+            arch: aarch64
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -95,22 +81,25 @@ jobs:
         with:
           toolchain: ${{ vars.RUST_VERSION }}
 
-      - name: Build binary
+      - name: Build prover binary
+        if: ${{ matrix.binary == 'ethrex_prover' }}
         run: |
           export RUSTFLAGS="${{ matrix.rustflags }}"
-          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
-            cd crates/l2
-            cargo build --release --features "l2" \
-              --manifest-path ./prover/Cargo.toml \
-              --bin ethrex_prover
-            cd ../../
-            mv target/release/ethrex_prover ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
-          else
-            cd cmd/ethrex_replay
-            cargo build --release
-            cd ../../
-            mv target/release/ethrex-replay ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
-          fi
+          cd crates/l2
+          cargo build --release --features "l2" \
+            --manifest-path ./prover/Cargo.toml \
+            --bin ethrex_prover
+          cd ../../
+          mv target/release/ethrex_prover ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+
+      - name: Build replay binary
+        if: ${{ matrix.binary == 'ethrex_replay' }}
+        run: |
+          export RUSTFLAGS="${{ matrix.rustflags }}"
+          cd cmd/ethrex_replay
+          cargo build --release
+          cd ../../
+          mv target/release/ethrex-replay ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -121,23 +110,18 @@ jobs:
   build-prover-and-replay-sp1:
     strategy:
       matrix:
+        platform:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+        binary:
+          - ethrex_prover
+          - ethrex_replay
         include:
           - platform: ubuntu-22.04
-            binary: ethrex_prover
-            os: linux
-            arch: x86-64
-          - platform: ubuntu-22.04
-            binary: ethrex_replay
-            os: linux
-            arch: x86-64
+            arch: x86_64
           - platform: ubuntu-22.04-arm
-            binary: ethrex_prover
-            os: linux
-            arch: arm64
-          - platform: ubuntu-22.04-arm
-            binary: ethrex_replay
-            os: linux
-            arch: arm64
+            arch: aarch64
+          - os: linux # This property will be added to all matrix combinations
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -162,23 +146,26 @@ jobs:
         with:
           platforms: amd64
 
-      - name: Build binary
+      - name: Build prover binary
+        if: ${{ matrix.binary == 'ethrex_prover' }}
         run: |
           export RUSTFLAGS='-C target-cpu=native'
-          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
-            cd crates/l2
-            cargo build --release --features "sp1,gpu,l2" \
-              --manifest-path ./prover/Cargo.toml \
-              --bin ethrex_prover
-            cd ../../
-            mv target/release/ethrex_prover ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
-            mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk ethrex-riscv32im-succinct-zkvm-vk
-          else
-            cd cmd/ethrex_replay
-            cargo build --release --features "sp1,gpu"
-            cd ../../
-            mv target/release/ethrex-replay ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
-          fi
+          cd crates/l2
+          cargo build --release --features "sp1,gpu,l2" \
+            --manifest-path ./prover/Cargo.toml \
+            --bin ethrex_prover
+          cd ../../
+          mv target/release/ethrex_prover ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk ethrex-riscv32im-succinct-zkvm-vk
+
+      - name: Build replay binary
+        if: ${{ matrix.binary == 'ethrex_replay' }}
+        run: |
+          export RUSTFLAGS='-C target-cpu=native'
+          cd cmd/ethrex_replay
+          cargo build --release --features "sp1,gpu"
+          cd ../../
+          mv target/release/ethrex-replay ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -187,7 +174,7 @@ jobs:
           path: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload sp1 vk
-        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86-64') }}
+        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86_64') }}
         uses: actions/upload-artifact@v4
         with:
           name: ethrex-riscv32im-succinct-zkvm-vk
@@ -196,15 +183,13 @@ jobs:
   build-prover-and-replay-risc0:
     strategy:
       matrix:
+        binary:
+          - ethrex_prover
+          - ethrex_replay
         include:
           - platform: ubuntu-22.04
-            binary: ethrex_prover
             os: linux
-            arch: x86-64
-          - platform: ubuntu-22.04
-            binary: ethrex_replay
-            os: linux
-            arch: x86-64
+            arch: x86_64
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
@@ -226,28 +211,32 @@ jobs:
       - uses: Jimver/cuda-toolkit@v0.2.24
         id: cuda-toolkit
         with:
-          cuda: '12.9.0'
-          method: 'network'
+          cuda: "12.9.0"
+          method: "network"
           sub-packages: '["nvcc"]'
 
-      - name: Build binary
+      - name: Build prover binary
+        if: ${{ matrix.binary == 'ethrex_prover' }}
         run: |
           export RUSTFLAGS='-C target-cpu=native'
           export NVCC_PREPEND_FLAGS='-arch=sm_70'
-          if [[ "${{ matrix.binary }}" == "ethrex_prover" ]]; then
-            cd crates/l2
-            cargo build --release --features "risc0,gpu,l2" \
-              --manifest-path ./prover/Cargo.toml \
-              --bin ethrex_prover
-            cd ../../
-            mv target/release/ethrex_prover ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
-            mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk ethrex-riscv32im-risc0-vk
-          else
-            cd cmd/ethrex_replay
-            cargo build --release --features "risc0,gpu"
-            cd ../../
-            mv target/release/ethrex-replay ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
-          fi
+          cd crates/l2
+          cargo build --release --features "risc0,gpu,l2" \
+            --manifest-path ./prover/Cargo.toml \
+            --bin ethrex_prover
+          cd ../../
+          mv target/release/ethrex_prover ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk ethrex-riscv32im-risc0-vk
+
+      - name: Build replay binary
+        if: ${{ matrix.binary == 'ethrex_replay' }}
+        run: |
+          export RUSTFLAGS='-C target-cpu=native'
+          export NVCC_PREPEND_FLAGS='-arch=sm_70'
+          cd cmd/ethrex_replay
+          cargo build --release --features "risc0,gpu"
+          cd ../../
+          mv target/release/ethrex-replay ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -256,7 +245,7 @@ jobs:
           path: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload risc0 vk
-        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86-64') }}
+        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86_64') }}
         uses: actions/upload-artifact@v4
         with:
           name: ethrex-riscv32im-risc0-vk

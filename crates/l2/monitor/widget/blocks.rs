@@ -11,9 +11,12 @@ use ratatui::{
     widgets::{Row, StatefulWidget, Table, TableState},
 };
 
-use crate::monitor::widget::{
-    ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
-    HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
+use crate::{
+    monitor::widget::{
+        ADDRESS_LENGTH_IN_DIGITS, BLOCK_SIZE_LENGTH_IN_DIGITS, GAS_USED_LENGTH_IN_DIGITS,
+        HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS, TX_NUMBER_LENGTH_IN_DIGITS,
+    },
+    sequencer::errors::MonitorError,
 };
 
 pub struct BlocksTable {
@@ -24,35 +27,37 @@ pub struct BlocksTable {
 }
 
 impl BlocksTable {
-    pub async fn new(store: &Store) -> Self {
+    pub async fn new(store: &Store) -> Result<Self, MonitorError> {
         let mut last_l2_block_known = 0;
-        let items = Self::refresh_items(&mut last_l2_block_known, store).await;
-        Self {
+        let items = Self::refresh_items(&mut last_l2_block_known, store).await?;
+        Ok(Self {
             state: TableState::default(),
             items,
             last_l2_block_known,
-        }
+        })
     }
 
-    pub async fn on_tick(&mut self, store: &Store) {
-        let mut new_blocks = Self::refresh_items(&mut self.last_l2_block_known, store).await;
+    pub async fn on_tick(&mut self, store: &Store) -> Result<(), MonitorError> {
+        let mut new_blocks = Self::refresh_items(&mut self.last_l2_block_known, store).await?;
         new_blocks.truncate(50);
 
         let n_new_blocks = new_blocks.len();
         self.items.truncate(50 - n_new_blocks);
         self.items.extend_from_slice(&new_blocks);
         self.items.rotate_right(n_new_blocks);
+
+        Ok(())
     }
 
     async fn refresh_items(
         last_l2_block_known: &mut u64,
         store: &Store,
-    ) -> Vec<(String, String, String, String, String, String, String)> {
-        let new_blocks = Self::get_blocks(last_l2_block_known, store).await;
+    ) -> Result<Vec<(String, String, String, String, String, String, String)>, MonitorError> {
+        let new_blocks = Self::get_blocks(last_l2_block_known, store).await?;
 
         let new_blocks_processed = Self::process_blocks(new_blocks).await;
 
-        new_blocks_processed
+        Ok(new_blocks_processed
             .iter()
             .map(|(number, n_txs, hash, coinbase, gas, blob_gas, size)| {
                 (
@@ -65,10 +70,13 @@ impl BlocksTable {
                     size.to_string(),
                 )
             })
-            .collect()
+            .collect())
     }
 
-    async fn get_blocks(last_l2_block_known: &mut u64, store: &Store) -> Vec<Block> {
+    async fn get_blocks(
+        last_l2_block_known: &mut u64,
+        store: &Store,
+    ) -> Result<Vec<Block>, MonitorError> {
         let last_l2_block_number = store
             .get_latest_block_number()
             .await
@@ -81,12 +89,8 @@ impl BlocksTable {
             let new_block = store
                 .get_block_by_number(new_last_l1_fetched_block)
                 .await
-                .unwrap_or_else(|_| {
-                    panic!("Failed to get block  by number ({new_last_l1_fetched_block})")
-                })
-                .unwrap_or_else(|| {
-                    panic!("Block {new_last_l1_fetched_block} not found in the store")
-                });
+                .map_err(|e| MonitorError::GetBlockByNumber(new_last_l1_fetched_block, e))?
+                .ok_or(MonitorError::BlockNotFound(new_last_l1_fetched_block))?;
 
             // Update the last L1 block fetched.
             *last_l2_block_known = new_last_l1_fetched_block;
@@ -94,7 +98,7 @@ impl BlocksTable {
             new_blocks.push(new_block);
         }
 
-        new_blocks
+        Ok(new_blocks)
     }
 
     async fn process_blocks(
