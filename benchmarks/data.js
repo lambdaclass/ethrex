@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752520330971,
+  "lastUpdate": 1752522250442,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7181,6 +7181,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012324395198522623,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "05d3c1290649b1f3949d7376178be78fbb1cecbf",
+          "message": "fix(levm): fix benchmark block execution ci (#3619)\n\n**Motivation**\n\nsee\nhttps://github.com/lambdaclass/ethrex/actions/runs/16266441472/job/45923106459?pr=3564\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-14T17:53:13Z",
+          "tree_id": "7b8fbc2f30df44acf9fc51a9312de9411c4b9c87",
+          "url": "https://github.com/lambdaclass/ethrex/commit/05d3c1290649b1f3949d7376178be78fbb1cecbf"
+        },
+        "date": 1752522238273,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012089963768115942,
             "unit": "Mgas/s"
           }
         ]
