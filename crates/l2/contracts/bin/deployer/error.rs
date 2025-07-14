@@ -15,8 +15,6 @@ pub enum DeployerError {
     DecodingError(String),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("Failed to compile contract: {0}")]
-    FailedToCompileContract(#[from] ContractCompilationError),
     #[error("Failed to deploy contract: {0}")]
     FailedToDeployContract(#[from] DeployError),
     #[error("Deployment subtask failed: {0}")]
