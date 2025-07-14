@@ -186,8 +186,6 @@ fn format_duration(duration: Duration) -> String {
 }
 
 async fn store_peers_in_file(kademlia: Kademlia) {
-    let bootnodes = bootnodes();
-
     let peers_node_ids = kademlia
         .peers
         .lock()
@@ -201,13 +199,7 @@ async fn store_peers_in_file(kademlia: Kademlia) {
         .lock()
         .await
         .iter()
-        .filter_map(|(node_id, node)| {
-            if !bootnodes.contains(node) && peers_node_ids.contains(node_id) {
-                Some(node)
-            } else {
-                None
-            }
-        })
+        .filter_map(|(node_id, node)| peers_node_ids.contains(node_id).then_some(node))
         .cloned()
         .collect::<Vec<_>>();
 
