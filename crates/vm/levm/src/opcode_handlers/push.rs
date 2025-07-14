@@ -28,19 +28,20 @@ impl<'a> VM<'a> {
             // bytecode
             .wrapping_add(1);
 
-        let read_n_bytes = if let Some(slice) = current_call_frame
+        let value = if let Some(slice) = current_call_frame
             .bytecode
             .get(pc_offset..pc_offset.wrapping_add(N))
         {
-            #[expect(unsafe_code)]
-            unsafe {
-                *slice.as_ptr().cast::<[u8; N]>()
-            }
+            u256_from_big_endian_const(
+                #[expect(unsafe_code)]
+                unsafe {
+                    *slice.as_ptr().cast::<[u8; N]>()
+                },
+            )
         } else {
-            [0; N]
+            U256::zero()
         };
 
-        let value = u256_from_big_endian_const(read_n_bytes);
         current_call_frame.stack.push(&[value])?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
