@@ -267,7 +267,7 @@ sequenceDiagram
     CommonBridge ->> Sequencer: OK
     Sequencer ->> CommonBridge: Sends batch of only privileged transactions
     CommonBridge ->> Sequencer: OK
-    Note: Sequencer catches up
+    Note over Sequencer: Sequencer catches up
     Sequencer ->> CommonBridge: Sends batch as usual
     CommonBridge ->> Sequencer: OK
 ```
