@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_common::calldata::Value;
+use ethrex_l2_common::{calldata::Value, l1_messages::L1MESSENGER_ADDRESS};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, calldata::encode_calldata};
 use ethrex_rpc::{EthClient, clients::Overrides, types::receipt::RpcLog};
 use keccak_hash::keccak;
@@ -33,16 +33,35 @@ impl L2ToL1MessageStatus {
     pub async fn for_tx(
         l2_tx_hash: H256,
         common_bridge_address: Address,
-        eth_client: &EthClient,
+        l1_client: &EthClient,
+        l2_client: &EthClient,
     ) -> Result<Self, MonitorError> {
+        let tx_receipt = l2_client
+            .get_transaction_receipt(l2_tx_hash)
+            .await?
+            .ok_or(MonitorError::ReceiptError)?;
+        let l1message_log = tx_receipt
+            .logs
+            .iter()
+            .find(|log| log.log.address == L1MESSENGER_ADDRESS)
+            .ok_or(MonitorError::InternalError(
+                "Withdrawal transaction has no logs".to_string(),
+            ))?;
+        let msg_id = l1message_log
+            .log
+            .topics
+            .get(3)
+            .ok_or(MonitorError::InternalError(
+                "Unexpected topic count in L1Message".to_string(),
+            ))?;
         let withdrawal_is_claimed = {
             let calldata = encode_calldata(
-                "claimedWithdrawals(bytes32)",
-                &[Value::FixedBytes(l2_tx_hash.as_bytes().to_vec().into())],
+                "claimedWithdrawalIDs(uint256)",
+                &[Value::FixedBytes(msg_id.as_bytes().to_vec().into())],
             )
             .map_err(MonitorError::CalldataEncodeError)?;
 
-            let raw_withdrawal_is_claimed: H256 = eth_client
+            let raw_withdrawal_is_claimed: H256 = l1_client
                 .call(common_bridge_address, calldata.into(), Overrides::default())
                 .await
                 .map_err(MonitorError::EthClientError)?
@@ -143,18 +162,26 @@ impl L2ToL1MessagesTable {
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(eth_client).await?;
+        self.refresh_items(eth_client, rollup_client).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
 
         Ok(())
     }
 
-    async fn refresh_items(&mut self, eth_client: &EthClient) -> Result<(), MonitorError> {
+    async fn refresh_items(
+        &mut self,
+        l1_client: &EthClient,
+        l2_client: &EthClient,
+    ) -> Result<(), MonitorError> {
         for (_kind, status, .., l2_tx_hash) in self.items.iter_mut() {
-            *status =
-                L2ToL1MessageStatus::for_tx(*l2_tx_hash, self.common_bridge_address, eth_client)
-                    .await?;
+            *status = L2ToL1MessageStatus::for_tx(
+                *l2_tx_hash,
+                self.common_bridge_address,
+                l1_client,
+                l2_client,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -172,13 +199,14 @@ impl L2ToL1MessagesTable {
             rollup_client,
         )
         .await?;
-        Self::process_logs(&logs, common_bridge_address, eth_client).await
+        Self::process_logs(&logs, common_bridge_address, eth_client, rollup_client).await
     }
 
     async fn process_logs(
         logs: &[RpcLog],
         common_bridge_address: Address,
-        eth_client: &EthClient,
+        l1_client: &EthClient,
+        l2_client: &EthClient,
     ) -> Result<Vec<L2ToL1MessageRow>, MonitorError> {
         let mut processed_logs = Vec::new();
 
@@ -187,14 +215,15 @@ impl L2ToL1MessagesTable {
             keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
 
         for log in logs {
-            let withdrawal_status = L2ToL1MessageStatus::for_tx(
-                log.transaction_hash,
-                common_bridge_address,
-                eth_client,
-            )
-            .await?;
             match log.log.topics[0] {
                 topic if topic == eth_withdrawal_topic => {
+                    let withdrawal_status = L2ToL1MessageStatus::for_tx(
+                        log.transaction_hash,
+                        common_bridge_address,
+                        l1_client,
+                        l2_client,
+                    )
+                    .await?;
                     processed_logs.push((
                         L2ToL1MessageKind::ETHWithdraw,
                         withdrawal_status,
@@ -206,6 +235,13 @@ impl L2ToL1MessagesTable {
                     ));
                 }
                 topic if topic == erc20_withdrawal_topic => {
+                    let withdrawal_status = L2ToL1MessageStatus::for_tx(
+                        log.transaction_hash,
+                        common_bridge_address,
+                        l1_client,
+                        l2_client,
+                    )
+                    .await?;
                     processed_logs.push((
                         L2ToL1MessageKind::ERC20Withdraw,
                         withdrawal_status,

@@ -334,4 +334,6 @@ pub enum MonitorError {
     InternalError(String),
     #[error("Configuration Error: {0}")]
     ConfigError(String),
+    #[error("Failed to get receipt for transaction")]
+    ReceiptError
 }
