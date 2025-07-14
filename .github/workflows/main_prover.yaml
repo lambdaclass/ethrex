@@ -154,10 +154,16 @@ jobs:
           cd ..
           rustup install nightly # Install the nightly toolchain needed by rex, change this in the future
           rustup default nightly
-          git clone https://github.com/lambdaclass/rex.git
+          
+          if [ ! -d "rex" ]; then
+            git clone https://github.com/lambdaclass/rex.git
+          else
+            echo "Rex directory already exists, skipping clone"
+          fi
+          
           cd rex
           make cli
-          echo "rex install successfully at $(which rex)"
+          echo "rex installed successfully at $(which rex)"
 
       - name: Register sequencer
         run: |
