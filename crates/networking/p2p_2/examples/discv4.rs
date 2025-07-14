@@ -141,7 +141,8 @@ elapsed: {}
 {} contacts ({} contacts/s)
 {} peers ({} new peers/s)
 {} connection attempts ({} new connection attempts/s)
-{} failed connections"#,
+{} failed connections
+failures: {:#?}"#,
                 format_duration(start.elapsed()),
                 METRICS.contacts.get(),
                 METRICS.new_contacts_rate.get().floor(),
@@ -150,6 +151,7 @@ elapsed: {}
                 METRICS.rlpx_conn_attempts.get(),
                 METRICS.rlpx_conn_attempts_rate.get().floor(),
                 METRICS.rlpx_conn_failures.get(),
+                METRICS.rlpx_conn_failures_counts().await,
             );
             // info!(
             //     contacts = kademlia_clone.table.lock().await.len(),
