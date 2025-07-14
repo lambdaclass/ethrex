@@ -29,27 +29,8 @@ impl ExtensionNode {
         if path.skip_prefix(&self.prefix) {
             let child_node = self
                 .child
-                .get_node(db)
-                .inspect(|node| {
-                    tracing::debug!("Ok: Child: {:?}", node.as_ref());
-                })
-                .inspect_err(|e| {
-                    tracing::error!(
-                        "Error getting child node in inspect: {:?}. Child: {:?}",
-                        e.to_string().as_str(),
-                        self.child
-                    );
-                })?
-                .ok_or(TrieError::InconsistentTree)
-                .map_err(|e| {
-                    tracing::error!(
-                        "Error getting child node: {:?}. Child: {:?}",
-                        e.to_string().as_str(),
-                        self.child
-                    );
-                    e
-                })
-                .unwrap();
+                .get_node(db)?
+                .ok_or(TrieError::InconsistentTree)?;
 
             child_node.get(db, path)
         } else {

@@ -34,33 +34,14 @@ pub enum NodeRef {
 impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
-            NodeRef::Node(ref node, _) => {
-                tracing::debug!(
-                    node = format!("{:?}", node.as_ref().compute_hash()),
-                    "[GETTING NODE]"
-                );
-                Ok(Some(node.as_ref().clone()))
-            }
+            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                tracing::debug!(
-                    node = format!("{:?}", NodeHash::Inline((data, len))),
-                    "[GETTING NODE]"
-                );
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
-                tracing::debug!(node = format!("{:?}", hash), "[GETTING NODE]");
-                db.get(hash)?
-                    .map(|rlp| {
-                        let node = Node::decode(&rlp).map_err(TrieError::RLPDecode)?;
-                        tracing::debug!(
-                            node = format!("{:?}", node.compute_hash()),
-                            "[GETTING NODE]"
-                        );
-                        Ok(node)
-                    })
-                    .transpose()
-            }
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
+                .get(hash)?
+                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                .transpose(),
         }
     }
 
