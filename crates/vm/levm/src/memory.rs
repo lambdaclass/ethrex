@@ -12,13 +12,13 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 ///
 /// When a new callframe is created a RC clone of this memory is made, with the current base offset at the length of the buffer at that time.
 #[derive(Debug, Clone)]
-pub struct MemoryV2 {
+pub struct Memory {
     buffer: Rc<RefCell<Vec<u8>>>,
     current_base: usize,
 }
 
 #[allow(clippy::unwrap_used)]
-impl MemoryV2 {
+impl Memory {
     #[inline]
     pub fn new(current_base: usize) -> Self {
         Self {
@@ -28,7 +28,7 @@ impl MemoryV2 {
     }
 
     #[inline]
-    pub fn next_memory(&self) -> MemoryV2 {
+    pub fn next_memory(&self) -> Memory {
         let mut mem = self.clone();
         mem.current_base = mem.buffer.borrow().len();
         mem
@@ -228,7 +228,7 @@ impl MemoryV2 {
     }
 }
 
-impl Default for MemoryV2 {
+impl Default for Memory {
     fn default() -> Self {
         Self::new(0)
     }
@@ -285,11 +285,11 @@ mod test {
     #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
     use ethrex_common::U256;
 
-    use crate::memory::MemoryV2;
+    use crate::memory::Memory;
 
     #[test]
     fn test_basic_store_data() {
-        let mut mem = MemoryV2::new(0);
+        let mut mem = Memory::new(0);
 
         mem.store_data(0, &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]).unwrap();
 
@@ -299,7 +299,7 @@ mod test {
 
     #[test]
     fn test_words() {
-        let mut mem = MemoryV2::new(0);
+        let mut mem = Memory::new(0);
 
         mem.store_word(0, U256::from(4)).unwrap();
 
@@ -310,7 +310,7 @@ mod test {
     #[test]
     fn test_copy_word_within() {
         {
-            let mut mem = MemoryV2::new(0);
+            let mut mem = Memory::new(0);
 
             mem.store_word(0, U256::from(4)).unwrap();
             mem.copy_within(0, 32, 32).unwrap();
@@ -320,7 +320,7 @@ mod test {
         }
 
         {
-            let mut mem = MemoryV2::new(0);
+            let mut mem = Memory::new(0);
 
             mem.store_word(32, U256::from(4)).unwrap();
             mem.copy_within(32, 0, 32).unwrap();
@@ -330,7 +330,7 @@ mod test {
         }
 
         {
-            let mut mem = MemoryV2::new(0);
+            let mut mem = Memory::new(0);
 
             mem.store_word(0, U256::from(4)).unwrap();
             mem.copy_within(0, 0, 32).unwrap();
@@ -340,7 +340,7 @@ mod test {
         }
 
         {
-            let mut mem = MemoryV2::new(0);
+            let mut mem = Memory::new(0);
 
             mem.store_word(0, U256::from(4)).unwrap();
             mem.copy_within(32, 0, 32).unwrap();

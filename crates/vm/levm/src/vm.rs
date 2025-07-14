@@ -10,7 +10,7 @@ use crate::{
         hook::{Hook, get_hooks},
     },
     l2_precompiles,
-    memory::MemoryV2,
+    memory::Memory,
     precompiles,
     tracing::LevmCallTracer,
 };
@@ -117,7 +117,7 @@ impl<'a> VM<'a> {
             0,
             0,
             Stack::default(),
-            MemoryV2::default(),
+            Memory::default(),
         );
 
         self.call_frames.push(initial_call_frame);

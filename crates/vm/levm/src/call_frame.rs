@@ -1,7 +1,7 @@
 use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
-    memory::MemoryV2,
+    memory::Memory,
     opcodes::Opcode,
     utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
@@ -157,7 +157,7 @@ pub struct CallFrame {
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
-    pub memory: MemoryV2,
+    pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
@@ -236,7 +236,7 @@ impl CallFrame {
         ret_offset: usize,
         ret_size: usize,
         stack: Stack,
-        memory: MemoryV2,
+        memory: Memory,
     ) -> Self {
         let invalid_jump_destinations =
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
