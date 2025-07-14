@@ -470,6 +470,55 @@ INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated
 <p>If you want to restart the sync from the very start you can do so by wiping the database using the following command:</p>
 <pre><code class="language-bash">cargo run --bin ethrex -- removedb
 </code></pre>
+<h2 id="ethereum-metrics-exporter"><a class="header" href="#ethereum-metrics-exporter">Ethereum Metrics Exporter</a></h2>
+<p>We use the <a href="https://github.com/ethpandaops/ethereum-metrics-exporter">Ethereum Metrics Exporter</a>, a Prometheus metrics exporter for Ethereum execution and consensus nodes, to gather metrics during syncing for L1. The exporter uses the prometheus data source to create a Grafana dashboard and display the metrics. For the syncing to work there must be a consensus node running along with the execution node.</p>
+<p>Currently we have two make targets to easily start an execution node and a consensus node on either hoodi or holesky, and display the syncing metrics. In both cases we use a lighthouse consensus node.</p>
+<h3 id="quickstart-guide"><a class="header" href="#quickstart-guide">Quickstart guide</a></h3>
+<p>Make sure you have your docker daemon running.</p>
+<ul>
+<li>
+<p><strong>Code Location</strong>: The targets are defined in <code>tooling/sync/Makefile</code>.</p>
+</li>
+<li>
+<p><strong>How to Run</strong>:</p>
+<pre><code class="language-bash"># Navigate to tooling/sync directory
+cd tooling/sync
+
+# Run target for hoodi 
+make start-hoodi-metrics-docker
+
+ # Run target for holesky 
+make start-holesky-metrics-docker
+</code></pre>
+</li>
+</ul>
+<p>To see the dashboards go to <a href="http://localhost:3001">http://localhost:3001</a>. Use “admin” for user and password. Select the Dashboards menu and go to Ethereum Metrics Exporter (Single) to see the exported metrics.</p>
+<p>To see the prometheus exported metrics and its respective requests with more detail in case you need to debug go to <a href="http://localhost:9093/metrics">http://localhost:9093/metrics</a>.</p>
+<h3 id="running-the-execution-node-on-other-networks-with-metrics-enabled"><a class="header" href="#running-the-execution-node-on-other-networks-with-metrics-enabled">Running the execution node on other networks with metrics enabled</a></h3>
+<p>A <code>docker-compose</code> is used to bundle prometheus and grafana services, the <code>*overrides</code> files define the ports and mounts the prometheus' configuration file.
+If a new dashboard is designed, it can be mounted only in that <code>*overrides</code> file.
+A consensus node must be running for the syncing to work.</p>
+<p>To run the execution node on any network with metrics, the next steps should be followed:</p>
+<ol>
+<li>
+<p>Build the <code>ethrex</code> binary for the network you want (see node options in <a href="#cli-commands">CLI Commands</a>) with the <code>metrics</code> feature enabled.</p>
+</li>
+<li>
+<p>Enable metrics by using the <code>--metrics</code> flag when starting the node.</p>
+</li>
+<li>
+<p>Set the <code>--metrics.port</code> cli arg of the ethrex binary to match the port defined in <code>crates/blockchain/metrics/provisioning/prometheus/prometheus_l1_sync_docker.yaml</code></p>
+</li>
+<li>
+<p>Run the docker containers:</p>
+<pre><code class="language-bash"># Navigate to crates/blockchain/metrics directory
+cd crates/blockchain/metrics
+
+ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
+</code></pre>
+</li>
+</ol>
+<p>For more details on running a sync go to <code>ethrex/tooling/sync/readme.md</code>.</p>
 
                     </main>
 
