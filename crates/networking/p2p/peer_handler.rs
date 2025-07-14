@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, future, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -110,6 +110,15 @@ impl PeerHandler {
         None
     }
 
+    async fn get_all_peer_channels(
+        &self,
+        capabilities: &[Capability],
+    ) -> Vec<(H256, PeerChannels)> {
+        let table = self.peer_table.lock().await;
+        table.get_all_peer_channels(capabilities)
+    }
+
+    /// TODO: update docs
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
@@ -128,50 +137,51 @@ impl PeerHandler {
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-                .await?;
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                self.record_peer_failure(peer_id).await;
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                            if id == request_id =>
-                        {
-                            return Some(block_headers);
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None, // Retry request
-                    }
+            let peer_channels = self
+                .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .await;
+            let mut responses = vec![];
+            for (peer_id, mut peer_channel) in peer_channels {
+                if let Err(err) = peer_channel
+                    .connection
+                    .cast(CastMessage::BackendMessage(request.clone()))
+                    .await
+                {
+                    self.record_peer_failure(peer_id).await;
+                    debug!("Failed to send message to peer: {err:?}");
+                    continue;
                 }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|headers| (!headers.is_empty()).then_some(headers))
-            {
-                if are_block_headers_chained(&block_headers, &order) {
-                    self.record_peer_success(peer_id).await;
-                    return Some(block_headers);
-                } else {
-                    warn!(
-                        "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
-                    );
-                    self.record_peer_critical_failure(peer_id).await;
-                }
+                let response = peer_channel.receiver.lock().await.recv();
+                responses.push(response);
             }
-            warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
+            let unpin_responses: Vec<_> = responses.into_iter().map(Box::pin).collect();
+
+            let (response, _, _) = futures::future::select_all(unpin_responses).await;
+            let block_headers_response = match response {
+                Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+                    if id == request_id =>
+                {
+                    Some(block_headers)
+                }
+                // Ignore replies that don't match the expected id (such as late responses)
+                Some(_) => continue,
+                None => None, // Retry request
+            };
+
+            let Some(block_headers) = block_headers_response else {
+                warn!("[SYNCING] Missing block headers response");
+                return None;
+            };
+
+            if are_block_headers_chained(&block_headers, &order) {
+                // self.record_peer_success(peer_id).await;
+                return Some(block_headers);
+            } else {
+                warn!("[SYNCING] Received invalid headers from peer");
+                // self.record_peer_critical_failure(peer_id).await;
+            }
+
+            warn!("[SYNCING] Didn't receive block headers from peer");
         }
         None
     }

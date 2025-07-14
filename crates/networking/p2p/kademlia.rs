@@ -380,6 +380,27 @@ impl KademliaTable {
                 .map(|channel| (peer.node.node_id(), channel))
         })
     }
+
+    /// TODO: docs
+    pub fn get_all_peer_channels(&self, capabilities: &[Capability]) -> Vec<(H256, PeerChannels)> {
+        let filter = |peer: &PeerData| -> bool {
+            // Search for peers with an active connection that support the required capabilities
+            peer.channels.is_some()
+                && capabilities
+                    .iter()
+                    .any(|cap| peer.supported_capabilities.contains(cap))
+        };
+        let filtered_peers: Vec<&PeerData> = self.filter_peers(&filter).collect();
+        let peer_channels = filtered_peers
+            .iter()
+            .filter_map(|peer| {
+                peer.channels
+                    .clone()
+                    .map(|channel| (peer.node.node_id(), channel))
+            })
+            .collect();
+        peer_channels
+    }
 }
 
 /// Computes the distance between two nodes according to the discv4 protocol
