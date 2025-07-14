@@ -60,19 +60,11 @@ impl BatchesTable {
             return Ok(());
         }
 
-        let mut from = self
-            .items
-            .last()
-            .ok_or(MonitorError::NoItemsInTable)?
-            .0
-            - 1;
+        let mut from = self.items.last().ok_or(MonitorError::NoItemsInTable)?.0 - 1;
 
         let refreshed_batches = Self::get_batches(
             &mut from,
-            self.items
-                .first()
-                .ok_or(MonitorError::NoItemsInTable)?
-                .0,
+            self.items.first().ok_or(MonitorError::NoItemsInTable)?.0,
             rollup_store,
         )
         .await?;
