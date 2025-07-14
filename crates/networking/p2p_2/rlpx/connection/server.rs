@@ -28,9 +28,8 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    // discv4::server::MAX_PEERS_TCP_CONNECTIONS,
-    discv4::{Kademlia, metrics::METRICS},
-    // kademlia::{KademliaTable, PeerChannels},
+    discv4::metrics::METRICS,
+    kademlia::Kademlia,
     network::P2PContext,
     rlpx::{
         connection::{codec::RLPxCodec, handshake},

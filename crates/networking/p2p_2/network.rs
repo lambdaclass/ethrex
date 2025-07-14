@@ -1,5 +1,5 @@
 use crate::{
-    discv4::Kademlia,
+    kademlia::Kademlia,
     rlpx::{connection::server::RLPxConnBroadcastSender, message::Message},
     types::{Node, NodeRecord},
 };

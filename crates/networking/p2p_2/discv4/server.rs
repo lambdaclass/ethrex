@@ -13,13 +13,13 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     discv4::{
-        Kademlia,
         messages::{
             ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
             Packet, PacketDecodeErr, PingMessage, PongMessage,
         },
         metrics::METRICS,
     },
+    kademlia::Kademlia,
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, node_id},
 };
