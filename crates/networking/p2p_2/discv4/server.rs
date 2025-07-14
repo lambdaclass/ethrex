@@ -144,10 +144,6 @@ impl DiscoveryServerState {
 
         debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
 
-        let _ = self.send_enr_request(node).await.inspect_err(
-            |e| error!(received = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
-        );
-
         Ok(())
     }
 
