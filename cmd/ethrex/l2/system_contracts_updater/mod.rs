@@ -7,7 +7,7 @@ use ethrex_common::types::{Genesis, GenesisAccount};
 use ethrex_common::{Address, H160, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{
-    address_to_word, get_erc1967_slot, COMMON_BRIDGE_L2_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS,
+    COMMON_BRIDGE_L2_ADDRESS, L2_TO_L1_MESSENGER_ADDRESS, address_to_word, get_erc1967_slot,
 };
 use genesis_tool::genesis::write_genesis_as_json;
 use std::{collections::HashMap, path::Path, path::PathBuf};
