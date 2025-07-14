@@ -106,9 +106,9 @@ async fn main() {
             error!("Failed to start RLPx Initiator: {e}");
         });
 
-    let mut terminal = init_terminal().expect("Failed to initialize terminal");
+    // let mut terminal = init_terminal().expect("Failed to initialize terminal");
 
-    let mut monitor = Monitor::new("Ethrex P2P", kademlia.clone());
+    // let mut monitor = Monitor::new("Ethrex P2P", kademlia.clone());
 
     // Barrani kademlia contacts counter
     let kademlia_counter_handle = tokio::spawn(async move {
