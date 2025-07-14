@@ -118,7 +118,13 @@ impl Metrics {
             }
             RLPxError::NoMatchingCapabilities(capabilities) => {
                 failures_grouped_by_reason
-                    .entry("NoMatchingCapabilities".to_owned())
+                    .entry(format!(
+                        "NoMatchingCapabilities - {:?}",
+                        capabilities
+                            .iter()
+                            .map(|c| format!("{}/{}", c.protocol(), c.version))
+                            .collect::<Vec<_>>()
+                    ))
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
