@@ -143,17 +143,29 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
     ];
     info!("Looking for peers");
     let mut already_known_peers_table = state.kademlia.already_tried_peers.lock().await;
+    let mut invalid_fork_ids = 0;
+    let mut no_fork_ids = 0;
+    let mut connected_peers = 0;
     for node in state.kademlia.table.lock().await.values() {
         let Some(fork_id) = &node.fork_id else {
+            no_fork_ids += 1;
             continue;
         };
 
         if !ACCEPTED_FORK_HASHES.contains(&fork_id.fork_hash) {
+            invalid_fork_ids += 1;
             continue;
         }
         if !already_known_peers_table.contains(&node.node_id()) {
             already_known_peers_table.insert(node.node_id());
             RLPxConnection::spawn_as_initiator(state.context.clone(), node).await;
+            connected_peers += 1;
         }
     }
+
+    info!(
+        invalid_fork_ids = invalid_fork_ids,
+        no_fork_ids = no_fork_ids,
+        connected_peers = connected_peers,
+    );
 }
