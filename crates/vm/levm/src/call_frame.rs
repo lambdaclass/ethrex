@@ -28,16 +28,16 @@ pub struct Stack {
 }
 
 impl Stack {
+    #[inline(always)]
     pub fn pop<const N: usize>(&mut self) -> Result<&[U256; N], ExceptionalHalt> {
         // Compile-time check for stack underflow.
-        if N > STACK_LIMIT {
-            return Err(ExceptionalHalt::StackUnderflow);
+        const {
+            assert!(N <= STACK_LIMIT);
         }
 
         // The following operation can never overflow as both `self.offset` and N are within
         // STACK_LIMIT (1024).
-        #[expect(clippy::arithmetic_side_effects)]
-        let next_offset = self.offset + N;
+        let next_offset = self.offset.wrapping_add(N);
 
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
@@ -51,6 +51,7 @@ impl Stack {
         Ok(values)
     }
 
+    #[inline(always)]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
@@ -61,8 +62,16 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[next_offset..self.offset].copy_from_slice(values);
+        #[expect(unsafe_code)]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                values.as_ptr(),
+                self.values
+                    .get_unchecked_mut(next_offset..self.offset)
+                    .as_mut_ptr(),
+                N,
+            );
+        }
         self.offset = next_offset;
 
         Ok(())
@@ -84,12 +93,16 @@ impl Stack {
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
         // The following index cannot fail because `self.offset` is known to be within
         // `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[self.offset..]
-            .get(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)
+        #[expect(unsafe_code)]
+        unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .get(index)
+                .ok_or(ExceptionalHalt::StackUnderflow)
+        }
     }
 
+    #[inline(always)]
     pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
         let index = self
             .offset

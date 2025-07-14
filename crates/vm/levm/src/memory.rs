@@ -272,7 +272,10 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
         .ok_or(OutOfGas)?
         / WORD_SIZE_IN_BYTES_USIZE;
 
-    let gas_cost = (memory_size_word.checked_mul(memory_size_word).ok_or(OutOfGas)? / MEMORY_EXPANSION_QUOTIENT)
+    let gas_cost = (memory_size_word
+        .checked_mul(memory_size_word)
+        .ok_or(OutOfGas)?
+        / MEMORY_EXPANSION_QUOTIENT)
         .checked_add(3usize.checked_mul(memory_size_word).ok_or(OutOfGas)?)
         .ok_or(OutOfGas)?;
 
