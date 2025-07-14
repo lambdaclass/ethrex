@@ -136,7 +136,7 @@ impl GenServer for RLPxInitiator {
 async fn look_for_peers(state: &RLPxInitiatorState) {
     info!("Looking for peers");
     let mut already_known_peers_table = state.kademlia.already_tried_peers.lock().await;
-    for node in state.kademlia.table.lock().await.values() {
+    for node in state.kademlia.contacts.lock().await.values() {
         if !already_known_peers_table.contains(&node.node_id()) {
             already_known_peers_table.insert(node.node_id());
             RLPxConnection::spawn_as_initiator(state.context.clone(), node).await;
