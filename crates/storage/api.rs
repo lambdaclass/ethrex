@@ -11,6 +11,8 @@ use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
+pub const KEEP_BLOCKS: u64 = 128;
+
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
@@ -29,7 +31,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// to complete reorg recovery.
     async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
 
-    /// Prunes the state and storage log tables.
+    /// Prune the state and storage trie from the pruning log
+    /// It will iterate over the pruning log and remove nodes from the state and storage tries
+    /// that are older than the [`KEEP_BLOCKS`] value.
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.

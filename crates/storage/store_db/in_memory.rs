@@ -1,6 +1,6 @@
 use crate::{
     UpdateBatch,
-    api::StoreEngine,
+    api::{KEEP_BLOCKS, StoreEngine},
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
     store_db::codec::{
@@ -529,7 +529,6 @@ impl StoreEngine for Store {
     }
 
     fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
-        const KEEP_BLOCKS: u64 = 128;
         let mut store = self.inner()?;
 
         // Get the block number of the last state trie pruning log entry
