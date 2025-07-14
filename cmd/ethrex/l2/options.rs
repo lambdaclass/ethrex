@@ -21,6 +21,7 @@ use secp256k1::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Parser)]
+#[group(id = "L2Options")]
 pub struct Options {
     #[command(flatten)]
     pub node_opts: NodeOptions,
