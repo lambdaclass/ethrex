@@ -92,10 +92,8 @@ async fn main() {
 
     let _ = DiscoveryServer::spawn(
         local_node.clone(),
-        local_node_ip6.clone(),
         signer.clone(),
         udp_socket.clone(),
-        udp6_socket.clone(),
         kademlia.clone(),
         bootnodes(&HOLESKY_BOOTNODES_ENODES),
     )

@@ -41,31 +41,25 @@ pub enum DiscoveryServerError {
 #[derive(Debug, Clone)]
 pub struct DiscoveryServerState {
     local_node: Node,
-    local_node_ip6: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
     udp_socket: Arc<UdpSocket>,
-    udp6_socket: Arc<UdpSocket>,
     kademlia: Kademlia,
 }
 
 impl DiscoveryServerState {
     pub fn new(
         local_node: Node,
-        local_node_ip6: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
-        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
         Self {
             local_node,
-            local_node_ip6,
             local_node_record,
             signer,
             udp_socket,
-            udp6_socket,
             kademlia,
         }
     }
@@ -272,10 +266,8 @@ pub struct DiscoveryServer;
 impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
-        local_node_ip6: Node,
         signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
-        udp6_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
         bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
@@ -288,11 +280,9 @@ impl DiscoveryServer {
 
         let state = DiscoveryServerState::new(
             local_node,
-            local_node_ip6,
             local_node_record,
             signer,
             udp_socket,
-            udp6_socket,
             kademlia,
         );
 
