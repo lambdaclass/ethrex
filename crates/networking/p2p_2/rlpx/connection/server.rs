@@ -563,11 +563,14 @@ where
                 }
             }
 
-            state.capabilities = hello_message.capabilities;
+            state.capabilities = hello_message.capabilities.clone();
 
             if negotiated_eth_version == 0 {
-                return Err(RLPxError::NoMatchingCapabilities());
+                return Err(RLPxError::NoMatchingCapabilities(
+                    hello_message.capabilities,
+                ));
             }
+
             debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 

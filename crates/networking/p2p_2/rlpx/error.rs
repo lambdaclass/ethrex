@@ -4,6 +4,8 @@ use ethrex_storage::error::StoreError;
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
 
+use crate::rlpx::p2p::Capability;
+
 use super::{message::Message, p2p::DisconnectReason};
 
 #[derive(Debug, Error)]
@@ -24,7 +26,7 @@ pub enum RLPxError {
     #[error("Invalid connection state: {0}")]
     StateError(String),
     #[error("No matching capabilities")]
-    NoMatchingCapabilities(),
+    NoMatchingCapabilities(Vec<Capability>),
     #[error("Peer disconnected")]
     Disconnected(),
     #[error("Disconnect requested: {0}")]
