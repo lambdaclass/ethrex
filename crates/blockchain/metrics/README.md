@@ -10,7 +10,7 @@ To run the node with metrics, the next steps should be followed:
 4. Run the docker containers, example with the L2:
 
 ```sh
-docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l2.override.yaml up
+docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l2.overrides.yaml up
 ```
 
 > [!NOTE]
