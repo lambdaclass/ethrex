@@ -346,7 +346,7 @@ To see the dashboards go to [http://localhost:3001](http://localhost:3001). Use 
 
 To see the prometheus exported metrics and its respective requests with more detail in case you need to debug go to [http://localhost:9093/metrics](http://localhost:9093/metrics).
 
-### Running other execution nodes with metrics enabled
+### Running the execution node on other networks with metrics enabled
 
 A `docker-compose` is used to bundle prometheus and grafana services, the `*overrides` files define the ports and mounts the prometheus' configuration file.
 If a new dashboard is designed, it can be mounted only in that `*overrides` file.
