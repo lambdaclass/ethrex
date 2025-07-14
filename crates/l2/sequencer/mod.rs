@@ -170,6 +170,7 @@ pub async fn start_l2(
     }
 
     if let Some(res) = task_set.join_next().await {
+        // If a task finishes, the whole sequencer should stop
         match res {
             Ok(Ok(_)) => {
                 task_set.abort_all();
@@ -183,5 +184,10 @@ pub async fn start_l2(
                 task_set.abort_all();
             }
         };
+    } else {
+        // If no tasks were spawned, we let the sequencer run until it is cancelled
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
     }
 }
