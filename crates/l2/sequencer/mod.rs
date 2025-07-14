@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
+use crate::monitor::EthrexMonitor;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -161,12 +162,16 @@ pub async fn start_l2(
     }
 
     if cfg.monitor.enabled {
-        task_set.spawn(monitor::start_monitor(
+        let _ = EthrexMonitor::spawn(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
-            cfg.clone(),
-        ));
+            cfg,
+        )
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Monitor: {err}");
+        });
     }
 
     if let Some(res) = task_set.join_next().await {

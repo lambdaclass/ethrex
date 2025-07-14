@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -18,10 +19,12 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
+use spawned_concurrency::messages::Unused;
+use spawned_concurrency::tasks::{send_after, CastResponse, GenServer, GenServerHandle};
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::based::sequencer_state::SequencerState;
-use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
+use crate::monitor::widget::{self, ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::{
     SequencerConfig,
     monitor::widget::{
@@ -30,13 +33,9 @@ use crate::{
     },
     sequencer::errors::MonitorError,
 };
+use tracing::{debug, error, info, warn};
 
-pub struct EthrexMonitor {
-    pub title: String,
-    pub should_quit: bool,
-    pub tabs: TabsState,
-    pub tick_rate: u64,
-
+pub struct WidgetState {
     pub logger: TuiWidgetState,
     pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
@@ -45,6 +44,16 @@ pub struct EthrexMonitor {
     pub blocks_table: BlocksTable,
     pub l1_to_l2_messages: L1ToL2MessagesTable,
     pub l2_to_l1_messages: L2ToL1MessagesTable,
+}
+
+#[derive(Clone)]
+pub struct EthrexMonitorState {
+    pub title: String,
+    pub should_quit: bool,
+    pub tabs: TabsState,
+    pub tick_rate: u64,
+
+    pub widget_state: Arc<Mutex<WidgetState>>,
 
     pub eth_client: EthClient,
     pub rollup_client: EthClient,
@@ -52,7 +61,65 @@ pub struct EthrexMonitor {
     pub rollup_store: StoreRollup,
 }
 
+pub struct EthrexMonitor {}
+
+#[derive(Clone)]
+pub enum InMessage {
+    Monitor,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+}
+
 impl EthrexMonitor {
+    pub async fn spawn(
+        sequencer_state: SequencerState,
+        store: Store,
+        rollup_store: StoreRollup,
+        cfg: &SequencerConfig,
+    ) -> Result<(), MonitorError> {
+        let state = EthrexMonitorState::new(sequencer_state, store, rollup_store, cfg).await?;
+        let mut ethrex_monitor = EthrexMonitor::start(state);
+        ethrex_monitor
+            .cast(InMessage::Monitor)
+            .await
+            .map_err(MonitorError::GenServerError)
+    }
+}
+
+
+impl GenServer for EthrexMonitor {
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
+    type OutMsg = OutMessage;
+    type State = EthrexMonitorState;
+    type Error = MonitorError;
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn handle_cast(
+        &mut self,
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
+        let _ = start_monitor(&mut state)
+            .await
+            .inspect_err(|err| error!("Monitor Error: {err}"));
+        send_after(
+            Duration::from_millis(state.tick_rate),
+            handle.clone(),
+            Self::CastMsg::Monitor,
+        );
+        CastResponse::NoReply(state)
+    }
+}
+
+impl EthrexMonitorState {
     pub async fn new(
         sequencer_state: SequencerState,
         store: Store,
@@ -65,7 +132,39 @@ impl EthrexMonitor {
         let rollup_client =
             EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
 
-        Ok(EthrexMonitor {
+        let widget_state = Arc::new(Mutex::new(WidgetState {
+                global_chain_status: GlobalChainStatusTable::new(
+                    &eth_client,
+                    cfg,
+                    &store,
+                    &rollup_store,
+                )
+                .await,
+                logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
+                node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
+                mempool: MempoolTable::new(&rollup_client).await,
+                batches_table: BatchesTable::new(
+                    cfg.l1_committer.on_chain_proposer_address,
+                    &eth_client,
+                    &rollup_store,
+                )
+                .await?,
+                blocks_table: BlocksTable::new(&store).await?,
+                l1_to_l2_messages: L1ToL2MessagesTable::new(
+                    cfg.l1_watcher.bridge_address,
+                    &eth_client,
+                    &store,
+                )
+                .await?,
+                l2_to_l1_messages: L2ToL1MessagesTable::new(
+                    cfg.l1_watcher.bridge_address,
+                    &eth_client,
+                    &rollup_client,
+                )
+                .await?,
+            }));
+
+        Ok(EthrexMonitorState {
             title: if cfg.based.based {
                 "Based Ethrex Monitor".to_string()
             } else {
@@ -74,161 +173,137 @@ impl EthrexMonitor {
             should_quit: false,
             tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
-            global_chain_status: GlobalChainStatusTable::new(
-                &eth_client,
-                cfg,
-                &store,
-                &rollup_store,
-            )
-            .await,
-            logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
-            mempool: MempoolTable::new(&rollup_client).await,
-            batches_table: BatchesTable::new(
-                cfg.l1_committer.on_chain_proposer_address,
-                &eth_client,
-                &rollup_store,
-            )
-            .await?,
-            blocks_table: BlocksTable::new(&store).await?,
-            l1_to_l2_messages: L1ToL2MessagesTable::new(
-                cfg.l1_watcher.bridge_address,
-                &eth_client,
-                &store,
-            )
-            .await?,
-            l2_to_l1_messages: L2ToL1MessagesTable::new(
-                cfg.l1_watcher.bridge_address,
-                &eth_client,
-                &rollup_client,
-            )
-            .await?,
+            widget_state,
             eth_client,
             rollup_client,
             store,
             rollup_store,
         })
     }
+}
 
-    pub async fn start(mut self) -> Result<(), MonitorError> {
-        // setup terminal
-        enable_raw_mode().map_err(MonitorError::Io)?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io)?;
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend).map_err(MonitorError::Io)?;
+pub async fn start_monitor(state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
+    // setup terminal
+    enable_raw_mode().map_err(MonitorError::Io)?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).map_err(MonitorError::Io)?;
 
-        let app_result = self.run(&mut terminal).await;
+    let app_result = run(&mut terminal, state).await;
 
-        // restore terminal
-        disable_raw_mode().map_err(MonitorError::Io)?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )
-        .map_err(MonitorError::Io)?;
-        terminal.show_cursor().map_err(MonitorError::Io)?;
+    // restore terminal
+    disable_raw_mode().map_err(MonitorError::Io)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .map_err(MonitorError::Io)?;
+    terminal.show_cursor().map_err(MonitorError::Io)?;
 
-        let _ = app_result.inspect_err(|err| {
-            eprintln!("Monitor error: {err}");
-        });
+    let _ = app_result.inspect_err(|err| {
+        eprintln!("Monitor error: {err}");
+    });
 
-        Ok(())
-    }
+    Ok(())
+}
 
-    async fn run<B>(&mut self, terminal: &mut Terminal<B>) -> Result<(), MonitorError>
-    where
-        B: Backend,
-    {
-        let mut last_tick = Instant::now();
-        loop {
-            self.draw(terminal)?;
+async fn run<B>(terminal: &mut Terminal<B>, state: &mut EthrexMonitorState) -> Result<(), MonitorError>
+where
+    B: Backend,
+{
+    let mut last_tick = Instant::now();
+    loop {
+        draw(terminal, state)?;
 
-            let timeout = Duration::from_millis(self.tick_rate).saturating_sub(last_tick.elapsed());
-            if !event::poll(timeout)? {
-                self.on_tick().await?;
-                last_tick = Instant::now();
-                continue;
-            }
-            let event = event::read()?;
-            if let Some(key) = event.as_key_press_event() {
-                self.on_key_event(key.code);
-            }
-            if let Some(mouse) = event.as_mouse_event() {
-                self.on_mouse_event(mouse.kind);
-            }
-            if self.should_quit {
-                return Ok(());
-            }
+        let timeout = Duration::from_millis(state.tick_rate).saturating_sub(last_tick.elapsed());
+        if !event::poll(timeout)? {
+            on_tick(state).await?;
+            last_tick = Instant::now();
+            continue;
         }
-    }
-
-    fn draw(&mut self, terminal: &mut Terminal<impl Backend>) -> Result<(), MonitorError> {
-        terminal.draw(|frame| {
-            frame.render_widget(self, frame.area());
-        })?;
-        Ok(())
-    }
-
-    pub fn on_key_event(&mut self, code: KeyCode) {
-        match (&self.tabs, code) {
-            (TabsState::Logs, KeyCode::Left) => self.logger.transition(TuiWidgetEvent::LeftKey),
-            (TabsState::Logs, KeyCode::Down) => self.logger.transition(TuiWidgetEvent::DownKey),
-            (TabsState::Logs, KeyCode::Up) => self.logger.transition(TuiWidgetEvent::UpKey),
-            (TabsState::Logs, KeyCode::Right) => self.logger.transition(TuiWidgetEvent::RightKey),
-            (TabsState::Logs, KeyCode::Char('h')) => {
-                self.logger.transition(TuiWidgetEvent::HideKey)
-            }
-            (TabsState::Logs, KeyCode::Char('f')) => {
-                self.logger.transition(TuiWidgetEvent::FocusKey)
-            }
-            (TabsState::Logs, KeyCode::Char('+')) => {
-                self.logger.transition(TuiWidgetEvent::PlusKey)
-            }
-            (TabsState::Logs, KeyCode::Char('-')) => {
-                self.logger.transition(TuiWidgetEvent::MinusKey)
-            }
-            (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_quit = true,
-            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
-            _ => {}
+        let event = event::read()?;
+        if let Some(key) = event.as_key_press_event() {
+            on_key_event(key.code,state);
         }
-    }
-
-    pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
-        match (&self.tabs, kind) {
-            (TabsState::Logs, MouseEventKind::ScrollDown) => {
-                self.logger.transition(TuiWidgetEvent::NextPageKey)
-            }
-            (TabsState::Logs, MouseEventKind::ScrollUp) => {
-                self.logger.transition(TuiWidgetEvent::PrevPageKey)
-            }
-            _ => {}
+        if let Some(mouse) = event.as_mouse_event() {
+            on_mouse_event(mouse.kind,state);
         }
-    }
-
-    pub async fn on_tick(&mut self) -> Result<(), MonitorError> {
-        self.node_status.on_tick(&self.store).await;
-        self.global_chain_status
-            .on_tick(&self.eth_client, &self.store, &self.rollup_store)
-            .await;
-        self.mempool.on_tick(&self.rollup_client).await;
-        self.batches_table
-            .on_tick(&self.eth_client, &self.rollup_store)
-            .await?;
-        self.blocks_table.on_tick(&self.store).await?;
-        self.l1_to_l2_messages
-            .on_tick(&self.eth_client, &self.store)
-            .await?;
-        self.l2_to_l1_messages
-            .on_tick(&self.eth_client, &self.rollup_client)
-            .await?;
-
-        Ok(())
+        if state.should_quit {
+            return Ok(());
+        }
     }
 }
 
-impl Widget for &mut EthrexMonitor {
+fn draw(terminal: &mut Terminal<impl Backend>, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
+    terminal.draw(|frame| {
+        frame.render_widget(state, frame.area());
+    })?;
+    Ok(())
+}
+
+pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) { // todo remove unwraps
+    let logger = &state.widget_state.lock().unwrap().logger;
+    match (&state.tabs, code) {
+        (TabsState::Logs, KeyCode::Left) => logger.transition(TuiWidgetEvent::LeftKey),
+        (TabsState::Logs, KeyCode::Down) => logger.transition(TuiWidgetEvent::DownKey),
+        (TabsState::Logs, KeyCode::Up) => logger.transition(TuiWidgetEvent::UpKey),
+        (TabsState::Logs, KeyCode::Right) => logger.transition(TuiWidgetEvent::RightKey),
+        (TabsState::Logs, KeyCode::Char('h')) => {
+            logger.transition(TuiWidgetEvent::HideKey)
+        }
+        (TabsState::Logs, KeyCode::Char('f')) => {
+            logger.transition(TuiWidgetEvent::FocusKey)
+        }
+        (TabsState::Logs, KeyCode::Char('+')) => {
+            logger.transition(TuiWidgetEvent::PlusKey)
+        }
+        (TabsState::Logs, KeyCode::Char('-')) => {
+            logger.transition(TuiWidgetEvent::MinusKey)
+        }
+        (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => state.should_quit = true,
+        (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => state.tabs.next(),
+        _ => {}
+    }
+}
+
+pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorState) {
+    let logger = &state.widget_state.lock().unwrap().logger;
+    match (&state.tabs, kind) {
+        (TabsState::Logs, MouseEventKind::ScrollDown) => {
+            logger.transition(TuiWidgetEvent::NextPageKey)
+        }
+        (TabsState::Logs, MouseEventKind::ScrollUp) => {
+            logger.transition(TuiWidgetEvent::PrevPageKey)
+        }
+        _ => {}
+    }
+}
+
+pub async fn on_tick(state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
+    let widget_state = &mut state.widget_state.lock().unwrap();
+    widget_state.node_status.on_tick(&state.store).await;
+    widget_state.global_chain_status
+        .on_tick(&state.eth_client, &state.store, &state.rollup_store)
+        .await;
+    widget_state.mempool.on_tick(&state.rollup_client).await;
+    widget_state.batches_table
+        .on_tick(&state.eth_client, &state.rollup_store)
+        .await?;
+    widget_state.blocks_table.on_tick(&state.store).await?;
+    widget_state.l1_to_l2_messages
+        .on_tick(&state.eth_client, &state.store)
+        .await?;
+    widget_state.l2_to_l1_messages
+        .on_tick(&state.eth_client, &state.rollup_client)
+        .await?;
+
+    Ok(())
+}
+
+
+impl Widget for &mut EthrexMonitorState {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
@@ -248,6 +323,8 @@ impl Widget for &mut EthrexMonitor {
             .select(self.tabs.clone());
 
         tabs.render(chunks[0], buf);
+
+        let mut widget_state = self.widget_state.lock().unwrap();
 
         match self.tabs {
             TabsState::Overview => {
@@ -281,35 +358,35 @@ impl Widget for &mut EthrexMonitor {
 
                         let chunks = Layout::horizontal(constraints).split(chunks[1]);
 
-                        let mut node_status_state = self.node_status.state.clone();
-                        self.node_status
+                        let mut node_status_state = widget_state.node_status.state.clone();
+                        widget_state.node_status
                             .render(chunks[0], buf, &mut node_status_state);
 
-                        let mut global_chain_status_state = self.global_chain_status.state.clone();
-                        self.global_chain_status.render(
+                        let mut global_chain_status_state = widget_state.global_chain_status.state.clone();
+                        widget_state.global_chain_status.render(
                             chunks[1],
                             buf,
                             &mut global_chain_status_state,
                         );
                     }
                 }
-                let mut batches_table_state = self.batches_table.state.clone();
-                self.batches_table
+                let mut batches_table_state = widget_state.batches_table.state.clone();
+                widget_state.batches_table
                     .render(chunks[1], buf, &mut batches_table_state);
 
-                let mut blocks_table_state = self.blocks_table.state.clone();
-                self.blocks_table
+                let mut blocks_table_state = widget_state.blocks_table.state.clone();
+                widget_state.blocks_table
                     .render(chunks[2], buf, &mut blocks_table_state);
 
-                let mut mempool_state = self.mempool.state.clone();
-                self.mempool.render(chunks[3], buf, &mut mempool_state);
+                let mut mempool_state = widget_state.mempool.state.clone();
+                widget_state.mempool.render(chunks[3], buf, &mut mempool_state);
 
-                let mut l1_to_l2_messages_state = self.l1_to_l2_messages.state.clone();
-                self.l1_to_l2_messages
+                let mut l1_to_l2_messages_state = widget_state.l1_to_l2_messages.state.clone();
+                widget_state.l1_to_l2_messages
                     .render(chunks[4], buf, &mut l1_to_l2_messages_state);
 
-                let mut l2_to_l1_messages_state = self.l2_to_l1_messages.state.clone();
-                self.l2_to_l1_messages
+                let mut l2_to_l1_messages_state = widget_state.l2_to_l1_messages.state.clone();
+                widget_state.l2_to_l1_messages
                     .render(chunks[5], buf, &mut l2_to_l1_messages_state);
 
                 let help = Line::raw("tab: switch tab |  Q: quit").centered();
@@ -332,7 +409,7 @@ impl Widget for &mut EthrexMonitor {
                     .output_target(true)
                     .output_file(false)
                     .output_line(false)
-                    .state(&self.logger);
+                    .state(&widget_state.logger);
 
                 log_widget.render(chunks[0], buf);
 
