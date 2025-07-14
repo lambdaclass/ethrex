@@ -116,7 +116,7 @@ async fn run_with_levm(
 ) -> Result<(), EFTestRunnerError> {
     let levm_run_time = std::time::Instant::now();
 
-    println!("{}", report::progress(reports, levm_run_time.elapsed()));
+    print!("{}", report::progress(reports, levm_run_time.elapsed()));
 
     for test in ef_tests.iter() {
         let is_not_specific = !opts.specific_tests.is_empty()
@@ -147,16 +147,16 @@ async fn run_with_levm(
             }
         };
         reports.push(ef_test_report);
-        println!("{}", report::progress(reports, levm_run_time.elapsed()));
+        print!("{}", report::progress(reports, levm_run_time.elapsed()));
     }
-    println!("{}", report::progress(reports, levm_run_time.elapsed()));
+    print!("{}", report::progress(reports, levm_run_time.elapsed()));
 
     if opts.summary {
         report::write_summary_for_slack(reports)?;
         report::write_summary_for_github(reports)?;
     }
 
-    println!("{}", "Loading summary...".to_owned());
+    println!("{}", "\nLoading summary...".to_owned());
     println!("{}", report::summary_for_shell(reports));
 
     Ok(())
@@ -221,8 +221,8 @@ async fn re_run_with_revm(
         if opts.verbose {
             println!("Running test: {:?}", failed_test_report.name);
         }
-        println!(
-            "{} {}/{failed_tests} - {}",
+        print!(
+            "\r{} {}/{failed_tests} - {}",
             "Re-running failed tests with REVM".bold(),
             idx + 1,
             format_duration_as_mm_ss(revm_run_time.elapsed())
@@ -272,7 +272,7 @@ async fn re_run_with_revm(
         }
     }
     println!(
-        "Re-ran failed tests with REVM in {}",
+        "\nRe-ran failed tests with REVM in {}",
         format_duration_as_mm_ss(revm_run_time.elapsed())
     );
     Ok(())

@@ -27,7 +27,7 @@ pub type TestVector = (usize, usize, usize);
 
 pub fn progress(reports: &[EFTestReport], time: Duration) -> String {
     format!(
-        "{}: {} {} {} - {}",
+        "\r{}: {} {} {} - {}",
         "Ethereum Foundation Tests".bold(),
         format!(
             "{} passed",
@@ -457,9 +457,15 @@ impl EFTestReport {
         EFTestReport {
             name,
             dir,
-            description: info.description.unwrap_or("".to_string()),
-            url: info.url.unwrap_or("".to_string()),
-            reference_spec: info.reference_spec.unwrap_or("".to_string()),
+            description: info
+                .description
+                .unwrap_or("No description provided by this tests".to_string()),
+            url: info
+                .url
+                .unwrap_or("No url provided by this tests".to_string()),
+            reference_spec: info
+                .reference_spec
+                .unwrap_or("No reference spec provided by this tests".to_string()),
             test_hash,
             re_run_report: None,
             fork_results: HashMap::new(),
