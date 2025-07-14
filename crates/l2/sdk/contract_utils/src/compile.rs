@@ -67,7 +67,6 @@ pub fn compile_contract(
     Ok(())
 }
 
-/// Optional remapping helper
 fn apply_remappings(
     cmd: &mut Command,
     remappings: Option<&[(&str, &Path)]>,

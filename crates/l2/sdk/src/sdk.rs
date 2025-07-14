@@ -386,6 +386,7 @@ pub async fn deploy_contract(
     .await
 }
 
+/// Same as `deploy_contract`, but takes the bytecode directly instead of a path.
 pub async fn deploy_contract_from_bytecode(
     constructor_args: &[u8],
     bytecode: &[u8],
