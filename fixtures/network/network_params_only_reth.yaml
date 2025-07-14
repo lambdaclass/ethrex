@@ -13,11 +13,15 @@ participants:
       - "--txpool.basefee-max-count=50000"
       # Increase max number in the blobpool
       - "--txpool.blobpool-max-count=50000"
-      # (Optional) Raise memory limits in MB
+      # Raise memory limits in MB
       - "--txpool.pending-max-size=1024"
       - "--txpool.queued-max-size=1024"
       - "--txpool.basefee-max-size=1024"
       - "--txpool.blobpool-max-size=1024"
+      # Increase gas limit and max pending transactions
+      - "--txpool.gas-limit=600000000"
+      - "--txpool.max-pending-txns=50000"
+      - "--txpool.max-new-txns=50000"
 
 ethereum_metrics_exporter_enabled: true
 
