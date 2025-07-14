@@ -7,8 +7,6 @@ pub enum DeployerError {
     FailedToGetStringFromPath,
     #[error("Deployer setup error: {0} not set")]
     ConfigValueNotSet(String),
-    #[error("Deployer dependency error: {0}")]
-    DependencyError(#[from] GitError),
     #[error("Deployer EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
