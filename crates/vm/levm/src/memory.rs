@@ -244,14 +244,15 @@ pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Res
     let cost = if new_memory_size <= current_memory_size {
         0
     } else {
-        cost(new_memory_size)?
-            .checked_sub(cost(current_memory_size)?)
-            .ok_or(InternalError::Underflow)?
+        // We already know new_memory_size > current_memory_size,
+        // and cost(x) > cost(y) where x > y, so cost should not underflow.
+        cost(new_memory_size)?.wrapping_sub(cost(current_memory_size)?)
     };
     Ok(cost)
 }
 
 /// The total cost for a given memory size.
+#[inline]
 fn cost(memory_size: usize) -> Result<u64, VMError> {
     let memory_size_word = memory_size
         .checked_add(
