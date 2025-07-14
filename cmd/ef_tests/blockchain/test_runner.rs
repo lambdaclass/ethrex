@@ -43,7 +43,12 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let mut blockchain = Blockchain::new(evm, store.clone(), decoded_block.header.hash());
+    let mut blockchain = Blockchain::new(evm, store.clone());
+
+    let _ = blockchain
+        .start_new_vm_instance(genesis_block_header.clone())
+        .await;
+
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
