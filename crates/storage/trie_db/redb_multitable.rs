@@ -25,11 +25,6 @@ impl RedBMultiTableTrieDB {
 
 impl TrieDB for RedBMultiTableTrieDB {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        tracing::debug!(
-            hashed_address = hex::encode(self.fixed_key),
-            node_hash = hex::encode(node_hash_to_fixed_size(key)),
-            "[QUERYING STORAGE TRIE NODE]",
-        );
         let read_txn = self
             .db
             .begin_read()
@@ -52,13 +47,11 @@ impl TrieDB for RedBMultiTableTrieDB {
             );
         }
 
-        let mut ret_flattened = ret.concat();
+        let ret_flattened = ret.concat();
 
         if ret.is_empty() {
             Ok(None)
         } else {
-            // Remove the last 8 bytes that contain the block number
-            ret_flattened.truncate(ret_flattened.len() - 8);
             Ok(Some(ret_flattened))
         }
     }
@@ -72,9 +65,7 @@ impl TrieDB for RedBMultiTableTrieDB {
             let mut table = write_txn
                 .open_multimap_table(STORAGE_TRIE_NODES_TABLE)
                 .map_err(|e| TrieError::DbError(e.into()))?;
-            for (key, mut value) in key_values {
-                // Add 8 extra bytes to store the block number
-                value.extend_from_slice(&[0u8; 8]);
+            for (key, value) in key_values {
                 table
                     .insert((self.fixed_key, node_hash_to_fixed_size(key)), &*value)
                     .map_err(|e| TrieError::DbError(e.into()))?;

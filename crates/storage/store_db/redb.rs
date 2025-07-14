@@ -764,7 +764,7 @@ impl StoreEngine for RedBStore {
                 let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
                 let mut state_ref_counters = write_txn.open_table(STATE_TRIE_REF_COUNTERS_TABLE)?;
 
-                for (node_hash, mut node_data) in update_batch.account_updates {
+                for (node_hash, node_data) in update_batch.account_updates {
                     tracing::debug!(
                         node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
                         parent_block_number = parent_block.block_number,
@@ -773,7 +773,7 @@ impl StoreEngine for RedBStore {
                         final_block_hash = hex::encode(final_block.block_hash),
                         "[WRITING STATE TRIE NODE]",
                     );
-                    node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+
                     state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
 
                     // Increment reference counter for state node
@@ -810,7 +810,7 @@ impl StoreEngine for RedBStore {
 
                 for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
                     let key_address: [u8; 32] = hashed_address.into();
-                    for (node_hash, mut node_data) in nodes {
+                    for (node_hash, node_data) in nodes {
                         let key_node = node_hash_to_fixed_size(node_hash);
 
                         tracing::debug!(
@@ -823,7 +823,6 @@ impl StoreEngine for RedBStore {
                             "[WRITING STORAGE TRIE NODE]",
                         );
 
-                        node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
                         addr_store.remove_all((key_address, key_node))?;
                         addr_store.insert((key_address, key_node), &*node_data)?;
 
@@ -949,21 +948,22 @@ impl StoreEngine for RedBStore {
             for (block, node_hash) in entries_to_process {
                 let k_delete = NodeHash::Hashed(node_hash.into());
 
-                // Get current reference count first
                 let current_count = state_ref_counters
                     .get(k_delete.as_ref())?
                     .map(|v| v.value())
                     .unwrap_or(0);
 
+                // Check if the node still has references
+                // If current_count is 0, the node was already deleted or never had references
+                // If current_count is 1, the node has one reference, so we can delete it
+                // If current_count is greater than 1, the node has more than one reference, so we
+                // just decrement the reference count
                 if current_count > 1 {
-                    // Still has references, just decrement
                     state_ref_counters.insert(k_delete.as_ref(), current_count - 1)?;
                 } else if current_count == 1 {
-                    // No more references, mark for deletion
                     state_ref_counters.remove(k_delete.as_ref())?;
                     nodes_to_delete.push((block, node_hash));
                 }
-                // If current_count is 0, the node was already deleted or never had references
             }
 
             // Delete nodes that have no more references
@@ -1032,21 +1032,22 @@ impl StoreEngine for RedBStore {
             for (block, addr_hash, node_hash) in storage_entries_to_process {
                 let storage_key = (addr_hash, node_hash);
 
-                // Get current reference count first
                 let current_count = storage_ref_counters
                     .get(storage_key)?
                     .map(|v| v.value())
                     .unwrap_or(0);
 
+                // Check if the node still has references
+                // If current_count is 0, the node was already deleted or never had references
+                // If current_count is 1, the node has one reference, so we can delete it
+                // If current_count is greater than 1, the node has more than one reference, so we
+                // just decrement the reference count
                 if current_count > 1 {
-                    // Still has references, just decrement
                     storage_ref_counters.insert(storage_key, current_count - 1)?;
                 } else if current_count == 1 {
-                    // No more references, mark for deletion
                     storage_ref_counters.remove(storage_key)?;
                     storage_nodes_to_delete.push((block, addr_hash, node_hash));
                 }
-                // If current_count is 0, the node was already deleted or never had references
             }
 
             // Delete nodes that have no more references
