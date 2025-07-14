@@ -1,4 +1,7 @@
 { gitRev }:
+assert (builtins.stringLength gitRev == 7)
+  || throw "gitRev must be exactly 7 characters use (git rev-parse --short=7 HEAD)";
+
 let
   pkgs = import <nixpkgs> { };
   fenix = pkgs.callPackage (pkgs.fetchFromGitHub {
