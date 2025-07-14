@@ -4,13 +4,27 @@ participants:
     cl_image: sigp/lighthouse:v7.0.1
     validator_count: 32
     count: 3
+    el_extra_params:
+      # Increase max number of pending transactions
+      - "--txpool.pending-max-count=30000"
+      # Increase max number of queued transactions
+      - "--txpool.queued-max-count=30000"
+      # Increase max number in the basefee subpool
+      - "--txpool.basefee-max-count=30000"
+      # Increase max number in the blobpool
+      - "--txpool.blobpool-max-count=30000"
+      # (Optional) Raise memory limits in MB
+      - "--txpool.pending-max-size=500"
+      - "--txpool.queued-max-size=500"
+      - "--txpool.basefee-max-size=500"
+      - "--txpool.blobpool-max-size=500"
 
 ethereum_metrics_exporter_enabled: true
 
 network_params:
   # The address of the staking contract address on the Eth1 chain
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
-  genesis_gaslimit: 300000000 # 300M gas limit for genesis block
+  genesis_gaslimit: 600000000 # 600M gas limit for genesis block
   electra_fork_epoch: 0
 
 additional_services:
@@ -22,4 +36,5 @@ spamoor_params:
   spammers:
     - scenario: eoatx
       config:
-        throughput: 10000
+        throughput: 25000
+        max_pending: 30000
