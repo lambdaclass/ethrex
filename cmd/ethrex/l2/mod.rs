@@ -1,4 +1,6 @@
+mod deployer;
 mod initializers;
+mod system_contracts_updater;
 
 pub mod command;
 pub mod options;
