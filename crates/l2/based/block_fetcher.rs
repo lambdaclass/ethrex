@@ -10,6 +10,7 @@ use ethrex_common::{
 use ethrex_l2_common::{
     l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
     privileged_transactions::compute_privileged_transactions_hash,
+    sequencer_state::{SequencerState, SequencerStatus},
     state_diff::prepare_state_diff,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -26,7 +27,6 @@ use tracing::{debug, error, info};
 
 use crate::{
     SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{l1_committer::generate_blobs_bundle, utils::node_is_up_to_date},
 };
 
@@ -168,7 +168,8 @@ impl GenServer for BlockFetcher {
 }
 
 async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
-    while !node_is_up_to_date::<BlockFetcherError>(
+    // Since we call fetch every `fetch_interval_ms`, we don't need a loop until is up to date.
+    if !node_is_up_to_date::<BlockFetcherError>(
         &state.eth_client,
         state.on_chain_proposer_address,
         &state.rollup_store,
@@ -177,15 +178,8 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
     {
         info!("Node is not up to date. Syncing via L1");
 
-        let last_l2_block_number_known = state.store.get_latest_block_number().await?;
-
-        let last_l2_batch_number_known = state
-            .rollup_store
-            .get_batch_number_by_block(last_l2_block_number_known)
-            .await?
-            .ok_or(BlockFetcherError::InternalError(format!(
-                "Failed to get last batch number known for block {last_l2_block_number_known}"
-            )))?;
+        let last_l2_batch_number_known = state.rollup_store.get_latest_batch_number().await?;
+        dbg!(last_l2_batch_number_known);
 
         let last_l2_committed_batch_number = state
             .eth_client
@@ -208,7 +202,8 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
         process_verified_logs(batch_verified_logs, state).await?;
     }
 
-    info!("Node is up to date");
+    let last_l2_batch_number_known = state.rollup_store.get_latest_batch_number().await?;
+    info!("Node fetch up to {last_l2_batch_number_known}");
 
     Ok(())
 }

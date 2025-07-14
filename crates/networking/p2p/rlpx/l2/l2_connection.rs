@@ -1,11 +1,12 @@
 use crate::rlpx::connection::server::{broadcast_message, send};
-use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
+use crate::rlpx::l2::messages::{BatchSealed, GetBatchSealedResponse, L2Message, NewBlock};
 use crate::rlpx::utils::{get_pub_key, log_peer_error};
 use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
 use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::Block;
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
@@ -20,18 +21,21 @@ use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL
 pub struct L2ConnectedState {
     pub latest_block_sent: u64,
     pub latest_block_added: u64,
+    pub last_block_broadcasted: u64,
     pub latest_batch_sent: u64,
     pub blocks_on_queue: BTreeMap<u64, Arc<Block>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
+    pub sequencer_state: SequencerState,
 }
 
 #[derive(Debug, Clone)]
 pub struct P2PBasedContext {
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
+    pub sequencer_state: SequencerState,
 }
 
 #[derive(Debug, Clone)]
@@ -63,19 +67,37 @@ impl L2ConnState {
         }
     }
 
-    pub(crate) fn set_established(&mut self) -> Result<(), RLPxError> {
+    pub(crate) async fn set_established(&mut self) -> Result<(), RLPxError> {
         match self {
             Self::Unsupported => Err(RLPxError::IncompatibleProtocol),
             Self::Disconnected(ctxt) => {
+                let latest_batch_on_store = ctxt
+                    .store_rollup
+                    .get_latest_batch_number()
+                    .await
+                    .unwrap_or(0);
+                // Get the latest block number from the latest batch, or default to 0
+                let latest_block_on_store = match ctxt
+                    .store_rollup
+                    .get_block_numbers_by_batch(latest_batch_on_store)
+                    .await?
+                {
+                    Some(block_numbers) if !block_numbers.is_empty() => {
+                        *block_numbers.last().expect("Batch cannot be empty")
+                    }
+                    _ => 0,
+                };
                 let state = L2ConnectedState {
-                    latest_block_sent: 0,
-                    latest_block_added: 0,
+                    latest_block_sent: latest_block_on_store,
+                    latest_block_added: latest_block_on_store,
+                    last_block_broadcasted: latest_block_on_store,
                     blocks_on_queue: BTreeMap::new(),
-                    latest_batch_sent: 0,
+                    latest_batch_sent: latest_batch_on_store,
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
                     next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
                     next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
+                    sequencer_state: ctxt.sequencer_state.clone(),
                 };
                 *self = L2ConnState::Connected(state);
                 Ok(())
@@ -99,14 +121,84 @@ pub(crate) async fn handle_based_capability_message(
         L2Message::BatchSealed(ref batch_sealed_msg) => {
             if should_process_batch_sealed(established, batch_sealed_msg).await? {
                 process_batch_sealed(established, batch_sealed_msg).await?;
+                let new_latest_batch_sent = batch_sealed_msg.batch.number;
                 broadcast_message(established, msg.into())?;
+                established
+                    .l2_state
+                    .connection_state_mut()?
+                    .latest_batch_sent = new_latest_batch_sent;
             }
         }
         L2Message::NewBlock(ref new_block_msg) => {
-            if should_process_new_block(established, new_block_msg).await? {
-                process_new_block(established, new_block_msg).await?;
-                broadcast_message(established, msg.into())?;
+            if let SequencerStatus::Following = established
+                .l2_state
+                .connection_state()?
+                .sequencer_state
+                .status()
+                .await
+            {
+                if should_process_new_block(established, new_block_msg).await? {
+                    debug!(
+                        "adding block to queue: {}",
+                        new_block_msg.block.header.number
+                    );
+                    established
+                        .l2_state
+                        .connection_state_mut()?
+                        .blocks_on_queue
+                        .entry(new_block_msg.block.header.number)
+                        .or_insert_with(|| new_block_msg.block.clone());
+                    if new_block_msg.block.header.number
+                        > established
+                            .l2_state
+                            .connection_state()?
+                            .last_block_broadcasted
+                    {
+                        broadcast_message(
+                            established,
+                            Message::L2(L2Message::NewBlock(new_block_msg.clone())),
+                        )?;
+                        established
+                            .l2_state
+                            .connection_state_mut()?
+                            .last_block_broadcasted = new_block_msg.block.header.number;
+                    }
+                }
+                // If the sequencer is following, we process the new block
+                // to keep the state updated.
+                process_blocks_on_queue(established).await?;
             }
+        }
+        L2Message::GetBatchSealed(_req) => {
+            let l2_state = established.l2_state.connection_state()?;
+            if let SequencerStatus::Syncing = l2_state.sequencer_state.status().await {
+                // If the sequencer is syncing, we won't send any batches
+                let response = GetBatchSealedResponse {
+                    batches: vec![], // empty response
+                                     // for now skipping signatures
+                };
+                send(established, response.into()).await?;
+                return Ok(());
+            }
+            let mut batches = vec![];
+            for batch_number in _req.first_batch..=_req.last_batch {
+                let Some(batch) = l2_state.store_rollup.get_batch(batch_number).await? else {
+                    return Err(RLPxError::InternalError(
+                        "The node is not syncing and was asked for a batch it does not have"
+                            .to_string(),
+                    ));
+                };
+                batches.push(batch);
+            }
+
+            let response = GetBatchSealedResponse {
+                batches,
+                // for now skipping signatures
+            };
+            send(established, response.into()).await?;
+        }
+        L2Message::GetBatchSealedResponse(_req) => {
+            return Err(RLPxError::InternalError("Unexpected GetBatchSealedResponse message received, this message should had been sent to the backend".to_string()));
         }
     }
     Ok(())
@@ -114,6 +206,14 @@ pub(crate) async fn handle_based_capability_message(
 
 pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), RLPxError> {
     let latest_block_number = established.storage.get_latest_block_number().await?;
+    if !established.blockchain.is_synced() {
+        // We do this since we are syncing, we don't want to broadcast old blocks
+        established
+            .l2_state
+            .connection_state_mut()?
+            .latest_block_sent = latest_block_number;
+        return Ok(());
+    }
     let latest_block_sent = established
         .l2_state
         .connection_state_mut()?
@@ -188,13 +288,12 @@ async fn should_process_new_block(
         debug!("Not processing new block, blockchain is not synced");
         return Ok(false);
     }
-    if l2_state.latest_block_added >= msg.block.header.number
-        || l2_state
-            .blocks_on_queue
-            .contains_key(&msg.block.header.number)
+    if l2_state
+        .blocks_on_queue
+        .contains_key(&msg.block.header.number)
     {
         debug!(
-            "Block {} received by peer already stored, ignoring it",
+            "Block {} received already on queue, ignoring it",
             msg.block.header.number
         );
         return Ok(false);
@@ -216,6 +315,7 @@ async fn should_process_new_block(
     })?;
 
     if !validate_signature(recovered_lead_sequencer) {
+        l2_state.blocks_on_queue.remove(&msg.block.header.number);
         return Ok(false);
     }
     let mut signature = [0u8; 68];
@@ -250,11 +350,16 @@ async fn should_process_batch_sealed(
         return Ok(false);
     }
     if l2_state.latest_block_added < msg.batch.last_block {
-        debug!(
-            "Not processing batch {} because the last block {} is not added yet",
-            msg.batch.number, msg.batch.last_block
-        );
-        return Ok(false);
+        let latest_block_in_storage = established.storage.get_latest_block_number().await?;
+        l2_state.latest_block_added = latest_block_in_storage;
+
+        if l2_state.latest_block_added < msg.batch.last_block {
+            debug!(
+                "Not processing batch {} because the last block {} is not added yet",
+                msg.batch.number, msg.batch.last_block
+            );
+            return Ok(false);
+        }
     }
 
     let hash = batch_hash(&msg.batch);
@@ -282,14 +387,19 @@ async fn should_process_batch_sealed(
     Ok(true)
 }
 
-async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Result<(), RLPxError> {
+async fn process_blocks_on_queue(established: &mut Established) -> Result<(), RLPxError> {
     let l2_state = established.l2_state.connection_state_mut()?;
-    l2_state
-        .blocks_on_queue
-        .entry(msg.block.header.number)
-        .or_insert_with(|| msg.block.clone());
+    if !established.blockchain.is_synced() {
+        let latest_block_in_storage = established.storage.get_latest_block_number().await?;
+        l2_state.latest_block_added = latest_block_in_storage;
+        return Ok(());
+    }
 
     let mut next_block_to_add = l2_state.latest_block_added + 1;
+    let latest_batch_number = l2_state.store_rollup.get_latest_batch_number().await?;
+    if let Some(latest_batch) = l2_state.store_rollup.get_batch(latest_batch_number).await? {
+        next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
+    }
     while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
         // This check is necessary if a connection to another peer already applied the block but this connection
         // did not register that update.
@@ -334,6 +444,20 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
 }
 
 pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(), RLPxError> {
+    if !established.blockchain.is_synced() {
+        // We do this since we are syncing, we don't want to broadcast old batches
+        let latest_batch_number = established
+            .l2_state
+            .connection_state()?
+            .store_rollup
+            .get_latest_batch_number()
+            .await?;
+        established
+            .l2_state
+            .connection_state_mut()?
+            .latest_batch_sent = latest_batch_number;
+        return Ok(());
+    }
     let batch_sealed_msg = {
         let l2_state = established.l2_state.connection_state_mut()?;
         let next_batch_to_send = l2_state.latest_batch_sent + 1;

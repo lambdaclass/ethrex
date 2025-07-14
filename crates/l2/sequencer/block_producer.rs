@@ -4,6 +4,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{BlockProducerConfig, SequencerConfig};
 use ethrex_blockchain::{
     Blockchain,
     fork_choice::apply_fork_choice,
@@ -11,6 +12,7 @@ use ethrex_blockchain::{
     validate_block,
 };
 use ethrex_common::Address;
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -21,11 +23,6 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info};
-
-use crate::{
-    BlockProducerConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-};
 
 use super::errors::BlockProducerError;
 

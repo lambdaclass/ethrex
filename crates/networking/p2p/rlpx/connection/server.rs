@@ -45,6 +45,7 @@ use crate::{
         l2::{
             self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
             l2_connection::{self, L2Cast, L2ConnState, handle_based_capability_message},
+            messages::L2Message,
         },
         message::Message,
         p2p::{
@@ -499,6 +500,12 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
             log_peer_debug(&state.node, "Peer already connected, don't replace it");
         }
+        RLPxError::BlockchainError(chain_err) => {
+            log_peer_error(
+                &state.node,
+                &format!("Got chain err, peer will not be discarded: {chain_err}"),
+            );
+        }
         _ => {
             let remote_public_key = state.node.public_key;
             log_peer_debug(
@@ -583,7 +590,7 @@ where
                         }
                     }
                     "based" => {
-                        state.l2_state.set_established()?;
+                        state.l2_state.set_established().await?;
                     }
                     _ => {}
                 }
@@ -808,7 +815,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let response = process_trie_nodes_request(req, state.storage.clone())?;
             send(state, Message::TrieNodes(response)).await?
         }
-        Message::L2(req) => {
+        Message::L2(req) if !matches!(req, L2Message::GetBatchSealedResponse(_)) => {
             handle_based_capability_message(state, req).await?;
         }
         // Send response messages to the backend
@@ -818,7 +825,8 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         | message @ Message::TrieNodes(_)
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
-        | message @ Message::Receipts(_) => {
+        | message @ Message::Receipts(_)
+        | message @ Message::L2(L2Message::GetBatchSealedResponse(_)) => {
             state
                 .backend_channel
                 .as_mut()

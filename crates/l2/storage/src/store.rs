@@ -14,17 +14,20 @@ use ethrex_common::{
     types::{AccountUpdate, Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
+use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngineRollup>,
+    storage_lock: Arc<RwLock<()>>,
 }
 
 impl Default for Store {
     fn default() -> Self {
         Self {
             engine: Arc::new(InMemoryStore::new()),
+            storage_lock: Arc::new(RwLock::new(())),
         }
     }
 }
@@ -48,17 +51,21 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStoreRollup::new(_path)?),
+                storage_lock: Arc::new(RwLock::new(())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                storage_lock: Arc::new(RwLock::new(())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStoreRollup::new()?),
+                storage_lock: Arc::new(RwLock::new(())),
             },
             #[cfg(feature = "sql")]
             EngineType::SQL => Self {
                 engine: Arc::new(SQLStore::new(_path)?),
+                storage_lock: Arc::new(RwLock::new(())),
             },
         };
         info!("Started l2 store engine");
@@ -79,7 +86,7 @@ impl Store {
             verify_tx: None,
         })
         .await?;
-        // Sets the lastest sent batch proof to 0
+        // Sets the latest sent batch proof to 0
         self.set_lastest_sent_batch_proof(0).await
     }
 
@@ -167,6 +174,7 @@ impl Store {
     }
 
     pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, RollupStoreError> {
+        let _read_guard = self.storage_lock.read().await;
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
         };
@@ -227,7 +235,15 @@ impl Store {
     }
 
     pub async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
-        self.engine.seal_batch(batch).await
+        // TODO: review this
+        let actual_latest_batch_number = self.get_latest_batch_number().await?;
+        let _write_guard = self.storage_lock.write().await;
+        let batch_number = batch.number;
+        self.engine.seal_batch(batch).await?;
+        if actual_latest_batch_number < batch_number {
+            self.engine.set_latest_batch_number(batch_number).await?;
+        }
+        Ok(())
     }
 
     pub async fn update_operations_count(
@@ -306,6 +322,11 @@ impl Store {
         self.engine.set_lastest_sent_batch_proof(batch_number).await
     }
 
+    /// Returns the latest batch number
+    pub async fn get_latest_batch_number(&self) -> Result<u64, RollupStoreError> {
+        self.engine.get_latest_batch_number().await
+    }
+
     /// Returns the account updates yielded from executing a block
     pub async fn get_account_updates_by_block_number(
         &self,
@@ -350,6 +371,7 @@ impl Store {
 
     /// Reverts to a previous batch, discarding operations in them
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
-        self.engine.revert_to_batch(batch_number).await
+        self.engine.revert_to_batch(batch_number).await?;
+        self.engine.set_latest_batch_number(batch_number).await
     }
 }

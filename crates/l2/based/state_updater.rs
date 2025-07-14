@@ -1,8 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
+use bytes::Bytes;
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
-use ethrex_common::{Address, types::Block};
+use ethrex_common::{Address, H256, U256, types::Block};
+use ethrex_l2_common::{
+    calldata::Value,
+    sequencer_state::{SequencerState, SequencerStatus},
+};
 use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
@@ -13,12 +19,7 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::utils::node_is_up_to_date,
-    utils::parse::hash_to_address,
-};
+use crate::{SequencerConfig, sequencer::utils::node_is_up_to_date, utils::parse::hash_to_address};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateUpdaterError {
@@ -53,6 +54,8 @@ pub struct StateUpdaterState {
     check_interval_ms: u64,
     sequencer_state: SequencerState,
     blockchain: Arc<Blockchain>,
+    sync_manager: SyncManager,
+    latest_block_fetched: U256,
 }
 
 impl StateUpdaterState {
@@ -62,6 +65,7 @@ impl StateUpdaterState {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
+        sync_manager: SyncManager,
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
@@ -75,6 +79,8 @@ impl StateUpdaterState {
             check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
             sequencer_state,
             blockchain,
+            sync_manager,
+            latest_block_fetched: U256::zero(),
         })
     }
 }
@@ -98,6 +104,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
+        sync_manager: SyncManager,
     ) -> Result<(), StateUpdaterError> {
         let state = StateUpdaterState::new(
             sequencer_cfg,
@@ -105,6 +112,7 @@ impl StateUpdater {
             blockchain,
             store,
             rollup_store,
+            sync_manager,
         )?;
         let mut state_updater = StateUpdater::start(state);
         state_updater
@@ -175,6 +183,29 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
         node_is_up_to_date,
         lead_sequencer == state.sequencer_address,
     );
+    if let SequencerStatus::Syncing = new_status {
+        if !state.blockchain.is_synced() {
+            let latest_l1_block = state.eth_client.get_block_number().await?;
+            let latest_batch_committed = state
+                .eth_client
+                .get_last_committed_batch(state.on_chain_proposer_address)
+                .await?;
+            let newest_fcu_head =
+                retrieve_latest_batch_committed_head(state, latest_batch_committed).await?;
+
+            let latest_block = state.store.get_latest_block_number().await?;
+            if let Some(latest_block_header) = state.store.get_block_header(latest_block)? {
+                if latest_block_header.hash() != newest_fcu_head {
+                    state
+                        .sync_manager
+                        .sync_to_head(newest_fcu_head, latest_batch_committed);
+                    if !state.sync_manager.is_active() {
+                        state.latest_block_fetched = latest_l1_block;
+                    }
+                }
+            }
+        }
+    }
 
     if current_state != new_status {
         info!("State transition: {:?} -> {:?}", current_state, new_status);
@@ -235,6 +266,7 @@ fn determine_new_status(
             if is_lead_sequencer && *current_state == SequencerStatus::Syncing {
                 warn!("Node is not up to date but is the lead sequencer, continue syncing.");
             }
+            info!("Node is not up to date, syncing...");
             SequencerStatus::Syncing
         }
     }
@@ -307,5 +339,55 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
     )
     .await
     .map_err(StateUpdaterError::InvalidForkChoice)?;
+
+    state
+        .rollup_store
+        .revert_to_batch(last_l2_committed_batch)
+        .await?;
     Ok(())
+}
+
+async fn retrieve_latest_batch_committed_head(
+    state: &StateUpdaterState,
+    latest_batch_committed: u64,
+) -> Result<H256, StateUpdaterError> {
+    let calldata = encode_calldata(
+        "batchCommitments(uint256)",
+        &[Value::Uint(U256::from(latest_batch_committed))],
+    )?;
+
+    let batch_commitment_hex = state
+        .eth_client
+        .call(
+            state.on_chain_proposer_address,
+            Bytes::from(calldata),
+            Overrides::default(),
+        )
+        .await?;
+
+    let hex_string = batch_commitment_hex
+        .strip_prefix("0x")
+        .unwrap_or(&batch_commitment_hex);
+
+    let decoded_bytes = hex::decode(hex_string).map_err(|e| {
+        StateUpdaterError::CalldataParsingError(format!(
+            "Failed to decode batch commitment hex string: {e}"
+        ))
+    })?;
+
+    // Extract the FCU (Finalized Chain Update) head from the batch commitment data
+    // In based/OnChainProposer.sol, batchCommitments is a struct with the following layout:
+    // - bytes32 newStateRoot                     (bytes 0-32)
+    // - bytes32 stateDiffKZGVersionedHash        (bytes 32-64)
+    // - bytes32 processedDepositLogsRollingHash  (bytes 64-96)
+    // - bytes32 withdrawalsLogsMerkleRoot        (bytes 96-128)
+    // - bytes32 lastBlockHash                    (bytes 128-160)
+    let fcu_head_bytes = decoded_bytes.get(128..160).ok_or_else(|| {
+        StateUpdaterError::CalldataParsingError(format!(
+            "Batch commitment has insufficient length (expected at least 160 bytes, got {})",
+            decoded_bytes.len()
+        ))
+    })?;
+
+    Ok(H256::from_slice(fcu_head_bytes))
 }

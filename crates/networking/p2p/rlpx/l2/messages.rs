@@ -100,17 +100,7 @@ impl RLPxMessage for BatchSealed {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
-            .encode_field(&self.batch.number)
-            .encode_field(&self.batch.first_block)
-            .encode_field(&self.batch.last_block)
-            .encode_field(&self.batch.state_root)
-            .encode_field(&self.batch.privileged_transactions_hash)
-            .encode_field(&self.batch.message_hashes)
-            .encode_field(&self.batch.blobs_bundle.blobs)
-            .encode_field(&self.batch.blobs_bundle.commitments)
-            .encode_field(&self.batch.blobs_bundle.proofs)
-            .encode_optional_field(&self.batch.commit_tx)
-            .encode_optional_field(&self.batch.verify_tx)
+            .encode_field(&*self.batch)
             .encode_field(&self.signature)
             .encode_field(&self.recovery_id)
             .finish();
@@ -122,44 +112,80 @@ impl RLPxMessage for BatchSealed {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (batch_number, decoder) = decoder.decode_field("batch_number")?;
-        let (first_block, decoder) = decoder.decode_field("first_block")?;
-        let (last_block, decoder) = decoder.decode_field("last_block")?;
-        let (state_root, decoder) = decoder.decode_field("state_root")?;
-        let (privileged_transactions_hash, decoder) =
-            decoder.decode_field("privileged_transactions_hash")?;
-        let (message_hashes, decoder) = decoder.decode_field("message_hashes")?;
-        let (blobs, decoder) = decoder.decode_field("blobs")?;
-        let (commitments, decoder) = decoder.decode_field("commitments")?;
-        let (proofs, decoder) = decoder.decode_field("proofs")?;
-        let (commit_tx, decoder) = decoder.decode_optional_field();
-        let (verify_tx, decoder) = decoder.decode_optional_field();
+        let (batch, decoder) = decoder.decode_field("batch")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
         decoder.finish()?;
 
-        let batch = Batch {
-            number: batch_number,
-            first_block,
-            last_block,
-            state_root,
-            privileged_transactions_hash,
-            message_hashes,
-            blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
-                blobs,
-                commitments,
-                proofs,
-            },
-            commit_tx,
-            verify_tx,
-        };
         Ok(BatchSealed::new(batch, signature, recovery_id))
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct GetBatchSealed {
+    pub first_batch: u64,
+    pub last_batch: u64,
+}
+
+impl RLPxMessage for GetBatchSealed {
+    const CODE: u8 = 0x2;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.first_batch)
+            .encode_field(&self.last_batch)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (first_batch, decoder) = decoder.decode_field("first_batch")?;
+        let (last_batch, decoder) = decoder.decode_field("last_batch")?;
+        decoder.finish()?;
+        Ok(GetBatchSealed {
+            first_batch,
+            last_batch,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GetBatchSealedResponse {
+    pub batches: Vec<Batch>,
+}
+impl RLPxMessage for GetBatchSealedResponse {
+    const CODE: u8 = 0x3;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.batches)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (batches, decoder) = decoder.decode_field("batches")?;
+        decoder.finish()?;
+        Ok(GetBatchSealedResponse { batches })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum L2Message {
     BatchSealed(BatchSealed),
     NewBlock(NewBlock),
+    GetBatchSealed(GetBatchSealed),
+    GetBatchSealedResponse(GetBatchSealedResponse),
 }
 
 // I don't really like doing ad-hoc 'from' implementations,
@@ -175,6 +201,18 @@ impl From<BatchSealed> for crate::rlpx::message::Message {
 impl From<NewBlock> for crate::rlpx::message::Message {
     fn from(value: NewBlock) -> Self {
         L2Message::NewBlock(value).into()
+    }
+}
+
+impl From<GetBatchSealed> for crate::rlpx::message::Message {
+    fn from(value: GetBatchSealed) -> Self {
+        L2Message::GetBatchSealed(value).into()
+    }
+}
+
+impl From<GetBatchSealedResponse> for crate::rlpx::message::Message {
+    fn from(value: GetBatchSealedResponse) -> Self {
+        L2Message::GetBatchSealedResponse(value).into()
     }
 }
 

@@ -41,6 +41,7 @@ const SIGNATURES_BY_BLOCK: TableDefinition<[u8; 32], [u8; 68]> =
 const SIGNATURES_BY_BATCH: TableDefinition<u64, [u8; 68]> =
     TableDefinition::new("SignaturesByBatch");
 
+const LATEST_BATCH_NUMBER: TableDefinition<u64, u64> = TableDefinition::new("LatestBatchNumber");
 const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
     TableDefinition::new("AccountUpdatesByBlockNumber");
 
@@ -131,6 +132,7 @@ pub fn init_db() -> Result<Database, RollupStoreError> {
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.open_table(SIGNATURES_BY_BLOCK)?;
     table_creation_txn.open_table(SIGNATURES_BY_BATCH)?;
+    table_creation_txn.open_table(LATEST_BATCH_NUMBER)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
     table_creation_txn.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
     table_creation_txn.open_table(COMMIT_TX_BY_BATCH)?;
@@ -338,6 +340,17 @@ impl StoreEngineRollup for RedBStoreRollup {
             .map(|s| s.value()))
     }
 
+    async fn get_latest_batch_number(&self) -> Result<u64, RollupStoreError> {
+        Ok(self
+            .read(LATEST_BATCH_NUMBER, 0)
+            .await?
+            .map(|b| b.value())
+            .unwrap_or(0))
+    }
+
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.write(LATEST_BATCH_NUMBER, 0, batch_number).await
+    }
     async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,

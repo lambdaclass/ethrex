@@ -6,7 +6,10 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
-use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
+use crate::{
+    peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    sync_manager::SyncManagerBasedContext,
+};
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -15,6 +18,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
+
+use ethrex_storage_rollup::RollupStoreError;
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
@@ -50,6 +55,8 @@ const MAX_CHANNEL_MESSAGES: usize = 500;
 const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
+/// The max number of nodes to fetch in a single request
+const BATCH_SYNC_CHUNK_SIZE: u64 = 64;
 
 lazy_static::lazy_static! {
     // Size of each state trie segment
@@ -123,20 +130,41 @@ impl Syncer {
     }
 
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
-    /// Will perforn either full or snap sync depending on the manager's `snap_mode`
+    /// Will perform either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
     /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
     /// After the sync cycle is complete, the sync mode will be set to full
     /// If the sync fails, no error will be returned but a warning will be emitted
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
-    /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
-    pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
+    /// [WARNING] Sync is currently simplified and will not download bodies + receipts previous to the pivot during snap sync
+    pub async fn start_sync(
+        &mut self,
+        current_head: H256,
+        sync_head: H256,
+        store: Store,
+        based_context: Option<SyncManagerBasedContext>,
+    ) {
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
+
+        if let Some(ctx) = &based_context {
+            let current_batch_number = ctx
+                .rollup_store
+                .get_latest_batch_number()
+                .await
+                .unwrap_or(1);
+            info!(
+                "Syncing from batch {:?} to batch number {:?}",
+                current_batch_number, ctx.next_batch_head
+            );
+        }
         let start_time = Instant::now();
-        match self.sync_cycle(current_head, sync_head, store).await {
+        match self
+            .sync_cycle(current_head, sync_head, store, based_context)
+            .await
+        {
             Ok(()) => {
                 info!(
                     "Sync cycle finished, time elapsed: {} secs",
@@ -156,6 +184,7 @@ impl Syncer {
         mut current_head: H256,
         sync_head: H256,
         store: Store,
+        based_context: Option<SyncManagerBasedContext>,
     ) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         let mut sync_mode = if self.snap_enabled.load(Ordering::Relaxed) {
@@ -214,7 +243,12 @@ impl Syncer {
                 && first_block_header.hash() == search_head
                 && search_head != sync_head
             {
-                // There is no path to the sync head this goes back until it find a common ancerstor
+                // There is no path to the sync head this goes back until it find a common ancestor
+                if store.get_block_by_hash(sync_head).await?.is_some() {
+                    // If we have the sync head in the store, we can stop here
+                    warn!("Sync head found in store, stopping sync");
+                    return Ok(());
+                }
                 warn!("Sync failed to find target block header, going back to the previous parent");
                 search_head = first_block_header.parent_hash;
                 continue;
@@ -301,6 +335,45 @@ impl Syncer {
             if sync_head_found {
                 break;
             };
+        }
+        // Now we sync to the new batch head
+        if let Some(based_context) = based_context {
+            let current_batch_number = based_context
+                .rollup_store
+                .get_latest_batch_number()
+                .await
+                .unwrap_or(1);
+            let next_batch_head = {
+                let new_batch_head = based_context.next_batch_head.lock().await;
+                *new_batch_head
+            };
+            info!(
+                "Syncing batches from {} to {}",
+                current_batch_number, next_batch_head
+            );
+            let mut current = current_batch_number;
+            while current < next_batch_head {
+                let step = current + BATCH_SYNC_CHUNK_SIZE;
+                let target = step.min(next_batch_head);
+
+                let Some(batches) = self.peers.request_batch(current, target).await else {
+                    warn!("Sync failed to request batch seal, aborting");
+                    return Ok(());
+                };
+                for batch in batches {
+                    let batch_number = batch.number;
+                    // TODO: Maybe unnecessary, but we check if the batch is already sealed
+                    if !based_context
+                        .rollup_store
+                        .contains_batch(&batch_number)
+                        .await?
+                    {
+                        based_context.rollup_store.seal_batch(batch).await?;
+                        info!("Sealed batch number {batch_number}");
+                    }
+                }
+                current = target;
+            }
         }
         match sync_mode {
             SyncMode::Snap => {
@@ -459,6 +532,10 @@ impl Syncer {
                 last_valid_hash,
             }) = failure
             {
+                warn!(
+                    "Failed to add block {:?} with the last valid being {:?}",
+                    failed_block_hash, last_valid_hash
+                );
                 store
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
@@ -730,6 +807,8 @@ enum SyncError {
     BodiesNotFound,
     #[error("Range received is invalid")]
     InvalidRangeReceived,
+    #[error(transparent)]
+    Rollup(#[from] RollupStoreError),
 }
 
 impl<T> From<SendError<T>> for SyncError {

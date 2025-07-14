@@ -95,7 +95,7 @@ impl GetBlockHeaders {
                 if let Ok(Some(block_number)) = storage.get_block_number(block_hash).await {
                     block_number
                 } else {
-                    error!("Could not fetch block number for hash {block_hash}");
+                    error!("Could not fetch block number for hash {block_hash:?}");
                     return vec![];
                 }
             }

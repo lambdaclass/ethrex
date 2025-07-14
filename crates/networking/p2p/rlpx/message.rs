@@ -2,6 +2,8 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
+use crate::rlpx::l2::messages::{GetBatchSealed, GetBatchSealedResponse};
+
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -9,8 +11,8 @@ use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
+use super::l2::messages;
 use super::l2::messages::{BatchSealed, L2Message, NewBlock};
-use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -105,6 +107,8 @@ impl Message {
                     match l2_msg {
                         L2Message::NewBlock(_) => NewBlock::CODE,
                         L2Message::BatchSealed(_) => BatchSealed::CODE,
+                        L2Message::GetBatchSealed(_) => GetBatchSealed::CODE,
+                        L2Message::GetBatchSealedResponse(_) => GetBatchSealedResponse::CODE,
                     }
                 }
             }
@@ -169,12 +173,20 @@ impl Message {
             // based capability
             Ok(Message::L2(match msg_id - BASED_CAPABILITY_OFFSET {
                 messages::NewBlock::CODE => {
-                    let decoded = l2::messages::NewBlock::decode(data)?;
+                    let decoded = messages::NewBlock::decode(data)?;
                     L2Message::NewBlock(decoded)
                 }
-                BatchSealed::CODE => {
-                    let decoded = l2::messages::BatchSealed::decode(data)?;
+                messages::BatchSealed::CODE => {
+                    let decoded = messages::BatchSealed::decode(data)?;
                     L2Message::BatchSealed(decoded)
+                }
+                messages::GetBatchSealed::CODE => {
+                    let decoded = messages::GetBatchSealed::decode(data)?;
+                    L2Message::GetBatchSealed(decoded)
+                }
+                messages::GetBatchSealedResponse::CODE => {
+                    let decoded = messages::GetBatchSealedResponse::decode(data)?;
+                    L2Message::GetBatchSealedResponse(decoded)
                 }
                 _ => return Err(RLPDecodeError::MalformedData),
             }))
@@ -211,6 +223,8 @@ impl Message {
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
                 L2Message::NewBlock(msg) => msg.encode(buf),
+                L2Message::GetBatchSealed(msg) => msg.encode(buf),
+                L2Message::GetBatchSealedResponse(msg) => msg.encode(buf),
             },
         }
     }
@@ -246,6 +260,8 @@ impl Display for Message {
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
                 L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
+                L2Message::GetBatchSealed(_) => "based:GetBatchSealed".fmt(f),
+                L2Message::GetBatchSealedResponse(_) => "based:GetBatchSealedResponse".fmt(f),
             },
         }
     }

@@ -79,6 +79,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(StateRoots),
         table_info!(PrivilegedTransactionsHash),
         table_info!(LastSentBatchProof),
+        table_info!(LatestBatchNumber),
         table_info!(AccountUpdatesByBlockNumber),
         table_info!(BatchProofs),
         table_info!(CommitTxByBatch),
@@ -295,6 +296,15 @@ impl StoreEngineRollup for Store {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
 
+    async fn get_latest_batch_number(&self) -> Result<u64, RollupStoreError> {
+        self.read::<LatestBatchNumber>(0)
+            .await
+            .map(|v| v.unwrap_or(0))
+    }
+
+    async fn set_latest_batch_number(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.write::<LatestBatchNumber>(0, batch_number).await
+    }
     async fn get_account_updates_by_block_number(
         &self,
         block_number: BlockNumber,
@@ -482,6 +492,10 @@ table!(
     ( LastSentBatchProof ) u64 => u64
 );
 
+table!(
+    /// Latest batch number stored
+    ( LatestBatchNumber ) u64 => u64
+);
 table!(
     /// List of serialized account updates by block number
     ( AccountUpdatesByBlockNumber ) BlockNumber => Vec<u8>

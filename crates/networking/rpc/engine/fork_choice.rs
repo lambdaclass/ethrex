@@ -213,7 +213,7 @@ async fn handle_forkchoice(
     if context.syncer.sync_mode() == SyncMode::Snap {
         context
             .syncer
-            .sync_to_head(fork_choice_state.head_block_hash);
+            .sync_to_head(fork_choice_state.head_block_hash, 0);
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
@@ -268,7 +268,7 @@ async fn handle_forkchoice(
                     // Start sync
                     context
                         .syncer
-                        .sync_to_head(fork_choice_state.head_block_hash);
+                        .sync_to_head(fork_choice_state.head_block_hash, 0);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {

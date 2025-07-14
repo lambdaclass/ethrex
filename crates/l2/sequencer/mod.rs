@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use crate::based::sequencer_state::SequencerState;
-use crate::based::sequencer_state::SequencerStatus;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_l2_common::prover::ProverType;
+use ethrex_l2_common::sequencer_state::SequencerState;
+use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -37,17 +37,14 @@ pub async fn start_l2(
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    sync_manager: SyncManager,
+    sequencer_state: SequencerState,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    let initial_status = if cfg.based.enabled {
-        SequencerStatus::default()
-    } else {
-        SequencerStatus::Sequencing
-    };
-
-    info!("Starting Sequencer in {initial_status} mode");
-
-    let shared_state = SequencerState::from(initial_status);
+    info!(
+        "Starting Sequencer in {} mode",
+        sequencer_state.status().await
+    );
 
     let Ok(needed_proof_types) = get_needed_proof_types(
         cfg.proof_coordinator.dev_mode,
@@ -70,7 +67,7 @@ pub async fn start_l2(
         store.clone(),
         blockchain.clone(),
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -81,7 +78,7 @@ pub async fn start_l2(
         blockchain.clone(),
         rollup_store.clone(),
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -101,7 +98,7 @@ pub async fn start_l2(
 
     let _ = L1ProofSender::spawn(
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
     )
@@ -114,7 +111,7 @@ pub async fn start_l2(
         rollup_store.clone(),
         blockchain.clone(),
         cfg.clone(),
-        shared_state.clone(),
+        sequencer_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -138,32 +135,33 @@ pub async fn start_l2(
     if cfg.based.enabled {
         let _ = StateUpdater::spawn(
             cfg.clone(),
-            shared_state.clone(),
+            sequencer_state.clone(),
             blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
+            sync_manager,
         )
         .await
         .inspect_err(|err| {
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(
-            &cfg,
-            store.clone(),
-            rollup_store.clone(),
-            blockchain,
-            shared_state.clone(),
-        )
-        .await
-        .inspect_err(|err| {
-            error!("Error starting Block Fetcher: {err}");
-        });
+        // let _ = BlockFetcher::spawn(
+        //     &cfg,
+        //     store.clone(),
+        //     rollup_store.clone(),
+        //     blockchain.clone(),
+        //     sequencer_state.clone(),
+        // )
+        // .await
+        // .inspect_err(|err| {
+        //     error!("Error starting Block Fetcher: {err}");
+        // });
     }
 
     if cfg.monitor.enabled {
         task_set.spawn(monitor::start_monitor(
-            shared_state.clone(),
+            sequencer_state.clone(),
             store.clone(),
             rollup_store.clone(),
             cfg.clone(),

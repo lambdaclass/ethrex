@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use ethrex_common::{Address, U256};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
@@ -22,7 +23,6 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{

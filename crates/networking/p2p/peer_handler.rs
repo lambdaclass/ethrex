@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+use crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES;
+use crate::rlpx::l2::messages::{GetBatchSealed, GetBatchSealedResponse, L2Message};
 use bytes::Bytes;
+use ethrex_common::types::batch::Batch;
 use ethrex_common::{
     H256, U256,
     types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
@@ -156,6 +159,9 @@ impl PeerHandler {
                 }
             })
             .await
+            .inspect_err(|e| {
+                warn!("[SYNCING] Timeout while waiting for block headers: {e}");
+            })
             .ok()
             .flatten()
             .and_then(|headers| (!headers.is_empty()).then_some(headers))
@@ -172,6 +178,62 @@ impl PeerHandler {
             }
             warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
             self.record_peer_failure(peer_id).await;
+        }
+        None
+    }
+
+    pub async fn request_batch(&self, first_batch: u64, last_batch: u64) -> Option<Vec<Batch>> {
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let request = RLPxMessage::L2(L2Message::GetBatchSealed(GetBatchSealed {
+                first_batch,
+                last_batch,
+            }));
+            let (peer_id, mut peer_channel) = self
+                .get_peer_channel_with_retry(
+                    &[SUPPORTED_ETH_CAPABILITIES, SUPPORTED_BASED_CAPABILITIES].concat(),
+                )
+                .await?;
+            let mut receiver = peer_channel.receiver.lock().await;
+            if let Err(err) = peer_channel
+                .connection
+                .cast(CastMessage::BackendMessage(request))
+                .await
+            {
+                debug!("Failed to send message to peer: {err}");
+                self.record_peer_failure(peer_id).await;
+                return None;
+            }
+            if let Some(batches) = tokio::time::timeout(PEER_REPLY_TIMEOUT * 2, async move {
+                loop {
+                    match receiver.recv().await {
+                        Some(RLPxMessage::L2(L2Message::GetBatchSealedResponse(
+                            GetBatchSealedResponse { batches },
+                        ))) => {
+                            if batches.is_empty() {
+                                warn!("[SYNCING] Received empty batch from peer {peer_id}, meaning is syncing, asking another peer...");
+                                return None;
+                            }
+                            return Some(batches);
+                        }
+                        // Ignore replies that don't match the expected message (such as late responses)
+                        Some(_) => {
+                            continue;
+                        }
+                        None => {
+                            return None;
+                        }
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten()
+            {
+                // TODO: penalize peer if the signature is incorrect or the batch is invalid
+                return Some(batches);
+            }
+            // TODO: think how to penalize peer if the response is None
+            // The peer may return None if it is syncing, so in the future the peer may be useful
         }
         None
     }

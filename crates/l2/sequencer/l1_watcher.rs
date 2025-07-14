@@ -1,5 +1,4 @@
 use super::utils::random_duration;
-use crate::based::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
@@ -7,6 +6,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::PrivilegedL2Transaction;
 use ethrex_common::{H160, types::Transaction};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
