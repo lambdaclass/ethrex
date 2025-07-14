@@ -317,7 +317,7 @@ impl Syncer {
                     pivot_header.number
                 );
                 let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes[pivot_idx + 1..].to_vec(),
+                    all_block_hashes[pivot_idx..].to_vec(),
                     self.peers.clone(),
                     store.clone(),
                 ));
