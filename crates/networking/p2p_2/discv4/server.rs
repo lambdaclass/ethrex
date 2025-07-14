@@ -3,6 +3,7 @@ use std::{net::SocketAddr, sync::Arc};
 use ethrex_common::H512;
 use k256::ecdsa::SigningKey;
 use keccak_hash::H256;
+use rand::{rngs::OsRng, seq::IteratorRandom};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle},
@@ -150,6 +151,31 @@ impl DiscoveryServerState {
         let _ = self.send_find_node(node).await.inspect_err(
             |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
         );
+
+        Ok(())
+    }
+
+    async fn send_neighbors(
+        &self,
+        neighbors: Vec<Node>,
+        node: &Node,
+    ) -> Result<(), DiscoveryServerError> {
+        let mut buf = Vec::new();
+
+        // TODO: Parametrize this expiration.
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
+
+        let msg = Message::Neighbors(NeighborsMessage::new(neighbors, expiration));
+
+        msg.encode_with_header(&mut buf, &self.signer);
+
+        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoveryServerError::PartialMessageSent);
+        }
+
+        debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -375,7 +401,23 @@ impl GenServer for ConnectionHandler {
                 debug!(received = "Pong", from = %format!("{:#x}", packet.get_public_key()));
             }
             Self::CastMsg::FindNode(packet) => {
-                debug!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
+                let node_id = packet.get_node_id();
+
+                let table = state.kademlia.table.lock().await;
+
+                let Some(node) = table.get(&node_id) else {
+                    drop(table);
+                    return CastResponse::Stop;
+                };
+
+                let nodes = table
+                    .iter()
+                    .map(|(_x, y)| y.clone())
+                    .choose_multiple(&mut OsRng, 16);
+
+                let _ = state.send_neighbors(nodes, node).await.inspect_err(|e| {
+                    error!(sent = "Neighbors", to = %format!("{:#x}", packet.get_public_key()), err = ?e);
+                });
             }
             Self::CastMsg::Neighbors {
                 message: msg,
