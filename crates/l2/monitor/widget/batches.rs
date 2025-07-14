@@ -14,6 +14,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+#[derive(Default)]
 pub struct BatchesTable {
     pub state: TableState,
     // batch number | # blocks | # messages | commit tx hash | verify tx hash
@@ -24,25 +25,11 @@ pub struct BatchesTable {
 }
 
 impl BatchesTable {
-    pub async fn new(
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-        rollup_store: &StoreRollup,
-    ) -> Result<Self, MonitorError> {
-        let mut last_l1_block_fetched = 0;
-        let items = Self::fetch_new_items(
-            &mut last_l1_block_fetched,
+    pub fn new(on_chain_proposer_address: Address) -> Self {
+        Self {
             on_chain_proposer_address,
-            eth_client,
-            rollup_store,
-        )
-        .await?;
-        Ok(Self {
-            state: TableState::default(),
-            items,
-            last_l1_block_fetched,
-            on_chain_proposer_address,
-        })
+            ..Default::default()
+        }
     }
 
     pub async fn on_tick(

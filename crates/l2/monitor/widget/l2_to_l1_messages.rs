@@ -52,11 +52,11 @@ impl L2ToL1MessageStatus {
             U256::from_big_endian(raw_withdrawal_is_claimed.as_fixed_bytes()) == U256::one()
         };
 
-        Ok(if withdrawal_is_claimed {
-            Self::WithdrawalClaimed
+        if withdrawal_is_claimed {
+            Ok(Self::WithdrawalClaimed)
         } else {
-            Self::WithdrawalInitiated
-        })
+            Ok(Self::WithdrawalInitiated)
+        }
     }
 }
 
@@ -98,6 +98,7 @@ pub type L2ToL1MessageRow = (
     H256,    // L2 tx hash
 );
 
+#[derive(Default)]
 pub struct L2ToL1MessagesTable {
     pub state: TableState,
     pub items: Vec<L2ToL1MessageRow>,
@@ -106,25 +107,11 @@ pub struct L2ToL1MessagesTable {
 }
 
 impl L2ToL1MessagesTable {
-    pub async fn new(
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Result<Self, MonitorError> {
-        let mut last_l2_block_fetched = U256::zero();
-        let items = Self::fetch_new_items(
-            &mut last_l2_block_fetched,
+    pub fn new(common_bridge_address: Address) -> Self {
+        Self {
             common_bridge_address,
-            eth_client,
-            rollup_client,
-        )
-        .await?;
-        Ok(Self {
-            state: TableState::default(),
-            items,
-            last_l2_block_fetched,
-            common_bridge_address,
-        })
+            ..Default::default()
+        }
     }
 
     pub async fn on_tick(

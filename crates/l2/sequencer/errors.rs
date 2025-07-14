@@ -332,6 +332,6 @@ pub enum MonitorError {
     EthClientError(#[from] EthClientError),
     #[error("Internal Error: {0}")]
     InternalError(String),
-    #[error("Configuration Error: {0}")]
-    ConfigError(String),
+    #[error("RPC List can't be empty")]
+    RPCListEmpty,
 }

@@ -21,6 +21,7 @@ use crate::{
 // kind | status | L1 tx hash | L2 tx hash | amount
 pub type L1ToL2MessagesRow = (L1ToL2MessageKind, L1ToL2MessageStatus, H256, H256, U256);
 
+#[derive(Default)]
 pub struct L1ToL2MessagesTable {
     pub state: TableState,
     pub items: Vec<L1ToL2MessagesRow>,
@@ -97,29 +98,11 @@ impl Display for L1ToL2MessageKind {
 }
 
 impl L1ToL2MessagesTable {
-    pub async fn new(
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-        store: &Store,
-    ) -> Result<Self, MonitorError> {
-        let mut last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(common_bridge_address)
-            .await
-            .map_err(|_| MonitorError::GetLastFetchedL1)?
-            .into();
-        let items = Self::fetch_new_items(
-            &mut last_l1_block_fetched,
+    pub fn new(common_bridge_address: Address) -> Self {
+        Self {
             common_bridge_address,
-            eth_client,
-            store,
-        )
-        .await?;
-        Ok(Self {
-            state: TableState::default(),
-            items,
-            last_l1_block_fetched,
-            common_bridge_address,
-        })
+            ..Default::default()
+        }
     }
 
     pub async fn on_tick(
