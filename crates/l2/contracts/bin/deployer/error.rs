@@ -1,4 +1,4 @@
-use ethrex_l2_sdk::{ContractCompilationError, DeployError, GitError};
+use ethrex_l2_sdk::DeployError;
 use ethrex_rpc::clients::{EthClientError, eth::errors::CalldataEncodeError};
 
 #[derive(Debug, thiserror::Error)]
