@@ -61,6 +61,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         #[cfg(feature = "l2")]
         Value::FixedBytes(blob_versioned_hash_bytes.into()),
         Value::FixedBytes(last_block_hash_bytes.into()),
+        Value::Uint(output.non_privileged_count)
     ]
     .clone();
     let bytes = encode_tuple(&data).map_err(|e| format!("Error packing data: {e}"))?;

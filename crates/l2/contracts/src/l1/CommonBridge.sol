@@ -254,7 +254,7 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function withinProcessingDeadline() public returns (bool) {
+    function withinProcessingDeadline() public view returns (bool) {
         if (pendingTxHashes.length == 0) {
             return true;
         }

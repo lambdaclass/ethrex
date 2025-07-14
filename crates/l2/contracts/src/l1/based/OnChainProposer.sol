@@ -360,11 +360,6 @@ contract OnChainProposer is
             );
         }
 
-        require(
-                ICommonBridge(BRIDGE).withinProcessingDeadline(),
-                "OnChainProposer: exceeded privileged transaction inclusion deadline"
-            );
-
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
 
@@ -432,11 +427,6 @@ contract OnChainProposer is
                 );
             }
 
-            require(
-                ICommonBridge(BRIDGE).withinProcessingDeadline(),
-                "OnChainProposer: exceeded privileged transaction inclusion deadline"
-            );
-
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
 
@@ -452,7 +442,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 160,
+            publicData.length == 192,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -483,6 +473,11 @@ contract OnChainProposer is
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
+        );
+        uint256 nonPrivilegedTransactions = uint256(bytes32(publicData[160:192]));
+        require(
+            ICommonBridge(BRIDGE).withinProcessingDeadline() || nonPrivilegedTransactions != 0,
+            "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
         );
     }
 

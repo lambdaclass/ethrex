@@ -144,5 +144,5 @@ interface ICommonBridge {
     ) external;
 
     /// @notice Checks that the sequencer hasn't exceeded it's processing deadlines
-    function withinProcessingDeadline() external returns (bool);
+    function withinProcessingDeadline() external view returns (bool);
 }
