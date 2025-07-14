@@ -339,6 +339,11 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
     )
     .await
     .map_err(StateUpdaterError::InvalidForkChoice)?;
+
+    state
+        .rollup_store
+        .revert_to_batch(last_l2_committed_batch)
+        .await?;
     Ok(())
 }
 

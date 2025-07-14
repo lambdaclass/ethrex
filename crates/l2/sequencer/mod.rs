@@ -146,17 +146,17 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(
-            &cfg,
-            store.clone(),
-            rollup_store.clone(),
-            blockchain.clone(),
-            sequencer_state.clone(),
-        )
-        .await
-        .inspect_err(|err| {
-            error!("Error starting Block Fetcher: {err}");
-        });
+        // let _ = BlockFetcher::spawn(
+        //     &cfg,
+        //     store.clone(),
+        //     rollup_store.clone(),
+        //     blockchain.clone(),
+        //     sequencer_state.clone(),
+        // )
+        // .await
+        // .inspect_err(|err| {
+        //     error!("Error starting Block Fetcher: {err}");
+        // });
     }
 
     if cfg.monitor.enabled {
