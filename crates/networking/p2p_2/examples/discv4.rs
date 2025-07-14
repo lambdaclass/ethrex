@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
     sync::Arc,
@@ -106,14 +105,15 @@ async fn main() {
         });
 
     // Barrani kademlia contacts counter
+    let kademlia_clone = kademlia.clone();
     let kademlia_counter_handle = tokio::spawn(async move {
         let start = std::time::Instant::now();
         loop {
             let elapsed = start.elapsed();
-            let number_of_peers = kademlia.number_of_peers().await;
-            let number_of_tried_peers = kademlia.number_of_tried_peers().await;
+            let number_of_peers = kademlia_clone.number_of_peers().await;
+            let number_of_tried_peers = kademlia_clone.number_of_tried_peers().await;
             info!(
-                contacts = kademlia.table.lock().await.len(),
+                contacts = kademlia_clone.table.lock().await.len(),
                 number_of_peers = number_of_peers,
                 number_of_tried_peers = number_of_tried_peers,
                 elapsed = format_duration(elapsed)
@@ -131,6 +131,7 @@ async fn main() {
             println!("Received Ctrl+C, shutting down...");
             // restore_terminal(&mut terminal).expect("Failed to restore terminal");
             kademlia_counter_handle.abort();
+            store_peers_in_file(kademlia).await;
         }
         // _ = monitor.start(&mut terminal) => {
         //     println!("Monitor has exited, shutting down...");
@@ -182,4 +183,52 @@ fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
 
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+}
+
+async fn store_peers_in_file(kademlia: Kademlia) {
+    let bootnodes = bootnodes();
+
+    let peers_node_ids = kademlia
+        .peers
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let current_peers = kademlia
+        .table
+        .lock()
+        .await
+        .iter()
+        .filter_map(|(node_id, node)| {
+            if !bootnodes.contains(node) && peers_node_ids.contains(node_id) {
+                Some(node)
+            } else {
+                None
+            }
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let already_known_peers = tokio::fs::read("peers.json")
+        .await
+        .ok()
+        .and_then(|data| serde_json::from_slice::<Vec<Node>>(&data).ok())
+        .unwrap_or_default();
+
+    let new_peers = current_peers
+        .iter()
+        .filter(|node| !already_known_peers.contains(node))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let peers = [already_known_peers, new_peers].concat();
+
+    tokio::fs::write(
+        "peers.json",
+        serde_json::to_string_pretty(&peers).expect("Failed to serialize peers to JSON"),
+    )
+    .await
+    .expect("Failed to write peers to file");
 }
