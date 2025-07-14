@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv6Addr},
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -11,7 +11,6 @@ use ethrex_p2p_2::{
     discv4::{server::DiscoveryServer, side_car::DiscoverySideCar},
     kademlia::Kademlia,
     metrics::METRICS,
-    monitor::{app::Monitor, init_terminal, restore_terminal},
     network::P2PContext,
     rlpx::initiator::RLPxInitiator,
     types::{Node, NodeRecord},
@@ -23,8 +22,7 @@ use rand::rngs::OsRng;
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
-use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive, layer::SubscriberExt};
-use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 pub const HOLESKY_GENESIS_CONTENTS: &str =
     include_str!("../../../../cmd/ethrex/networks/holesky/genesis.json");
@@ -63,7 +61,7 @@ async fn main() {
     let signer = SigningKey::random(&mut OsRng);
 
     let local_node = Node::new(
-        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
         30303,
         30303,
         public_key_from_signing_key(&signer),
