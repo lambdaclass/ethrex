@@ -11,10 +11,7 @@ use ethrex_p2p_2::{
     discv4::{server::DiscoveryServer, side_car::DiscoverySideCar},
     kademlia::Kademlia,
     metrics::METRICS,
-<<<<<<< HEAD
-=======
     monitor::{app::Monitor, init_terminal, restore_terminal},
->>>>>>> @{-1}
     network::P2PContext,
     rlpx::initiator::RLPxInitiator,
     types::{Node, NodeRecord},
