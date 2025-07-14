@@ -8,8 +8,9 @@ use std::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::H512;
 use ethrex_p2p_2::{
-    discv4::{metrics::METRICS, server::DiscoveryServer, side_car::DiscoverySideCar},
+    discv4::{server::DiscoveryServer, side_car::DiscoverySideCar},
     kademlia::Kademlia,
+    metrics::METRICS,
     monitor::{app::Monitor, init_terminal, restore_terminal},
     network::P2PContext,
     rlpx::initiator::RLPxInitiator,
@@ -248,7 +249,7 @@ async fn store_peers_in_file(kademlia: Kademlia) {
         .cloned()
         .collect::<Vec<_>>();
 
-    let already_known_peers = tokio::fs::read("peers.json")
+    let total_known_peers = tokio::fs::read("peers.json")
         .await
         .ok()
         .and_then(|data| serde_json::from_slice::<Vec<Node>>(&data).ok())
@@ -257,7 +258,7 @@ async fn store_peers_in_file(kademlia: Kademlia) {
     let new_peers = current_peers
         .iter()
         .filter(|node| {
-            !already_known_peers
+            !total_known_peers
                 .iter()
                 .any(|already_known_peer| already_known_peer.node_id() == node.node_id())
         })
@@ -265,12 +266,12 @@ async fn store_peers_in_file(kademlia: Kademlia) {
         .collect::<Vec<_>>();
 
     info!(
-        already_known_peers = already_known_peers.len(),
         new_peers = new_peers.len(),
+        total_known_peer = total_known_peers.len(),
         "Storing peers to file"
     );
 
-    let peers = [already_known_peers, new_peers].concat();
+    let peers = [total_known_peers, new_peers].concat();
 
     tokio::fs::write(
         "peers.json",

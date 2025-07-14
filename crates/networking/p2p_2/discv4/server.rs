@@ -12,14 +12,12 @@ use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    discv4::{
-        messages::{
-            ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
-            Packet, PacketDecodeErr, PingMessage, PongMessage,
-        },
-        metrics::METRICS,
+    discv4::messages::{
+        ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
+        PacketDecodeErr, PingMessage, PongMessage,
     },
     kademlia::Kademlia,
+    metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, node_id},
 };

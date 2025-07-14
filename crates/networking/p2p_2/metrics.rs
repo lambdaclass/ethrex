@@ -7,10 +7,10 @@ use std::{
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
-pub static METRICS: LazyLock<DiscoveryMetrics> = LazyLock::new(DiscoveryMetrics::default);
+pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 
 #[derive(Debug, Clone)]
-pub struct DiscoveryMetrics {
+pub struct Metrics {
     pub registry: Registry,
 
     pub new_contacts_events: Arc<Mutex<VecDeque<SystemTime>>>,
@@ -31,9 +31,9 @@ pub struct DiscoveryMetrics {
     start_time: SystemTime,
 }
 
-impl DiscoveryMetrics {
+impl Metrics {
     pub fn new(window_size_in_secs: u64) -> Self {
-        DiscoveryMetrics {
+        Metrics {
             window_size: Duration::from_secs(window_size_in_secs),
             ..Default::default()
         }
@@ -104,7 +104,7 @@ impl DiscoveryMetrics {
     }
 }
 
-impl Default for DiscoveryMetrics {
+impl Default for Metrics {
     fn default() -> Self {
         let registry = Registry::new();
 
@@ -129,31 +129,31 @@ impl Default for DiscoveryMetrics {
             .expect("Failed to register contacts_rate gauge");
 
         let attempted_rlpx_conn = IntCounter::new(
-            "discv4_attempted_rlpx_conn",
+            "rlpx_attempted_rlpx_conn",
             "Total number of attempted RLPx connections",
         )
         .expect("Failed to create attempted_rlpx_conn counter");
 
         let attempted_rlpx_conn_rate = Gauge::new(
-            "discv4_attempted_rlpx_conn_rate",
+            "rlpx_attempted_rlpx_conn_rate",
             "Rate of attempted RLPx connections per second",
         )
         .expect("Failed to create attempted_rlpx_conn_rate gauge");
 
         let established_rlpx_conn = IntCounter::new(
-            "discv4_established_rlpx_conn",
+            "rlpx_established_rlpx_conn",
             "Total number of established RLPx connections",
         )
         .expect("Failed to create established_rlpx_conn counter");
 
         let established_rlpx_conn_rate = Gauge::new(
-            "discv4_established_rlpx_conn_rate",
+            "rlpx_established_rlpx_conn_rate",
             "Rate of established RLPx connections per second",
         )
         .expect("Failed to create established_rlpx_conn_rate gauge");
 
         let failed_rlpx_conn = IntCounter::new(
-            "discv4_failed_rlpx_conn",
+            "rlpx_failed_rlpx_conn",
             "Total number of failed RLPx connections",
         )
         .expect("Failed to create failed_rlpx_conn counter");
@@ -178,7 +178,7 @@ impl Default for DiscoveryMetrics {
             .register(Box::new(failed_rlpx_conn.clone()))
             .expect("Failed to register failed_rlpx_conn counter");
 
-        DiscoveryMetrics {
+        Metrics {
             registry,
             new_contacts_events: Arc::new(Mutex::new(VecDeque::new())),
             window_size: Duration::from_secs(60),
