@@ -106,6 +106,11 @@ jobs:
           make init-l2-no-metrics &
           sleep 30
           cd tee/quote-gen/
-          ETHREX_TDX_DEV_MODE=true make run &
+          qemu-system-x86_64 -smp 2 -m 2G \
+            -accel kvm -cpu host -nographic -nodefaults \
+            -no-user-config \
+            -serial mon:stdio \
+            -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
+            -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=./image.raw,discard=unmap,detect-zeroes=unmap" &
           cd ../../
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
