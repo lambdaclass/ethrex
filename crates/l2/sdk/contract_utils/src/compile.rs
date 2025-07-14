@@ -83,3 +83,18 @@ pub fn compile_contract(
 
     Ok(())
 }
+
+fn apply_remappings(
+    cmd: &mut Command,
+    remappings: Option<&[(&str, &Path)]>,
+) -> Result<(), ContractCompilationError> {
+    if let Some(remaps) = remappings {
+        for (prefix, path) in remaps {
+            let path_str = path
+                .to_str()
+                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?;
+            cmd.arg(format!("{prefix}={path_str}"));
+        }
+    }
+    Ok(())
+}

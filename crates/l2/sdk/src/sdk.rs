@@ -376,7 +376,25 @@ pub async fn deploy_contract(
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
-    let init_code = [&bytecode, constructor_args].concat();
+    deploy_contract_from_bytecode(
+        constructor_args,
+        &bytecode,
+        deployer_private_key,
+        salt,
+        eth_client,
+    )
+    .await
+}
+
+/// Same as `deploy_contract`, but takes the bytecode directly instead of a path.
+pub async fn deploy_contract_from_bytecode(
+    constructor_args: &[u8],
+    bytecode: &[u8],
+    deployer_private_key: &SecretKey,
+    salt: &[u8],
+    eth_client: &EthClient,
+) -> Result<(H256, Address), DeployError> {
+    let init_code = [bytecode, constructor_args].concat();
     let (deploy_tx_hash, contract_address) =
         create2_deploy(salt, &init_code, deployer_private_key, eth_client).await?;
     Ok((deploy_tx_hash, contract_address))
