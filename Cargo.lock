@@ -3175,6 +3175,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
  "zkvm_interface",
 ]
 
@@ -4198,6 +4200,7 @@ dependencies = [
  "tempdir",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

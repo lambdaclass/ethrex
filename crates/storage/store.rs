@@ -98,6 +98,7 @@ impl Store {
             },
         };
         info!("Started store engine");
+
         Ok(store)
     }
 

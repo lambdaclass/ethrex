@@ -34,7 +34,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Prune the state and storage trie from the pruning log
     /// It will iterate over the pruning log and remove nodes from the state and storage tries
     /// that are older than the [`KEEP_BLOCKS`] value.
-    fn prune_state_and_storage_log(&self) -> Result<(), StoreError>;
+    fn prune_state_and_storage_log(
+        &self,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
