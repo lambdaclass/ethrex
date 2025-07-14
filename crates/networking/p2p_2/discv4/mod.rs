@@ -10,6 +10,7 @@ use tracing::info;
 use crate::types::Node;
 
 pub mod messages;
+pub mod metrics;
 pub mod server;
 pub mod side_car;
 
@@ -30,6 +31,11 @@ impl Kademlia {
             peers: Arc::new(Mutex::new(HashSet::default())),
             already_tried_peers: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    pub async fn number_of_contacts(&self) -> u64 {
+        let contacts = self.table.lock().await;
+        contacts.len() as u64
     }
 
     pub async fn number_of_peers(&self) -> u64 {

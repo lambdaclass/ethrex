@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::hash_map::Entry, net::SocketAddr, sync::Arc};
 
 use ethrex_common::H512;
 use k256::ecdsa::SigningKey;
@@ -18,6 +18,7 @@ use crate::{
             ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
             Packet, PacketDecodeErr, PingMessage, PongMessage,
         },
+        metrics::METRICS,
     },
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, node_id},
@@ -428,7 +429,10 @@ impl GenServer for ConnectionHandler {
                 let mut kademlia = state.kademlia.table.lock().await;
 
                 for node in msg.nodes {
-                    kademlia.entry(node.node_id()).or_insert(node);
+                    if let Entry::Vacant(vacant_entry) = kademlia.entry(node.node_id()) {
+                        vacant_entry.insert(node);
+                        METRICS.record_new_contact().await;
+                    };
                 }
             }
             Self::CastMsg::ENRRequest(packet) => {

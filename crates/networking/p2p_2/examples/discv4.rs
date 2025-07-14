@@ -8,7 +8,7 @@ use std::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::H512;
 use ethrex_p2p_2::{
-    discv4::{Kademlia, server::DiscoveryServer, side_car::DiscoverySideCar},
+    discv4::{Kademlia, metrics::METRICS, server::DiscoveryServer, side_car::DiscoverySideCar},
     monitor::{app::Monitor, init_terminal, restore_terminal},
     network::P2PContext,
     rlpx::initiator::RLPxInitiator,
@@ -135,15 +135,32 @@ async fn main() {
     let kademlia_counter_handle = tokio::spawn(async move {
         let start = std::time::Instant::now();
         loop {
-            let elapsed = start.elapsed();
-            let number_of_peers = kademlia_clone.number_of_peers().await;
-            let number_of_tried_peers = kademlia_clone.number_of_tried_peers().await;
             info!(
-                contacts = kademlia_clone.table.lock().await.len(),
-                number_of_peers = number_of_peers,
-                number_of_tried_peers = number_of_tried_peers,
-                elapsed = format_duration(elapsed)
+                r#"
+elapsed: {}
+{} contacts ({} contacts/s)
+{} peers ({} new peers/s)
+{} connection attempts ({} new connection attempts/s)
+{} failed connections"#,
+                format_duration(start.elapsed()),
+                METRICS.contacts.get(),
+                METRICS.new_contacts_rate.get().floor(),
+                METRICS.rlpx_conn_establishments.get(),
+                METRICS.rlpx_conn_establishments_rate.get().floor(),
+                METRICS.rlpx_conn_attempts.get(),
+                METRICS.rlpx_conn_attempts_rate.get().floor(),
+                METRICS.rlpx_conn_failures.get(),
             );
+            // info!(
+            //     contacts = kademlia_clone.table.lock().await.len(),
+            //     number_of_peers = number_of_peers,
+            //     number_of_tried_peers = number_of_tried_peers,
+            //     elapsed = format_duration(elapsed),
+            //     new_contacts_rate = %format!("{} contacts/s", METRICS.new_contacts_rate.get().floor()),
+            //     connection_attempts_rate = %format!("{} attempts/s", METRICS.attempted_rlpx_conn_rate.get().floor()),
+            //     connection_establishments_rate = %format!("{} establishments/s", METRICS.established_rlpx_conn_rate.get().floor()),
+            //     failed_connections = METRICS.failed_rlpx_conn.get(),
+            // );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });

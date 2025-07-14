@@ -52,6 +52,8 @@ tui-input = "0.14.0"
 tabwriter = "1.4.1"
 color-eyre = "0.6.5"
 
+prometheus = "0.14.0"
+
 [dev-dependencies]
 hex-literal = "0.4.1"
 

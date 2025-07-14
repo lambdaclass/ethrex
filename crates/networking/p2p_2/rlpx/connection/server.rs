@@ -29,7 +29,7 @@ use tracing::{debug, error};
 
 use crate::{
     // discv4::server::MAX_PEERS_TCP_CONNECTIONS,
-    discv4::Kademlia,
+    discv4::{Kademlia, metrics::METRICS},
     // kademlia::{KademliaTable, PeerChannels},
     network::P2PContext,
     rlpx::{
@@ -191,7 +191,16 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = handshake::perform(state.0).await?;
+        METRICS.record_new_rlpx_conn_attempt().await;
+
+        let (mut established_state, stream) = match handshake::perform(state.0).await {
+            Ok(result) => result,
+            Err(err) => {
+                METRICS.record_new_rlpx_conn_failed().await;
+                return Err(err);
+            }
+        };
+
         log_peer_debug(&established_state.node, "Starting RLPx connection");
 
         if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
@@ -201,10 +210,16 @@ impl GenServer for RLPxConnection {
                 reason,
             )
             .await;
+
+            METRICS.record_new_rlpx_conn_failed().await;
+
             Err(RLPxError::Disconnected())
         } else {
             // New state
             state.0 = InnerState::Established(established_state);
+
+            METRICS.record_new_rlpx_conn_established().await;
+
             Ok(state)
         }
     }
