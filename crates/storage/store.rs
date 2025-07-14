@@ -7,6 +7,7 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
+use tokio_util::sync::CancellationToken;
 
 use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
 use ethereum_types::{Address, H256, U256};

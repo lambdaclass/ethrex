@@ -20,8 +20,8 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
-    thread,
 };
+use tokio_util::sync::CancellationToken;
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
@@ -120,21 +120,7 @@ pub struct SnapState {
 
 impl Store {
     pub fn new() -> Self {
-        let store = Self::default();
-
-        let store_for_pruning = store.clone();
-
-        let _join = thread::Builder::new()
-            .name("trie_pruner🗑️".to_string())
-            .spawn(move || {
-                loop {
-                    thread::sleep(std::time::Duration::from_secs(1));
-                    #[allow(clippy::unwrap_used)]
-                    store_for_pruning.prune_state_and_storage_log().unwrap();
-                }
-            });
-
-        store
+        Self::default()
     }
 
     fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
@@ -367,8 +353,6 @@ impl StoreEngine for Store {
             }
         }
         Ok(())
-
-        // self.prune_state_and_storage_log()
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
@@ -528,7 +512,15 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+    fn prune_state_and_storage_log(
+        &self,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), StoreError> {
+        if cancellation_token.is_cancelled() {
+            tracing::warn!("Received shutdown signal, aborting pruning");
+            return Ok(());
+        }
+
         let mut store = self.inner()?;
 
         // Get the block number of the last state trie pruning log entry

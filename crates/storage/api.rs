@@ -6,6 +6,7 @@ use ethrex_common::types::{
     Index, Receipt, Transaction, payload::PayloadBundle,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
+use tokio_util::sync::CancellationToken;
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};

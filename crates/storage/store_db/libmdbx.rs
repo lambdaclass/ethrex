@@ -41,7 +41,7 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
-use std::thread;
+use tokio_util::sync::CancellationToken;
 
 /// The number of blocks to keep in the state and storage log tables
 const KEEP_BLOCKS: u64 = 128;
@@ -190,23 +190,8 @@ pub struct Store {
 }
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
-        // FIXME 🔥🔥🔥🔥!!!
         let db = Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?);
-
-        let store = Store { db: db.clone() };
-
-        // we prune the database in a separate thread to avoid blocking the main thread
-        let _join = thread::Builder::new()
-            .name("trie_pruner🗑️".to_string())
-            .spawn(move || {
-                loop {
-                    thread::sleep(std::time::Duration::from_secs(1));
-                    #[allow(clippy::unwrap_used)]
-                    store.prune_state_and_storage_log().unwrap();
-                }
-            });
-
-        Ok(Self { db })
+        Ok(Store { db })
     }
 
     // Helper method to write into a libmdbx table
@@ -750,8 +735,7 @@ impl StoreEngine for Store {
             tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))??;
-        self.prune_state_and_storage_log()
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
@@ -849,7 +833,15 @@ impl StoreEngine for Store {
         tx.commit().map_err(|err| err.into())
     }
 
-    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+    fn prune_state_and_storage_log(
+        &self,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), StoreError> {
+        if cancellation_token.is_cancelled() {
+            tracing::warn!("Received shutdown signal, aborting pruning");
+            return Ok(());
+        }
+
         let tx = self.db.begin_readwrite()?;
 
         let stats_pre_state_log = tx

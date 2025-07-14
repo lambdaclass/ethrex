@@ -28,6 +28,7 @@ use redb::{
 };
 use std::thread;
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
+use tokio_util::sync::CancellationToken;
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -108,18 +109,6 @@ impl RefUnwindSafe for RedBStore {}
 impl RedBStore {
     pub fn new() -> Result<Self, StoreError> {
         let db = Arc::new(init_db()?);
-        let store = RedBStore { db: db.clone() };
-
-        // we prune the database in a separate thread to avoid blocking the main thread
-        let _join = thread::Builder::new()
-            .name("trie_pruner🗑️".to_string())
-            .spawn(move || {
-                loop {
-                    thread::sleep(std::time::Duration::from_secs(1));
-                    #[allow(clippy::unwrap_used)]
-                    store.prune_state_and_storage_log().unwrap();
-                }
-            });
         Ok(Self { db })
     }
 
@@ -899,11 +888,18 @@ impl StoreEngine for RedBStore {
             write_txn.commit().map_err(StoreError::from)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))??;
-        self.prune_state_and_storage_log()
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    fn prune_state_and_storage_log(&self) -> Result<(), StoreError> {
+    fn prune_state_and_storage_log(
+        &self,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), StoreError> {
+        if cancellation_token.is_cancelled() {
+            tracing::warn!("Received shutdown signal, aborting pruning");
+            return Ok(());
+        }
+
         let txn = self.db.begin_write().map_err(Box::new)?;
 
         {
