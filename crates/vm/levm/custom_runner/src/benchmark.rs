@@ -22,6 +22,7 @@ pub const DEFAULT_CONTRACT: H160 = H160([
 pub struct ExecutionInput {
     #[serde(default)]
     pub fork: Fork,
+    #[serde(default)]
     pub transaction: BenchTransaction,
     #[serde(default)]
     pub pre: HashMap<Address, BenchAccount>,
@@ -84,6 +85,19 @@ pub struct BenchTransaction {
     pub value: U256,
     #[serde(default, deserialize_with = "deserialize_hex_bytes")]
     pub data: Bytes,
+}
+
+impl Default for BenchTransaction {
+    fn default() -> Self {
+        Self {
+            to: default_recipient(),
+            sender: default_sender(),
+            gas_limit: high_u64(),
+            gas_price: one_u256(),
+            value: U256::default(),
+            data: Bytes::default(),
+        }
+    }
 }
 
 impl From<BenchTransaction> for ethrex_common::types::LegacyTransaction {
