@@ -45,10 +45,7 @@ impl BranchNode {
             // Delegate to children if present
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref
-                    .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)
-                    .unwrap();
+                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 child_node.get(db, path)
             } else {
                 Ok(None)
@@ -100,8 +97,7 @@ impl BranchNode {
                         }
                         *choice_ref = choice_ref
                             .get_node(db)?
-                            .ok_or(TrieError::InconsistentTree)
-                            .unwrap()
+                            .ok_or(TrieError::InconsistentTree)?
                             .insert(db, path, value, invalidated_nodes)?
                             .into();
                     }
@@ -152,8 +148,7 @@ impl BranchNode {
                 }
                 let child_node = self.choices[choice_index]
                     .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)
-                    .unwrap();
+                    .ok_or(TrieError::InconsistentTree)?;
                 // Remove value from child node
                 let (child_node, old_value) =
                     child_node.remove(db, path.clone(), invalidated_nodes)?;
@@ -193,10 +188,7 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_ref) = children[0];
-                let child = child_ref
-                    .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)
-                    .unwrap();
+                let child = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
@@ -263,10 +255,7 @@ impl BranchNode {
             // Continue to child
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref
-                    .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)
-                    .unwrap();
+                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 child_node.get_path(db, path, node_path)?;
             }
         }
