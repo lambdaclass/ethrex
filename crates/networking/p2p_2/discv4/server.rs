@@ -417,6 +417,6 @@ impl GenServer for ConnectionHandler {
                 }
             }
         }
-        CastResponse::NoReply(state)
+        CastResponse::Stop
     }
 }
