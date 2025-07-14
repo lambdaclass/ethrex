@@ -65,8 +65,7 @@ impl ExtensionNode {
             let child_node = self
                 .child
                 .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)
-                .unwrap();
+                .ok_or(TrieError::InconsistentTree)?;
             let new_child_node =
                 child_node.insert(db, path.offset(match_index), value, invalidated_nodes)?;
             self.child = new_child_node.into();
@@ -81,7 +80,7 @@ impl ExtensionNode {
             let branch_node = if self.prefix.at(0) == 16 {
                 match new_node.get_node(db)? {
                     Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
-                    _ => return Err(TrieError::InconsistentTree).unwrap(),
+                    _ => return Err(TrieError::InconsistentTree),
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
@@ -120,8 +119,7 @@ impl ExtensionNode {
             let child_node = self
                 .child
                 .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)
-                .unwrap();
+                .ok_or(TrieError::InconsistentTree)?;
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(db, path, invalidated_nodes)?;
             // Restructure node based on removal
@@ -188,8 +186,7 @@ impl ExtensionNode {
             let child_node = self
                 .child
                 .get_node(db)?
-                .ok_or(TrieError::InconsistentTree)
-                .unwrap();
+                .ok_or(TrieError::InconsistentTree)?;
             child_node.get_path(db, path, node_path)?;
         }
         Ok(())
