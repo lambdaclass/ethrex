@@ -532,31 +532,31 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
 
     // If point is zero the precompile should not fail, but the conversion in
     // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let point_is_zero =
-        u256_from_big_endian(point_x).is_zero() && u256_from_big_endian(point_y).is_zero();
-    if point_is_zero {
-        return Ok(Bytes::from([0u8; 64].to_vec()));
-    }
+    // let point_is_zero =
+    //     u256_from_big_endian(point_x).is_zero() && u256_from_big_endian(point_y).is_zero();
+    // if point_is_zero {
+    //     return Ok(Bytes::from([0u8; 64].to_vec()));
+    // }
 
     let point_x = BN254FieldElement::from_bytes_be(point_x).map_err(|_| InternalError::Slicing)?;
     let point_y = BN254FieldElement::from_bytes_be(point_y).map_err(|_| InternalError::Slicing)?;
 
+    let fe_zero = BN254FieldElement::zero();
+
+    if point_x == fe_zero && point_y == fe_zero {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
     let point = BN254Curve::create_point_from_affine(point_x, point_y)
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let zero_u256 = element::U256::from(0_u16);
-    if scalar.eq(&zero_u256) {
+    let res = point.operate_with_self(scalar);
+    if res.is_neutral_element() {
         Ok(Bytes::from([0u8; 64].to_vec()))
     } else {
-        let mul = point.operate_with_self(scalar).to_affine();
-        if u256_from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
-            || u256_from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
-        {
-            Ok(Bytes::from([0u8; 64].to_vec()))
-        } else {
-            let res = [mul.x().to_bytes_be(), mul.y().to_bytes_be()].concat();
-            Ok(Bytes::from(res))
-        }
+        let res = res.to_affine();
+        let res = [res.x().to_bytes_be(), res.y().to_bytes_be()].concat();
+        Ok(Bytes::from(res))
     }
 }
 
