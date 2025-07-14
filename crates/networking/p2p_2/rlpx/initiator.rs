@@ -147,15 +147,16 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
     let mut no_fork_ids = 0;
     let mut connected_peers = 0;
     for node in state.kademlia.table.lock().await.values() {
-        let Some(fork_id) = &node.fork_id else {
+        if let Some(fork_id) = &node.fork_id {
+            if !ACCEPTED_FORK_HASHES.contains(&fork_id.fork_hash) {
+                invalid_fork_ids += 1;
+                continue;
+            }
+        } else {
             no_fork_ids += 1;
-            continue;
+            // continue;
         };
 
-        if !ACCEPTED_FORK_HASHES.contains(&fork_id.fork_hash) {
-            invalid_fork_ids += 1;
-            continue;
-        }
         if !already_known_peers_table.contains(&node.node_id()) {
             already_known_peers_table.insert(node.node_id());
             RLPxConnection::spawn_as_initiator(state.context.clone(), node).await;
