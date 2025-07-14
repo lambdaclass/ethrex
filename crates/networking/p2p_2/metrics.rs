@@ -116,7 +116,7 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
-            RLPxError::NoMatchingCapabilities(capabilities) => {
+            RLPxError::NoMatchingCapabilities() => {
                 failures_grouped_by_reason
                     .entry("NoMatchingCapabilities".to_owned())
                     .and_modify(|e| *e += 1)
