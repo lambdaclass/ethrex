@@ -138,7 +138,10 @@ pub(crate) async fn perform(
 }
 
 async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
-    TcpSocket::new_v4()?.connect(addr).await
+    match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4()?.connect(addr).await,
+        SocketAddr::V6(_) => TcpSocket::new_v6()?.connect(addr).await,
+    }
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
