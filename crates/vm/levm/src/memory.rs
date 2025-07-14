@@ -56,7 +56,7 @@ impl Memory {
     /// Resizes the from the current base to fit the memory specified at new_memory_size.
     ///
     /// Note: new_memory_size is increased to the next 32 byte multiple.
-    #[inline]
+    #[inline(always)]
     pub fn resize(&mut self, new_memory_size: usize) -> Result<(), VMError> {
         if new_memory_size == 0 {
             return Ok(());
@@ -133,7 +133,7 @@ impl Memory {
     }
 
     /// Load a word from at the given offset.
-    #[inline]
+    #[inline(always)]
     pub fn load_word(&mut self, offset: usize) -> Result<U256, VMError> {
         let value: [u8; 32] = self.load_range_const(offset)?;
         Ok(u256_from_big_endian_const(value))
@@ -142,6 +142,7 @@ impl Memory {
     /// Stores the given data and data size at the given offset.
     ///
     /// Internal use.
+    #[inline(always)]
     fn store(&self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
         if data_size == 0 {
             return Ok(());
@@ -170,7 +171,7 @@ impl Memory {
     }
 
     /// Stores the given data at the given offset.
-    #[inline]
+    #[inline(always)]
     pub fn store_data(&mut self, offset: usize, data: &[u8]) -> Result<(), VMError> {
         let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
@@ -180,7 +181,7 @@ impl Memory {
     /// Stores the given data and data size at the given offset.
     ///
     /// Resizes memory to fit the given data.
-    #[inline]
+    #[inline(always)]
     pub fn store_range(&mut self, offset: usize, size: usize, data: &[u8]) -> Result<(), VMError> {
         if size == 0 {
             return Ok(());
@@ -192,7 +193,7 @@ impl Memory {
     }
 
     /// Stores a word at the given offset, resizing memory if needed.
-    #[inline]
+    #[inline(always)]
     pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {
         let new_size: usize = offset
             .checked_add(WORD_SIZE_IN_BYTES_USIZE)
