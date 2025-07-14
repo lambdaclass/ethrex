@@ -470,7 +470,7 @@ pub struct ProofCoordinatorOptions {
         long = "proof-coordinator.remote-signer-url",
         value_name = "URL",
         env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_URL",
-        help_heading = "L1 Prover Server options",
+        help_heading = "Proof coordinator options",
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "remote_signer_public_key",
         required_unless_present = "proof_coordinator_l1_private_key"
@@ -481,7 +481,7 @@ pub struct ProofCoordinatorOptions {
         value_name = "PUBLIC_KEY",
         value_parser = utils::parse_public_key,
         env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_PUBLIC_KEY",
-        help_heading = "L1 Prover Server options",
+        help_heading = "Proof coordinator options",
         help = "Public key to request the remote signature from.",
         requires = "remote_signer_url",
     )]
