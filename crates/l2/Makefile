@@ -107,8 +107,8 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
@@ -195,7 +195,7 @@ build-prover:
 	--bin ethrex_prover
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	cargo test l2_integration_test --release -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)

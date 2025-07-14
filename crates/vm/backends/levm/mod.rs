@@ -289,14 +289,9 @@ impl LEVM {
             ));
         }
 
-        let beacon_root = match block_header.parent_beacon_block_root {
-            None => {
-                return Err(EvmError::Header(
-                    "parent_beacon_block_root field is missing".to_string(),
-                ));
-            }
-            Some(beacon_root) => beacon_root,
-        };
+        let beacon_root = block_header.parent_beacon_block_root.ok_or_else(|| {
+            EvmError::Header("parent_beacon_block_root field is missing".to_string())
+        })?;
 
         generic_system_contract_levm(
             block_header,
