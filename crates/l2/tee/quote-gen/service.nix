@@ -49,11 +49,10 @@ let
       pkgs.pkg-config
       rustPlatform.cargoSetupHook
     ];
-    env.OPENSSL_NO_VENDOR = 1;
-
-    preBuild = ''
-      echo "${gitRev}" > git-revision
-    '';
+    env = {
+      VERGEN_GIT_SHA = gitRev;
+      OPENSSL_NO_VENDOR = 1;
+    };
   };
 in
 {

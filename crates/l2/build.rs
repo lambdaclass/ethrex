@@ -6,8 +6,8 @@ use vergen_git2::{Emitter, Git2Builder};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Export git commit hash and branch name as environment variables
-    // When building tdx image with nix the commit version is stored in a file
-    if let Ok(sha) = fs::read_to_string("./tee/quote-gen/git-revision") {
+    // When building tdx image with nix the commit version is stored as an env var
+    if let Ok(sha) = std::env::var("VERGEN_GIT_SHA") {
         println!("cargo:rustc-env=VERGEN_GIT_SHA={}", sha.trim());
         return Ok(());
     }
