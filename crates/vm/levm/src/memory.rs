@@ -15,7 +15,6 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 pub struct MemoryV2 {
     buffer: Rc<RefCell<Vec<u8>>>,
     current_base: usize,
-    len_gas: usize,
 }
 
 #[allow(clippy::unwrap_used)]
@@ -25,7 +24,6 @@ impl MemoryV2 {
         Self {
             buffer: Rc::new(RefCell::new(Vec::new())),
             current_base,
-            len_gas: 0,
         }
     }
 
@@ -33,7 +31,6 @@ impl MemoryV2 {
     pub fn next_memory(&self) -> MemoryV2 {
         let mut mem = self.clone();
         mem.current_base = mem.buffer.borrow().len();
-        mem.len_gas = 0;
         mem
     }
 
