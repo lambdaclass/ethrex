@@ -224,6 +224,8 @@ async fn store_peers_in_file(kademlia: Kademlia) {
         .cloned()
         .collect::<Vec<_>>();
 
+    info!("Storing {} new peers", new_peers.len());
+
     let peers = [already_known_peers, new_peers].concat();
 
     tokio::fs::write(
