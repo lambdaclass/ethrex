@@ -42,9 +42,9 @@ jobs:
         uses: cachix/install-nix-action@v31
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: amd64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils
 
       - name: Build prover
         run: |
@@ -52,10 +52,6 @@ jobs:
           sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
           make image.raw
-
-      - name: Build test
-        run: |
-          cargo test l2 --no-run --release
 
       - name: Build L2
         run: |
