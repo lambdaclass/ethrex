@@ -236,6 +236,8 @@ impl DiscoveryServer {
 
         let _ = server.cast(InMessage::Listen).await;
 
+        info!("Pinging {} bootnodes", bootnodes.len());
+
         for bootnode in bootnodes {
             let _ = state.ping(&bootnode).await.inspect_err(|e| {
                 error!("Failed to ping bootnode: {e}");

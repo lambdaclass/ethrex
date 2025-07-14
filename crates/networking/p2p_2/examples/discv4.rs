@@ -49,12 +49,14 @@ async fn main() {
             .expect("Failed to bind udp socket"),
     );
 
+    let bootnodes = [bootnodes(), read_peers_from_file().await].concat();
+
     let _ = DiscoveryServer::spawn(
         local_node.clone(),
         signer.clone(),
         udp_socket.clone(),
         kademlia.clone(),
-        bootnodes(),
+        bootnodes,
     )
     .await
     .inspect_err(|e| {
@@ -183,6 +185,13 @@ fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
 
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+}
+
+async fn read_peers_from_file() -> Vec<Node> {
+    tokio::fs::read("peers.json")
+        .await
+        .map(|data| serde_json::from_slice::<Vec<Node>>(&data).unwrap_or_default())
+        .unwrap_or_default()
 }
 
 async fn store_peers_in_file(kademlia: Kademlia) {
