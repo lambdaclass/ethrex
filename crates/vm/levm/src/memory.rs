@@ -76,11 +76,11 @@ impl Memory {
 
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
-        #[expect(clippy::arithmetic_side_effects)]
-        // when resizing, resize by allocating entire pages instead of small memory sizes.
-        let new_size = (real_new_memory_size) + (4096 - ((real_new_memory_size) % 4096));
 
-        if new_size > buffer.capacity() {
+        if real_new_memory_size > buffer.capacity() {
+            #[expect(clippy::arithmetic_side_effects)]
+            // when resizing, resize by allocating entire pages instead of small memory sizes.
+            let new_size = (real_new_memory_size) + (4096 - ((real_new_memory_size) % 4096));
             buffer.reserve_exact(new_size);
         }
 
