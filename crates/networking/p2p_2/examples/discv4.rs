@@ -240,7 +240,11 @@ async fn store_peers_in_file(kademlia: Kademlia) {
 
     let new_peers = current_peers
         .iter()
-        .filter(|node| !already_known_peers.contains(node))
+        .filter(|node| {
+            already_known_peers
+                .iter()
+                .any(|already_known_peer| already_known_peer.node_id() == node.node_id())
+        })
         .cloned()
         .collect::<Vec<_>>();
 
