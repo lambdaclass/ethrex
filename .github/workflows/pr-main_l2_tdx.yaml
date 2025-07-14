@@ -43,6 +43,12 @@ jobs:
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
 
+      - name: Set up QEMU
+        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64
+
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
         with:
