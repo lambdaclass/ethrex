@@ -11,6 +11,7 @@ use crate::monitor::widget::{
     ADDRESS_LENGTH_IN_DIGITS, HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS,
 };
 
+#[derive(Clone)]
 pub struct MempoolTable {
     pub state: TableState,
     // type | hash | sender | nonce

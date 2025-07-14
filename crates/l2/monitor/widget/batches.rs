@@ -14,6 +14,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+#[derive(Clone)]
 pub struct BatchesTable {
     pub state: TableState,
     // batch number | # blocks | # messages | commit tx hash | verify tx hash

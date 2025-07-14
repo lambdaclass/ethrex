@@ -166,7 +166,7 @@ pub async fn start_l2(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
-            cfg,
+            &cfg,
         )
         .await
         .inspect_err(|err| {

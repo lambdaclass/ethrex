@@ -13,6 +13,7 @@ use ratatui::{
 
 use crate::SequencerConfig;
 
+#[derive(Clone)]
 pub struct GlobalChainStatusTable {
     pub state: TableState,
     pub items: Vec<(String, String)>,

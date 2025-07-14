@@ -34,18 +34,6 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 use tracing::{debug, error, info, warn};
-
-pub struct WidgetState {
-    pub logger: TuiWidgetState,
-    pub node_status: NodeStatusTable,
-    pub global_chain_status: GlobalChainStatusTable,
-    pub mempool: MempoolTable,
-    pub batches_table: BatchesTable,
-    pub blocks_table: BlocksTable,
-    pub l1_to_l2_messages: L1ToL2MessagesTable,
-    pub l2_to_l1_messages: L2ToL1MessagesTable,
-}
-
 #[derive(Clone)]
 pub struct EthrexMonitorState {
     pub title: String,
@@ -53,7 +41,14 @@ pub struct EthrexMonitorState {
     pub tabs: TabsState,
     pub tick_rate: u64,
 
-    pub widget_state: Arc<Mutex<WidgetState>>,
+    pub logger: Arc<Mutex<TuiWidgetState>>,
+    pub node_status: NodeStatusTable,
+    pub global_chain_status: GlobalChainStatusTable,
+    pub mempool: MempoolTable,
+    pub batches_table: BatchesTable,
+    pub blocks_table: BlocksTable,
+    pub l1_to_l2_messages: L1ToL2MessagesTable,
+    pub l2_to_l1_messages: L2ToL1MessagesTable,
 
     pub eth_client: EthClient,
     pub rollup_client: EthClient,
@@ -132,38 +127,6 @@ impl EthrexMonitorState {
         let rollup_client =
             EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
 
-        let widget_state = Arc::new(Mutex::new(WidgetState {
-                global_chain_status: GlobalChainStatusTable::new(
-                    &eth_client,
-                    cfg,
-                    &store,
-                    &rollup_store,
-                )
-                .await,
-                logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-                node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
-                mempool: MempoolTable::new(&rollup_client).await,
-                batches_table: BatchesTable::new(
-                    cfg.l1_committer.on_chain_proposer_address,
-                    &eth_client,
-                    &rollup_store,
-                )
-                .await?,
-                blocks_table: BlocksTable::new(&store).await?,
-                l1_to_l2_messages: L1ToL2MessagesTable::new(
-                    cfg.l1_watcher.bridge_address,
-                    &eth_client,
-                    &store,
-                )
-                .await?,
-                l2_to_l1_messages: L2ToL1MessagesTable::new(
-                    cfg.l1_watcher.bridge_address,
-                    &eth_client,
-                    &rollup_client,
-                )
-                .await?,
-            }));
-
         Ok(EthrexMonitorState {
             title: if cfg.based.based {
                 "Based Ethrex Monitor".to_string()
@@ -173,7 +136,35 @@ impl EthrexMonitorState {
             should_quit: false,
             tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
-            widget_state,
+            global_chain_status: GlobalChainStatusTable::new(
+                &eth_client,
+                cfg,
+                &store,
+                &rollup_store,
+            )
+            .await,
+            logger: Arc::new(Mutex::new(TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info))),
+            node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
+            mempool: MempoolTable::new(&rollup_client).await,
+            batches_table: BatchesTable::new(
+                cfg.l1_committer.on_chain_proposer_address,
+                &eth_client,
+                &rollup_store,
+            )
+            .await?,
+            blocks_table: BlocksTable::new(&store).await?,
+            l1_to_l2_messages: L1ToL2MessagesTable::new(
+                cfg.l1_watcher.bridge_address,
+                &eth_client,
+                &store,
+            )
+            .await?,
+            l2_to_l1_messages: L2ToL1MessagesTable::new(
+                cfg.l1_watcher.bridge_address,
+                &eth_client,
+                &rollup_client,
+            )
+            .await?,
             eth_client,
             rollup_client,
             store,
@@ -244,7 +235,7 @@ fn draw(terminal: &mut Terminal<impl Backend>, state: &mut EthrexMonitorState) -
 }
 
 pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) { // todo remove unwraps
-    let logger = &state.widget_state.lock().unwrap().logger;
+    let logger = &state.logger.lock().unwrap();
     match (&state.tabs, code) {
         (TabsState::Logs, KeyCode::Left) => logger.transition(TuiWidgetEvent::LeftKey),
         (TabsState::Logs, KeyCode::Down) => logger.transition(TuiWidgetEvent::DownKey),
@@ -269,7 +260,7 @@ pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) { // todo rem
 }
 
 pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorState) {
-    let logger = &state.widget_state.lock().unwrap().logger;
+    let logger = &state.logger.lock().unwrap();
     match (&state.tabs, kind) {
         (TabsState::Logs, MouseEventKind::ScrollDown) => {
             logger.transition(TuiWidgetEvent::NextPageKey)
@@ -282,20 +273,19 @@ pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorState) {
 }
 
 pub async fn on_tick(state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
-    let widget_state = &mut state.widget_state.lock().unwrap();
-    widget_state.node_status.on_tick(&state.store).await;
-    widget_state.global_chain_status
+    state.node_status.on_tick(&state.store).await;
+    state.global_chain_status
         .on_tick(&state.eth_client, &state.store, &state.rollup_store)
         .await;
-    widget_state.mempool.on_tick(&state.rollup_client).await;
-    widget_state.batches_table
+    state.mempool.on_tick(&state.rollup_client).await;
+    state.batches_table
         .on_tick(&state.eth_client, &state.rollup_store)
         .await?;
-    widget_state.blocks_table.on_tick(&state.store).await?;
-    widget_state.l1_to_l2_messages
+    state.blocks_table.on_tick(&state.store).await?;
+    state.l1_to_l2_messages
         .on_tick(&state.eth_client, &state.store)
         .await?;
-    widget_state.l2_to_l1_messages
+    state.l2_to_l1_messages
         .on_tick(&state.eth_client, &state.rollup_client)
         .await?;
 
@@ -323,8 +313,6 @@ impl Widget for &mut EthrexMonitorState {
             .select(self.tabs.clone());
 
         tabs.render(chunks[0], buf);
-
-        let mut widget_state = self.widget_state.lock().unwrap();
 
         match self.tabs {
             TabsState::Overview => {
@@ -358,35 +346,35 @@ impl Widget for &mut EthrexMonitorState {
 
                         let chunks = Layout::horizontal(constraints).split(chunks[1]);
 
-                        let mut node_status_state = widget_state.node_status.state.clone();
-                        widget_state.node_status
+                        let mut node_status_state = self.node_status.state.clone();
+                        self.node_status
                             .render(chunks[0], buf, &mut node_status_state);
 
-                        let mut global_chain_status_state = widget_state.global_chain_status.state.clone();
-                        widget_state.global_chain_status.render(
+                        let mut global_chain_status_state = self.global_chain_status.state.clone();
+                        self.global_chain_status.render(
                             chunks[1],
                             buf,
                             &mut global_chain_status_state,
                         );
                     }
                 }
-                let mut batches_table_state = widget_state.batches_table.state.clone();
-                widget_state.batches_table
+                let mut batches_table_state = self.batches_table.state.clone();
+                self.batches_table
                     .render(chunks[1], buf, &mut batches_table_state);
 
-                let mut blocks_table_state = widget_state.blocks_table.state.clone();
-                widget_state.blocks_table
+                let mut blocks_table_state = self.blocks_table.state.clone();
+                self.blocks_table
                     .render(chunks[2], buf, &mut blocks_table_state);
 
-                let mut mempool_state = widget_state.mempool.state.clone();
-                widget_state.mempool.render(chunks[3], buf, &mut mempool_state);
+                let mut mempool_state = self.mempool.state.clone();
+                self.mempool.render(chunks[3], buf, &mut mempool_state);
 
-                let mut l1_to_l2_messages_state = widget_state.l1_to_l2_messages.state.clone();
-                widget_state.l1_to_l2_messages
+                let mut l1_to_l2_messages_state = self.l1_to_l2_messages.state.clone();
+                self.l1_to_l2_messages
                     .render(chunks[4], buf, &mut l1_to_l2_messages_state);
 
-                let mut l2_to_l1_messages_state = widget_state.l2_to_l1_messages.state.clone();
-                widget_state.l2_to_l1_messages
+                let mut l2_to_l1_messages_state = self.l2_to_l1_messages.state.clone();
+                self.l2_to_l1_messages
                     .render(chunks[5], buf, &mut l2_to_l1_messages_state);
 
                 let help = Line::raw("tab: switch tab |  Q: quit").centered();
@@ -409,7 +397,7 @@ impl Widget for &mut EthrexMonitorState {
                     .output_target(true)
                     .output_file(false)
                     .output_line(false)
-                    .state(&widget_state.logger);
+                    .state(&self.logger.lock().unwrap());
 
                 log_widget.render(chunks[0], buf);
 
