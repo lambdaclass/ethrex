@@ -13,22 +13,20 @@ fn main() {
     // ERC1967Proxy contract.
     compile_contract(
         &contracts_path,
-        "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967",
+        &contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol"),
         "ERC1967Proxy",
         false,
         None,
     );
 
     // SP1VerifierGroth16 contract
-    ethrex_l2_sdk::compile_contract(
+    compile_contract(
         &contracts_path,
         &contracts_path.join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
+        "SP1Verifier",
         false,
         None,
-    )
-    .unwrap();
-    println!("Successfully compiled SP1VerifierGroth16 contract");
-    decode_to_bytecode(&contracts_path, "SP1Verifier", false);
+    );
 
     // Get the openzeppelin contracts remappings
     let remappings = [
@@ -47,29 +45,34 @@ fn main() {
         remappings.iter().map(|(s, p)| (*s, p.as_path())).collect();
 
     // L1 contracts
-    let l1_contracts = [("src/l1", "OnChainProposer"), ("src/l1", "CommonBridge")];
-    for (dir, name) in l1_contracts {
-        compile_contract(&contracts_path, dir, name, false, Some(&remappings));
+    let l1_contracts = [
+        (Path::new("src/l1/OnChainProposer.sol"), "OnChainProposer"),
+        (Path::new("src/l1/CommonBridge.sol"), "CommonBridge"),
+    ];
+    for (path, name) in l1_contracts {
+        compile_contract(&contracts_path, path, name, false, Some(&remappings));
     }
     // L2 contracts
-    let l2_contracts = [("src/l2", "CommonBridgeL2"), ("src/l2", "L2ToL1Messenger")];
-    for (dir, name) in l2_contracts {
-        compile_contract(&contracts_path, dir, name, true, Some(&remappings));
+    let l2_contracts = [
+        (Path::new("src/l2/CommonBridgeL2.sol"), "CommonBridgeL2"),
+        (Path::new("src/l2/L2ToL1Messenger.sol"), "L2ToL1Messenger"),
+    ];
+    for (path, name) in l2_contracts {
+        compile_contract(&contracts_path, path, name, true, Some(&remappings));
     }
 
-    ethrex_l2_sdk::compile_contract(
+    compile_contract(
         &contracts_path,
         Path::new("src/l2/L2Upgradeable.sol"),
+        "UpgradeableSystemContract",
         true,
         Some(&remappings),
-    )
-    .unwrap();
-    decode_to_bytecode(&contracts_path, "UpgradeableSystemContract", true);
+    );
 
     // Based contracts
     compile_contract(
         &contracts_path,
-        "src/l1/based",
+        Path::new("src/l1/based/SequencerRegistry.sol"),
         "SequencerRegistry",
         false,
         Some(&remappings),
@@ -121,14 +124,13 @@ fn download_contract_deps(contracts_path: &Path) {
 
 fn compile_contract(
     output_dir: &Path,
-    relative_dir: &str,
+    contract_path: &Path,
     contract_name: &str,
     runtime_bin: bool,
     remappings: Option<&[(&str, &Path)]>,
 ) {
     println!("Compiling {contract_name} contract");
-    let contract_path = Path::new(relative_dir).join(format!("{contract_name}.sol"));
-    ethrex_l2_sdk::compile_contract(output_dir, &contract_path, runtime_bin, remappings)
+    ethrex_l2_sdk::compile_contract(output_dir, contract_path, runtime_bin, remappings)
         .expect("Failed to compile {contract_name}");
     println!("Successfully compiled {contract_name} contract");
     decode_to_bytecode(output_dir, contract_name, runtime_bin);
