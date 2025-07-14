@@ -12,7 +12,7 @@ use tracing::{debug, error, info};
 use crate::{
     discv4::{
         Kademlia,
-        messages::{ENRRequestMessage, FindNodeMessage, Message, PingMessage},
+        messages::{FindNodeMessage, Message, PingMessage},
     },
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, public_key_from_signing_key},
@@ -100,6 +100,12 @@ impl DiscoverySideCarState {
         Ok(())
     }
 
+    pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
+        let public_key = PublicKey::from(signer.verifying_key());
+        let encoded = public_key.to_encoded_point(false);
+        H512::from_slice(&encoded.as_bytes()[1..])
+    }
+
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
@@ -121,31 +127,6 @@ impl DiscoverySideCarState {
         }
 
         debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
-
-        Ok(())
-    }
-
-    async fn send_enr_request(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
-        let mut buf = Vec::new();
-
-        // TODO: Parametrize this expiration.
-        let expiration: u64 = get_msg_expiration_from_seconds(20);
-
-        let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));
-
-        enr_req.encode_with_header(&mut buf, &self.signer);
-
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, node.udp_addr())
-            .await
-            .map_err(DiscoverySideCarError::MessageSendFailure)?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoverySideCarError::PartialMessageSent);
-        }
-
-        debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
