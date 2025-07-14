@@ -55,7 +55,7 @@ async fn main() {
         signer.clone(),
         udp_socket.clone(),
         kademlia.clone(),
-        bootnode(),
+        bootnodes(),
     )
     .await
     .inspect_err(|e| {
@@ -73,11 +73,14 @@ async fn main() {
         error!("Failed to start discovery side car: {e}");
     });
 
-    let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+    let local_node_record =
+        NodeRecord::from_node(&local_node, 1, &signer).expect("Failed to create local node record");
 
-    let store = Store::new("./db", ethrex_storage::EngineType::InMemory).unwrap();
+    let store =
+        Store::new("./db", ethrex_storage::EngineType::InMemory).expect("Failed to create store");
 
-    let genesis = serde_json::from_str(HOLESKY_GENESIS_CONTENTS).unwrap();
+    let genesis =
+        serde_json::from_str(HOLESKY_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
     store
         .add_initial_state(genesis)
         .await
@@ -161,10 +164,15 @@ pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
     H512::from_slice(&encoded.as_bytes()[1..])
 }
 
-pub fn bootnode() -> Node {
-    Node::from_enode_url(
+pub fn bootnodes() -> Vec<Node> {
+    [
         "enode://ac906289e4b7f12df423d654c5a962b6ebe5b3a74cc9e06292a85221f9a64a6f1cfdd6b714ed6dacef51578f92b34c60ee91e9ede9c7f8fadc4d347326d95e2b@146.190.13.128:30303",
-    ).expect("Failed to parse bootnode enode URL")
+        "enode://a3435a0155a3e837c02f5e7f5662a2f1fbc25b48e4dc232016e1c51b544cb5b4510ef633ea3278c0e970fa8ad8141e2d4d0f9f95456c537ff05fdf9b31c15072@178.128.136.233:30303",
+        "enode://7fa09f1e8bb179ab5e73f45d3a7169a946e7b3de5ef5cea3a0d4546677e4435ee38baea4dd10b3ddfdc1f1c5e869052932af8b8aeb6f9738598ec4590d0b11a6@65.109.94.124:30303",
+        "enode://3524632a412f42dee4b9cc899b946912359bb20103d7596bddb9c8009e7683b7bff39ea20040b7ab64d23105d4eac932d86b930a605e632357504df800dba100@172.174.35.249:30303",
+    ].iter().map(|&s| {
+        Node::from_str(s).expect("Failed to parse bootnode enode")
+    }).collect()
 }
 
 fn format_duration(duration: Duration) -> String {

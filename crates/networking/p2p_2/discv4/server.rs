@@ -220,7 +220,7 @@ impl DiscoveryServer {
         signer: SigningKey,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
-        bootnode: Node,
+        bootnodes: Vec<Node>,
     ) -> Result<(), DiscoveryServerError> {
         info!("Starting Discovery Server");
 
@@ -236,9 +236,11 @@ impl DiscoveryServer {
 
         let _ = server.cast(InMessage::Listen).await;
 
-        let _ = state.ping(&bootnode).await.inspect_err(|e| {
-            error!("Failed to ping bootnode: {e}");
-        });
+        for bootnode in bootnodes {
+            let _ = state.ping(&bootnode).await.inspect_err(|e| {
+                error!("Failed to ping bootnode: {e}");
+            });
+        }
 
         Ok(())
     }
