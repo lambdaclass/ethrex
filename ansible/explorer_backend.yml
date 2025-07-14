@@ -11,6 +11,8 @@
       apt:
         name:
           - inotify-tools
+          - ca-certificates
+          - curl
           - make
           - g++
           - libudev-dev
@@ -64,17 +66,17 @@
 
     - name: Add Docker APT repository
       apt_repository:
-        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable"
+        repo: "deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable"
         filename: docker
         state: present
 
     - name: Install Docker packages
       apt:
         name:
-          - docker-ce 
-          - docker-ce-cli 
-          - containerd.io 
-          - docker-buildx-plugin 
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
           - docker-compose-plugin
         state: present
         update_cache: true
@@ -141,6 +143,7 @@
         ansible_ssh_user: app
 
     - name: Compile Explorer
+      become: false
       shell:
         cmd: |
           mix do deps.get, local.rebar --force, deps.compile
