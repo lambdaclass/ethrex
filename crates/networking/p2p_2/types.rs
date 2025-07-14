@@ -10,6 +10,7 @@ use ethrex_rlp::{
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
+use std::net::Ipv6Addr;
 use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -166,10 +167,12 @@ impl Node {
         let encoded = verifying_key.to_encoded_point(false);
         let public_key = H512::from_slice(&encoded.as_bytes()[1..]);
 
-        let ip = pairs
-            .ip
-            .map(|p| IpAddr::from(Ipv4Addr::from_bits(p)))
-            .ok_or("Ip not found in record, can't construct node")?;
+        let ip: IpAddr = match (pairs.ip, pairs.ip6) {
+            (None, None) => return Err("Ip not found in record, can't construct node".to_string()),
+            (None, Some(ipv6)) => IpAddr::from(Ipv6Addr::from_bits(ipv6)),
+            (Some(ipv4), None) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
+            (Some(ipv4), Some(ipv6)) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
+        };
 
         // both udp and tcp can be defined in the pairs or only one
         // in the latter case, we have to default both ports to the one provided
@@ -233,6 +236,7 @@ pub struct NodeRecord {
 pub struct NodeRecordPairs {
     pub id: Option<String>,
     pub ip: Option<u32>,
+    pub ip6: Option<u128>,
     // the record structure reference says that tcp_port and udp_ports are big-endian integers
     // but they are actually encoded as 2 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/f544fc3b4659aeca24a6de83f820dd61ea9b39db/p2p/enr/entries.go#L60-L78
     // I think the confusion comes from the fact that geth decodes the bytes and then builds an IPV4/6 big-integer structure.
@@ -255,6 +259,7 @@ impl NodeRecord {
             match key.as_str() {
                 "id" => decoded_pairs.id = String::decode(&value).ok(),
                 "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
+                "ip6" => decoded_pairs.ip6 = u128::decode(&value).ok(),
                 "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
                 "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
                 "secp256k1" => {
