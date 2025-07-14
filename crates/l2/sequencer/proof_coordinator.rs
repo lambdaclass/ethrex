@@ -161,6 +161,7 @@ pub struct ProofCoordinatorState {
     l1_private_key: SecretKey,
     blockchain: Arc<Blockchain>,
     validium: bool,
+    needed_proof_types: Vec<ProverType>,
     commit_hash: String,
     aligned: bool,
 }
@@ -171,6 +172,7 @@ impl ProofCoordinatorState {
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
+        needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
             config.eth.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -204,6 +206,7 @@ impl ProofCoordinatorState {
             l1_private_key: config.proof_coordinator.l1_private_key,
             blockchain,
             validium: config.proof_coordinator.validium,
+            needed_proof_types,
             commit_hash: get_commit_hash(),
             aligned: config.aligned.aligned_mode,
         })
@@ -228,8 +231,11 @@ impl ProofCoordinator {
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
         blockchain: Arc<Blockchain>,
+        needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
-        let state = ProofCoordinatorState::new(&cfg, store, rollup_store, blockchain).await?;
+        let state =
+            ProofCoordinatorState::new(&cfg, store, rollup_store, blockchain, needed_proof_types)
+                .await?;
         let listener =
             Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
         let mut proof_coordinator = ProofCoordinator::start(state);
@@ -421,20 +427,11 @@ async fn handle_request(
         return Ok(());
     }
 
-    let batch_to_verify = 1 + get_latest_sent_batch(
-        state.needed_proof_types.clone(),
-        &state.rollup_store,
-        &state.eth_client,
-        state.on_chain_proposer_address,
-    )
-    .await
-    .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
-
     let mut all_proofs_exist = true;
     for proof_type in &state.needed_proof_types {
         if state
             .rollup_store
-            .get_proof_by_batch_and_type(batch_to_verify, *proof_type)
+            .get_proof_by_batch_and_type(batch_to_prove, *proof_type)
             .await?
             .is_none()
         {
@@ -444,18 +441,18 @@ async fn handle_request(
     }
 
     let response =
-        if all_proofs_exist || !state.rollup_store.contains_batch(&batch_to_verify).await? {
+        if all_proofs_exist || !state.rollup_store.contains_batch(&batch_to_prove).await? {
             debug!("Sending empty BatchResponse");
             ProofData::empty_batch_response()
         } else {
-            let input = create_prover_input(state, batch_to_verify).await?;
+            let input = create_prover_input(state, batch_to_prove).await?;
             let format = if state.aligned {
                 ProofFormat::Compressed
             } else {
                 ProofFormat::Groth16
             };
-            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-            ProofData::batch_response(batch_to_verify, input, format)
+            debug!("Sending BatchResponse for block_number: {batch_to_prove}");
+            ProofData::batch_response(batch_to_prove, input, format)
         };
 
     send_response(stream, &response).await?;
