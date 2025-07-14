@@ -27,6 +27,7 @@ impl Memory {
         }
     }
 
+    /// Gets the Memory for the next children callframe.
     #[inline]
     pub fn next_memory(&self) -> Memory {
         let mut mem = self.clone();
@@ -34,38 +35,28 @@ impl Memory {
         mem
     }
 
-    /// Cleans the memory from base onwards, this should be used in callframes when handling returns. On the callframe that is about to be dropped.
+    /// Cleans the memory from base onwards, this must be used in callframes when handling returns.
+    ///
+    /// On the callframe that is about to be dropped.
+    #[inline]
     pub fn clean_from_base(&self) {
         self.buffer.borrow_mut().truncate(self.current_base);
     }
 
-    /// Returns the len of the current memory for gas, this differs from the actual allocated length due to optimizations.
+    /// Returns the len of the current memory, from the current base.
     #[inline]
     pub fn len(&self) -> usize {
-        self.current_len()
+        self.buffer.borrow().len().wrapping_sub(self.current_base)
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Returns the len of the current memory, from the current base.
-    #[inline]
-    fn current_len(&self) -> usize {
-        // will never wrap
-        self.buffer.borrow().len().wrapping_sub(self.current_base)
-    }
-
-    /// Returns the len of the current memory, from the current base.
-    #[inline]
-    fn current_cap(&self) -> usize {
-        // will never wrap
-        self.buffer
-            .borrow()
-            .capacity()
-            .wrapping_sub(self.current_base)
-    }
-
+    /// Resizes the from the current base to fit the memory specified at new_memory_size.
+    ///
+    /// Note: new_memory_size is increased to the next 32 byte multiple.
     #[inline]
     pub fn resize(&mut self, new_memory_size: usize) -> Result<(), VMError> {
         if new_memory_size == 0 {
@@ -76,8 +67,7 @@ impl Memory {
             .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
             .ok_or(OutOfBounds)?;
 
-        let current_len = self.current_len();
-        let current_cap = self.current_cap();
+        let current_len = self.len();
 
         if new_memory_size <= current_len {
             return Ok(());
@@ -91,7 +81,7 @@ impl Memory {
         // when resizing, resize by allocating entire pages instead of small memory sizes.
         let new_size = (real_new_memory_size) + (4096 - ((real_new_memory_size) % 4096));
 
-        if new_size > current_cap {
+        if new_size > buffer.capacity() {
             buffer.reserve_exact(new_size);
         }
 
@@ -101,6 +91,7 @@ impl Memory {
         Ok(())
     }
 
+    /// Load `size` bytes from the given offset.
     #[inline]
     pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Vec<u8>, VMError> {
         if size == 0 {
@@ -119,6 +110,7 @@ impl Memory {
             .to_vec())
     }
 
+    /// Load N bytes from the given offset.
     #[inline]
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
         let new_size = offset.checked_add(N).unwrap();
@@ -134,13 +126,17 @@ impl Memory {
             .unwrap())
     }
 
+    /// Load a word from at the given offset.
     #[inline]
     pub fn load_word(&mut self, offset: usize) -> Result<U256, VMError> {
         let value: [u8; 32] = self.load_range_const(offset)?;
         Ok(u256_from_big_endian_const(value))
     }
 
-    pub fn store(&self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
+    /// Stores the given data and data size at the given offset.
+    ///
+    /// Internal use.
+    fn store(&self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
         if data_size == 0 {
             return Ok(());
         }
@@ -161,6 +157,7 @@ impl Memory {
         Ok(())
     }
 
+    /// Stores the given data at the given offset.
     #[inline]
     pub fn store_data(&mut self, offset: usize, data: &[u8]) -> Result<(), VMError> {
         let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
@@ -168,6 +165,9 @@ impl Memory {
         self.store(data, offset, data.len())
     }
 
+    /// Stores the given data and data size at the given offset.
+    ///
+    /// Resizes memory to fit the given data.
     #[inline]
     pub fn store_range(&mut self, offset: usize, size: usize, data: &[u8]) -> Result<(), VMError> {
         if size == 0 {
@@ -179,6 +179,7 @@ impl Memory {
         self.store(data, offset, size)
     }
 
+    /// Stores a word at the given offset, resizing memory if needed.
     #[inline]
     pub fn store_word(&mut self, offset: usize, word: U256) -> Result<(), VMError> {
         let new_size: usize = offset
@@ -190,6 +191,9 @@ impl Memory {
         Ok(())
     }
 
+    /// Copies memory within 2 offsets. Like a memmove.
+    ///
+    /// Resizes if needed, because one can copy from "expanded memory", which is initialized with zeroes.
     pub fn copy_within(
         &mut self,
         from_offset: usize,
