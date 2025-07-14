@@ -88,6 +88,7 @@ jobs:
           cd crates/l2
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
+          PROOF_COORDINATOR_ADDRESS=0.0.0.0 \
           make init-l2-no-metrics &
           sleep 30
           cd tee/quote-gen/
