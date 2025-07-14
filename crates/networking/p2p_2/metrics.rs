@@ -29,6 +29,7 @@ pub struct Metrics {
     pub rlpx_conn_establishments_rate: Gauge,
 
     pub rlpx_conn_failures_reasons: Arc<Mutex<Vec<RLPxError>>>,
+    pub rlpx_conn_failures_reasons_counts: Arc<Mutex<BTreeMap<String, u64>>>,
     pub rlpx_conn_failures: IntCounter,
 
     start_time: SystemTime,
@@ -70,10 +71,11 @@ impl Metrics {
         events.push_back(SystemTime::now());
         self.rlpx_conn_failures.inc();
         self.rlpx_conn_failures_reasons.lock().await.push(reason);
+        self.update_rlpx_conn_failures_counts().await;
     }
 
-    pub async fn rlpx_conn_failures_counts(&self) -> BTreeMap<String, u64> {
-        let mut failures_grouped_by_reason = BTreeMap::new();
+    pub async fn update_rlpx_conn_failures_counts(&self) {
+        let mut failures_grouped_by_reason = self.rlpx_conn_failures_reasons_counts.lock().await;
 
         for failure_reason in self.rlpx_conn_failures_reasons.lock().await.iter() {
             match failure_reason {
@@ -249,8 +251,6 @@ impl Metrics {
                 }
             }
         }
-
-        failures_grouped_by_reason
     }
 
     pub async fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
@@ -377,6 +377,7 @@ impl Default for Metrics {
             rlpx_conn_establishments_rate: established_rlpx_conn_rate,
             rlpx_conn_failures: failed_rlpx_conn,
             rlpx_conn_failures_reasons: Arc::new(Mutex::new(Vec::new())),
+            rlpx_conn_failures_reasons_counts: Arc::new(Mutex::new(BTreeMap::new())),
             start_time: SystemTime::now(),
         }
     }

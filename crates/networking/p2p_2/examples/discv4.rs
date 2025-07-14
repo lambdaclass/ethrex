@@ -175,7 +175,7 @@ failures: {:#?}"#,
                 METRICS.rlpx_conn_attempts.get(),
                 METRICS.rlpx_conn_attempts_rate.get().floor(),
                 METRICS.rlpx_conn_failures.get(),
-                METRICS.rlpx_conn_failures_counts().await,
+                METRICS.rlpx_conn_failures_reasons_counts.lock().await,
             );
             // info!(
             //     contacts = kademlia_clone.table.lock().await.len(),
