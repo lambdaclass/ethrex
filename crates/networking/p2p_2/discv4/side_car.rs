@@ -11,10 +11,8 @@ use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info};
 
 use crate::{
-    discv4::{
-        Kademlia,
-        messages::{FindNodeMessage, Message, PingMessage},
-    },
+    discv4::messages::{FindNodeMessage, Message, PingMessage},
+    kademlia::Kademlia,
     types::{Endpoint, Node, NodeRecord},
     utils::get_msg_expiration_from_seconds,
 };

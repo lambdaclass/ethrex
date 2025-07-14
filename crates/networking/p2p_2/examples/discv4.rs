@@ -8,7 +8,8 @@ use std::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::H512;
 use ethrex_p2p_2::{
-    discv4::{Kademlia, metrics::METRICS, server::DiscoveryServer, side_car::DiscoverySideCar},
+    discv4::{metrics::METRICS, server::DiscoveryServerListener, side_car::DiscoverySideCar},
+    kademlia::Kademlia,
     monitor::{app::Monitor, init_terminal, restore_terminal},
     network::P2PContext,
     rlpx::initiator::RLPxInitiator,
