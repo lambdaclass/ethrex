@@ -89,14 +89,12 @@ pub struct BenchTransaction {
 
 impl Default for BenchTransaction {
     fn default() -> Self {
-        Self {
-            to: default_recipient(),
-            sender: default_sender(),
-            gas_limit: high_u64(),
-            gas_price: one_u256(),
-            value: U256::default(),
-            data: Bytes::default(),
-        }
+        // This trick deserializes an empty JSON object.
+        // Serde will see all fields are missing and apply the
+        // `#[serde(default = "...")]` attributes to build the struct.
+        // serde default is necessary on each attribute so that in the JSON
+        // we can get away with specifying some attributes only
+        serde_json::from_str("{}").unwrap()
     }
 }
 
