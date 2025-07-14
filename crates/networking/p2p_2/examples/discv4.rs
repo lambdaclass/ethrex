@@ -9,12 +9,11 @@ use std::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::H512;
 use ethrex_p2p_2::{
-    discv4::{Kademlia, metrics::METRICS, server::DiscoveryServer, side_car::DiscoverySideCar},
+    discv4::{Kademlia, server::DiscoveryServer, side_car::DiscoverySideCar},
     monitor::{app::Monitor, init_terminal, restore_terminal},
     network::P2PContext,
     rlpx::initiator::RLPxInitiator,
     types::{Node, NodeRecord},
-    utils::public_key_from_signing_key,
 };
 use ethrex_storage::Store;
 use ethrex_vm::EvmEngine;
@@ -106,10 +105,6 @@ async fn main() {
             error!("Failed to start RLPx Initiator: {e}");
         });
 
-    let mut terminal = init_terminal().expect("Failed to initialize terminal");
-
-    let mut monitor = Monitor::new("Ethrex P2P", kademlia.clone());
-
     // Barrani kademlia contacts counter
     let kademlia_counter_handle = tokio::spawn(async move {
         let start = std::time::Instant::now();
@@ -118,10 +113,9 @@ async fn main() {
             let number_of_peers = kademlia.number_of_peers().await;
             let number_of_tried_peers = kademlia.number_of_tried_peers().await;
             info!(
-                contacts = kademlia.contacts.lock().await.len(),
+                contacts = kademlia.table.lock().await.len(),
                 number_of_peers = number_of_peers,
                 number_of_tried_peers = number_of_tried_peers,
-                rate = %format!("{} contacts/s", METRICS.contacts_rate.get().round()),
                 elapsed = format_duration(elapsed)
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -163,6 +157,12 @@ pub fn init_tracing() {
 //     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 //     tui_logger::init_logger(LevelFilter::max()).expect("Failed to initialize tui_logger");
 // }
+
+pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
+    let public_key = PublicKey::from(signer.verifying_key());
+    let encoded = public_key.to_encoded_point(false);
+    H512::from_slice(&encoded.as_bytes()[1..])
+}
 
 pub fn bootnodes() -> Vec<Node> {
     [

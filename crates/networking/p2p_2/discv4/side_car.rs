@@ -2,6 +2,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use ethrex_common::H512;
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
+use rand::rngs::OsRng;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
@@ -15,7 +16,7 @@ use crate::{
         messages::{FindNodeMessage, Message, PingMessage},
     },
     types::{Endpoint, Node, NodeRecord},
-    utils::{get_msg_expiration_from_seconds, public_key_from_signing_key},
+    utils::get_msg_expiration_from_seconds,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -109,8 +110,8 @@ impl DiscoverySideCarState {
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let random_priv_key = SigningKey::random(&mut rand::rngs::OsRng);
-        let random_pub_key = public_key_from_signing_key(&random_priv_key);
+        let random_priv_key = SigningKey::random(&mut OsRng);
+        let random_pub_key = Self::public_key_from_signing_key(&random_priv_key);
 
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
 
@@ -225,7 +226,7 @@ impl GenServer for DiscoverySideCar {
 }
 
 async fn revalidate(state: &DiscoverySideCarState) {
-    for node in state.kademlia.contacts.lock().await.values() {
+    for node in state.kademlia.table.lock().await.values() {
         let _ = state.ping(node).await.inspect_err(
             |e| error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?e),
         );
@@ -234,11 +235,11 @@ async fn revalidate(state: &DiscoverySideCarState) {
 
 async fn lookup(state: &DiscoverySideCarState) {
     {
-        if state.kademlia.contacts.lock().await.len() >= 18000 {
+        if state.kademlia.table.lock().await.len() >= 18000 {
             return;
         }
     }
-    for node in state.kademlia.contacts.lock().await.values() {
+    for node in state.kademlia.table.lock().await.values() {
         let _ = state.send_find_node(node).await.inspect_err(
             |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
         );

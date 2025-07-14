@@ -1,4 +1,4 @@
-use std::{collections::hash_map::Entry, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use ethrex_common::H512;
 use k256::ecdsa::SigningKey;
@@ -17,7 +17,6 @@ use crate::{
             ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
             Packet, PacketDecodeErr, PingMessage, PongMessage,
         },
-        metrics::METRICS,
     },
     types::{Endpoint, Node, NodeRecord},
     utils::get_msg_expiration_from_seconds,
@@ -148,6 +147,10 @@ impl DiscoveryServerState {
             |e| error!(received = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
         );
 
+        let _ = self.send_find_node(node).await.inspect_err(
+            |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
+        );
+
         Ok(())
     }
 
@@ -172,6 +175,28 @@ impl DiscoveryServerState {
         }
 
         debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
+
+        Ok(())
+    }
+
+    async fn send_find_node(&self, node: &Node) -> Result<(), DiscoveryServerError> {
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
+
+        let msg = Message::FindNode(FindNodeMessage::new(node.public_key, expiration));
+
+        let mut buf = Vec::new();
+        msg.encode_with_header(&mut buf, &self.signer);
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
+            .await
+            .map_err(DiscoveryServerError::MessageSendFailure)?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoveryServerError::PartialMessageSent);
+        }
+
+        debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -356,13 +381,10 @@ impl GenServer for ConnectionHandler {
             } => {
                 debug!(received = "Neighbors", from = %format!("{sender_public_key:#x}"));
 
-                let mut kademlia = state.kademlia.contacts.lock().await;
+                let mut kademlia = state.kademlia.table.lock().await;
 
                 for node in msg.nodes {
-                    if let Entry::Vacant(vacant_entry) = kademlia.entry(node.node_id()) {
-                        vacant_entry.insert(node);
-                        METRICS.record_new_contact().await;
-                    };
+                    kademlia.entry(node.node_id()).or_insert(node);
                 }
             }
             Self::CastMsg::ENRRequest(packet) => {
