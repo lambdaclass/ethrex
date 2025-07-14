@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use ethrex_common::H32;
 use k256::ecdsa::SigningKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -134,13 +135,22 @@ impl GenServer for RLPxInitiator {
 }
 
 async fn look_for_peers(state: &RLPxInitiatorState) {
+    const ACCEPTED_FORK_HASHES: [H32; 4] = [
+        H32([0xc6, 0x1a, 0x60, 0x98]),
+        H32([0xfd, 0x4f, 0x01, 0x6b]),
+        H32([0x9b, 0x19, 0x2a, 0xd0]),
+        H32([0xdf, 0xbd, 0x9b, 0xed]),
+    ];
     info!("Looking for peers");
     let mut already_known_peers_table = state.kademlia.already_tried_peers.lock().await;
     for node in state.kademlia.table.lock().await.values() {
-        let Some(_fork_id) = &node.fork_id else {
+        let Some(fork_id) = &node.fork_id else {
             continue;
         };
-        // TODO: check fork ID
+
+        if !ACCEPTED_FORK_HASHES.contains(&fork_id.fork_hash) {
+            continue;
+        }
         if !already_known_peers_table.contains(&node.node_id()) {
             already_known_peers_table.insert(node.node_id());
             RLPxConnection::spawn_as_initiator(state.context.clone(), node).await;
