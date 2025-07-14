@@ -165,8 +165,8 @@ async fn test_upgrade(
     let private_key = l1_rich_wallet_private_key();
 
     let contracts_path = Path::new("contracts");
-    get_contract_dependencies(&contracts_path);
-    let remappings_raw = vec![(
+    get_contract_dependencies(contracts_path);
+    let remappings_raw = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
@@ -361,7 +361,7 @@ async fn test_erc20_roundtrip(
     let contracts_path = Path::new("contracts");
 
     get_contract_dependencies(contracts_path);
-    let remappings_raw = vec![(
+    let remappings_raw = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
