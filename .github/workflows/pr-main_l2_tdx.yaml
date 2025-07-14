@@ -29,10 +29,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install solc
         uses: pontem-network/get-solc@master
@@ -44,15 +42,9 @@ jobs:
         uses: cachix/install-nix-action@v31
 
       - name: Set up QEMU
-        if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: amd64
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: "true"
 
       - name: Build prover
         run: |
