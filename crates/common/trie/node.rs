@@ -31,10 +31,6 @@ pub enum NodeRef {
 }
 
 impl NodeRef {
-    pub const fn const_default() -> Self {
-        Self::Hash(NodeHash::const_default())
-    }
-
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
@@ -92,7 +88,7 @@ impl NodeRef {
 
 impl Default for NodeRef {
     fn default() -> Self {
-        Self::const_default()
+        Self::Hash(NodeHash::default())
     }
 }
 

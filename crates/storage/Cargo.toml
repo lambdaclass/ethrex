@@ -25,6 +25,7 @@ redb = { workspace = true, optional = true }
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
 tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
+bincode = "1.3.3"
 
 [features]
 default = []
@@ -40,5 +41,5 @@ tokio = { workspace = true, features = ["full"] }
 [lib]
 path = "./lib.rs"
 
-[lints.clippy] 
-unwrap_used = "deny" 
+[lints.clippy]
+unwrap_used = "deny"

@@ -14,14 +14,10 @@ jobs:
   build-ethrex-trie:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Fetch Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3

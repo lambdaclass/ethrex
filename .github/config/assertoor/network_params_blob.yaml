@@ -17,7 +17,10 @@ network_params:
 additional_services:
   - assertoor
   - tx_fuzz
-  - dora
+#   - dora
+#   - prometheus_grafana
+# ethereum_metrics_exporter_enabled: true
+# Uncomment the previous lines to enable metrics dashboards and dora explorer, useful for local testing
 
 network_params:
   electra_fork_epoch: 1

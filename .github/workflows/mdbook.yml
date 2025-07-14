@@ -9,6 +9,10 @@ on:
   pull_request:
     paths:
       - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   deploy:
@@ -23,17 +27,18 @@ jobs:
         with:
           mdbook-version: '0.4.51'
 
-      - name: Install mdbook-alerts
-        run: cargo install mdbook-alerts
+      - name: Install mdbook dependencies
+        run: make docs-deps
 
-      - run: mdbook build
+      - name: Build documentation
+        run: make docs
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
         if: ${{ github.ref == 'refs/heads/main' }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: book
+          publish_dir: book/html
           destination_dir: .     # root of gh-pages
           keep_files: true       # do not erase flamegraphs/ or benchmarks/
           cname: docs.ethrex.xyz # always commit the CNAME file

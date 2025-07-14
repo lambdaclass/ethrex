@@ -9,7 +9,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Receipts68 {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages

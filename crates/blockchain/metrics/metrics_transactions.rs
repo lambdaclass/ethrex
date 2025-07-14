@@ -11,6 +11,7 @@ pub static METRICS_TX: LazyLock<MetricsTx> = LazyLock::new(MetricsTx::default);
 #[derive(Debug, Clone)]
 pub struct MetricsTx {
     pub transactions_tracker: IntCounterVec,
+    pub transaction_errors_count: IntCounterVec,
     pub transactions_total: IntGauge,
     pub mempool_tx_count: IntGaugeVec,
     pub transactions_per_second: Gauge,
@@ -24,16 +25,27 @@ impl Default for MetricsTx {
 
 impl MetricsTx {
     pub fn new() -> Self {
+        let transactions_tracker = IntCounterVec::new(
+            Opts::new(
+                "transactions_tracker",
+                "Keeps track of all transactions depending on status and tx_type",
+            ),
+            &["tx_type"],
+        )
+        .unwrap();
+
+        Self::initialize_transactions_tracker(&transactions_tracker);
+
         MetricsTx {
-            transactions_tracker: IntCounterVec::new(
+            transactions_tracker,
+            transaction_errors_count: IntCounterVec::new(
                 Opts::new(
-                    "transactions_tracker",
-                    "Keeps track of all transactions depending on status and tx_type",
+                    "transaction_errors_count",
+                    "Keeps track of all errors that happen during transaction execution",
                 ),
-                &["status", "tx_type"],
+                &["tx_error"],
             )
             .unwrap(),
-
             transactions_total: IntGauge::new(
                 "transactions_total",
                 "Keeps track of all transactions",
@@ -55,19 +67,32 @@ impl MetricsTx {
         }
     }
 
-    pub fn inc_tx_with_status_and_type(&self, status: MetricsTxStatus, tx_type: MetricsTxType) {
+    pub fn inc_tx_with_type(&self, tx_type: MetricsTxType) {
         let txs = self.transactions_tracker.clone();
 
-        let txs_builder =
-            match txs.get_metric_with_label_values(&[status.to_str(), tx_type.to_str()]) {
-                Ok(builder) => builder,
-                Err(e) => {
-                    tracing::error!("Failed to build Metric: {e}");
-                    return;
-                }
-            };
+        let txs_builder = match txs.get_metric_with_label_values(&[tx_type.to_str()]) {
+            Ok(builder) => builder,
+            Err(e) => {
+                tracing::error!("Failed to build Metric: {e}");
+                return;
+            }
+        };
 
         txs_builder.inc();
+    }
+
+    pub fn inc_tx_errors(&self, tx_error: &str) {
+        let tx_errors = self.transaction_errors_count.clone();
+
+        let tx_errors_builder = match tx_errors.get_metric_with_label_values(&[tx_error]) {
+            Ok(builder) => builder,
+            Err(e) => {
+                tracing::error!("Failed to build Metric: {e}");
+                return;
+            }
+        };
+
+        tx_errors_builder.inc();
     }
 
     pub fn set_tx_count(&self, count: u64) -> Result<(), MetricsError> {
@@ -99,6 +124,8 @@ impl MetricsTx {
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transactions_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.transaction_errors_count.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.mempool_tx_count.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transactions_per_second.clone()))
@@ -116,18 +143,10 @@ impl MetricsTx {
 
         Ok(res)
     }
-}
 
-pub enum MetricsTxStatus {
-    Failed,
-    Succeeded,
-}
-
-impl MetricsTxStatus {
-    pub fn to_str(&self) -> &str {
-        match self {
-            MetricsTxStatus::Failed => "failed",
-            MetricsTxStatus::Succeeded => "succedded",
+    fn initialize_transactions_tracker(transactions_tracker: &IntCounterVec) {
+        for tx_type in MetricsTxType::all() {
+            transactions_tracker.with_label_values(&[&tx_type]).reset();
         }
     }
 }
@@ -144,5 +163,15 @@ impl MetricsTxType {
             ethrex_common::types::TxType::EIP7702 => "EIP7702",
             ethrex_common::types::TxType::Privileged => "Privileged",
         }
+    }
+    pub fn all() -> Vec<String> {
+        vec![
+            "Legacy".to_string(),
+            "EIP2930".to_string(),
+            "EIP1559".to_string(),
+            "EIP4844".to_string(),
+            "EIP7702".to_string(),
+            "Privileged".to_string(),
+        ]
     }
 }

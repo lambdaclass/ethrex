@@ -10,35 +10,70 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    # "Lint" is a required check, don't change the name
-    name: Lint
+  lint_zk:
+    name: Lint ${{ matrix.backend }} backend
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
-      # backend: ["sp1", "risc0", "exec"] # TODO: fix Risc0 (https://github.com/lambdaclass/ethrex/issues/2145)
+      matrix:
+        backend: ["sp1", "risc0"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
+        run: |
+          git diff --exit-code -- crates/l2/prover/zkvm/interface/${{ matrix.backend }}/Cargo.lock
+
+      - name: RISC-V Risc0 toolchain install
+        if: matrix.backend == 'risc0'
+        # should be able to specify a version for `rzup install rust` (toolchain version)
+        # but it throws a "error decoding response body" in that case
+        run: |
+          curl -L https://risczero.com/install | bash
+          ~/.risc0/bin/rzup install cargo-risczero 2.1.0
+          ~/.risc0/bin/rzup install rust
+
       - name: RISC-V SP1 toolchain install
+        if: matrix.backend == 'sp1'
         run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 5.0.0
-      - name: Check sp1
+
+      - name: Check ${{ matrix.backend }} backend
         run: |
-          cargo check -r -p ethrex-prover -F sp1
-          cargo check -r -p ethrex-replay -F sp1
-      - name: Clippy sp1
+          cargo check -r -p ethrex-prover -F ${{ matrix.backend }}
+          cargo check -r -p ethrex-replay -F ${{ matrix.backend }}
+      - name: Clippy ${{ matrix.backend }} backend
         run: |
-          cargo clippy -r -p ethrex-prover --all-targets -F sp1
+          cargo clippy -r -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+
+  lint_exec:
+    name: Lint exec backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Check exec
         run: |
           cargo check -p ethrex-prover
       - name: Clippy exec
         run: |
           cargo clippy -p ethrex-prover --all-targets
+
+  lint_tdx:
+    name: Lint tdx backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Check tdx
         run: |
           cd crates/l2/tee/quote-gen
@@ -47,3 +82,29 @@ jobs:
         run: |
           cd crates/l2/tee/quote-gen
           cargo clippy --all-targets
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Lint" is a required check, don't change the name
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: [lint_exec, lint_tdx, lint_zk]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ always() && needs.lint_exec.result != 'skipped' && needs.lint_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.lint_exec.result }}" != "success" ]; then
+            echo "Job Lint exec Check failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.lint_tdx.result }}" != "success" ]; then
+            echo "Job Lint TDX failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.lint_zk.result }}" != "success" ]; then
+            echo "Job Lint ZK failed"
+            exit 1
+          fi

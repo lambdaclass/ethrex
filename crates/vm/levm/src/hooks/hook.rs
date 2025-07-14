@@ -1,10 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
-use ethrex_common::types::Transaction;
-
 use crate::{
-    errors::{ExecutionReport, VMError},
-    vm::VM,
+    errors::{ContextResult, VMError},
+    hooks::{L2Hook, backup_hook::BackupHook, default_hook::DefaultHook},
+    vm::{VM, VMType},
 };
 
 pub trait Hook {
@@ -13,32 +12,24 @@ pub trait Hook {
     fn finalize_execution(
         &mut self,
         vm: &mut VM<'_>,
-        report: &mut ExecutionReport,
+        report: &mut ContextResult,
     ) -> Result<(), VMError>;
 }
 
-pub fn get_hooks(_tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
-    #[cfg(not(feature = "l2"))]
-    {
-        use crate::hooks::default_hook::DefaultHook;
-        vec![Rc::new(RefCell::new(DefaultHook))]
+pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    match vm_type {
+        VMType::L1 => l1_hooks(),
+        VMType::L2 => l2_hooks(),
     }
+}
 
-    #[cfg(feature = "l2")]
-    {
-        use crate::hooks::{L2Hook, backup_hook::BackupHook};
-        use ethrex_common::types::PrivilegedL2Transaction;
+pub fn l1_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    vec![Rc::new(RefCell::new(DefaultHook))]
+}
 
-        let recipient = match _tx {
-            Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction { recipient, .. }) => {
-                Some(*recipient)
-            }
-            _ => None,
-        };
-
-        vec![
-            Rc::new(RefCell::new(L2Hook { recipient })),
-            Rc::new(RefCell::new(BackupHook::default())),
-        ]
-    }
+pub fn l2_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    vec![
+        Rc::new(RefCell::new(L2Hook {})),
+        Rc::new(RefCell::new(BackupHook::default())),
+    ]
 }

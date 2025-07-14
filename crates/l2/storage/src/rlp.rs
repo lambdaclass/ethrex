@@ -12,7 +12,7 @@ use libmdbx::orm::{Decodable, Encodable};
 #[cfg(feature = "redb")]
 use redb::TypeName;
 
-pub type WithdrawalHashesRLP = Rlp<Vec<H256>>;
+pub type MessageHashesRLP = Rlp<Vec<H256>>;
 pub type BlockNumbersRLP = Rlp<Vec<BlockNumber>>;
 pub type OperationsCountRLP = Rlp<Vec<u64>>;
 

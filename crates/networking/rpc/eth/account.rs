@@ -65,7 +65,7 @@ impl RpcHandler for GetBalanceRequest {
             .await?;
         let balance = account.map(|acc| acc.balance).unwrap_or_default();
 
-        serde_json::to_value(format!("{:#x}", balance))
+        serde_json::to_value(format!("{balance:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -101,7 +101,7 @@ impl RpcHandler for GetCodeRequest {
             .await?
             .unwrap_or_default();
 
-        serde_json::to_value(format!("0x{:x}", code))
+        serde_json::to_value(format!("0x{code:x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -138,7 +138,7 @@ impl RpcHandler for GetStorageAtRequest {
             .await?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
-        serde_json::to_value(format!("{:#x}", storage_value))
+        serde_json::to_value(format!("{storage_value:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -186,7 +186,7 @@ impl RpcHandler for GetTransactionCountRequest {
             }
         };
 
-        serde_json::to_value(format!("0x{:x}", nonce))
+        serde_json::to_value(format!("0x{nonce:x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

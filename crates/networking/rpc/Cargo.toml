@@ -21,6 +21,7 @@ ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
+ethrex-l2-common = { workspace = true, optional = true }
 ethereum-types.workspace = true
 hex.workspace = true
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
@@ -46,8 +47,5 @@ hex-literal = "0.4.1"
 [lib]
 path = "./lib.rs"
 
-[features]
-l2 = ["ethrex-storage-rollup"]
-
-[lints.clippy] 
-unwrap_used = "deny" 
+[lints.clippy]
+unwrap_used = "deny"

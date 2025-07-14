@@ -1,72 +1,47 @@
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    let contracts = [
-        "Factorial",
-        "FactorialRecursive",
-        "Fibonacci",
-        "ManyHashes",
-        "BubbleSort",
-    ];
-    println!("Current directory: {:?}", std::env::current_dir().unwrap());
-    contracts.iter().for_each(|name| {
-        compile_contract(name);
-    });
+    let contracts_dir = format!("{}/contracts", env!("CARGO_MANIFEST_DIR"));
 
-    compile_erc20_contracts();
+    walk_and_compile(Path::new(&contracts_dir));
 }
 
-fn compile_contract(bench_name: &str) {
-    let basepath = "crates/vm/levm/bench/revm_comparison/contracts";
-    let outpath = format!("{}/bin", basepath);
-    let path = format!("{}/{}.sol", basepath, bench_name);
+/// Recursively walks through the contracts directory and compiles all `.sol` files found.
+/// It skips the `lib` directory to avoid compiling library contracts.
+fn walk_and_compile(dir: &Path) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+
+        if path.is_dir() && path.file_name().unwrap() != "lib" {
+            walk_and_compile(&path);
+        } else if let Some(ext) = path.extension() {
+            if ext == "sol" {
+                compile_contract(&path);
+            }
+        }
+    }
+}
+
+/// Compiles a single Solidity contract file using `solc`.
+/// The compiled binary will be placed in the `contracts/bin` directory.
+fn compile_contract(sol_path: &Path) {
+    let outpath = format!("{}/contracts/bin", env!("CARGO_MANIFEST_DIR"));
     let args = [
         "--bin-runtime",
         "--optimize",
         "--overwrite",
-        &path,
+        sol_path.to_str().unwrap(),
         "--output-dir",
         &outpath,
     ];
-    println!("compiling {}", path);
+    println!("compiling {}", sol_path.display());
     run_solc(&args);
 }
 
-fn compile_erc20_contracts() {
-    let basepath = "crates/vm/levm/bench/revm_comparison/contracts/erc20";
-    let libpath = format!("{}/lib", basepath);
-    let outpath = "crates/vm/levm/bench/revm_comparison/contracts/bin";
-
-    // Collect all `.sol` files from the `erc20` directory
-    let paths = fs::read_dir(basepath)
-        .expect("Failed to read erc20 directory")
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            if path.extension()?.to_str()? == "sol" {
-                Some(path.to_string_lossy().to_string())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<String>>();
-
-    let mut args = vec![
-        "--bin-runtime",
-        "--optimize",
-        "--overwrite",
-        "--allow-paths",
-        &libpath,
-        "--output-dir",
-        &outpath,
-    ];
-    // Add the `.sol` files to the arguments
-    args.extend(paths.iter().map(|s| s.as_str()));
-
-    println!("compiling erc20 contracts: {:?}", args);
-    run_solc(&args);
-}
-
+/// Runs the Solidity compiler (`solc`) with the given arguments and prints the output.
 fn run_solc(args: &[&str]) {
     let output = Command::new("solc")
         .args(args)
@@ -75,6 +50,6 @@ fn run_solc(args: &[&str]) {
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    println!("{}", stdout);
-    println!("{}", stderr);
+    println!("{stdout}");
+    println!("{stderr}");
 }

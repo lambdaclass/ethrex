@@ -11,8 +11,11 @@ participants:
 
 additional_services:
   - assertoor
-  - dora
   - spamoor
+#   - dora
+#   - prometheus_grafana
+# ethereum_metrics_exporter_enabled: true
+# Uncomment the previous lines to enable metrics dashboards and dora explorer, useful for local testing
 
 spamoor_params:
   spammers:

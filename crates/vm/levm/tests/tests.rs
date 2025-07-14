@@ -2,9 +2,8 @@
 #![allow(clippy::unwrap_used)]
 
 use bytes::Bytes;
+use ethrex_levm::l2_precompiles::p_256_verify;
 use ethrex_levm::precompiles::bls12_pairing_check;
-#[cfg(feature = "l2")]
-use ethrex_levm::precompiles::p_256_verify;
 
 #[test]
 fn pairing_infinity() {
@@ -15,9 +14,9 @@ fn pairing_infinity() {
     // test "bls_pairing_non-degeneracy"
     let mut calldata = hex::decode("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e100000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be").unwrap();
     let calldata_bytes = Bytes::from(calldata.clone());
-    let mut consumed_gas = 0;
+    let mut remaining_gas = 10000000;
 
-    let result = bls12_pairing_check(&calldata_bytes, 10000000, &mut consumed_gas);
+    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas);
     assert_eq!(result.unwrap(), zero);
 
     // Now we add a pair were one point is infinity, the result must not change
@@ -32,18 +31,15 @@ fn pairing_infinity() {
 
     let calldata_bytes = Bytes::from(calldata.clone());
 
-    let result = bls12_pairing_check(&calldata_bytes, 10000000, &mut consumed_gas);
+    let result = bls12_pairing_check(&calldata_bytes, &mut remaining_gas);
 
     assert_eq!(result.unwrap(), zero);
 }
 
-#[cfg(feature = "l2")]
 use serde::Deserialize;
 
-#[cfg(feature = "l2")]
 use std::fs;
 
-#[cfg(feature = "l2")]
 #[derive(Debug, Deserialize)]
 struct P256TestCase {
     input: String,
@@ -52,7 +48,6 @@ struct P256TestCase {
     name: String,
 }
 
-#[cfg(feature = "l2")]
 #[test]
 fn p_256_verify_test() {
     // Taken from https://github.com/ulerdogan/go-ethereum/tree/ulerdogan-secp256r1.
@@ -64,8 +59,9 @@ fn p_256_verify_test() {
     for test in tests {
         let calldata = hex::decode(&test.input).unwrap();
         let calldata = Bytes::from(calldata);
-        let mut consumed_gas = 0;
-        let result = p_256_verify(&calldata, 10000, &mut consumed_gas).unwrap();
+        let initial_remaining_gas = 10000;
+        let mut remaining_gas = initial_remaining_gas;
+        let result = p_256_verify(&calldata, &mut remaining_gas).unwrap();
         let expected_result = Bytes::from(hex::decode(&test.expected).unwrap());
         assert_eq!(
             result, expected_result,
@@ -73,7 +69,8 @@ fn p_256_verify_test() {
             test.name
         );
         assert_eq!(
-            consumed_gas, test.gas,
+            initial_remaining_gas - remaining_gas,
+            test.gas,
             "Gas assertion failed on test: {}.",
             test.name
         );

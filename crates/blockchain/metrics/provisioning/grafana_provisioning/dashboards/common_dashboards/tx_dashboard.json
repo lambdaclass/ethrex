@@ -36,8 +36,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             }
                         ]
                     }
@@ -68,7 +67,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.4.0",
+            "pluginVersion": "12.0.0",
             "targets": [
                 {
                     "datasource": {
@@ -139,8 +138,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             }
                         ]
                     }
@@ -162,11 +160,12 @@
                     "showLegend": true
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "mode": "single",
                     "sort": "none"
                 }
             },
-            "pluginVersion": "11.4.0",
+            "pluginVersion": "12.0.0",
             "targets": [
                 {
                     "datasource": {
@@ -199,73 +198,6 @@
             "fieldConfig": {
                 "defaults": {
                     "color": {
-                        "mode": "palette-classic"
-                    },
-                    "custom": {
-                        "hideFrom": {
-                            "legend": false,
-                            "tooltip": false,
-                            "viz": false
-                        }
-                    },
-                    "mappings": []
-                },
-                "overrides": []
-            },
-            "gridPos": {
-                "h": 8,
-                "w": 5,
-                "x": 0,
-                "y": 9
-            },
-            "id": 3,
-            "options": {
-                "displayLabels": [
-                    "percent"
-                ],
-                "legend": {
-                    "displayMode": "list",
-                    "placement": "bottom",
-                    "showLegend": true
-                },
-                "pieType": "donut",
-                "reduceOptions": {
-                    "calcs": [
-                        "lastNotNull"
-                    ],
-                    "fields": "",
-                    "values": false
-                },
-                "tooltip": {
-                    "mode": "single",
-                    "sort": "none"
-                }
-            },
-            "pluginVersion": "11.4.0",
-            "targets": [
-                {
-                    "disableTextWrap": false,
-                    "editorMode": "builder",
-                    "expr": "transactions_tracker{status=\"succedded\"}",
-                    "fullMetaSearch": false,
-                    "includeNullMetadata": true,
-                    "legendFormat": "{{tx_type}}",
-                    "range": true,
-                    "refId": "A",
-                    "useBackend": false
-                }
-            ],
-            "title": "Succeeded Transactions By Type",
-            "type": "piechart"
-        },
-        {
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "color": {
                         "mode": "thresholds"
                     },
                     "mappings": [],
@@ -273,8 +205,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             }
                         ]
                     }
@@ -284,10 +215,10 @@
             "gridPos": {
                 "h": 8,
                 "w": 12,
-                "x": 5,
+                "x": 0,
                 "y": 9
             },
-            "id": 5,
+            "id": 3,
             "options": {
                 "colorMode": "value",
                 "graphMode": "area",
@@ -305,7 +236,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.4.0",
+            "pluginVersion": "12.0.0",
             "targets": [
                 {
                     "datasource": {
@@ -313,20 +244,20 @@
                         "uid": "prom-001"
                     },
                     "disableTextWrap": false,
-                    "editorMode": "builder",
-                    "expr": "transactions_tracker",
+                    "editorMode": "code",
+                    "expr": "floor(increase(transactions_tracker[$__range]))",
                     "fullMetaSearch": false,
                     "hide": false,
                     "includeNullMetadata": true,
                     "instant": false,
-                    "legendFormat": "{{tx_type}} || {{status}}",
+                    "interval": "",
+                    "legendFormat": "{{tx_type}}",
                     "range": true,
                     "refId": "A",
                     "useBackend": false
                 }
             ],
-            "title": "Transactions",
-            "transparent": true,
+            "title": "Succeeded Transactions By Type",
             "type": "stat"
         },
         {
@@ -340,68 +271,97 @@
                         "mode": "palette-classic"
                     },
                     "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "barWidthFactor": 0.6,
+                        "drawStyle": "line",
+                        "fillOpacity": 1,
+                        "gradientMode": "none",
                         "hideFrom": {
                             "legend": false,
                             "tooltip": false,
                             "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "auto",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
                         }
                     },
-                    "mappings": []
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green"
+                            },
+                            {
+                                "color": "red",
+                                "value": 80
+                            }
+                        ]
+                    }
                 },
                 "overrides": []
             },
             "gridPos": {
                 "h": 8,
-                "w": 7,
-                "x": 17,
+                "w": 6,
+                "x": 12,
                 "y": 9
             },
             "id": 4,
             "options": {
-                "displayLabels": [
-                    "percent"
-                ],
                 "legend": {
+                    "calcs": [],
                     "displayMode": "list",
                     "placement": "bottom",
                     "showLegend": true
                 },
-                "pieType": "donut",
-                "reduceOptions": {
-                    "calcs": [
-                        "lastNotNull"
-                    ],
-                    "fields": "",
-                    "values": false
-                },
                 "tooltip": {
+                    "hideZeros": false,
                     "mode": "single",
                     "sort": "none"
                 }
             },
-            "pluginVersion": "11.4.0",
+            "pluginVersion": "12.0.0",
             "targets": [
                 {
                     "disableTextWrap": false,
-                    "editorMode": "builder",
+                    "editorMode": "code",
                     "exemplar": false,
-                    "expr": "transactions_tracker",
+                    "expr": "floor(increase(transaction_errors_count[$__range]))",
                     "format": "time_series",
                     "fullMetaSearch": false,
                     "includeNullMetadata": true,
                     "instant": false,
-                    "legendFormat": "{{tx_type}} || {{status}}",
+                    "legendFormat": "{{tx_error}}",
                     "range": true,
                     "refId": "A",
                     "useBackend": false
                 }
             ],
-            "title": "Status of Transactions",
-            "type": "piechart"
+            "title": "Transaction Errors",
+            "type": "timeseries"
         }
     ],
     "preload": false,
-    "schemaVersion": 40,
+    "schemaVersion": 41,
     "tags": [],
     "templating": {
         "list": []
@@ -414,6 +374,5 @@
     "timezone": "browser",
     "title": "Ethrex - Transactions",
     "uid": "ae6t2gxjoyx34c",
-    "version": 1,
-    "weekStart": ""
+    "version": 1
 }

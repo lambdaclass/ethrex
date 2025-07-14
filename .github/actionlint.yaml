@@ -2,4 +2,3 @@ self-hosted-runner:
   # Labels of self-hosted runner in array of strings.
   labels:
     - gpu
-    - larger_runners

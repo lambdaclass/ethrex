@@ -1,14 +1,15 @@
-use ethrex_l2::utils::prover::proving_systems::{
-    BatchProof, ProofBytes, ProofCalldata, ProverType,
-};
-use ethrex_l2_sdk::calldata::Value;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
 use std::{fmt::Debug, sync::LazyLock};
 use tracing::info;
-use zkvm_interface::io::ProgramInput;
+use zkvm_interface::io::{JSONProgramInput, ProgramInput};
+
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+};
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
@@ -52,7 +53,7 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&input);
+    stdin.write(&JSONProgramInput(input));
 
     let setup = &*PROVER_SETUP;
 
@@ -67,7 +68,7 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&input);
+    stdin.write(&JSONProgramInput(input));
 
     let setup = &*PROVER_SETUP;
 
@@ -97,7 +98,6 @@ pub fn to_batch_proof(
         BatchProof::ProofBytes(ProofBytes {
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
-            vk: proof.vk.hash_bytes().into(),
         })
     } else {
         BatchProof::ProofCalldata(to_calldata(proof))

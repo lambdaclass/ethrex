@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::report::EFTestsReport;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
     report::{self, EFTestReport, TestReRunReport, format_duration_as_mm_ss},
@@ -34,6 +35,10 @@ pub enum EFTestRunnerError {
     EIP7702ShouldNotBeCreateType,
     #[error("This is a bug: {0}")]
     Internal(#[from] InternalError),
+    #[error("Failed to revert levm state after transaction error: {0}")]
+    FailedToRevertLEVMState(String),
+    #[error("Tests failed")]
+    TestsFailed,
 }
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
@@ -91,6 +96,13 @@ pub async fn run_ef_tests(
         }
     }
     if opts.summary {
+        if reports.iter().any(|r| !r.passed()) {
+            println!(
+                "{}",
+                EFTestsReport(reports.iter().filter(|&r| !r.passed()).cloned().collect(),)
+            );
+            return Err(EFTestRunnerError::TestsFailed);
+        }
         return Ok(());
     }
     re_run_with_revm(&mut reports, &ef_tests, opts).await?;
