@@ -71,7 +71,7 @@ impl Default for BenchAccount {
 }
 
 // Super basic transaction data
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct BenchTransaction {
     #[serde(default = "default_recipient")]
     pub to: Option<Address>,

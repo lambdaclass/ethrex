@@ -1,8 +1,8 @@
 use bytes::Bytes;
-use custom_runner::benchmark::{BenchAccount, ExecutionInput};
+use custom_runner::benchmark::{BenchAccount, BenchTransaction, ExecutionInput};
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
-    Address, H256,
+    Address, H256, U256,
     types::{Account, LegacyTransaction, Transaction},
 };
 use ethrex_levm::{
@@ -62,7 +62,7 @@ fn main() {
     let mut vm = VM::new(
         env,
         &mut db,
-        &Transaction::LegacyTransaction(LegacyTransaction::from(benchmark.transaction)),
+        &Transaction::LegacyTransaction(LegacyTransaction::from(benchmark.transaction.clone())),
         LevmCallTracer::disabled(),
         VMType::L1,
     )
@@ -77,9 +77,77 @@ fn main() {
 
     let result = vm.execute();
 
+    let callframe = vm.pop_call_frame().unwrap();
+    println!(
+        "Final Stack (top to bottom): {:?}",
+        &callframe.stack.values[callframe.stack.offset - 1..]
+    );
+    println!("Final Memory: 0x{}", hex::encode(callframe.memory));
+
     match result {
-        Ok(report) => println!("Successful: {:?}", report),
+        Ok(report) => println!("{:?}", report),
         Err(e) => println!("Error: {}", e.to_string()),
+    }
+
+    compare_initial_and_current_accounts(
+        db.initial_accounts_state,
+        db.current_accounts_state,
+        &benchmark.transaction,
+    );
+}
+
+/// Prints on screen difference between initial state and current one.
+fn compare_initial_and_current_accounts(
+    initial_accounts: HashMap<Address, Account>,
+    current_accounts: HashMap<Address, Account>,
+    transaction: &BenchTransaction,
+) {
+    println!("Account Diffs:");
+    for (addr, acc) in current_accounts {
+        if transaction.sender == addr {
+            println!("\n Checking Sender Account: {:#x}", addr);
+        } else if transaction.to.map_or(false, |to| to == addr) {
+            println!("\n Checking Recipient Account: {:#x}", addr);
+        } else {
+            println!("\n Checking Account: {:#x}", addr);
+        };
+
+        if let Some(prev) = initial_accounts.get(&addr) {
+            if prev.info.balance != acc.info.balance {
+                let balance_diff = acc.info.balance.abs_diff(prev.info.balance);
+                let balance_diff_sign = if acc.info.balance >= prev.info.balance {
+                    ""
+                } else {
+                    "-"
+                };
+                println!(
+                    "    Balance changed: {} -> {} (Diff: {}{})",
+                    prev.info.balance, acc.info.balance, balance_diff_sign, balance_diff
+                );
+            }
+
+            if prev.info.nonce != acc.info.nonce {
+                println!(
+                    "    Nonce changed: {} -> {}",
+                    prev.info.nonce, acc.info.nonce,
+                );
+            }
+
+            if prev.code != acc.code {
+                println!("    Code changed: {:?} -> {:?}", prev.code, acc.code);
+            }
+
+            for (slot, value) in &acc.storage {
+                let default_value = U256::default();
+                let prev_value = prev.storage.get(slot).unwrap_or(&default_value);
+                if prev_value != value {
+                    println!(
+                        "    Storage slot {:?} changed: {:?} -> {:?}",
+                        slot, prev_value, value
+                    );
+                }
+            }
+        }
     }
 }
 
