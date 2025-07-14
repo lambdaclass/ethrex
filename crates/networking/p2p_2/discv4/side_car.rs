@@ -13,7 +13,7 @@ use tracing::{debug, error, info};
 use crate::{
     discv4::{
         Kademlia,
-        messages::{FindNodeMessage, Message, PingMessage},
+        messages::{ENRRequestMessage, FindNodeMessage, Message, PingMessage},
     },
     types::{Endpoint, Node, NodeRecord},
     utils::get_msg_expiration_from_seconds,
@@ -131,6 +131,26 @@ impl DiscoverySideCarState {
 
         Ok(())
     }
+
+    async fn send_enr_request(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
+        let mut buf = Vec::new();
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
+        let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));
+        enr_req.encode_with_header(&mut buf, &self.signer);
+
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .map_err(DiscoverySideCarError::MessageSendFailure)?;
+        if bytes_sent != buf.len() {
+            return Err(DiscoverySideCarError::PartialMessageSent);
+        }
+
+        debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,11 +254,16 @@ async fn revalidate(state: &DiscoverySideCarState) {
 }
 
 async fn lookup(state: &DiscoverySideCarState) {
-    let table = state.kademlia.table.lock().await;
-    for node in table.values().choose_multiple(&mut OsRng, 2048) {
+    let mut table = state.kademlia.table.lock().await;
+    for node in table.values_mut().choose_multiple(&mut OsRng, 2048) {
         let _ = state.send_find_node(node).await.inspect_err(
             |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
         );
+        if node.fork_id.is_none() {
+            let _ = state.send_enr_request(node).await.inspect_err(
+                |e| error!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
+            );
+        }
     }
 }
 
