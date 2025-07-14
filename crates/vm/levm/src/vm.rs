@@ -114,7 +114,7 @@ impl<'a> VM<'a> {
             0,
             true,
             is_create,
-            U256::zero(),
+            0,
             0,
             Stack::default(),
             MemoryV2::default(),
