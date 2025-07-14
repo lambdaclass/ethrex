@@ -3,6 +3,8 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -142,6 +144,7 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
+          ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
           docker compose -f docker-compose-l2.yaml up --build contract_deployer
 
       - name: Ensure admin permissions in _work
