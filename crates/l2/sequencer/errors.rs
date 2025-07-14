@@ -330,8 +330,8 @@ pub enum MonitorError {
     PrivilegedTxParseError,
     #[error("Failure in rpc call: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("Internal Error: {0}")]
-    InternalError(String),
+    #[error("Expected items in the table")]
+    NoItemsInTable,
     #[error("RPC List can't be empty")]
     RPCListEmpty,
 }

@@ -63,9 +63,7 @@ impl BatchesTable {
         let mut from = self
             .items
             .last()
-            .ok_or(MonitorError::InternalError(
-                "Expected items in the table".to_string(),
-            ))?
+            .ok_or(MonitorError::NoItemsInTable)?
             .0
             - 1;
 
@@ -73,9 +71,7 @@ impl BatchesTable {
             &mut from,
             self.items
                 .first()
-                .ok_or(MonitorError::InternalError(
-                    "Expected items in the table".to_string(),
-                ))?
+                .ok_or(MonitorError::NoItemsInTable)?
                 .0,
             rollup_store,
         )
