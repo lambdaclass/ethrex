@@ -1,8 +1,9 @@
 use crate::deserialize::{
-    deserialize_hex_bytes, deserialize_u64_str, deserialize_u256_str, deserialize_u256_vec,
+    deserialize_hex_bytes, deserialize_u64_str, deserialize_u256_str,
+    deserialize_u256_valued_hashmap, deserialize_u256_vec,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, H160, H256, U256, types::Fork};
+use ethrex_common::{Address, H160, U256, types::Fork};
 use serde::Deserialize;
 use std::{collections::HashMap, u64};
 
@@ -34,17 +35,8 @@ pub struct Account {
     pub balance: U256,
     #[serde(default, deserialize_with = "deserialize_hex_bytes")]
     pub code: Bytes,
-    pub storage: HashMap<H256, U256>,
-}
-
-impl Default for Account {
-    fn default() -> Self {
-        Self {
-            balance: U256::from(1_000_000_000_000u64),
-            code: Bytes::new(),
-            storage: HashMap::new(),
-        }
-    }
+    #[serde(default, deserialize_with = "deserialize_u256_valued_hashmap")]
+    pub storage: HashMap<U256, U256>,
 }
 
 // Super basic transaction data
@@ -76,27 +68,10 @@ fn one_u64() -> u64 {
     1
 }
 
-fn one_u256() -> U256 {
-    U256::one()
-}
-
 fn high_u64() -> u64 {
     u64::from(100_000_000_000u64)
 }
 
 fn high_u256() -> U256 {
     U256::from(100_000_000_000u64)
-}
-
-impl Default for Transaction {
-    fn default() -> Self {
-        Self {
-            to: Some(DEFAULT_CONTRACT),
-            sender: DEFAULT_SENDER,
-            gas_limit: u64::MAX,
-            gas_price: 1,
-            value: U256::zero(),
-            data: Bytes::new(),
-        }
-    }
 }
