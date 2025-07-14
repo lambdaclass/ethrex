@@ -6,18 +6,18 @@ participants:
     count: 3
     el_extra_params:
       # Increase max number of pending transactions
-      - "--txpool.pending-max-count=30000"
+      - "--txpool.pending-max-count=50000"
       # Increase max number of queued transactions
-      - "--txpool.queued-max-count=30000"
+      - "--txpool.queued-max-count=50000"
       # Increase max number in the basefee subpool
-      - "--txpool.basefee-max-count=30000"
+      - "--txpool.basefee-max-count=50000"
       # Increase max number in the blobpool
-      - "--txpool.blobpool-max-count=30000"
+      - "--txpool.blobpool-max-count=50000"
       # (Optional) Raise memory limits in MB
-      - "--txpool.pending-max-size=500"
-      - "--txpool.queued-max-size=500"
-      - "--txpool.basefee-max-size=500"
-      - "--txpool.blobpool-max-size=500"
+      - "--txpool.pending-max-size=1024"
+      - "--txpool.queued-max-size=1024"
+      - "--txpool.basefee-max-size=1024"
+      - "--txpool.blobpool-max-size=1024"
 
 ethereum_metrics_exporter_enabled: true
 
@@ -30,6 +30,7 @@ network_params:
 additional_services:
   - dora
   - spamoor
+  - tx_fuzz
   - prometheus_grafana
 
 spamoor_params:
@@ -38,3 +39,7 @@ spamoor_params:
       config:
         throughput: 25000
         max_pending: 30000
+
+tx_fuzz_params:
+  # A list of optional extra params that will be passed to the TX Spammer container for modifying its behaviour
+  tx_fuzz_extra_args: ["--txcount=5", "--accounts=1000"]
