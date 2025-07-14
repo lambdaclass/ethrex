@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use ethrex_common::H512;
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, seq::IteratorRandom};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
@@ -57,8 +57,8 @@ impl DiscoverySideCarState {
             udp_socket,
             kademlia,
 
-            revalidation_period: Duration::from_secs(5),
-            lookup_period: Duration::from_secs(5),
+            revalidation_period: Duration::from_secs(12 * 60 * 60), // 12 hours
+            lookup_period: Duration::from_millis(50),
         }
     }
 
@@ -234,12 +234,8 @@ async fn revalidate(state: &DiscoverySideCarState) {
 }
 
 async fn lookup(state: &DiscoverySideCarState) {
-    {
-        if state.kademlia.table.lock().await.len() >= 18000 {
-            return;
-        }
-    }
-    for node in state.kademlia.table.lock().await.values() {
+    let table = state.kademlia.table.lock().await;
+    for node in table.values().choose_multiple(&mut OsRng, 2048) {
         let _ = state.send_find_node(node).await.inspect_err(
             |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
         );
