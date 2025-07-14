@@ -1,10 +1,8 @@
 use crate::{
-    call_frame::CallFrame,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
-use ExceptionalHalt::OutOfBounds;
 use ethrex_common::{U256, types::Fork, utils::u256_from_big_endian_const};
 
 // Push Operations
