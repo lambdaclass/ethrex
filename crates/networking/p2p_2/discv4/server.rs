@@ -406,7 +406,7 @@ impl GenServer for ConnectionHandler {
 
                 let table = state.kademlia.table.lock().await;
 
-                let Some(node) = table.get(&node_id) else {
+                let Some(node) = table.get(&node_id).cloned() else {
                     drop(table);
                     return CastResponse::Stop;
                 };
@@ -416,7 +416,9 @@ impl GenServer for ConnectionHandler {
                     .map(|(_x, y)| y.clone())
                     .choose_multiple(&mut OsRng, 16);
 
-                let _ = state.send_neighbors(nodes, node).await.inspect_err(|e| {
+                drop(table);
+
+                let _ = state.send_neighbors(nodes, &node).await.inspect_err(|e| {
                     error!(sent = "Neighbors", to = %format!("{:#x}", packet.get_public_key()), err = ?e);
                 });
             }
