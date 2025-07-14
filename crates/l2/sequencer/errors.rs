@@ -330,10 +330,14 @@ pub enum MonitorError {
     PrivilegedTxParseError,
     #[error("Failure in rpc call: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("Internal Error: {0}")]
-    InternalError(String),
-    #[error("Configuration Error: {0}")]
-    ConfigError(String),
     #[error("Failed to get receipt for transaction")]
-    ReceiptError
+    ReceiptError,
+    #[error("Expected transaction to have logs")]
+    NoLogs,
+    #[error("Expected items in the table")]
+    NoItemsInTable,
+    #[error("RPC List can't be empty")]
+    RPCListEmpty,
+    #[error("Failed to get logs topics {0}")]
+    LogsTopics(usize),
 }

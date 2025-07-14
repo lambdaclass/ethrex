@@ -16,7 +16,7 @@ pub struct NodeStatusTable {
 }
 
 impl NodeStatusTable {
-    pub async fn new(sequencer_state: SequencerState) -> Self {
+    pub fn new(sequencer_state: SequencerState) -> Self {
         Self {
             state: TableState::default(),
             items: Default::default(),

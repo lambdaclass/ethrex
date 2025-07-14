@@ -12,6 +12,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+#[derive(Default)]
 pub struct MempoolTable {
     pub state: TableState,
     // type | hash | sender | nonce
@@ -19,11 +20,8 @@ pub struct MempoolTable {
 }
 
 impl MempoolTable {
-    pub async fn new() -> Self {
-        Self {
-            state: TableState::default(),
-            items: vec![],
-        }
+    pub fn new() -> Self {
+        Default::default()
     }
 
     pub async fn on_tick(&mut self, rollup_client: &EthClient) -> Result<(), MonitorError> {

@@ -59,15 +59,13 @@ impl EthrexMonitor {
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
     ) -> Result<Self, MonitorError> {
-        let eth_client = EthClient::new(cfg.eth.rpc_url.first().ok_or(
-            MonitorError::ConfigError("RPC list can't be empty".to_string()),
-        )?)
-        .map_err(MonitorError::EthClientError)?;
+        let eth_client = EthClient::new(cfg.eth.rpc_url.first().ok_or(MonitorError::RPCListEmpty)?)
+            .map_err(MonitorError::EthClientError)?;
         // TODO: De-hardcode the rollup client URL
         let rollup_client =
             EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
 
-        Ok(EthrexMonitor {
+        let mut monitor = EthrexMonitor {
             title: if cfg.based.based {
                 "Based Ethrex Monitor".to_string()
             } else {
@@ -76,34 +74,21 @@ impl EthrexMonitor {
             should_quit: false,
             tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
-            global_chain_status: GlobalChainStatusTable::new(cfg).await,
+            global_chain_status: GlobalChainStatusTable::new(cfg),
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(sequencer_state.clone()).await,
-            mempool: MempoolTable::new().await,
-            batches_table: BatchesTable::new(
-                cfg.l1_committer.on_chain_proposer_address,
-                &eth_client,
-                &rollup_store,
-            )
-            .await?,
-            blocks_table: BlocksTable::new(&store).await?,
-            l1_to_l2_messages: L1ToL2MessagesTable::new(
-                cfg.l1_watcher.bridge_address,
-                &eth_client,
-                &store,
-            )
-            .await?,
-            l2_to_l1_messages: L2ToL1MessagesTable::new(
-                cfg.l1_watcher.bridge_address,
-                &eth_client,
-                &rollup_client,
-            )
-            .await?,
+            node_status: NodeStatusTable::new(sequencer_state.clone()),
+            mempool: MempoolTable::new(),
+            batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
+            blocks_table: BlocksTable::new(),
+            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address),
+            l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.l1_watcher.bridge_address),
             eth_client,
             rollup_client,
             store,
             rollup_store,
-        })
+        };
+        monitor.on_tick().await?;
+        Ok(monitor)
     }
 
     pub async fn start(mut self) -> Result<(), MonitorError> {
