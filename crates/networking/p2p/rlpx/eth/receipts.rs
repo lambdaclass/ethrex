@@ -17,7 +17,7 @@ use ethrex_rlp::{
 };
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GetReceipts {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
@@ -56,7 +56,7 @@ impl RLPxMessage for GetReceipts {
 }
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#receipts-0x10
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Receipts {
     Receipts68(Receipts68),
     Receipts69(Receipts69),

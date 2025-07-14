@@ -8,10 +8,6 @@ We will then fetch the block bodies from each header and at the same time select
 
 After we fully rebuilt the pivot state and fetched all the block bodies we will fetch and store the receipts for the range between the current head and the pivot (including it), and at the same time store all blocks in the same range and execute all blocks after the pivot (like in full sync).
 
-This diagram illustrates the process described above:
-
-![snap_sync](/crates/networking/docs/diagrams/snap_sync.jpg).
-
 ### Snap State Rebuild
 
 During snap sync we need to fully rebuild the pivot block's state.
@@ -23,10 +19,10 @@ Also, the `storage_healer` will be spawned earlier, during state sync so that it
 
 This diagram illustrates all the processes involved in snap sync:
 
-![SnapSync](/crates/networking/docs/diagrams/SnapSync.jpg).
+![SnapSync](/crates/networking/docs/diagrams/SnapSync.drawio.png).
 
 And this diagram shows the interaction between the different processes involved in State Sync, Trie Rebuild and Healing:
-![StateSyncAndHealing](/crates/networking/docs/diagrams/StateSyncAndHealing.jpg).
+![StateSyncAndHealing](/crates/networking/docs/diagrams/StateSyncAndHealing.drawio.png).
 
 
 To exemplify how queue-like processes work we will explain how the `bytecode_fetcher` works:

@@ -308,8 +308,7 @@ where
             "EIP150" => Fork::Tangerine,
             other => {
                 return Err(serde::de::Error::custom(format!(
-                    "Unknown fork name: {}",
-                    other
+                    "Unknown fork name: {other}",
                 )));
             }
         };

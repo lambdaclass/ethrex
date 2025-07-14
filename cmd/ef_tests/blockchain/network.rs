@@ -92,7 +92,7 @@ impl Network {
             | Network::Byzantium
             | Network::London
             | Network::Berlin => {
-                panic!("Ethrex doesn't support pre-Merge forks: {:?}", self)
+                panic!("Ethrex doesn't support pre-Merge forks: {self:?}")
             }
         }
     }

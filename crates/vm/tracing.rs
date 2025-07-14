@@ -28,9 +28,14 @@ impl Evm {
             Evm::REVM { state } => {
                 REVM::trace_tx_calls(&block.header, tx, state, only_top_call, with_log)
             }
-            Evm::LEVM { db } => {
-                LEVM::trace_tx_calls(db, &block.header, tx, only_top_call, with_log)
-            }
+            Evm::LEVM { db, vm_type } => LEVM::trace_tx_calls(
+                db,
+                &block.header,
+                tx,
+                only_top_call,
+                with_log,
+                vm_type.clone(),
+            ),
         }
     }
 
@@ -45,7 +50,7 @@ impl Evm {
     ) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::rerun_block(block, state, stop_index),
-            Evm::LEVM { db } => LEVM::rerun_block(db, block, stop_index),
+            Evm::LEVM { db, vm_type } => LEVM::rerun_block(db, block, stop_index, vm_type.clone()),
         }
     }
 }

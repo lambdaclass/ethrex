@@ -1,32 +1,10 @@
 use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
+use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use keccak_hash::keccak;
-use serde::{Deserialize, Serialize};
 
-/// Struct representing the possible solidity types for function arguments
-/// - `Uint` -> `uint256`
-/// - `Address` -> `address`
-/// - `Bool` -> `bool`
-/// - `Bytes` -> `bytes`
-/// - `String` -> `string`
-/// - `Array` -> `T[]`
-/// - `Tuple` -> `(X_1, ..., X_k)`
-/// - `FixedArray` -> `T[k]`
-/// - `FixedBytes` -> `bytesN`
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub enum Value {
-    Address(Address),
-    Uint(U256),
-    Int(U256),
-    Bool(bool),
-    Bytes(Bytes),
-    String(String),
-    Array(Vec<Value>),
-    Tuple(Vec<Value>),
-    FixedArray(Vec<Value>),
-    FixedBytes(Bytes),
-}
+use crate::address_to_word;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CalldataDecodeError {
@@ -530,14 +508,6 @@ fn copy_into(
         .copy_from_slice(to_copy_slice);
 
     Ok(())
-}
-
-fn address_to_word(address: Address) -> U256 {
-    let mut word = [0u8; 32];
-    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
-        *word_byte = *address_byte;
-    }
-    U256::from_big_endian(&word)
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
+use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
 use crate::{EvmError, backends::levm::LEVM};
@@ -11,8 +12,9 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         block: &Block,
         stop_index: Option<usize>,
+        vm_type: VMType,
     ) -> Result<(), EvmError> {
-        Self::prepare_block(block, db)?;
+        Self::prepare_block(block, db, vm_type.clone())?;
 
         // Executes transactions and stops when the index matches the stop index.
         for (index, (tx, sender)) in block
@@ -26,7 +28,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db)?;
+            Self::execute_tx(tx, sender, &block.header, db, vm_type.clone())?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -46,6 +48,7 @@ impl LEVM {
         tx: &Transaction,
         only_top_call: bool,
         with_log: bool,
+        vm_type: VMType,
     ) -> Result<CallTrace, EvmError> {
         let env = Self::setup_env(
             tx,
@@ -55,7 +58,13 @@ impl LEVM {
             block_header,
             db,
         )?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::new(only_top_call, with_log));
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::new(only_top_call, with_log),
+            vm_type,
+        );
 
         vm.execute()?;
 

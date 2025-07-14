@@ -10,7 +10,7 @@ use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::Decoder;
 use ethrex_storage::Store;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StatusMessage {
     StatusMessage68(StatusMessage68),
     StatusMessage69(StatusMessage69),

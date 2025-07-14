@@ -1,7 +1,6 @@
 use crate::{config::ProverConfig, prove, to_batch_proof};
-use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::BatchProof,
-};
+use ethrex_l2::sequencer::proof_coordinator::{ProofData, get_commit_hash};
+use ethrex_l2_common::prover::BatchProof;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -25,6 +24,7 @@ struct Prover {
     prover_server_endpoint: String,
     proving_time_ms: u64,
     aligned_mode: bool,
+    commit_hash: String,
 }
 
 impl Prover {
@@ -33,6 +33,7 @@ impl Prover {
             prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
             proving_time_ms: cfg.proving_time_ms,
             aligned_mode: cfg.aligned_mode,
+            commit_hash: get_commit_hash(),
         }
     }
 
@@ -44,15 +45,20 @@ impl Prover {
             let Ok(prover_data) = self
                 .request_new_input()
                 .await
-                .inspect_err(|e| warn!("Failed to request new data: {e}"))
+                .inspect_err(|e| error!("Failed to request new data: {e}"))
             else {
                 continue;
             };
+
+            let Some(prover_data) = prover_data else {
+                continue;
+            };
+
             // If we get the input
             // Generate the Proof
             let Ok(batch_proof) = prove(prover_data.input, self.aligned_mode)
                 .and_then(|output| to_batch_proof(output, self.aligned_mode))
-                .inspect_err(|e| error!(e))
+                .inspect_err(|e| error!("{}", e.to_string()))
             else {
                 continue;
             };
@@ -66,30 +72,36 @@ impl Prover {
         }
     }
 
-    async fn request_new_input(&self) -> Result<ProverData, String> {
+    async fn request_new_input(&self) -> Result<Option<ProverData>, String> {
         // Request the input with the correct batch_number
-        let request = ProofData::batch_request();
+        let request = ProofData::batch_request(self.commit_hash.clone());
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
-        let ProofData::BatchResponse {
-            batch_number,
-            input,
-        } = response
-        else {
-            return Err("Expecting ProofData::Response".to_owned());
+        let (batch_number, input) = match response {
+            ProofData::BatchResponse {
+                batch_number,
+                input,
+            } => (batch_number, input),
+            ProofData::InvalidCodeVersion { commit_hash } => {
+                return Err(format!(
+                    "Invalid code version received. Server commit_hash: {}, Prover commit_hash: {}",
+                    commit_hash, self.commit_hash
+                ));
+            }
+            _ => return Err("Expecting ProofData::Response".to_owned()),
         };
 
         let (Some(batch_number), Some(input)) = (batch_number, input) else {
-            return Err(
-                    "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
-                        .to_owned(),
-                );
+            warn!(
+                "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
+            );
+            return Ok(None);
         };
 
         info!("Received Response for batch_number: {batch_number}");
-        Ok(ProverData {
+        Ok(Some(ProverData {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
@@ -100,7 +112,7 @@ impl Prover {
                 #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
             },
-        })
+        }))
     }
 
     async fn submit_proof(&self, batch_number: u64, batch_proof: BatchProof) -> Result<(), String> {

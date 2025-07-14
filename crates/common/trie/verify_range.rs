@@ -56,8 +56,7 @@ pub fn verify_range(
         let hash = trie.hash()?;
         if hash != root {
             return Err(TrieError::Verify(format!(
-                "invalid proof, expected root hash {}, got  {}",
-                root, hash
+                "invalid proof, expected root hash {root}, got  {hash}",
             )));
         }
         return Ok(false);
@@ -130,8 +129,7 @@ pub fn verify_range(
     let hash = trie.hash();
     if hash != root {
         return Err(TrieError::Verify(format!(
-            "invalid proof, expected root hash {}, got  {}",
-            root, hash
+            "invalid proof, expected root hash {root}, got  {hash}",
         )));
     }
     Ok(num_right_refs > 0)

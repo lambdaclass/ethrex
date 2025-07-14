@@ -6,7 +6,11 @@ use ethrex_common::{
     types::{Account, EIP1559Transaction, Transaction, TxKind},
 };
 use ethrex_levm::{
-    Environment, db::gen_db::GeneralizedDatabase, errors::TxResult, tracing::LevmCallTracer, vm::VM,
+    Environment,
+    db::gen_db::GeneralizedDatabase,
+    errors::TxResult,
+    tracing::LevmCallTracer,
+    vm::{VM, VMType},
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
@@ -37,7 +41,7 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
         TxResult::Success => {
             println!("output: \t\t0x{}", hex::encode(tx_report.output));
         }
-        TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
+        TxResult::Revert(error) => panic!("Execution failed: {error:?}"),
     }
 }
 
@@ -76,5 +80,5 @@ fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled())
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
 }

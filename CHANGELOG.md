@@ -2,6 +2,23 @@
 
 ## Perf
 
+### 2025-07-08
+
+- Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)
+
+### 2025-07-07
+
+- Improve blake2f [#3503](https://github.com/lambdaclass/ethrex/pull/3503)
+
+### 2025-06-30
+
+- Use a stack pool [#3386](https://github.com/lambdaclass/ethrex/pull/3386)
+
+### 2025-06-27
+
+- Reduce handle_debug runtime cost [#3356](https://github.com/lambdaclass/ethrex/pull/3356)
+- Improve U256 decoding and PUSHX [#3332](https://github.com/lambdaclass/ethrex/pull/3332)
+
 ### 2025-06-26
 
 - Refactor jump opcodes to use a blacklist on invalid targets.
