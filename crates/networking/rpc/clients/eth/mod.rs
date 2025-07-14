@@ -1,7 +1,8 @@
 use std::fmt;
 
 use crate::{
-    clients::eth::errors::GetWitnessError,
+    clients::eth::errors::{GetBatchByNumberError, GetWitnessError, TxPoolContentError},
+    mempool::MempoolContent,
     types::{
         block::RpcBlock,
         block_identifier::{BlockIdentifier, BlockTag},
@@ -20,8 +21,8 @@ use eth_sender::Overrides;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        BlobsBundle, Block, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
+        BlobsBundle, Block, BlockHash, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
+        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction, batch::Batch,
         block_execution_witness::ExecutionWitnessResult,
     },
     utils::decode_hex,
@@ -81,6 +82,17 @@ pub struct L1MessageProof {
     pub message_id: U256,
     pub message_hash: H256,
     pub merkle_proof: Vec<H256>,
+}
+
+// TODO: This struct is duplicated from `crates/l2/networking/rpc/l2/batch.rs`.
+// It can't be imported because of circular dependencies. After fixed, we should
+// remove the duplication.
+#[derive(Serialize, Deserialize)]
+pub struct RpcBatch {
+    #[serde(flatten)]
+    pub batch: Batch,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_hashes: Option<Vec<BlockHash>>,
 }
 
 impl EthClient {
@@ -143,7 +155,11 @@ impl EthClient {
         for url in self.urls.iter() {
             response = self.send_request_to_url(url, &request).await;
             if response.is_ok() {
-                return response;
+                // Some RPC servers don't implement all the endpoints or don't implement them completely/correctly
+                // so if the server returns Ok(RpcResponse::Error) we retry with the others
+                if let Ok(RpcResponse::Success(ref _a)) = response {
+                    return response;
+                }
             }
         }
         response
@@ -424,6 +440,20 @@ impl EthClient {
                 );
         }
 
+        if !transaction.blobs.is_empty() {
+            let blobs_str: Vec<_> = transaction
+                .blobs
+                .into_iter()
+                .map(|blob| format!("0x{}", hex::encode(blob)))
+                .collect();
+
+            data.as_object_mut()
+                .ok_or_else(|| {
+                    EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
+                })?
+                .insert("blobs".to_owned(), json!(blobs_str));
+        }
+
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
         if let Some(nonce) = transaction.nonce {
             if let Value::Object(ref mut map) = data {
@@ -677,7 +707,7 @@ impl EthClient {
         from_block: U256,
         to_block: U256,
         address: Address,
-        topic: H256,
+        topics: Vec<H256>,
     ) -> Result<Vec<RpcLog>, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -688,7 +718,7 @@ impl EthClient {
                     "fromBlock": format!("{:#x}", from_block),
                     "toBlock": format!("{:#x}", to_block),
                     "address": format!("{:#x}", address),
-                    "topics": [format!("{:#x}", topic)]
+                    "topics": topics.iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>()
                 }
             )]),
         };
@@ -736,6 +766,34 @@ impl EthClient {
             jsonrpc: "2.0".to_string(),
             method: "eth_getBalance".to_string(),
             params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetBalanceError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetBalanceError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        block: BlockIdentifier,
+    ) -> Result<U256, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getStorageAt".to_string(),
+            params: Some(vec![
+                json!(format!("{:#x}", address)),
+                json!(format!("{:#x}", slot)),
+                block.into(),
+            ]),
         };
 
         match self.send_request(request).await {
@@ -831,7 +889,9 @@ impl EthClient {
     ) -> Result<(), EthClientError> {
         let mut transaction = match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
+                let mut tx = GenericTransaction::from(wrapped_eip4844_transaction.clone().tx);
+                add_blobs_to_generic_tx(&mut tx, &wrapped_eip4844_transaction.blobs_bundle);
+                tx
             }
             WrappedTransaction::EIP1559(eip1559_transaction) => {
                 GenericTransaction::from(eip1559_transaction.clone())
@@ -865,7 +925,9 @@ impl EthClient {
     ) -> Result<u64, EthClientError> {
         let mut transaction = match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
+                let mut tx = GenericTransaction::from(wrapped_eip4844_transaction.clone().tx);
+                add_blobs_to_generic_tx(&mut tx, &wrapped_eip4844_transaction.blobs_bundle);
+                tx
             }
             WrappedTransaction::EIP1559(eip1559_transaction) => {
                 GenericTransaction::from(eip1559_transaction.clone())
@@ -1333,6 +1395,42 @@ impl EthClient {
 
         self.get_fee_from_override_or_get_gas_price(None).await
     }
+
+    pub async fn tx_pool_content(&self) -> Result<MempoolContent, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "txpool_content".to_string(),
+            params: None,
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(TxPoolContentError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(TxPoolContentError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
+
+    pub async fn get_batch_by_number(&self, batch_number: u64) -> Result<RpcBatch, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "ethrex_getBatchByNumber".to_string(),
+            params: Some(vec![json!(format!("{batch_number:#x}")), json!(true)]),
+        };
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetBatchByNumberError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            RpcResponse::Error(error_response) => {
+                Err(GetBatchByNumberError::RPCError(error_response.error.message).into())
+            }
+        }
+    }
 }
 
 pub fn from_hex_string_to_u256(hex_string: &str) -> Result<U256, EthClientError> {
@@ -1373,6 +1471,14 @@ pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, Et
         })?;
 
     Ok(Address::from(address_bytes))
+}
+
+pub fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, bundle: &BlobsBundle) {
+    tx.blobs = bundle
+        .blobs
+        .iter()
+        .map(|blob| Bytes::copy_from_slice(blob))
+        .collect()
 }
 
 #[derive(Serialize, Deserialize, Debug)]

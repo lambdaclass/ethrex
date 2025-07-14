@@ -8,16 +8,18 @@ pragma solidity =0.8.29;
 interface ICommonBridge {
     /// @notice A privileged transaction to L2 has initiated.
     /// @dev Event emitted when a privileged transaction is initiated.
-    /// @param from the address that initiated the transaction.
-    /// @param to the recipient on L2
-    /// @param transactionId Id used to make transactions unique
-    /// @param value the value of the transaction
+    /// @param l1From the address that initiated the transaction.
+    /// @param from the address sending the transaction on L2.
+    /// @param to the recipient on L2.
+    /// @param transactionId Id used to make transactions unique.
+    /// @param value the value of the transaction.
     /// @param gasLimit the gas limit for the deposit transaction.
     /// @param data The calldata of the deposit transaction.
     event PrivilegedTxSent (
-        address indexed from,
-        address indexed to,
-        uint256 indexed transactionId,
+        address indexed l1From,
+        address from,
+        address to,
+        uint256 transactionId,
         uint256 value,
         uint256 gasLimit,
         bytes data
@@ -111,7 +113,6 @@ interface ICommonBridge {
     /// @dev We do not need to check that the claimee is the same as the
     /// beneficiary of the withdrawal, because the withdrawal proof already
     /// contains the beneficiary.
-    /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
     /// @param claimedAmount the amount that will be claimed.
     /// @param withdrawalProof the merkle path to the withdrawal log.
     /// @param withdrawalLogIndex the index of the message log in the block.
@@ -119,7 +120,6 @@ interface ICommonBridge {
     /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawal(
-        bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
         uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,
@@ -127,7 +127,6 @@ interface ICommonBridge {
     ) external;
 
     /// @notice Claims an ERC20 withdrawal
-    /// @param l2WithdrawalTxHash the hash of the L2 withdrawal transaction.
     /// @param tokenL1 Address of the token on the L1
     /// @param tokenL2 Address of the token on the L2
     /// @param claimedAmount the amount that will be claimed.
@@ -136,7 +135,6 @@ interface ICommonBridge {
     /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawalERC20(
-        bytes32 l2WithdrawalTxHash,
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,

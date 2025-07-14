@@ -7,6 +7,7 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "./interfaces/ICommonBridge.sol";
@@ -65,6 +66,9 @@ contract CommonBridge is
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    /// @notice Owner of the L2 system contract proxies
+    address public constant L2_PROXY_ADMIN =  0x000000000000000000000000000000000000f000;
 
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping for the message id
@@ -135,6 +139,7 @@ contract CommonBridge is
         pendingTxHashes.push(l2MintTxHash);
 
         emit PrivilegedTxSent(
+            msg.sender,
             from,
             sendValues.to,
             transactionId,
@@ -263,14 +268,12 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function claimWithdrawal(
-        bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) public {
         _claimWithdrawal(
-            l2WithdrawalTxHash,
             ETH_TOKEN,
             ETH_TOKEN,
             claimedAmount,
@@ -284,7 +287,6 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function claimWithdrawalERC20(
-        bytes32 l2WithdrawalTxHash,
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
@@ -293,7 +295,6 @@ contract CommonBridge is
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
         _claimWithdrawal(
-            l2WithdrawalTxHash,
             tokenL1,
             tokenL2,
             claimedAmount,
@@ -309,7 +310,6 @@ contract CommonBridge is
     }
 
     function _claimWithdrawal(
-        bytes32 l2WithdrawalTxHash,
         address tokenL1,
         address tokenL2,
         uint256 claimedAmount,
@@ -342,7 +342,6 @@ contract CommonBridge is
         emit WithdrawalClaimed(withdrawalMessageId);
         require(
             _verifyMessageProof(
-                l2WithdrawalTxHash,
                 msgHash,
                 withdrawalBatchNumber,
                 withdrawalMessageId,
@@ -353,7 +352,6 @@ contract CommonBridge is
     }
 
     function _verifyMessageProof(
-        bytes32 l2WithdrawalTxHash,
         bytes32 msgHash,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalMessageId,
@@ -361,7 +359,6 @@ contract CommonBridge is
     ) internal view returns (bool) {
         bytes32 withdrawalLeaf = keccak256(
             abi.encodePacked(
-                l2WithdrawalTxHash,
                 L2_BRIDGE_ADDRESS,
                 msgHash,
                 withdrawalMessageId
@@ -373,6 +370,17 @@ contract CommonBridge is
                 batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
                 withdrawalLeaf
             );
+    }
+
+    function upgradeL2Contract(address l2Contract, address newImplementation, uint256 gasLimit, bytes calldata data) public onlyOwner {
+        bytes memory callData = abi.encodeCall(ITransparentUpgradeableProxy.upgradeToAndCall, (newImplementation, data));
+        SendValues memory sendValues = SendValues({
+            to: l2Contract,
+            gasLimit: gasLimit,
+            value: 0,
+            data: callData
+        });
+        _sendToL2(L2_PROXY_ADMIN, sendValues);
     }
 
     /// @notice Allow owner to upgrade the contract.

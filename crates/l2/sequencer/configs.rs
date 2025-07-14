@@ -13,6 +13,7 @@ pub struct SequencerConfig {
     pub proof_coordinator: ProofCoordinatorConfig,
     pub based: BasedConfig,
     pub aligned: AlignedConfig,
+    pub monitor: MonitorConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -90,4 +91,11 @@ pub struct AlignedConfig {
     pub network: Network,
     pub fee_estimate: String,
     pub aligned_sp1_elf_path: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct MonitorConfig {
+    pub enabled: bool,
+    /// time in ms between two ticks.
+    pub tick_rate: u64,
 }

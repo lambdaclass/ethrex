@@ -127,6 +127,8 @@ impl Command {
                     panic!("L2 Doesn't support REVM, use LEVM instead.");
                 }
 
+                l2::initializers::init_tracing(&opts);
+
                 let data_dir = set_datadir(&opts.node_opts.datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
@@ -175,7 +177,11 @@ impl Command {
                     l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
-                if opts.node_opts.p2p_enabled {
+                // TODO: This should be handled differently, the current problem
+                // with using opts.node_opts.p2p_enabled is that with the removal
+                // of the l2 feature flag, p2p_enabled is set to true by default
+                // prioritizing the L1 UX.
+                if opts.sequencer_opts.based {
                     init_network(
                         &opts.node_opts,
                         &network,
@@ -263,7 +269,7 @@ impl Command {
                             current_block,
                             current_block,
                             contract_address,
-                            event_signature,
+                            vec![event_signature],
                         )
                         .await?;
 

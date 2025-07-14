@@ -163,7 +163,6 @@ pub async fn withdraw(
 
 pub async fn claim_withdraw(
     amount: U256,
-    l2_withdrawal_tx_hash: H256,
     from: Address,
     from_pk: SecretKey,
     eth_client: &EthClient,
@@ -171,13 +170,9 @@ pub async fn claim_withdraw(
 ) -> Result<H256, EthClientError> {
     println!("Claiming {amount} from bridge to {from:#x}");
 
-    const CLAIM_WITHDRAWAL_SIGNATURE: &str =
-        "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";
+    const CLAIM_WITHDRAWAL_SIGNATURE: &str = "claimWithdrawal(uint256,uint256,uint256,bytes32[])";
 
     let calldata_values = vec![
-        Value::Uint(U256::from_big_endian(
-            l2_withdrawal_tx_hash.as_fixed_bytes(),
-        )),
         Value::Uint(amount),
         Value::Uint(message_proof.batch_number.into()),
         Value::Uint(message_proof.message_id),
@@ -218,19 +213,15 @@ pub async fn claim_erc20withdraw(
     token_l1: Address,
     token_l2: Address,
     amount: U256,
-    l2_withdrawal_tx_hash: H256,
     from_pk: SecretKey,
     eth_client: &EthClient,
     message_proof: &L1MessageProof,
 ) -> Result<H256, EthClientError> {
     let from = get_address_from_secret_key(&from_pk)?;
     const CLAIM_WITHDRAWAL_ERC20_SIGNATURE: &str =
-        "claimWithdrawalERC20(bytes32,address,address,uint256,uint256,uint256,bytes32[])";
+        "claimWithdrawalERC20(address,address,uint256,uint256,uint256,bytes32[])";
 
     let calldata_values = vec![
-        Value::Uint(U256::from_big_endian(
-            l2_withdrawal_tx_hash.as_fixed_bytes(),
-        )),
         Value::Address(token_l1),
         Value::Address(token_l2),
         Value::Uint(amount),
@@ -841,4 +832,16 @@ pub fn download_contract_deps(contracts_path: &Path) -> Result<(), GitError> {
 
     trace!("Contract dependencies downloaded");
     Ok(())
+}
+
+pub fn address_to_word(address: Address) -> U256 {
+    let mut word = [0u8; 32];
+    for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
+        *word_byte = *address_byte;
+    }
+    U256::from_big_endian(&word)
+}
+
+pub fn get_erc1967_slot(name: &str) -> U256 {
+    U256::from_big_endian(&keccak(name).0) - U256::one()
 }

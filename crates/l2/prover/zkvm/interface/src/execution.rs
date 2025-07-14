@@ -335,7 +335,7 @@ fn get_batch_l1messages_and_privileged_transactions(
     for (block, receipts) in blocks.iter().zip(receipts) {
         let txs = &block.body.transactions;
         privileged_transactions.extend(get_block_privileged_transactions(txs));
-        l1messages.extend(get_block_l1_messages(txs, receipts));
+        l1messages.extend(get_block_l1_messages(receipts));
     }
 
     Ok((l1messages, privileged_transactions))

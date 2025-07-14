@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::{cmp::min, fmt::Display};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
@@ -270,6 +270,19 @@ impl From<TxType> for u8 {
             TxType::EIP4844 => 0x03,
             TxType::EIP7702 => 0x04,
             TxType::Privileged => 0x7e,
+        }
+    }
+}
+
+impl Display for TxType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TxType::Legacy => write!(f, "Legacy"),
+            TxType::EIP2930 => write!(f, "EIP2930"),
+            TxType::EIP1559 => write!(f, "EIP1559"),
+            TxType::EIP4844 => write!(f, "EIP4844"),
+            TxType::EIP7702 => write!(f, "EIP7702"),
+            TxType::Privileged => write!(f, "Privileged"),
         }
     }
 }
@@ -1863,7 +1876,7 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
             )?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
-            struct_serializer.serialize_field("from", &self.from)?;
+            struct_serializer.serialize_field("sender", &self.from)?;
             struct_serializer.end()
         }
     }
@@ -1925,7 +1938,7 @@ mod serde_impl {
                 )
                 .map(Transaction::PrivilegedL2Transaction)
                 .map_err(|e| {
-                    serde::de::Error::custom(format!("Couldn't Deserialize Privileged {e}"))
+                    serde::de::Error::custom(format!("Couldn't Deserialize Privileged: {e}"))
                 }),
             }
         }
@@ -2164,7 +2177,7 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                from: deserialize_field::<Address, D>(&mut map, "from")?,
+                from: deserialize_field::<Address, D>(&mut map, "sender")?,
             })
         }
     }

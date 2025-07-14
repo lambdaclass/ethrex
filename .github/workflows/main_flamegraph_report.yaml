@@ -23,11 +23,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Cache Extra Binaries
         id: cache-binaries
@@ -167,11 +164,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Caching
         uses: Swatinem/rust-cache@v2

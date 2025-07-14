@@ -242,7 +242,7 @@ async fn get_logs(
                 state.last_l1_block_fetched + 1,
                 new_last_l1_fetched_block,
                 state.on_chain_proposer_address,
-                keccak(b"BatchCommitted(uint256,bytes32)"),
+                vec![keccak(b"BatchCommitted(uint256,bytes32)")],
             )
             .await?;
 
@@ -253,7 +253,7 @@ async fn get_logs(
                 state.last_l1_block_fetched + 1,
                 new_last_l1_fetched_block,
                 state.on_chain_proposer_address,
-                keccak(b"BatchVerified(uint256)"),
+                vec![keccak(b"BatchVerified(uint256)")],
             )
             .await?;
 
@@ -480,7 +480,7 @@ async fn extract_block_messages(
         txs.push(tx.clone());
         receipts.push(receipt);
     }
-    Ok(get_block_l1_messages(&txs, &receipts))
+    Ok(get_block_l1_messages(&receipts))
 }
 
 async fn get_batch(

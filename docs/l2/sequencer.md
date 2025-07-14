@@ -39,4 +39,4 @@ The L1 Proof Sender is responsible for interacting with Ethereum L1 to manage pr
 
 ## Configuration
 
-Configuration is done either by CLI flags or through environment variables. Run `cargo run --release --bin ethrex --features l2 -- l2 init --help` in the repository's root directory to see the available CLI flags and envs.
+Configuration is done either by CLI flags or through environment variables. Run `cargo run --release --bin ethrex -- l2 init --help` in the repository's root directory to see the available CLI flags and envs.
