@@ -206,6 +206,27 @@ impl DiscoveryServerState {
         Ok(())
     }
 
+    async fn send_enr_response(&self, node: &Node, packet: &Packet) -> Result<(), DiscoveryServerError> {
+        // TODO: Packet expiration
+        let node_record = self.local_node_record.lock().await.clone();
+
+        let msg =
+            Message::ENRResponse(ENRResponseMessage::new(packet.get_hash(), node_record));
+        let mut buf = vec![];
+        msg.encode_with_header(&mut buf, &self.signer);
+
+        let bytes_sent = self
+            .udp_socket
+            .send_to(&buf, node.udp_addr())
+            .await
+            .map_err(DiscoveryServerError::MessageSendFailure)?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoveryServerError::PartialMessageSent);
+        }
+        Ok(())
+    }
+
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoveryServerError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
@@ -439,6 +460,20 @@ impl GenServer for ConnectionHandler {
             }
             Self::CastMsg::ENRRequest(packet) => {
                 debug!(received = "ENRRequest", from = %format!("{:#x}", packet.get_public_key()));
+
+                let node_id = packet.get_node_id();
+
+                let table = state.kademlia.table.lock().await;
+
+                let Some(node) = table.get(&node_id) else {
+                    drop(table);
+                    return CastResponse::Stop;
+                };
+
+                // We ignore if the message is expired
+                let _ = state.send_enr_response(&node, &packet).await.inspect_err(
+                    |err| error!("{}", err.to_string())
+                );
 
                 debug!(packet = ?packet);
             }
