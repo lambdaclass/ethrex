@@ -1,4 +1,4 @@
-use std::{error::Error, fs};
+use std::error::Error;
 use vergen_git2::{Emitter, Git2Builder};
 
 // This build code is needed to add some env vars in order to construct the code version
