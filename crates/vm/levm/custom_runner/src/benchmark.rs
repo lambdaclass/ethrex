@@ -10,33 +10,26 @@ use serde::Deserialize;
 use std::str::FromStr;
 use std::{collections::HashMap, u64};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
+#[serde(default)]
 pub struct ExecutionInput {
-    #[serde(default)]
     pub fork: Fork,
-    #[serde(default)]
     pub transaction: BenchTransaction,
-    #[serde(default)]
     pub pre: HashMap<Address, BenchAccount>,
-    #[serde(default, deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "deserialize_hex_bytes")]
     pub initial_memory: Bytes,
-    #[serde(default, deserialize_with = "deserialize_u256_vec")]
+    #[serde(deserialize_with = "deserialize_u256_vec")]
     pub initial_stack: Vec<U256>,
 }
 
-impl Default for ExecutionInput {
-    fn default() -> Self {
-        serde_json::from_str("{}").unwrap()
-    }
-}
-
 #[derive(Deserialize, Debug, Clone)]
+#[serde(default)]
 pub struct BenchAccount {
-    #[serde(default = "high_u256", deserialize_with = "deserialize_u256_str")]
+    #[serde(deserialize_with = "deserialize_u256_str")]
     pub balance: U256,
-    #[serde(default, deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "deserialize_hex_bytes")]
     pub code: Bytes,
-    #[serde(default, deserialize_with = "deserialize_u256_valued_hashmap")]
+    #[serde(deserialize_with = "deserialize_u256_valued_hashmap")]
     pub storage: HashMap<U256, U256>,
 }
 
@@ -60,35 +53,40 @@ impl From<BenchAccount> for Account {
 
 impl Default for BenchAccount {
     fn default() -> Self {
-        serde_json::from_str("{}").unwrap()
+        BenchAccount {
+            balance: high_u256(),
+            code: Bytes::new(),
+            storage: HashMap::new(),
+        }
     }
 }
 
 // Super basic transaction data
 #[derive(Deserialize, Debug, Clone)]
+#[serde(default)]
 pub struct BenchTransaction {
-    #[serde(default = "default_recipient")]
     pub to: Option<Address>,
-    #[serde(default = "default_sender")]
     pub sender: Address,
-    #[serde(default = "high_u64", deserialize_with = "deserialize_u64_str")]
+    #[serde(deserialize_with = "deserialize_u64_str")]
     pub gas_limit: u64,
-    #[serde(default = "one_u256", deserialize_with = "deserialize_u256_str")]
+    #[serde(deserialize_with = "deserialize_u256_str")]
     pub gas_price: U256,
-    #[serde(default, deserialize_with = "deserialize_u256_str")]
+    #[serde(deserialize_with = "deserialize_u256_str")]
     pub value: U256,
-    #[serde(default, deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "deserialize_hex_bytes")]
     pub data: Bytes,
 }
 
 impl Default for BenchTransaction {
     fn default() -> Self {
-        // This trick deserializes an empty JSON object.
-        // Serde will see all fields are missing and apply the
-        // `#[serde(default = "...")]` attributes to build the struct.
-        // serde default is necessary on each attribute so that in the JSON
-        // we can get away with specifying some attributes only
-        serde_json::from_str("{}").unwrap()
+        BenchTransaction {
+            to: default_recipient(),
+            sender: default_sender(),
+            gas_limit: high_u64(),
+            gas_price: one_u256(),
+            value: U256::zero(),
+            data: Bytes::new(),
+        }
     }
 }
 
