@@ -1,8 +1,8 @@
 use sp1_sdk::{
-    EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
-    SP1VerifyingKey,
+    EnvProver, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey,
+    SP1Stdin, SP1VerifyingKey,
 };
-use std::{fmt::Debug, sync::LazyLock};
+use std::fmt::Debug;
 use tracing::info;
 use zkvm_interface::io::{JSONProgramInput, ProgramInput};
 
@@ -13,22 +13,6 @@ use ethrex_l2_common::{
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
-
-struct ProverSetup {
-    client: EnvProver,
-    pk: SP1ProvingKey,
-    vk: SP1VerifyingKey,
-}
-
-static PROVER_SETUP: LazyLock<ProverSetup> = LazyLock::new(|| {
-    let client = if cfg!(feature = "gpu") {
-        ProverClient::builder().cuda().build()
-    } else {
-        ProverClient::builder().cpu().build()
-    };
-    let (pk, vk) = client.setup(PROGRAM_ELF);
-    ProverSetup { client, pk, vk }
-});
 
 pub struct ProveOutput {
     pub proof: SP1ProofWithPublicValues,
@@ -59,9 +43,13 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&JSONProgramInput(input));
 
-    let setup = &*PROVER_SETUP;
-
-    setup.client.execute(PROGRAM_ELF, &stdin).run()?;
+    if cfg!(feature = "gpu") {
+        let client = ProverClient::builder().cuda().build();
+        client.execute(PROGRAM_ELF, &stdin).run()?;
+    } else {
+        let client = ProverClient::builder().cpu().build();
+        client.execute(PROGRAM_ELF, &stdin).run()?;
+    }
 
     info!("Successfully executed SP1 program.");
     Ok(())
@@ -74,20 +62,36 @@ pub fn prove(
     let mut stdin = SP1Stdin::new();
     stdin.write(&JSONProgramInput(input));
 
-    let setup = &*PROVER_SETUP;
-
-    let proof = match format {
-        ProofFormat::Compressed => setup.client.prove(&setup.pk, &stdin).compressed().run()?,
-        ProofFormat::Groth16 => setup.client.prove(&setup.pk, &stdin).groth16().run()?,
+    let (proof, vk) = if cfg!(feature = "gpu") {
+        let client = ProverClient::builder().cuda().build();
+        let (pk, vk) = client.setup(PROGRAM_ELF);
+        let proof = match format {
+            ProofFormat::Compressed => client.prove(&pk, &stdin).compressed().run()?,
+            ProofFormat::Groth16 => client.prove(&pk, &stdin).groth16().run()?,
+        };
+        (proof, vk)
+    } else {
+        let client = ProverClient::builder().cpu().build();
+        let (pk, vk) = client.setup(PROGRAM_ELF);
+        let proof = match format {
+            ProofFormat::Compressed => client.prove(&pk, &stdin).compressed().run()?,
+            ProofFormat::Groth16 => client.prove(&pk, &stdin).groth16().run()?,
+        };
+        (proof, vk)
     };
 
     info!("Successfully generated SP1Proof.");
-    Ok(ProveOutput::new(proof, setup.vk.clone()))
+    Ok(ProveOutput::new(proof, vk))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    let setup = &*PROVER_SETUP;
-    setup.client.verify(&output.proof, &output.vk)?;
+    if cfg!(feature = "gpu") {
+        let client = ProverClient::builder().cuda().build();
+        client.verify(&output.proof, &output.vk)?;
+    } else {
+        let client = ProverClient::builder().cpu().build();
+        client.verify(&output.proof, &output.vk)?;
+    };
 
     Ok(())
 }
