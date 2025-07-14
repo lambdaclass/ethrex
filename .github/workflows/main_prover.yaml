@@ -46,7 +46,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          make build-prover PROVER=sp1 GPU=true
+          make build-prover-sp1 GPU=true
 
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -80,7 +80,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover PROVER=sp1 GPU=true &
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-sp1 GPU=true &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
 

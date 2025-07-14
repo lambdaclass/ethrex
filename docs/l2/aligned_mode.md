@@ -16,7 +16,7 @@ Run:
 
 ```bash
 cd ethrex/crates/l2
-make build-prover PROVER=<sp1/risc0> # optional: GPU=true
+make build-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 This will generate the SP1 ELF program and verification key under:

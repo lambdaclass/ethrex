@@ -65,12 +65,10 @@ jobs:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
 
-      # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
           cd crates/l2
-          make build-prover
-          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          make build-prover-exec
 
       - name: Build test
         run: |
@@ -108,7 +106,7 @@ jobs:
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
           docker logs --follow ethrex_l2 &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
@@ -195,7 +193,7 @@ jobs:
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
 

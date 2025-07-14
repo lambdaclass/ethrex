@@ -1,6 +1,7 @@
 .PHONY: help init down clean restart init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
-		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 ci_test test \
+		init-l2-no-metrics down-l2 restart-l2 init-prover-sp1 init-prover-risc0 init-prover-exec \
+		build-prover-sp1 build-prover-risc0 build-prover-exec rm-db-l2 ci_test test \
 		init-testnet deploy-l1-testnet restart-testnet
 
 .DEFAULT_GOAL := help
@@ -158,38 +159,35 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-build-prover:
-	@{ \
-		if [ -z "$$PROVER" ]; then \
-			echo "warn: PROVER=<sp1/risc0> is missing, falling back to 'exec' backend (no proving)" \
-			exit 1; \
-		fi; \
-		FEATURES="$$PROVER"; \
-		if [ -n "$$GPU" ]; then \
-			FEATURES="$$FEATURES,gpu"; \
-		fi; \
-		RUSTFLAGS='-C target-cpu=native' \
-		cargo build --release --no-default-features --features "$$FEATURES,l2" --manifest-path ./prover/Cargo.toml \
-		--bin "ethrex_prover_$$PROVER"; \
-	}
+ifdef GPU
+  GPU? := gpu
+else
+  GPU? :=
+endif
 
-init-prover:
-	@{ \
-		if [ -z "$$PROVER" ]; then \
-			echo "warn: PROVER=<sp1/risc0> is missing, falling back to 'exec' backend (no proving)" \
-			exit 1; \
-		fi; \
-		FEATURES="$$PROVER"; \
-		if [ -n "$$GPU" ]; then \
-			FEATURES="$$FEATURES,gpu"; \
-		fi; \
-		RUSTFLAGS='-C target-cpu=native' \
-		cargo run --release --no-default-features --features "$$FEATURES,l2" --manifest-path ./prover/Cargo.toml \
-		--bin "ethrex_prover_$$PROVER" \
-		-- \
-		--http.addr 127.0.0.1 \
-		--http.port 3900; \
-	}
+build-prover-sp1:
+	cargo build --release --no-default-features --features "$(GPU?),sp1,l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_sp1";
+
+build-prover-risc0:
+	cargo build --release --no-default-features --features "$(GPU?),risc0,l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_risc0";
+
+build-prover-exec:
+	cargo build --release --no-default-features --features "$(GPU?),l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_exec";
+
+init-prover-sp1:
+	cargo run --release --no-default-features --features "$(GPU?),sp1,l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_sp1" -- \
+	--http.addr 127.0.0.1 \
+	--http.port 3900;
+
+init-prover-risc0:
+	cargo run --release --no-default-features --features "$(GPU?),risc0,l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_risc0" -- \
+	--http.addr 127.0.0.1 \
+	--http.port 3900;
+
+init-prover-exec:
+	cargo run --release --no-default-features --features "$(GPU?),exec,l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_exec" -- \
+	--http.addr 127.0.0.1 \
+	--http.port 3900;
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
@@ -204,7 +202,7 @@ integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
+	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test l2 --release -- --nocapture --test-threads=1
@@ -220,7 +218,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 
-	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
+	RUST_LOG=info,ethrex_prover_lib=debug GPU=true make init-prover-sp1 & \
 	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
