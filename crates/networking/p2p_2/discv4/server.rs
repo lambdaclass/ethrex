@@ -408,6 +408,6 @@ impl GenServer for ConnectionHandler {
                 debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"));
             }
         }
-        CastResponse::NoReply(state)
+        CastResponse::Stop
     }
 }
