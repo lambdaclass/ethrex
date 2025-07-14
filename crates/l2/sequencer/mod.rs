@@ -172,6 +172,7 @@ pub async fn start_l2(
     while let Some(res) = task_set.join_next().await {
         match res {
             Ok(Ok(_)) => {
+                task_set.abort_all();
                 break;
             }
             Ok(Err(err)) => {
