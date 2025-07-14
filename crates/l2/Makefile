@@ -103,8 +103,8 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--contracts-path contracts \
-	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \

@@ -155,4 +155,8 @@ impl SyncManager {
             }
         });
     }
+
+    pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
+        Ok(*self.last_fcu_head.try_lock()?)
+    }
 }

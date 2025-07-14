@@ -421,19 +421,42 @@ async fn handle_request(
         return Ok(());
     }
 
-    let response = if !state.rollup_store.contains_batch(&batch_to_prove).await? {
-        debug!("Sending empty BatchResponse");
-        ProofData::empty_batch_response()
-    } else {
-        let input = create_prover_input(state, batch_to_prove).await?;
-        let format = if state.aligned {
-            ProofFormat::Compressed
+    let batch_to_verify = 1 + get_latest_sent_batch(
+        state.needed_proof_types.clone(),
+        &state.rollup_store,
+        &state.eth_client,
+        state.on_chain_proposer_address,
+    )
+    .await
+    .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
+
+    let mut all_proofs_exist = true;
+    for proof_type in &state.needed_proof_types {
+        if state
+            .rollup_store
+            .get_proof_by_batch_and_type(batch_to_verify, *proof_type)
+            .await?
+            .is_none()
+        {
+            all_proofs_exist = false;
+            break;
+        }
+    }
+
+    let response =
+        if all_proofs_exist || !state.rollup_store.contains_batch(&batch_to_verify).await? {
+            debug!("Sending empty BatchResponse");
+            ProofData::empty_batch_response()
         } else {
-            ProofFormat::Groth16
+            let input = create_prover_input(state, batch_to_verify).await?;
+            let format = if state.aligned {
+                ProofFormat::Compressed
+            } else {
+                ProofFormat::Groth16
+            };
+            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+            ProofData::batch_response(batch_to_verify, input, format)
         };
-        debug!("Sending BatchResponse for block_number: {batch_to_prove}");
-        ProofData::batch_response(batch_to_prove, input, format)
-    };
 
     send_response(stream, &response).await?;
     info!("BatchResponse sent for batch number: {batch_to_prove}");

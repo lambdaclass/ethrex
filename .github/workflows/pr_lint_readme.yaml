@@ -23,14 +23,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Build ethrex binary
         run: cargo build --bin ethrex
