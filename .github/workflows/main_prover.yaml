@@ -130,7 +130,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover
-      
+
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
@@ -144,7 +144,7 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          docker compose -f docker-compose-l2.yaml up --build contract_deployer
 
       - name: Ensure admin permissions in _work
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
