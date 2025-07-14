@@ -31,7 +31,7 @@ fn main() {
     decode_to_bytecode(&contracts_path, "SP1Verifier", false);
 
     // Get the openzeppelin contracts remappings
-    let remappings_raw = vec![
+    let remappings_raw = [
         (
             "@openzeppelin/contracts",
             contracts_path.join(
@@ -67,14 +67,14 @@ fn main() {
     // Compile the L2 contracts
     compile_contract_to_bytecode(
         &contracts_path,
-        &Path::new("src/l2"),
+        Path::new("src/l2"),
         "CommonBridgeL2",
         true,
         Some(&remappings),
     );
     compile_contract_to_bytecode(
         &contracts_path,
-        &Path::new("src/l2"),
+        Path::new("src/l2"),
         "L2ToL1Messenger",
         true,
         Some(&remappings),
@@ -82,7 +82,7 @@ fn main() {
 
     ethrex_l2_sdk::compile_contract(
         &contracts_path,
-        &Path::new("src/l2/L2Upgradeable.sol"),
+        Path::new("src/l2/L2Upgradeable.sol"),
         true,
         Some(&remappings),
     )
@@ -93,31 +93,28 @@ fn main() {
     // Compile based contracts
     compile_contract_to_bytecode(
         &contracts_path,
-        &Path::new("src/l1/based"),
+        Path::new("src/l1/based"),
         "SequencerRegistry",
         false,
         Some(&remappings),
     );
     ethrex_l2_sdk::compile_contract(
         &contracts_path,
-        &Path::new("src/l1/based/OnChainProposer.sol"),
+        Path::new("src/l1/based/OnChainProposer.sol"),
         false,
         Some(&remappings),
     )
     .unwrap();
-    let contract_bytecode_hex = std::fs::read_to_string(
-        contracts_path
-            .join("solc_out")
-            .join(format!("OnChainProposer.bin")),
-    )
-    .unwrap();
+    let contract_bytecode_hex =
+        std::fs::read_to_string(contracts_path.join("solc_out").join("OnChainProposer.bin"))
+            .unwrap();
     let contract_bytecode = hex::decode(contract_bytecode_hex.trim()).unwrap();
 
     // To avoid colision with the original OnChainProposer bytecode, we rename it to OnChainProposerBased
     std::fs::write(
         contracts_path
             .join("solc_out")
-            .join(format!("OnChainProposerBased.bytecode",)),
+            .join("OnChainProposerBased.bytecode"),
         contract_bytecode,
     )
     .unwrap();
@@ -159,7 +156,7 @@ fn compile_contract_to_bytecode(
     println!("Compiling {contract_name} contract");
     ethrex_l2_sdk::compile_contract(
         output_dir,
-        &contract_path.join(&format!("{contract_name}.sol")),
+        &contract_path.join(format!("{contract_name}.sol")),
         runtime_bin,
         remappings,
     )
