@@ -78,9 +78,6 @@ impl<'a> VM<'a> {
                 eip7702_gas_consumed,
                 callee,
             )?;
-        // Make sure we have enough memory to write the return data
-        // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
-        try_resize(&mut self.current_call_frame_mut()?.memory, new_memory_size)?;
 
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
@@ -97,6 +94,10 @@ impl<'a> VM<'a> {
             cost.checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
+
+        // Make sure we have enough memory to write the return data
+        // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
+        try_resize(&mut callframe.memory, new_memory_size)?;
 
         // OPERATION
         let from = callframe.to; // The new sender will be the current contract.
