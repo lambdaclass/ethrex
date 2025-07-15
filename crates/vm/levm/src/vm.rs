@@ -40,7 +40,7 @@ pub enum VMType {
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub accessed_addresses: ahash::HashSet<Address>,
-    pub accessed_storage_slots: ahash::HashMap<Address, BTreeSet<H256>>,
+    pub accessed_storage_slots: ahash::HashMap<Address, ahash::HashSet<H256>>,
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,

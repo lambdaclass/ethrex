@@ -568,7 +568,8 @@ impl<'a> VM<'a> {
     pub fn initialize_substate(&mut self) -> Result<(), VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = ahash::HashSet::default();
-        let mut initial_accessed_storage_slots: ahash::HashMap<Address, BTreeSet<H256>> = ahash::HashMap::default();
+        let mut initial_accessed_storage_slots: ahash::HashMap<Address, ahash::HashSet<H256>> =
+            ahash::HashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(self.env.origin);
@@ -592,10 +593,7 @@ impl<'a> VM<'a> {
         // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in self.tx.access_list().clone() {
             initial_accessed_addresses.insert(address);
-            let mut warm_slots = BTreeSet::new();
-            for slot in keys {
-                warm_slots.insert(slot);
-            }
+            let warm_slots = ahash::HashSet::from_iter(keys.into_iter());
             initial_accessed_storage_slots.insert(address, warm_slots);
         }
 
