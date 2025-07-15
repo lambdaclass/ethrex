@@ -8,7 +8,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use tokio::{sync::Mutex, time::timeout};
+use tokio::sync::Mutex;
 
 use crate::{
     kademlia::{KademliaTable, PeerChannels, PeerData},
@@ -111,6 +111,7 @@ impl PeerHandler {
         None
     }
 
+    /// Returns all the peer channels that support the given capability.
     async fn get_all_peer_channels(
         &self,
         capabilities: &[Capability],
@@ -119,8 +120,8 @@ impl PeerHandler {
         table.get_all_peer_channels(capabilities)
     }
 
-    /// TODO: update docs
-    /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
+    /// Requests block headers to all the peers and waits for the first valid response,
+    /// starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
