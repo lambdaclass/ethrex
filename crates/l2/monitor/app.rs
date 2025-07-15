@@ -1,5 +1,5 @@
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -21,6 +21,7 @@ use ratatui::{
 };
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{send_after, CastResponse, GenServer, GenServerHandle};
+use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::based::sequencer_state::SequencerState;
@@ -41,7 +42,7 @@ pub struct EthrexMonitorState {
     pub tabs: TabsState,
     pub tick_rate: u64,
 
-    pub logger: Arc<Mutex<TuiWidgetState>>,
+    pub logger: Arc<TuiWidgetState>,
     pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
     pub mempool: MempoolTable,
@@ -54,9 +55,12 @@ pub struct EthrexMonitorState {
     pub rollup_client: EthClient,
     pub store: Store,
     pub rollup_store: StoreRollup,
+    pub last_tick: Instant,
 }
 
-pub struct EthrexMonitor {}
+pub struct EthrexMonitor {
+    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
+}
 
 #[derive(Clone)]
 pub enum InMessage {
@@ -82,6 +86,31 @@ impl EthrexMonitor {
             .await
             .map_err(MonitorError::GenServerError)
     }
+
+    pub async fn monitor(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
+        let mut terminal = self.terminal.lock().await;
+
+        draw(&mut terminal, state)?;
+
+        let timeout = Duration::from_millis(state.tick_rate).saturating_sub(state.last_tick.elapsed());
+        if !event::poll(timeout)? {
+            on_tick(state).await?;
+            state.last_tick = Instant::now();
+            return Ok(());
+        }
+        let event = event::read()?;
+        if let Some(key) = event.as_key_press_event() {
+            on_key_event(key.code,state);
+        }
+        if let Some(mouse) = event.as_mouse_event() {
+            on_mouse_event(mouse.kind,state);
+        }
+
+
+        Ok(())
+
+        
+    }
 }
 
 
@@ -93,7 +122,15 @@ impl GenServer for EthrexMonitor {
     type Error = MonitorError;
 
     fn new() -> Self {
-        Self {}
+        // setup terminal
+        enable_raw_mode().map_err(MonitorError::Io).unwrap();
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io).unwrap();
+        let backend = CrosstermBackend::new(stdout);
+        let terminal = Terminal::new(backend).map_err(MonitorError::Io).unwrap();
+        Self {
+            terminal: Arc::new(Mutex::new(terminal)),
+        }
     }
 
     async fn handle_cast(
@@ -102,14 +139,28 @@ impl GenServer for EthrexMonitor {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
-        let _ = start_monitor(&mut state)
+        let _ = self.monitor(&mut state)
             .await
             .inspect_err(|err| error!("Monitor Error: {err}"));
-        send_after(
-            Duration::from_millis(state.tick_rate),
-            handle.clone(),
-            Self::CastMsg::Monitor,
-        );
+        if !state.should_quit {
+            send_after(
+                Duration::from_millis(1),
+                handle.clone(),
+                Self::CastMsg::Monitor,
+            );
+        } else {
+            let mut terminal = self.terminal.lock().await;
+            // restore terminal
+            disable_raw_mode().map_err(MonitorError::Io).unwrap();
+            execute!(
+                terminal.backend_mut(),
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )
+            .map_err(MonitorError::Io).unwrap();
+            terminal.show_cursor().map_err(MonitorError::Io).unwrap();
+
+        }
         CastResponse::NoReply(state)
     }
 }
@@ -143,7 +194,7 @@ impl EthrexMonitorState {
                 &rollup_store,
             )
             .await,
-            logger: Arc::new(Mutex::new(TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info))),
+            logger: Arc::new(TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info)),
             node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
             mempool: MempoolTable::new(&rollup_client).await,
             batches_table: BatchesTable::new(
@@ -169,61 +220,8 @@ impl EthrexMonitorState {
             rollup_client,
             store,
             rollup_store,
+            last_tick: Instant::now(),
         })
-    }
-}
-
-pub async fn start_monitor(state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
-    // setup terminal
-    enable_raw_mode().map_err(MonitorError::Io)?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).map_err(MonitorError::Io)?;
-
-    let app_result = run(&mut terminal, state).await;
-
-    // restore terminal
-    disable_raw_mode().map_err(MonitorError::Io)?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )
-    .map_err(MonitorError::Io)?;
-    terminal.show_cursor().map_err(MonitorError::Io)?;
-
-    let _ = app_result.inspect_err(|err| {
-        eprintln!("Monitor error: {err}");
-    });
-
-    Ok(())
-}
-
-async fn run<B>(terminal: &mut Terminal<B>, state: &mut EthrexMonitorState) -> Result<(), MonitorError>
-where
-    B: Backend,
-{
-    let mut last_tick = Instant::now();
-    loop {
-        draw(terminal, state)?;
-
-        let timeout = Duration::from_millis(state.tick_rate).saturating_sub(last_tick.elapsed());
-        if !event::poll(timeout)? {
-            on_tick(state).await?;
-            last_tick = Instant::now();
-            continue;
-        }
-        let event = event::read()?;
-        if let Some(key) = event.as_key_press_event() {
-            on_key_event(key.code,state);
-        }
-        if let Some(mouse) = event.as_mouse_event() {
-            on_mouse_event(mouse.kind,state);
-        }
-        if state.should_quit {
-            return Ok(());
-        }
     }
 }
 
@@ -235,7 +233,7 @@ fn draw(terminal: &mut Terminal<impl Backend>, state: &mut EthrexMonitorState) -
 }
 
 pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) { // todo remove unwraps
-    let logger = &state.logger.lock().unwrap();
+    let logger = &state.logger;
     match (&state.tabs, code) {
         (TabsState::Logs, KeyCode::Left) => logger.transition(TuiWidgetEvent::LeftKey),
         (TabsState::Logs, KeyCode::Down) => logger.transition(TuiWidgetEvent::DownKey),
@@ -260,7 +258,7 @@ pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) { // todo rem
 }
 
 pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorState) {
-    let logger = &state.logger.lock().unwrap();
+    let logger = &state.logger;
     match (&state.tabs, kind) {
         (TabsState::Logs, MouseEventKind::ScrollDown) => {
             logger.transition(TuiWidgetEvent::NextPageKey)
@@ -397,7 +395,7 @@ impl Widget for &mut EthrexMonitorState {
                     .output_target(true)
                     .output_file(false)
                     .output_line(false)
-                    .state(&self.logger.lock().unwrap());
+                    .state(&self.logger);
 
                 log_widget.render(chunks[0], buf);
 
