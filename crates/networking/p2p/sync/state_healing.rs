@@ -130,10 +130,9 @@ async fn heal_state_batch(
         // - If it is a leaf, request its bytecode & storage
         // - If it is a leaf, add its path & value to the trie
         {
-            let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
             for node in nodes.iter() {
                 let path = batch.remove(0);
-                batch.extend(node_missing_children(node, &path, trie.db())?);
+                batch.extend(node_missing_children(node, &path, &store, None)?);
                 if let Node::Leaf(node) = &node {
                     // Fetch bytecode & storage
                     let account = AccountState::decode(&node.value)?;
@@ -157,6 +156,7 @@ async fn heal_state_batch(
                 }
             }
             // Write nodes to trie
+            let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
             trie.db()
                 .put_batch_async(
                     nodes
