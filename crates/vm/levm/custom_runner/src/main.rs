@@ -161,15 +161,14 @@ fn compare_initial_and_current_accounts(
 ) {
     println!("\nState Diff:");
     for (addr, acc) in current_accounts {
-        if transaction.sender == addr {
-            println!("\n Checking Sender Account: {:#x}", addr);
-        } else if transaction.to.map_or(false, |to| to == addr) {
-            println!("\n Checking Recipient Account: {:#x}", addr);
-        } else if addr == COINBASE {
-            println!("\n Checking Coinbase Account: {:#x}", addr);
-        } else {
-            println!("\n Checking Account: {:#x}", addr);
+        // Instead of the if-else chain
+        let account_label = match &addr {
+            a if *a == transaction.sender => "Sender ",
+            a if Some(*a) == transaction.to => "Recipient ",
+            a if *a == COINBASE => "Coinbase ",
+            _ => "",
         };
+        println!("\n Checking {}Account: {:#x}", account_label, addr);
 
         if let Some(prev) = initial_accounts.get(&addr) {
             if prev.info.balance != acc.info.balance {
