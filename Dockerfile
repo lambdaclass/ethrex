@@ -7,15 +7,19 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
 RUN cargo install cargo-chef
 
 WORKDIR /ethrex
 
 FROM chef AS planner
 COPY crates ./crates
-COPY tooling ./tooling
 COPY cmd ./cmd
 COPY Cargo.* .
+
+# Remove tooling crates from workspace
+RUN sed -i '/"tooling\//d' Cargo.toml
+
 # Determine the crates that need to be built from dependencies
 RUN cargo chef prepare --recipe-path recipe.json
 

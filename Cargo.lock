@@ -4418,7 +4418,6 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "eyre",
- "genesis-tool",
  "hex",
  "keccak-hash",
  "lazy_static",
