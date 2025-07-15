@@ -191,6 +191,7 @@ impl<'a> VM<'a> {
                     self.increment_pc_by(pc_increment)?;
                     continue;
                 }
+
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };
