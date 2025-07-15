@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752571117098,
+  "lastUpdate": 1752572027085,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7532,6 +7532,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012301677419354839,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d874b90c05456847c4b0d50657916434b4600840",
+          "message": "fix(levm): ignore DB storage values for destroyed accounts (#3617)\n\n**Motivation**\nWhen executing blocks in batches an account may be destroyed and created\nagain within the same batch. This can lead to errors as we might try to\nload a storage value from the DB (such as in an `SLOAD`) that doesn't\nexist in the newly created account but that used to be part of the now\ndestroyed account, leading to the incorrect value being loaded.\nThis was detected on sepolia testnet block range 3302786-3302799 where a\nan account was destructed via `SELFDESTRUCT` and then created 6 blocks\nlater via `CREATE`. The same transaction that created it then performed\nan `SSTORE` which was charged the default fee (100 gas) as the stored\nkey and value matched the ones in the previously destroyed storage\ninstead of charging the storage creation fee (2000 gas). The value was\npreviously fetched from the DB by an `SLOAD` operation.\nThis PR solves this issue by first checking if the account was destroyed\nbefore looking up a storage value in the DB (The `Store`). If an account\nwas destroyed then whatever was stored in the DB is no longer valid, so\nwe return the default value (as we would do if the key doesn't exist)\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* (`levm` crate)`GeneralizedDatabase::get_value_from_database`: check if\nthe account was destroyed before querying the DB. If the account was\ndestroyed return default value\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-14T21:39:10Z",
+          "tree_id": "23f2aaec44dced688b3ec27ba5b502a6f41983e4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d874b90c05456847c4b0d50657916434b4600840"
+        },
+        "date": 1752572026604,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.005985345291479821,
             "unit": "Mgas/s"
           }
         ]
