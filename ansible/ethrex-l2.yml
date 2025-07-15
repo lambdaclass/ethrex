@@ -1,6 +1,7 @@
 - name: Ethrex L2 Setup
   hosts: l2
   vars:
+    ansible_ssh_user: app
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     ethrex_version: "v0.0.1-rc.1"
     uploaded_json_genesis_file: "{{ ethrex_dir }}/genesis.json"

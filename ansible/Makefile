@@ -6,50 +6,50 @@ help:
 all: inventory ethrex-l2
 
 inventory: ## Generates inventory for ansible
-	@if [ -n "$(DATABASE_IP)" ] || [ -n "$(EXPLORER_FRONTEND_IP)" ] || [ -n "$(EXPLORER_BACKEND_IP)" ] || [ -n "$(L1_IP)" ] || [ -n "$(L2_IP)" ] || [ -n "$(PROVER_EXEC_IP)" ] || [ -n "$(PROVER_SP1_IP)" ] || [ -n "$(MONITORING_IP)" ]; then \
+	@if [ -n "$(DATABASE_IP)" ] || [ -n "$(EXPLORER_FRONTEND_IP)" ] || [ -n "$(EXPLORER_BACKEND_IP)" ] || [ -n "$(L1_IP)" ] || [ -n "$(L2_IP)" ] || [ -n "$(PROVER_EXEC_IP)" ] || [ -n "$(PROVER_SP1_IP)" ] || [ -n "$(METRICS_IP)" ]; then \
 		truncate -s0 inventory.ini; \
 		if [ -n "$(DATABASE_IP)" ]; then \
 			echo "[database]" >> inventory.ini; \
-			for ip in $$(echo $(DATABASE_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=admin ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			for ip in $$(echo $(DATABASE_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 		if [ -n "$(EXPLORER_FRONTEND_IP)" ]; then \
 			echo "[explorer_frontend]" >> inventory.ini; \
-			for ip in $$(echo $(EXPLORER_FRONTEND_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			for ip in $$(echo $(EXPLORER_FRONTEND_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 		if [ -n "$(EXPLORER_BACKEND_IP)" ]; then \
 			echo "[explorer_backend]" >> inventory.ini; \
-			for ip in $$(echo $(EXPLORER_BACKEND_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=admin ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			for ip in $$(echo $(EXPLORER_BACKEND_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 		if [ -n "$(L1_IP)" ]; then \
 			echo "[l1]" >> inventory.ini; \
-			for ip in $$(echo $(L1_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			for ip in $$(echo $(L1_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 		if [ -n "$(L2_IP)" ]; then \
 			echo "[l2]" >> inventory.ini; \
-			for ip in $$(echo $(L2_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			for ip in $$(echo $(L2_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 		if [ -n "$(PROVER_EXEC_IP)" ]; then \
 			echo "[prover_exec]" >> inventory.ini; \
-			for ip in $$(echo $(PROVER_EXEC_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=app ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			for ip in $$(echo $(PROVER_EXEC_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 		if [ -n "$(PROVER_SP1_IP)" ]; then \
 			echo "[prover_sp1]" >> inventory.ini; \
-			for ip in $$(echo $(PROVER_SP1_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=admin ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
+			for ip in $$(echo $(PROVER_SP1_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
-		if [ -n "$(MONITORING_IP)" ]; then \
+		if [ -n "$(METRICS_IP)" ]; then \
 			echo "[metrics]" >> inventory.ini; \
-			for ip in $$(echo $(MONITORING_IP) | tr ',' ' '); do echo "$$ip ansible_ssh_user=admin ansible_python_interpreter=/usr/bin/python3 ansible_ssh_common_args='-o ForwardAgent=yes'" >> inventory.ini; done; \
+			for ip in $$(echo $(METRICS_IP) | tr ',' ' '); do echo "$$ip ansible_python_interpreter=/usr/bin/python3 ansible_ssh_common_args='-o ForwardAgent=yes'" >> inventory.ini; done; \
 			echo "" >> inventory.ini; \
 		fi; \
 	else \
-		echo "Error: At least one of DATABASE_IP, EXPLORER_FRONTEND_IP, EXPLORER_BACKEND_IP, L1_IP, L2_IP, PROVER_EXEC_IP, PROVER_SP1_IP, or MONITORING_IP must be set." 1>&2; exit 1; \
+		echo "Error: At least one of DATABASE_IP, EXPLORER_FRONTEND_IP, EXPLORER_BACKEND_IP, L1_IP, L2_IP, PROVER_EXEC_IP, PROVER_SP1_IP, or METRICS_IP must be set." 1>&2; exit 1; \
 	fi
 
 database: ## Installs Postgres database

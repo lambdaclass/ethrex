@@ -2,6 +2,7 @@
   hosts: metrics
 
   vars:
+    ansible_ssh_user: admin
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     local_grafana_dashboards: "{{ playbook_dir }}/../crates/blockchain/metrics/provisioning/grafana_provisioning/"
     remote_grafana_dashboards: "/etc/grafana/provisioning/"

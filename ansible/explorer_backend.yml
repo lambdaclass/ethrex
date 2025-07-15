@@ -2,6 +2,7 @@
   hosts: explorer_backend
   become: true
   vars:
+    ansible_ssh_user: admin
     explorer_url: "https://github.com/lambdaclass/sovra-explorer.git"
     explorer_dir: "/home/{{ ansible_user }}/sovra-explorer-backend"
     nodejs_version: "22.11.0"

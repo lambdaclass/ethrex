@@ -2,6 +2,7 @@
   hosts: prover_sp1
   become: true
   vars:
+    ansible_ssh_user: admin
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     ethrex_version: "v0.0.1-rc.1"
 

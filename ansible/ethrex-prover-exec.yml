@@ -1,6 +1,7 @@
 - name: Ethrex Prover Exec
   hosts: prover_exec
   vars:
+    ansible_ssh_user: app
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     ethrex_version: "l2_v0.0.1-rc1"
 

@@ -1,6 +1,7 @@
 - name: Explorer Frontend Setup
   hosts: explorer_frontend
   vars:
+    ansible_ssh_user: app
     yarn_version: "1.22.22"
     nodejs_version: "22.11.0"
     explorer_url: "https://github.com/lambdaclass/sovra-explorer-frontend.git"
