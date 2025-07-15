@@ -9,6 +9,7 @@ use ethrex_common::{
 use ethrex_levm::{
     EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
+    opcodes::Opcode,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -31,6 +32,9 @@ struct Cli {
 
     #[arg(long)]
     code: Option<String>,
+
+    #[arg(long, short, action = clap::ArgAction::SetTrue)]
+    verbose: bool,
 }
 
 fn main() {
@@ -43,28 +47,38 @@ fn main() {
 
     // Mutable just to assign the code to the transaction if necessary
     let mut runner_input: RunnerInput = if let Some(input_file_path) = cli.input {
+        if cli.verbose {
+            println!("Reading input file: {}", input_file_path);
+        }
         let input_file = File::open(&input_file_path)
             .unwrap_or_else(|_| panic!("Input file '{}' not found", input_file_path));
         let reader = BufReader::new(input_file);
         serde_json::from_reader(reader).expect("Failed to parse input file")
     } else {
+        if cli.verbose {
+            println!("No input file provided, using default RunnerInput.");
+        }
         RunnerInput::default()
     };
 
-    // Code can be implicitely provided in the `pre` of the runner input so we don't have this as requirement.
-    let code: Option<Bytes> = if let Some(code_file_path) = cli.code {
-        let code = fs::read_to_string(&code_file_path)
+    let mnemonic: Vec<String> = if let Some(code_file_path) = cli.code {
+        if cli.verbose {
+            println!("Reading code file: {}", code_file_path);
+        }
+        fs::read_to_string(&code_file_path)
             .expect("Failed to read bytecode file")
-            .trim_start_matches("0x")
-            .to_string();
-        Some(
-            hex::decode(code.trim_end())
-                .expect("Failed to decode hex string into bytes")
-                .into(),
-        )
+            .split_ascii_whitespace()
+            .map(String::from)
+            .collect()
     } else {
-        None
+        vec![]
     };
+
+    let bytecode = mnemonic_to_bytecode(mnemonic, cli.verbose);
+
+    if cli.verbose {
+        println!("Final bytecode: {}", printable_bytes(bytecode.clone()));
+    }
 
     // Now we want to initialize the VM, so we set up the environment and database.
     // Env
@@ -82,7 +96,7 @@ fn main() {
     };
 
     // DB
-    let initial_state = setup_initial_state(&mut runner_input, code);
+    let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
     let mut db = GeneralizedDatabase::new(Arc::new(store), initial_state);
@@ -204,7 +218,7 @@ fn compare_initial_and_current_accounts(
 ///   - Create contract: Code becomes transaction calldata
 fn setup_initial_state(
     runner_input: &mut RunnerInput,
-    bytecode: Option<Bytes>,
+    bytecode: Bytes,
 ) -> HashMap<Address, Account> {
     // Default state has sender with some balance to send Tx, it can be overwritten though.
     let mut initial_state = HashMap::from([(
@@ -218,16 +232,75 @@ fn setup_initial_state(
         .collect();
     initial_state.extend(benchmark_pre_state);
     // Contract bytecode or initcode
-    if let Some(code) = bytecode {
+    if bytecode != Bytes::new() {
         if let Some(to) = runner_input.transaction.to {
             // Contract Bytecode, set code of recipient.
             let acc = initial_state.entry(to).or_default();
-            acc.code = code;
+            acc.code = bytecode;
         } else {
             // Initcode should be data of transaction
-            runner_input.transaction.data = code;
+            runner_input.transaction.data = bytecode;
         }
     }
 
     initial_state
+}
+
+fn printable_bytes(bytecode: Bytes) -> String {
+    let mut result = String::new();
+    for byte in bytecode.iter() {
+        result.push_str(&format!("{:02x}", byte));
+    }
+    result
+}
+
+/// Parse mnemonics, converting them into bytecode.
+fn mnemonic_to_bytecode(mnemonic: Vec<String>, verbose: bool) -> Bytes {
+    let mut mnemonic_iter = mnemonic.into_iter();
+    let mut bytecode: Vec<u8> = Vec::new();
+
+    while let Some(symbol) = mnemonic_iter.next() {
+        let opcode = serde_json::from_str::<Opcode>(&format!("\"{}\"", symbol))
+            .expect(&format!("Failed to parse Opcode from symbol {symbol}"));
+
+        bytecode.push(opcode.into());
+
+        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&opcode) {
+            let push_size = (opcode as u8 - Opcode::PUSH1 as u8 + 1) as usize;
+            let value = mnemonic_iter
+                .next()
+                .expect("Expected a value after PUSH opcode");
+            let mut decoded_value = if value.starts_with("0x") {
+                hex::decode(value.trim_start_matches("0x"))
+                    .expect("Failed to decode PUSH value as hex")
+            } else {
+                let decimal_value: u64 = value
+                    .parse()
+                    .expect("Failed to parse PUSH value as decimal");
+                let mut bytes = vec![];
+                let mut temp = decimal_value;
+                while temp > 0 {
+                    bytes.push((temp & 0xFF) as u8);
+                    temp >>= 8;
+                }
+                bytes.reverse();
+                bytes
+            };
+            if decoded_value.len() < push_size {
+                let padding = vec![0u8; push_size - decoded_value.len()];
+                decoded_value = [padding, decoded_value].concat();
+            }
+            if verbose {
+                println!("Parsed PUSH{} 0x{}", push_size, hex::encode(&decoded_value));
+            }
+
+            bytecode.append(&mut decoded_value);
+        } else {
+            if verbose {
+                println!("Parsed {}", symbol);
+            }
+        }
+    }
+
+    bytecode.into()
 }
