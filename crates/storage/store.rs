@@ -26,6 +26,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -101,8 +102,6 @@ impl Store {
         };
         info!("Started store engine");
 
-        // store.handle_pruning(CancellationToken::new()).await;
-
         Ok(store)
     }
 
@@ -121,28 +120,38 @@ impl Store {
         Ok(store)
     }
 
-    pub async fn handle_pruning(
-        self,
+    /// Starts the pruning task in the background. This task will run every 15 seconds
+    /// and prune the state and storage tries. The function will return a join handle
+    /// that can be used to wait for the task to finish.
+    pub fn start_pruner_task(
+        &self,
         cancellation_token: CancellationToken,
     ) -> JoinHandle<Result<(), StoreError>> {
+        let store_clone = self.clone();
+
+        // Start the pruning task in the background
         tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(15));
+
             loop {
-                if let Err(e) = self
-                    .engine
-                    .prune_state_and_storage_log(cancellation_token.clone())
-                {
-                    tracing::error!("Pruning failed: {}", e);
-                    continue;
-                    // return Err(e);
-                }
-
+                let cancellation_token = cancellation_token.clone();
                 tokio::select! {
-                    _ = cancellation_token.cancelled() => {
-                        break;
-                    }
+                    _ = interval.tick() => {
+                        // Execute pruning synchronously in a blocking task
+                        let result = tokio::task::spawn_blocking({
+                            let store = store_clone.clone();
+                            move || store.engine.prune_state_and_storage_log(cancellation_token)
+                        }).await;
 
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                        continue;
+                        match result {
+                            Ok(Ok(())) => tracing::debug!("Pruning completed"),
+                            Ok(Err(e)) => tracing::error!("Pruning error: {:?}", e),
+                            Err(e) => tracing::error!("Task join error: {:?}", e),
+                        }
+                    }
+                    _ = cancellation_token.cancelled() => {
+                        tracing::info!("Pruner task shutting down");
+                        break;
                     }
                 }
             }

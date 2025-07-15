@@ -77,7 +77,7 @@ async fn main() -> eyre::Result<()> {
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let store = init_store(&data_dir, genesis).await;
-    store.clone().handle_pruning(cancel_token.clone()).await;
+    store.start_pruner_task(cancel_token.clone());
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;

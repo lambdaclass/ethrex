@@ -7,6 +7,7 @@ use ethrex::{
 };
 use ethrex_blockchain::BlockchainType;
 use ethrex_vm::EvmEngine;
+use tokio_util::sync::CancellationToken;
 
 #[inline]
 fn block_import() {
@@ -29,6 +30,7 @@ fn block_import() {
         genesis,
         evm_engine,
         blockchain_type,
+        CancellationToken::new(),
     ))
     .expect("Failed to import blocks on the Tokio runtime");
 }

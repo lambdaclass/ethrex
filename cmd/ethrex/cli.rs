@@ -12,6 +12,7 @@ use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
+use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, warn};
 
 use crate::{
@@ -284,6 +285,7 @@ pub enum Subcommand {
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
+        let cancel_token = CancellationToken::new();
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
@@ -308,10 +310,18 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    opts.evm,
+                    blockchain_type,
+                    cancel_token,
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last).await
+                export_blocks(&path, &opts.datadir, first, last, cancel_token).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -357,11 +367,11 @@ pub async fn import_blocks(
     genesis: Genesis,
     evm: EvmEngine,
     blockchain_type: BlockchainType,
+    cancel_token: CancellationToken,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    let cancel_token = tokio_util::sync::CancellationToken::new();
-    store.clone().handle_pruning(cancel_token.clone()).await;
+    store.start_pruner_task(cancel_token);
 
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -446,11 +456,11 @@ pub async fn export_blocks(
     data_dir: &str,
     first_number: Option<u64>,
     last_number: Option<u64>,
+    cancel_token: CancellationToken,
 ) {
     let data_dir = set_datadir(data_dir);
     let store = open_store(&data_dir);
-    let cancel_token = tokio_util::sync::CancellationToken::new();
-    store.clone().handle_pruning(cancel_token.clone()).await;
+    store.start_pruner_task(cancel_token);
 
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
