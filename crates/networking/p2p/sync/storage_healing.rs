@@ -15,7 +15,7 @@ use std::{
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use ethrex_trie::{Nibbles, NodeHash};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -133,6 +133,8 @@ async fn heal_storage_batch(
         // Sort nodes by trie & update current batch
         let mut nodes_to_commit = HashMap::new();
         for (acc_path, paths) in batch.iter_mut() {
+            // TODO: check if we can do this without opening a trie
+            let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
             // Collect fetched nodes for that particular trie
             let trie_nodes = nodes
                 .drain(..paths.len().min(nodes.len()))
@@ -141,7 +143,7 @@ async fn heal_storage_batch(
             let missing_children = trie_nodes
                 .iter()
                 .zip(paths.drain(..trie_nodes.len()))
-                .map(|(node, path)| node_missing_children(node, &path, &store, Some(*acc_path)))
+                .map(|(node, path)| node_missing_children(node, &path, trie.db()))
                 .collect::<Result<Vec<_>, _>>()?;
             // Add the missing children paths of the nodes we fetched to the batch
             paths.extend(missing_children.into_iter().flatten());
