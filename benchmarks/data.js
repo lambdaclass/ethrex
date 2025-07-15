@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752565686360,
+  "lastUpdate": 1752568424528,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7474,6 +7474,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0057531551724137936,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e97d4a42213231038801327a5485b720f3dcbde",
+          "message": "docs(l1): add documentation on ethereum metrics exporter use (#3538)\n\n**Motivation**\n\nWe don't have proper documentation on running the metrics introduced for\nL1 in #3061\n\n**Description**\n\nThis pr includes a quick start on how to use the new targets to display\nmetrics for running a sync on holesky or hoodi, and a more detailed\ndescription in case you want to display metrics when syncing on another\nnetwork.\n\nCloses #3207",
+          "timestamp": "2025-07-14T19:58:28Z",
+          "tree_id": "302f57a1d2cecd1d75639aa68bc81c9f627bc936",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7e97d4a42213231038801327a5485b720f3dcbde"
+        },
+        "date": 1752568423702,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012089963768115942,
             "unit": "Mgas/s"
           }
         ]
