@@ -12,6 +12,8 @@ use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
+/// The number of blocks to keep when pruning, we keep the last `KEEP_BLOCKS` of the state and
+/// storage tries.
 pub const KEEP_BLOCKS: u64 = 128;
 
 // We need async_trait because the stabilized feature lacks support for object safety

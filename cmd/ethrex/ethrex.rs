@@ -74,7 +74,10 @@ async fn main() -> eyre::Result<()> {
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
+
+    let cancel_token = tokio_util::sync::CancellationToken::new();
     let store = init_store(&data_dir, genesis).await;
+    store.clone().handle_pruning(cancel_token.clone()).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
@@ -95,8 +98,6 @@ async fn main() -> eyre::Result<()> {
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-
-    let cancel_token = tokio_util::sync::CancellationToken::new();
 
     init_rpc_api(
         &opts,

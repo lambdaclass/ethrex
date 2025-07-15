@@ -360,6 +360,9 @@ pub async fn import_blocks(
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    store.clone().handle_pruning(cancel_token.clone()).await;
+
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -446,6 +449,9 @@ pub async fn export_blocks(
 ) {
     let data_dir = set_datadir(data_dir);
     let store = open_store(&data_dir);
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    store.clone().handle_pruning(cancel_token.clone()).await;
+
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

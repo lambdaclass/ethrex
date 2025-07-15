@@ -7,6 +7,7 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
@@ -100,6 +101,8 @@ impl Store {
         };
         info!("Started store engine");
 
+        // store.handle_pruning(CancellationToken::new()).await;
+
         Ok(store)
     }
 
@@ -116,6 +119,35 @@ impl Store {
         let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
+    }
+
+    pub async fn handle_pruning(
+        self,
+        cancellation_token: CancellationToken,
+    ) -> JoinHandle<Result<(), StoreError>> {
+        tokio::spawn(async move {
+            loop {
+                if let Err(e) = self
+                    .engine
+                    .prune_state_and_storage_log(cancellation_token.clone())
+                {
+                    tracing::error!("Pruning failed: {}", e);
+                    continue;
+                    // return Err(e);
+                }
+
+                tokio::select! {
+                    _ = cancellation_token.cancelled() => {
+                        break;
+                    }
+
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                        continue;
+                    }
+                }
+            }
+            Ok(())
+        })
     }
 
     // SNAPSHOT RECONSTRUCTION STRATEGY

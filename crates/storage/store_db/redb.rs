@@ -26,7 +26,6 @@ use redb::{
     AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable,
     TableDefinition, TypeName, Value,
 };
-use std::thread;
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
