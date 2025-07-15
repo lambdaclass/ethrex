@@ -41,7 +41,6 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
 ) -> Result<(), errors::SequencerError> {
-    // Todo: add correct error handling
     let initial_status = if cfg.based.based {
         SequencerStatus::default()
     } else {
