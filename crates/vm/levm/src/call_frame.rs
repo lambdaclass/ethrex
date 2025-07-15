@@ -42,10 +42,13 @@ impl Stack {
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
         // check it again.
-        #[expect(clippy::indexing_slicing)]
-        let values = self.values[self.offset..]
-            .first_chunk::<N>()
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        #[expect(unsafe_code)]
+        let values = unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .first_chunk::<N>()
+                .ok_or(ExceptionalHalt::StackUnderflow)?
+        };
         self.offset = next_offset;
 
         Ok(values)
