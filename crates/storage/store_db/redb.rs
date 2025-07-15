@@ -660,124 +660,185 @@ impl StoreEngine for RedBStore {
                 // We only need to update the flat tables if the update batch contains blocks
                 // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
                 // If no blocks are updated then the batchs should be empty and there's no work to do.
-                let (Some(first_block), Some(last_block)) =
+                if let (Some(first_block), Some(last_block)) =
                     (update_batch.blocks.first(), update_batch.blocks.last())
-                else {
-                    tracing::warn!("No blocks in update batch");
-                    return Ok(());
-                };
-
-                let parent_block = BlockNumHash {
-                    block_number: first_block.header.number - 1,
-                    block_hash: first_block.header.parent_hash,
-                };
-
-                let final_block = BlockNumHash {
-                    block_number: last_block.header.number,
-                    block_hash: last_block.hash(),
-                };
-
-                // Update the account info log table
-                let mut state_logs_table =
-                    write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
-                for (addr, old_info, new_info) in
-                    update_batch.account_info_log_updates.iter().cloned()
                 {
-                    let log_entry = AccountInfoLogEntry {
-                        address: addr.0,
-                        info: new_info,
-                        previous_info: old_info,
+                    let parent_block = BlockNumHash {
+                        block_number: first_block.header.number - 1,
+                        block_hash: first_block.header.parent_hash,
                     };
 
-                    let key: BlockNumHashRLP = final_block.into();
-                    let value = (parent_block.into(), log_entry.into());
-                    state_logs_table.insert(key, value)?;
-                }
+                    let final_block = BlockNumHash {
+                        block_number: last_block.header.number,
+                        block_hash: last_block.hash(),
+                    };
 
-                // Update the account storage log table
-                let mut storage_logs_table =
-                    write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
-                for entry in update_batch.storage_log_updates.iter().cloned() {
-                    let key: BlockNumHashRLP = final_block.into();
-                    let value = (parent_block.into(), entry.into());
-                    storage_logs_table.insert(key, value)?;
-                }
+                    // Update the account info log table
+                    let mut state_logs_table =
+                        write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+                    for (addr, old_info, new_info) in
+                        update_batch.account_info_log_updates.iter().cloned()
+                    {
+                        let log_entry = AccountInfoLogEntry {
+                            address: addr.0,
+                            info: new_info,
+                            previous_info: old_info,
+                        };
 
-                // Check if we need to update flat tables
-                let current_snapshot = {
-                    let snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
-                    snapshot_table
-                        .get(())?
-                        .map(|v| v.value().to())
-                        .transpose()?
-                        .unwrap_or_default()
-                };
-
-                if current_snapshot == parent_block {
-                    // Update flat tables with new state
-                    let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
-                    let mut account_storage_table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
-
-                    // Apply account info changes to flat tables
-                    for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
-                        let address_key = <H160 as Into<AccountAddressRLP>>::into(addr.0);
-                        if new_info != AccountInfo::default() {
-                            let new_info_rlp: AccountInfoRLP = new_info.into();
-                            account_info_table.insert(address_key, new_info_rlp)?;
-                        } else {
-                            account_info_table.remove(address_key)?;
-                        }
+                        let key: BlockNumHashRLP = final_block.into();
+                        let value = (parent_block.into(), log_entry.into());
+                        state_logs_table.insert(key, value)?;
                     }
 
-                    // Apply storage changes to flat tables
-                    for entry in update_batch.storage_log_updates {
-                        let storage_key = (entry.address.into(), entry.slot.into());
-                        if !entry.new_value.is_zero() {
-                            let new_value_rlp: AccountStorageValueRLP = entry.new_value.into();
-                            account_storage_table.insert(storage_key, new_value_rlp)?;
-                        } else {
-                            account_storage_table.remove(storage_key)?;
-                        }
+                    // Update the account storage log table
+                    let mut storage_logs_table =
+                        write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
+                    for entry in update_batch.storage_log_updates.iter().cloned() {
+                        let key: BlockNumHashRLP = final_block.into();
+                        let value = (parent_block.into(), entry.into());
+                        storage_logs_table.insert(key, value)?;
                     }
 
-                    // Update snapshot metadata
-                    let mut snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
-                    let final_block_rlp: BlockNumHashRLP = final_block.into();
-                    snapshot_table.insert((), final_block_rlp)?;
-                }
+                    // Check if we need to update flat tables
+                    let current_snapshot = {
+                        let snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+                        snapshot_table
+                            .get(())?
+                            .map(|v| v.value().to())
+                            .transpose()?
+                            .unwrap_or_default()
+                    };
 
-                // For each block in the update batch, we iterate over the account updates (by index)
-                // we store account info changes in the table StateWriteBatch
-                // store account updates
-                let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
-                let mut state_ref_counters = write_txn.open_table(STATE_TRIE_REF_COUNTERS_TABLE)?;
+                    if current_snapshot == parent_block {
+                        // Update flat tables with new state
+                        let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+                        let mut account_storage_table =
+                            write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
 
-                for (node_hash, node_data) in update_batch.account_updates {
-                    tracing::debug!(
-                        node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
-                        parent_block_number = parent_block.block_number,
-                        parent_block_hash = hex::encode(parent_block.block_hash),
-                        final_block_number = final_block.block_number,
-                        final_block_hash = hex::encode(final_block.block_hash),
-                        "[WRITING STATE TRIE NODE]",
-                    );
+                        // Apply account info changes to flat tables
+                        for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
+                            let address_key = <H160 as Into<AccountAddressRLP>>::into(addr.0);
+                            if new_info != AccountInfo::default() {
+                                let new_info_rlp: AccountInfoRLP = new_info.into();
+                                account_info_table.insert(address_key, new_info_rlp)?;
+                            } else {
+                                account_info_table.remove(address_key)?;
+                            }
+                        }
 
-                    state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
+                        // Apply storage changes to flat tables
+                        for entry in update_batch.storage_log_updates {
+                            let storage_key = (entry.address.into(), entry.slot.into());
+                            if !entry.new_value.is_zero() {
+                                let new_value_rlp: AccountStorageValueRLP = entry.new_value.into();
+                                account_storage_table.insert(storage_key, new_value_rlp)?;
+                            } else {
+                                account_storage_table.remove(storage_key)?;
+                            }
+                        }
 
-                    // Increment reference counter for state node
-                    let current_count = state_ref_counters
-                        .get(node_hash.as_ref())?
-                        .map(|v| v.value())
-                        .unwrap_or(0);
-                    state_ref_counters.insert(node_hash.as_ref(), current_count + 1)?;
-                }
+                        // Update snapshot metadata
+                        let mut snapshot_table =
+                            write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+                        let final_block_rlp: BlockNumHashRLP = final_block.into();
+                        snapshot_table.insert((), final_block_rlp)?;
+                    }
 
-                let mut state_trie_pruning_log_table =
-                    write_txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
+                    // For each block in the update batch, we iterate over the account updates (by index)
+                    // we store account info changes in the table StateWriteBatch
+                    // store account updates
+                    let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
+                    let mut state_ref_counters =
+                        write_txn.open_table(STATE_TRIE_REF_COUNTERS_TABLE)?;
 
-                for node_hash in update_batch.invalidated_state_nodes {
-                    let block_rlp: BlockNumHashRLP = final_block.into();
-                    state_trie_pruning_log_table.insert(block_rlp, node_hash.0)?;
+                    for (node_hash, node_data) in update_batch.account_updates {
+                        tracing::debug!(
+                            node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                            parent_block_number = parent_block.block_number,
+                            parent_block_hash = hex::encode(parent_block.block_hash),
+                            final_block_number = final_block.block_number,
+                            final_block_hash = hex::encode(final_block.block_hash),
+                            "[WRITING STATE TRIE NODE]",
+                        );
+
+                        state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
+
+                        // Increment reference counter for state node
+                        let current_count = state_ref_counters
+                            .get(node_hash.as_ref())?
+                            .map(|v| v.value())
+                            .unwrap_or(0);
+                        state_ref_counters.insert(node_hash.as_ref(), current_count + 1)?;
+                    }
+
+                    let mut state_trie_pruning_log_table =
+                        write_txn.open_multimap_table(STATE_TRIE_PRUNING_LOG_TABLE)?;
+
+                    for node_hash in update_batch.invalidated_state_nodes {
+                        let block_rlp: BlockNumHashRLP = final_block.into();
+                        state_trie_pruning_log_table.insert(block_rlp, node_hash.0)?;
+                    }
+
+                    // Store storage trie updates
+                    let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+                    let mut storage_trie_pruning_log_table =
+                        write_txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
+                    let mut storage_ref_counters =
+                        write_txn.open_table(STORAGE_TRIE_REF_COUNTERS_TABLE)?;
+
+                    for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
+                        let key_address: [u8; 32] = hashed_address.into();
+                        for (node_hash, node_data) in nodes {
+                            let key_node = node_hash_to_fixed_size(node_hash);
+
+                            tracing::debug!(
+                                hashed_address = hex::encode(hashed_address.0),
+                                node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                                parent_block_number = parent_block.block_number,
+                                parent_block_hash = hex::encode(parent_block.block_hash),
+                                final_block_number = final_block.block_number,
+                                final_block_hash = hex::encode(final_block.block_hash),
+                                "[WRITING STORAGE TRIE NODE]",
+                            );
+
+                            addr_store.remove_all((key_address, key_node))?;
+                            addr_store.insert((key_address, key_node), &*node_data)?;
+
+                            // Increment reference counter for storage node
+                            let storage_key = (key_address, key_node);
+                            let current_count = storage_ref_counters
+                                .get(storage_key)?
+                                .map(|v| v.value())
+                                .unwrap_or(0);
+                            storage_ref_counters.insert(storage_key, current_count + 1)?;
+                        }
+
+                        for node_hash in invalidated_nodes {
+                            // NOTE: the hash itself *should* suffice, but this way the value matches
+                            // the other table's key.
+                            let key_node = node_hash_to_fixed_size(NodeHash::Hashed(node_hash));
+                            let block_rlp: BlockNumHashRLP = final_block.into();
+                            storage_trie_pruning_log_table
+                                .insert(block_rlp, (key_address, key_node))?;
+                        }
+                    }
+                } else {
+                    let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
+                    for (node_hash, node_data) in update_batch.account_updates {
+                        state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
+                    }
+
+                    // Store storage trie updates
+                    let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+                    for (hashed_address, nodes, _invalidated_nodes) in update_batch.storage_updates
+                    {
+                        for (node_hash, node_data) in nodes {
+                            addr_store.insert(
+                                (hashed_address.0, node_hash_to_fixed_size(node_hash)),
+                                &*node_data,
+                            )?;
+                        }
+                    }
                 }
 
                 // Store code updates
@@ -787,50 +848,6 @@ impl StoreEngine for RedBStore {
                         <H256 as Into<AccountCodeHashRLP>>::into(hashed_address);
                     let account_code = <bytes::Bytes as Into<AccountCodeRLP>>::into(code);
                     code_store.insert(account_code_hash, account_code)?;
-                }
-
-                // Store storage trie updates
-                let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
-                let mut storage_trie_pruning_log_table =
-                    write_txn.open_multimap_table(STORAGE_TRIE_PRUNING_LOG_TABLE)?;
-                let mut storage_ref_counters =
-                    write_txn.open_table(STORAGE_TRIE_REF_COUNTERS_TABLE)?;
-
-                for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
-                    let key_address: [u8; 32] = hashed_address.into();
-                    for (node_hash, node_data) in nodes {
-                        let key_node = node_hash_to_fixed_size(node_hash);
-
-                        tracing::debug!(
-                            hashed_address = hex::encode(hashed_address.0),
-                            node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
-                            parent_block_number = parent_block.block_number,
-                            parent_block_hash = hex::encode(parent_block.block_hash),
-                            final_block_number = final_block.block_number,
-                            final_block_hash = hex::encode(final_block.block_hash),
-                            "[WRITING STORAGE TRIE NODE]",
-                        );
-
-                        addr_store.remove_all((key_address, key_node))?;
-                        addr_store.insert((key_address, key_node), &*node_data)?;
-
-                        // Increment reference counter for storage node
-                        let storage_key = (key_address, key_node);
-                        let current_count = storage_ref_counters
-                            .get(storage_key)?
-                            .map(|v| v.value())
-                            .unwrap_or(0);
-                        storage_ref_counters.insert(storage_key, current_count + 1)?;
-                    }
-
-                    for node_hash in invalidated_nodes {
-                        // NOTE: the hash itself *should* suffice, but this way the value matches
-                        // the other table's key.
-                        let key_node = node_hash_to_fixed_size(NodeHash::Hashed(node_hash));
-                        let block_rlp: BlockNumHashRLP = final_block.into();
-                        storage_trie_pruning_log_table
-                            .insert(block_rlp, (key_address, key_node))?;
-                    }
                 }
 
                 // Store block data
