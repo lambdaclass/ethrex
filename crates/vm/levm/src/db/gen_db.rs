@@ -22,7 +22,7 @@ use std::collections::hash_map::Entry;
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
-    pub initial_accounts_state: HashMap<Address, Account>,
+    pub initial_accounts_state: ahash::HashMap<Address, Account>,
     pub tx_backup: Option<CallFrameBackup>,
     /// For keeping track of all destroyed accounts during block execution.
     /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
@@ -31,7 +31,8 @@ pub struct GeneralizedDatabase {
 }
 
 impl GeneralizedDatabase {
-    pub fn new(store: Arc<dyn Database>, current_accounts_state: CacheDB) -> Self {
+    pub fn new(store: Arc<dyn Database>, current_accounts_state: impl IntoIterator<Item = (Address, Account)>) -> Self {
+        let current_accounts_state = ahash::HashMap::from_iter(current_accounts_state);
         Self {
             store,
             current_accounts_state: current_accounts_state.clone(),

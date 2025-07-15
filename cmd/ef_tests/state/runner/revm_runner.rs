@@ -10,7 +10,7 @@ use ethrex_common::{
     Address, H256,
     types::{Account, AccountUpdate, Fork, TxKind},
 };
-use ethrex_levm::errors::{ExecutionReport, TxResult};
+use ethrex_levm::{db::ahash, errors::{ExecutionReport, TxResult}};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{
     self, DynVmDatabase, EvmError,
@@ -377,7 +377,7 @@ pub async fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let mut db = load_initial_state_levm(test).await;
-            db.current_accounts_state = levm_cache;
+            db.current_accounts_state = ahash::HashMap::from_iter(levm_cache.into_iter());
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
                 .map_err(|_| {
                     InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())

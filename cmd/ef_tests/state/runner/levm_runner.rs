@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     report::{EFTestReport, EFTestReportForkResult, TestVector},
     runner::{EFTestRunnerError, InternalError},
@@ -356,7 +358,7 @@ pub async fn ensure_post_state(
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         Box::new(execution_report.clone()),
                         error_reason,
-                        cache,
+                        HashMap::from_iter(cache.into_iter()),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -376,7 +378,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             "Post-state root mismatch".to_string(),
-                            cache,
+                            HashMap::from_iter(cache.into_iter()),
                         ));
                     }
 
@@ -394,7 +396,7 @@ pub async fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             Box::new(execution_report.clone()),
                             "Logs mismatch".to_string(),
-                            cache,
+                            HashMap::from_iter(cache.into_iter()),
                         ));
                     }
                 }
