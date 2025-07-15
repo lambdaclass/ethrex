@@ -570,91 +570,133 @@ impl Store {
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            // If no blocks are updated then the batchs should be empty and there's no work to do.
-            let (Some(first_block), Some(last_block)) =
-                (update_batch.blocks.first(), update_batch.blocks.last())
-            else {
-                return Ok(());
-            };
 
+        tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite()?;
 
             // We only need to update the flat tables if the update batch contains blocks
             // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
-            let parent_block = (
-                first_block.header.number - 1,
-                first_block.header.parent_hash,
-            )
-                .into();
-            let final_block = (last_block.header.number, last_block.hash()).into();
-
-            // Update the account info log table
-            let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
-            for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned()
+            if let (Some(first_block), Some(last_block)) =
+                (update_batch.blocks.first(), update_batch.blocks.last())
             {
-                account_info_log_cursor.upsert(
-                    (final_block, parent_block),
-                    AccountInfoLogEntry {
-                        address: addr.0,
-                        info: new_info,
-                        previous_info: old_info,
-                    },
-                )?;
-            }
+                let parent_block = (
+                    first_block.header.number - 1,
+                    first_block.header.parent_hash,
+                )
+                    .into();
+                let final_block = (last_block.header.number, last_block.hash()).into();
 
-            // Update the account storage log table
-            let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
-            for entry in update_batch.storage_log_updates.iter().cloned() {
-                account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
-            }
-
-            let meta = tx
-                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
-                .unwrap_or_default();
-            // If we are at the parent block, we need to update the flat tables with the new changes
-            // and update the metadata to the final block
-            if meta == parent_block {
-                let mut info_cursor = tx.cursor::<FlatAccountInfo>()?;
-                let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
-
-                for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
-                    let key = addr;
-                    let value = (new_info != AccountInfo::default())
-                        .then_some(EncodableAccountInfo(new_info));
-                    Self::replace_value_or_delete(&mut info_cursor, key, value)?;
+                // Update the account info log table
+                let mut account_info_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+                for (addr, old_info, new_info) in
+                    update_batch.account_info_log_updates.iter().cloned()
+                {
+                    account_info_log_cursor.upsert(
+                        (final_block, parent_block),
+                        AccountInfoLogEntry {
+                            address: addr.0,
+                            info: new_info,
+                            previous_info: old_info,
+                        },
+                    )?;
                 }
-                for entry in update_batch.storage_log_updates {
-                    let key = (entry.address.into(), entry.slot.into());
-                    let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
-                    Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
+
+                // Update the account storage log table
+                let mut account_storage_logs_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+                for entry in update_batch.storage_log_updates.iter().cloned() {
+                    account_storage_logs_cursor.upsert((final_block, parent_block), entry)?;
                 }
-                tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, final_block)?;
-            }
 
-            let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
-            let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+                let meta = tx
+                    .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+                    .unwrap_or_default();
+                // If we are at the parent block, we need to update the flat tables with the new changes
+                // and update the metadata to the final block
+                if meta == parent_block {
+                    let mut info_cursor = tx.cursor::<FlatAccountInfo>()?;
+                    let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
 
-            // For each block in the update batch, we iterate over the account updates (by index)
-            // we store account info changes in the table StateWriteBatch
-            // store account updates
-            for (node_hash, mut node_data) in update_batch.account_updates {
-                tracing::debug!(
-                    node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
-                    parent_block_number = parent_block.block_number,
-                    parent_block_hash = hex::encode(parent_block.block_hash),
-                    final_block_number = final_block.block_number,
-                    final_block_hash = hex::encode(final_block.block_hash),
-                    "[WRITING STATE TRIE NODE]",
-                );
-                node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
-            }
+                    for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
+                        let key = addr;
+                        let value = (new_info != AccountInfo::default())
+                            .then_some(EncodableAccountInfo(new_info));
+                        Self::replace_value_or_delete(&mut info_cursor, key, value)?;
+                    }
+                    for entry in update_batch.storage_log_updates {
+                        let key = (entry.address.into(), entry.slot.into());
+                        let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
+                        Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
+                    }
+                    tx.upsert::<FlatTablesBlockMetadata>(
+                        FlatTablesBlockMetadataKey {},
+                        final_block,
+                    )?;
+                }
 
-            for node_hash in update_batch.invalidated_state_nodes {
-                // Before inserting, we insert the node into the pruning log
-                cursor_state_trie_pruning_log
-                    .upsert(final_block, StateTriePruningLogEntry::from(node_hash.0))?;
+                let mut cursor_state_trie_pruning_log = tx.cursor::<StateTriePruningLog>()?;
+                let mut cursor_storage_trie_pruning_log = tx.cursor::<StorageTriesPruningLog>()?;
+
+                // For each block in the update batch, we iterate over the account updates (by index)
+                // we store account info changes in the table StateWriteBatch
+                // store account updates
+                for (node_hash, mut node_data) in update_batch.account_updates {
+                    tracing::debug!(
+                        node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                        parent_block_number = parent_block.block_number,
+                        parent_block_hash = hex::encode(parent_block.block_hash),
+                        final_block_number = final_block.block_number,
+                        final_block_hash = hex::encode(final_block.block_hash),
+                        "[WRITING STATE TRIE NODE]",
+                    );
+                    node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+                    tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
+                }
+
+                for node_hash in update_batch.invalidated_state_nodes {
+                    // Before inserting, we insert the node into the pruning log
+                    cursor_state_trie_pruning_log
+                        .upsert(final_block, StateTriePruningLogEntry::from(node_hash.0))?;
+                }
+
+                for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
+                    let key_1: [u8; 32] = hashed_address.into();
+                    for (node_hash, mut node_data) in nodes {
+                        let key_2 = node_hash_to_fixed_size(node_hash);
+
+                        tracing::debug!(
+                            hashed_address = hex::encode(hashed_address.0),
+                            node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
+                            parent_block_number = parent_block.block_number,
+                            parent_block_hash = hex::encode(parent_block.block_hash),
+                            final_block_number = final_block.block_number,
+                            final_block_hash = hex::encode(final_block.block_hash),
+                            "[WRITING STORAGE TRIE NODE]",
+                        );
+                        node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+                        tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
+                    }
+                    for node_hash in invalidated_nodes {
+                        // NOTE: the hash itself *should* suffice, but this way the value matches
+                        // the other table's key.
+                        let key_2 = node_hash_to_fixed_size(NodeHash::Hashed(node_hash));
+                        cursor_storage_trie_pruning_log.upsert(final_block, (key_1, key_2))?;
+                    }
+                }
+            } else {
+                // In case that we are in a reconstruct scenario (L2), we need to update the state and storage tries
+                // without the block number extension
+                for (node_hash, node_data) in update_batch.account_updates {
+                    tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
+                }
+
+                for (hashed_address, nodes, _invalidated_nodes) in update_batch.storage_updates {
+                    for (node_hash, node_data) in nodes {
+                        let key_1: [u8; 32] = hashed_address.into();
+                        let key_2 = node_hash_to_fixed_size(node_hash);
+
+                        tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
+                    }
+                }
             }
 
             // store code updates
@@ -662,30 +704,6 @@ impl StoreEngine for Store {
                 tx.upsert::<AccountCodes>(hashed_address.into(), code.into())?;
             }
 
-            for (hashed_address, nodes, invalidated_nodes) in update_batch.storage_updates {
-                let key_1: [u8; 32] = hashed_address.into();
-                for (node_hash, mut node_data) in nodes {
-                    let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    tracing::debug!(
-                        hashed_address = hex::encode(hashed_address.0),
-                        node_hash = hex::encode(node_hash_to_fixed_size(node_hash)),
-                        parent_block_number = parent_block.block_number,
-                        parent_block_hash = hex::encode(parent_block.block_hash),
-                        final_block_number = final_block.block_number,
-                        final_block_hash = hex::encode(final_block.block_hash),
-                        "[WRITING STORAGE TRIE NODE]",
-                    );
-                    node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)?;
-                }
-                for node_hash in invalidated_nodes {
-                    // NOTE: the hash itself *should* suffice, but this way the value matches
-                    // the other table's key.
-                    let key_2 = node_hash_to_fixed_size(NodeHash::Hashed(node_hash));
-                    cursor_storage_trie_pruning_log.upsert(final_block, (key_1, key_2))?;
-                }
-            }
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
