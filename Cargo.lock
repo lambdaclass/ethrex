@@ -11057,8 +11057,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.3#ed518f7cc1219eb4164e52de4cfa800f1e9f09bd"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbf2934bc56e7e8c07b155b7d858cd911d77d3c082cdafa01079a10733b59daa"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -11067,8 +11068,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.3#ed518f7cc1219eb4164e52de4cfa800f1e9f09bd"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e467fb9d3e4f7a3bd2ff27c5bee8b8a681be0c352941d7412a0a58e18671748a"
 dependencies = [
  "crossbeam",
  "tokio",
