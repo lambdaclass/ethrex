@@ -32,6 +32,7 @@ use std::collections::HashMap;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
+use std::collections::hash_map::Entry;
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -54,6 +55,53 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            // Shortcut for transfer transactions.
+            if let TxKind::Call(tx_recipient) = tx.to() {
+                if tx.data().is_empty() {
+                    let account = match db.current_accounts_state.entry(tx_sender) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            let account = db.store.get_account(tx_sender)?;
+                            db.initial_accounts_state.insert(tx_sender, account.clone());
+
+                            entry.insert(account)
+                        }
+                    };
+                    account.info.balance = account
+                        .info
+                        .balance
+                        .checked_sub(tx.value())
+                        .ok_or(InternalError::Overflow)?;
+                    account.info.nonce += 1;
+
+                    let account = match db.current_accounts_state.entry(tx_recipient) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            let account = db.store.get_account(tx_recipient)?;
+                            db.initial_accounts_state
+                                .insert(tx_recipient, account.clone());
+
+                            entry.insert(account)
+                        }
+                    };
+                    account.info.balance = account
+                        .info
+                        .balance
+                        .checked_add(tx.value())
+                        .ok_or(InternalError::Overflow)?;
+
+                    cumulative_gas_used += 21000;
+                    receipts.push(Receipt {
+                        tx_type: tx.tx_type(),
+                        succeeded: true,
+                        cumulative_gas_used,
+                        logs: vec![],
+                    });
+
+                    continue;
+                }
+            }
+
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
 
             cumulative_gas_used += report.gas_used;
