@@ -314,11 +314,7 @@ pub struct TestCase {
 impl TestCase {
     /// Tells whether the execution of the test case should give an exception as a result.
     pub fn expects_exception(&self) -> bool {
-        if let Some(_) = self.post.expected_exception {
-            true
-        } else {
-            false
-        }
+        self.post.expected_exception.is_some()
     }
 }
 

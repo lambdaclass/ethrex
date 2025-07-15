@@ -25,18 +25,17 @@ pub fn create_report(
         .create(true)
         .open(report_path)
         .map_err(|err| RunnerError::FailedToCreateReportFile(err.to_string()))?;
-    let content: String;
-    if res.is_ok() {
-        content = format!(
+    let content = if res.is_ok() {
+        format!(
             "Test checks succeded for test: {:?}, with fork {:?},  in path: {:?}.\n",
             test.name, test_case.fork, test.path
-        );
+        )
     } else {
-        content = format!(
+        format!(
             "Test checks failed for test: {:?}, with fork: {:?},  in path: {:?}.\n",
             test.name, test_case.fork, test.path,
-        );
-    }
+        )
+    };
     report
         .write_all(content.as_bytes())
         .map_err(|err| RunnerError::FailedToWriteReport(err.to_string()))?;
