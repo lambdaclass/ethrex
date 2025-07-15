@@ -940,7 +940,10 @@ pub fn validate_gas_used(
         // dbg!(last.cumulative_gas_used);
         // dbg!(block_header.gas_used);
         if last.cumulative_gas_used != block_header.gas_used {
-            return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch));
+            return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch(
+                last.cumulative_gas_used,
+                block_header.gas_used,
+            )));
         }
     }
     Ok(())
