@@ -16,7 +16,7 @@ use crate::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
         PacketDecodeErr, PingMessage, PongMessage,
     },
-    kademlia::Kademlia,
+    kademlia::{Contact, Kademlia},
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, node_id},
@@ -428,19 +428,19 @@ impl GenServer for ConnectionHandler {
 
                 let table = state.kademlia.table.lock().await;
 
-                let Some(node) = table.get(&node_id).cloned() else {
+                let Some(contact) = table.get(&node_id).cloned() else {
                     drop(table);
                     return CastResponse::Stop;
                 };
 
                 let nodes = table
                     .iter()
-                    .map(|(_x, y)| y.clone())
+                    .map(|(_x, y)| y.node.clone())
                     .choose_multiple(&mut OsRng, 16);
 
                 drop(table);
 
-                let _ = state.send_neighbors(nodes, &node).await.inspect_err(|e| {
+                let _ = state.send_neighbors(nodes, &contact.node).await.inspect_err(|e| {
                     error!(sent = "Neighbors", to = %format!("{:#x}", packet.get_public_key()), err = ?e);
                 });
             }
@@ -454,7 +454,7 @@ impl GenServer for ConnectionHandler {
 
                 for node in msg.nodes {
                     if let Entry::Vacant(vacant_entry) = kademlia.entry(node.node_id()) {
-                        vacant_entry.insert(node);
+                        vacant_entry.insert(Contact::from(node));
                         METRICS.record_new_contact().await;
                     };
                 }
@@ -466,14 +466,14 @@ impl GenServer for ConnectionHandler {
 
                 let table = state.kademlia.table.lock().await;
 
-                let Some(node) = table.get(&node_id) else {
+                let Some(contact) = table.get(&node_id) else {
                     drop(table);
                     return CastResponse::Stop;
                 };
 
                 // We ignore if the message is expired
                 let _ = state
-                    .send_enr_response(&node, &packet)
+                    .send_enr_response(&contact.node, &packet)
                     .await
                     .inspect_err(|err| error!("{}", err.to_string()));
 
@@ -495,8 +495,8 @@ impl GenServer for ConnectionHandler {
                 let node_id = node_id(&sender_public_key);
                 let mut table = state.kademlia.table.lock().await;
 
-                if let Some(node) = table.get_mut(&node_id) {
-                    node.fork_id = msg.node_record.decode_pairs().eth;
+                if let Some(contact) = table.get_mut(&node_id) {
+                    contact.node.fork_id = msg.node_record.decode_pairs().eth;
                 } else {
                     error!(sent = "ENRResponse from unknown node", to = %format!("{:#x}", sender_public_key));
                 }

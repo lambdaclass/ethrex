@@ -10,8 +10,23 @@ use tracing::info;
 use crate::types::Node;
 
 #[derive(Debug, Clone)]
+pub struct Contact {
+    pub node: Node,
+    pub n_find_node_sent: u64,
+}
+
+impl From<Node> for Contact {
+    fn from(node: Node) -> Self {
+        Self {
+            node,
+            n_find_node_sent: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Kademlia {
-    pub table: Arc<Mutex<HashMap<H256, Node>>>,
+    pub table: Arc<Mutex<HashMap<H256, Contact>>>,
     pub peers: Arc<Mutex<HashSet<H256>>>,
     pub already_tried_peers: Arc<Mutex<HashSet<H256>>>,
 }

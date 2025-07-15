@@ -282,11 +282,12 @@ async fn store_peers_in_file(kademlia: Kademlia) {
 
     let new_peers = current_peers
         .iter()
-        .filter(|node| {
+        .filter(|contact| {
             !total_known_peers
                 .iter()
-                .any(|already_known_peer| already_known_peer.node_id() == node.node_id())
+                .any(|already_known_peer| already_known_peer.node_id() == contact.node.node_id())
         })
+        .map(|contact| &contact.node)
         .cloned()
         .collect::<Vec<_>>();
 

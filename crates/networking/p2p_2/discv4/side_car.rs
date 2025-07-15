@@ -244,41 +244,24 @@ impl GenServer for DiscoverySideCar {
 }
 
 async fn revalidate(state: &DiscoverySideCarState) {
-    let cloned_table: Vec<Node> = state
-        .kademlia
-        .table
-        .lock()
-        .await
-        .values()
-        .cloned()
-        .collect();
-
-    for node in cloned_table {
-        let _ = state.ping(&node).await.inspect_err(
-            |e| error!(sent = "Ping", to = %format!("{:#x}", node.public_key), err = ?e),
+    for contact in state.kademlia.table.lock().await.values() {
+        let _ = state.ping(&contact.node).await.inspect_err(
+            |e| error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?e),
         );
     }
 }
 
 async fn lookup(state: &DiscoverySideCarState) {
-    let random_nodes: Vec<Node> = state
-        .kademlia
-        .table
-        .lock()
-        .await
-        .values()
-        .cloned()
-        .choose_multiple(&mut OsRng, 2048);
-
-    for node in random_nodes {
-        let _ = state.send_find_node(&node).await.inspect_err(
-            |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
-        );
-        if node.fork_id.is_none() {
-            let _ = state.send_enr_request(&node).await.inspect_err(
-                |e| error!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
-            );
+    for contact in state.kademlia.table.lock().await.values_mut() {
+        if contact.n_find_node_sent == 20 {
+            continue;
         }
+
+        let _ = state.send_find_node(&contact.node).await.inspect_err(
+            |e| error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?e),
+        );
+
+        contact.n_find_node_sent += 1;
     }
 }
 
