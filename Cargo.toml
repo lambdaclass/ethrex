@@ -15,6 +15,7 @@ members = [
   "crates/l2/prover",
   "crates/l2/prover/zkvm/interface",
   "crates/l2/sdk",
+  "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
   "crates/l2/networking/rpc",
   "crates/networking/p2p",
