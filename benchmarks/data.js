@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752618159051,
+  "lastUpdate": 1752622513977,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7885,6 +7885,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012122906448683015,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f8a6168341db73d3a593b94e0e0f0a50c1044168",
+          "message": "feat(l1): peer scoring for snap requests (#3334)\n\n**Motivation**\nIntegrate and adapt the peer scoring introduced by #2115 for snap\nrequests.\nFor eth requests, we consider failure to return requested data as a peer\nfailure, but with snap the data we request is not guaranteed to be\navailable (as it might have become stale during the sync cycle) so we\ncannot asume that an empty response is a bad response that should be\npenalized. For snap requests this PR collects the ids of the peers we\nattempted to request data from, and once we get a successful peer\nresponse we confirm that the data was indeed available and reward the\nresponsive peer while penalizing the previous unresponsive peers\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Collect ids of peers on each snap request retry and penalize and\nreward peers accordingly upon a successful peer response\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3118",
+          "timestamp": "2025-07-15T14:29:34Z",
+          "tree_id": "98d4bd1b3523d36f75886638eca8394cb47f9400",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f8a6168341db73d3a593b94e0e0f0a50c1044168"
+        },
+        "date": 1752622497848,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0061793148148148146,
             "unit": "Mgas/s"
           }
         ]
