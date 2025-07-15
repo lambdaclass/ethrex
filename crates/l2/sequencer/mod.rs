@@ -193,18 +193,15 @@ pub async fn start_l2(
     if let Some(res) = task_set.join_next().await {
         // If a task finishes, the whole sequencer should stop
         match res {
-            Ok(Ok(_)) => {
-                task_set.abort_all();
-            }
+            Ok(Ok(_)) => {}
             Ok(Err(err)) => {
                 error!("Error starting Proposer: {err}");
-                task_set.abort_all();
             }
             Err(err) => {
                 error!("JoinSet error: {err}");
-                task_set.abort_all();
             }
         };
+        task_set.abort_all();
     } else {
         // If no tasks were spawned, we let the sequencer run until it is cancelled
         loop {
