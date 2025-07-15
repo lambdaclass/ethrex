@@ -59,7 +59,20 @@ impl RpcHandler for BlobsV1Request {
 
         let mut blobs_bundles = Vec::new();
         for hash in self.blob_versioned_hashes.iter() {
-            blobs_bundles.push(context.blockchain.mempool.get_blobs_bundle(*hash)?)
+            let blob_bundle = context.blockchain.mempool.get_blobs_bundle(*hash)?;
+            match blob_bundle {
+                None => blobs_bundles.push(
+                    serde_json::to_value(blob_bundle)
+                        .map_err(|error| RpcErr::Internal(error.to_string()))?,
+                ),
+                Some(blob_bundle) => blobs_bundles.push(
+                    serde_json::to_value(BlobsV1Response {
+                        blobs: blob_bundle.blobs,
+                        proofs: blob_bundle.proofs,
+                    })
+                    .map_err(|error| RpcErr::Internal(error.to_string()))?,
+                ),
+            }
         }
 
         serde_json::to_value(blobs_bundles).map_err(|error| RpcErr::Internal(error.to_string()))
