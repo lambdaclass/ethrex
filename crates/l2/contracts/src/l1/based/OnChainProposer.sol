@@ -59,7 +59,7 @@ contract OnChainProposer is
 
     address public BRIDGE;
     /// @dev Deprecated variable.
-    address public PICOVERIFIER;
+    address public PICO_VERIFIER_ADDRESS;
     address public RISC0_VERIFIER_ADDRESS;
     address public SP1_VERIFIER_ADDRESS;
     address public TDX_VERIFIER_ADDRESS;
