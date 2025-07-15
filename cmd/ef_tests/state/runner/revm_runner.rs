@@ -10,7 +10,10 @@ use ethrex_common::{
     Address, H256,
     types::{Account, AccountUpdate, Fork, TxKind},
 };
-use ethrex_levm::{db::ahash, errors::{ExecutionReport, TxResult}};
+use ethrex_levm::{
+    db::ahash,
+    errors::{ExecutionReport, TxResult},
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{
     self, DynVmDatabase, EvmError,

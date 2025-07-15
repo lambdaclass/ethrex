@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -15,8 +16,6 @@ use crate::vm::VM;
 
 use super::CacheDB;
 use super::Database;
-use std::collections::HashSet;
-use std::collections::hash_map::Entry;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
@@ -27,18 +26,21 @@ pub struct GeneralizedDatabase {
     /// For keeping track of all destroyed accounts during block execution.
     /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
     /// In that scenario we want to remove the previous storage of the account but we still want the account to exist.
-    pub destroyed_accounts: HashSet<Address>,
+    pub destroyed_accounts: ahash::HashSet<Address>,
 }
 
 impl GeneralizedDatabase {
-    pub fn new(store: Arc<dyn Database>, current_accounts_state: impl IntoIterator<Item = (Address, Account)>) -> Self {
+    pub fn new(
+        store: Arc<dyn Database>,
+        current_accounts_state: impl IntoIterator<Item = (Address, Account)>,
+    ) -> Self {
         let current_accounts_state = ahash::HashMap::from_iter(current_accounts_state);
         Self {
             store,
             current_accounts_state: current_accounts_state.clone(),
             initial_accounts_state: current_accounts_state,
             tx_backup: None,
-            destroyed_accounts: HashSet::new(),
+            destroyed_accounts: ahash::HashSet::default(),
         }
     }
 
