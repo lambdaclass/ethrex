@@ -168,28 +168,26 @@ pub async fn start_l2(
             rollup_store.clone(),
             &cfg,
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
-        task_set.spawn(
-            async move {
-                let mut finished = false;
-                while !finished {
-                    let message = ethrex_monitor
-                        .call(monitor::app::CallInMessage::Finished)
-                        .await.unwrap();
-                    if let monitor::app::OutMessage::ShouldQuit(should_quit) = message {
-                        finished = should_quit;
-                    }
-
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        task_set.spawn(async move {
+            let mut finished = false;
+            while !finished {
+                let message = ethrex_monitor
+                    .call(monitor::app::CallInMessage::Finished)
+                    .await
+                    .unwrap();
+                if let monitor::app::OutMessage::ShouldQuit(should_quit) = message {
+                    finished = should_quit;
                 }
 
-                Ok(())
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
-        );
+
+            Ok(())
+        });
     }
-
-
 
     if let Some(res) = task_set.join_next().await {
         // If a task finishes, the whole sequencer should stop
