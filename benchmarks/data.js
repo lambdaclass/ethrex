@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752589757576,
+  "lastUpdate": 1752591493304,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3715,6 +3715,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209776915502,
             "range": "± 1259799176",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "906de695154909601de4c10a883cc822509dc270",
+          "message": "feat(l2): monitor add delay to scroll (#3616)\n\n**Motivation**\nMonitor scroll goes too fast\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdded a delay for the log scroll\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n**How to Test**\n\n- Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n- Run a Sequencer (I suggest `make restart` in `crates/l2`).\n- Run the prover with `make init-prover` in `crates/l2`.\n- Run `make test` in `crates/l2`.\n- Press Tab to change the Tab\n- Scroll Up and Down to test the scroll\n\nCloses\nhttps://github.com/orgs/lambdaclass/projects/37/views/10?pane=issue&itemId=118809801&issue=lambdaclass%7Cethrex%7C3514",
+          "timestamp": "2025-07-15T14:01:38Z",
+          "tree_id": "ad406a83542279b38ac48a3d0e98b93574f00c0d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/906de695154909601de4c10a883cc822509dc270"
+        },
+        "date": 1752591481304,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210018829230,
+            "range": "± 425972831",
             "unit": "ns/iter"
           }
         ]
