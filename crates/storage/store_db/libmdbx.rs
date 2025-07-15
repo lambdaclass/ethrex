@@ -685,12 +685,14 @@ impl StoreEngine for Store {
             } else {
                 // In case that we are in a reconstruct scenario (L2), we need to update the state and storage tries
                 // without the block number extension
-                for (node_hash, node_data) in update_batch.account_updates {
+                for (node_hash, mut node_data) in update_batch.account_updates {
+                    node_data.extend_from_slice(&[0u8; 8]);
                     tx.upsert::<StateTrieNodes>(node_hash, node_data)?;
                 }
 
                 for (hashed_address, nodes, _invalidated_nodes) in update_batch.storage_updates {
-                    for (node_hash, node_data) in nodes {
+                    for (node_hash, mut node_data) in nodes {
+                        node_data.extend_from_slice(&[0u8; 8]);
                         let key_1: [u8; 32] = hashed_address.into();
                         let key_2 = node_hash_to_fixed_size(node_hash);
 
