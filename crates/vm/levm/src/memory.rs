@@ -14,6 +14,7 @@ use ethrex_common::{U256, utils::u256_from_big_endian_const};
 #[derive(Debug, Clone)]
 pub struct Memory {
     buffer: Rc<RefCell<Vec<u8>>>,
+    len: usize,
     current_base: usize,
 }
 
@@ -22,6 +23,7 @@ impl Memory {
     pub fn new(current_base: usize) -> Self {
         Self {
             buffer: Rc::new(RefCell::new(Vec::new())),
+            len: 0,
             current_base,
         }
     }
@@ -31,6 +33,7 @@ impl Memory {
     pub fn next_memory(&self) -> Memory {
         let mut mem = self.clone();
         mem.current_base = mem.buffer.borrow().len();
+        mem.len = 0;
         mem
     }
 
@@ -39,13 +42,19 @@ impl Memory {
     /// On the callframe that is about to be dropped.
     #[inline]
     pub fn clean_from_base(&self) {
-        self.buffer.borrow_mut().truncate(self.current_base);
+        #[expect(unsafe_code)]
+        unsafe {
+            self.buffer
+                .borrow_mut()
+                .get_unchecked_mut(self.current_base..(self.current_base.wrapping_add(self.len)))
+                .fill(0);
+        }
     }
 
     /// Returns the len of the current memory, from the current base.
     #[inline]
     pub fn len(&self) -> usize {
-        self.buffer.borrow().len().wrapping_sub(self.current_base)
+        self.len
     }
 
     #[inline]
@@ -72,20 +81,19 @@ impl Memory {
             return Ok(());
         }
 
+        self.len = new_memory_size;
+
         let mut buffer = self.buffer.borrow_mut();
 
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
 
-        if real_new_memory_size > buffer.capacity() {
+        if real_new_memory_size > buffer.len() {
             #[expect(clippy::arithmetic_side_effects)]
             // when resizing, resize by allocating entire pages instead of small memory sizes.
             let new_size = (real_new_memory_size) + (4096 - ((real_new_memory_size) % 4096));
-            buffer.reserve_exact(new_size);
+            buffer.resize(new_size, 0);
         }
-
-        #[allow(clippy::arithmetic_side_effects)]
-        buffer.resize(real_new_memory_size, 0);
 
         Ok(())
     }
