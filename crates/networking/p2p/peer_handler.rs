@@ -163,8 +163,11 @@ impl PeerHandler {
             let mut correct_response = None;
             while let Some(first_response ) = set.join_next().await {
                 match first_response {
-                    Ok(Some(message)) => correct_response = message,
-                    Ok(None) => info!("Failed to receive message from peer [None]"),
+                    Ok(Some(response@Some(RLPxMessage::BlockHeaders(BlockHeaders { id, .. })))) if id == request_id  => {
+                        correct_response = response;
+                        break;
+                    },
+                    Ok(_) => continue,
                     Err(err) => info!("Failed to receive message from peer: {err:?}"),
                 }
             }
@@ -173,18 +176,15 @@ impl PeerHandler {
                 Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
                     if id == request_id =>
                 {
-                    info!("[SYNCING] Received CORRECT block headers from peer");
                     Some(block_headers)
                 }
                 // Ignore replies that don't match the expected id (such as late responses)
                 Some(_) => 
                 {
-                    warn!("[SYNCING] Received INCORRECT block headers from peer");
                     continue;
                 },
                 None => 
                 {
-                    warn!("[SYNCING] Missing block headers response");
                     None
                 }, // Retry request
             };

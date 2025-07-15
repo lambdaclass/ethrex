@@ -220,7 +220,7 @@ impl Syncer {
                 continue;
             }
 
-            debug!(
+            info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
                 first_block_header.number,
