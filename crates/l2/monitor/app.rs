@@ -37,7 +37,7 @@ use crate::{
 };
 use tracing::error;
 #[derive(Clone)]
-pub struct EthrexMonitorState {
+pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
@@ -59,9 +59,13 @@ pub struct EthrexMonitorState {
     pub last_tick: Instant,
 }
 
-pub struct EthrexMonitor {
+#[derive(Clone)]
+pub struct EthrexMonitorState {
+    pub widget: EthrexMonitorWidget,
     terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
 }
+
+pub struct EthrexMonitor {}
 
 #[derive(Clone)]
 pub enum CastInMessage {
@@ -86,7 +90,11 @@ impl EthrexMonitor {
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
     ) -> Result<GenServerHandle<Self>, MonitorError> {
-        let state = EthrexMonitorState::new(sequencer_state, store, rollup_store, cfg).await?;
+        let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
+        let state = EthrexMonitorState {
+            widget,
+            terminal: Arc::new(Mutex::new(setup_terminal()?)),
+        };
         let mut ethrex_monitor = EthrexMonitor::start(state);
         ethrex_monitor
             .cast(CastInMessage::Monitor)
@@ -96,23 +104,24 @@ impl EthrexMonitor {
     }
 
     pub async fn monitor(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
-        let mut terminal = self.terminal.lock().await;
+        let mut terminal = state.terminal.lock().await;
+        let widget = &mut state.widget;
 
-        draw(&mut terminal, state)?;
+        draw(&mut terminal, widget)?;
 
         let timeout =
-            Duration::from_millis(state.tick_rate).saturating_sub(state.last_tick.elapsed());
+            Duration::from_millis(widget.tick_rate).saturating_sub(widget.last_tick.elapsed());
         if !event::poll(timeout)? {
-            on_tick(state).await?;
-            state.last_tick = Instant::now();
+            on_tick(widget).await?;
+            widget.last_tick = Instant::now();
             return Ok(());
         }
         let event = event::read()?;
         if let Some(key) = event.as_key_press_event() {
-            on_key_event(key.code, state);
+            on_key_event(key.code, widget);
         }
         if let Some(mouse) = event.as_mouse_event() {
-            on_mouse_event(mouse.kind, state);
+            on_mouse_event(mouse.kind, widget);
         }
 
         Ok(())
@@ -127,14 +136,7 @@ impl GenServer for EthrexMonitor {
     type Error = MonitorError;
 
     fn new() -> Self {
-        let terminal = setup_terminal()
-            .inspect_err(|err| {
-                error!("Error setting up terminal: {err}");
-            })
-            .unwrap(); // GenServer new does not return a Result
-        Self {
-            terminal: Arc::new(Mutex::new(terminal)),
-        }
+        Self {}
     }
 
     async fn handle_cast(
@@ -147,14 +149,14 @@ impl GenServer for EthrexMonitor {
             .monitor(&mut state)
             .await
             .inspect_err(|err| error!("Monitor Error: {err}"));
-        if !state.should_quit {
+        if !state.widget.should_quit {
             send_after(
                 Duration::from_millis(1),
                 handle.clone(),
                 Self::CastMsg::Monitor,
             );
         } else {
-            let mut terminal = self.terminal.lock().await;
+            let mut terminal = state.terminal.lock().await;
             let _ = restore_terminal(&mut terminal).inspect_err(|err| {
                 error!("Error restoring terminal: {err}");
             });
@@ -168,12 +170,12 @@ impl GenServer for EthrexMonitor {
         _handle: &GenServerHandle<Self>,
         state: Self::State,
     ) -> CallResponse<Self> {
-        let should_quit = state.should_quit;
+        let should_quit = state.widget.should_quit;
         CallResponse::Reply(state, OutMessage::ShouldQuit(should_quit))
     }
 }
 
-impl EthrexMonitorState {
+impl EthrexMonitorWidget {
     pub async fn new(
         sequencer_state: SequencerState,
         store: Store,
@@ -186,7 +188,7 @@ impl EthrexMonitorState {
         let rollup_client =
             EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
 
-        Ok(EthrexMonitorState {
+        Ok(EthrexMonitorWidget {
             title: if cfg.based.based {
                 "Based Ethrex Monitor".to_string()
             } else {
@@ -260,7 +262,7 @@ fn restore_terminal(
 
 fn draw(
     terminal: &mut Terminal<impl Backend>,
-    state: &mut EthrexMonitorState,
+    state: &mut EthrexMonitorWidget,
 ) -> Result<(), MonitorError> {
     terminal.draw(|frame| {
         frame.render_widget(state, frame.area());
@@ -268,7 +270,7 @@ fn draw(
     Ok(())
 }
 
-pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) {
+pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorWidget) {
     match (&state.tabs, code) {
         (TabsState::Logs, KeyCode::Left) => state.logger.transition(TuiWidgetEvent::LeftKey),
         (TabsState::Logs, KeyCode::Down) => state.logger.transition(TuiWidgetEvent::DownKey),
@@ -284,7 +286,7 @@ pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) {
     }
 }
 
-pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorState) {
+pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorWidget) {
     match (&state.tabs, kind) {
         (TabsState::Logs, MouseEventKind::ScrollDown) => {
             state.logger.transition(TuiWidgetEvent::NextPageKey)
@@ -296,7 +298,7 @@ pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorState) {
     }
 }
 
-pub async fn on_tick(state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
+pub async fn on_tick(state: &mut EthrexMonitorWidget) -> Result<(), MonitorError> {
     state.node_status.on_tick(&state.store).await;
     state
         .global_chain_status
@@ -320,7 +322,7 @@ pub async fn on_tick(state: &mut EthrexMonitorState) -> Result<(), MonitorError>
     Ok(())
 }
 
-impl Widget for &mut EthrexMonitorState {
+impl Widget for &mut EthrexMonitorWidget {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
