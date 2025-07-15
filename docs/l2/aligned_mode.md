@@ -170,20 +170,11 @@ let ws_stream_future =
 1. In another terminal let's deploy the L1 contracts, specifying the `AlignedProofAggregatorService` contract address, and adding the required prover types (Risc0 or SP1):
 ```
 cd ethrex/crates/l2
-cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--eth-rpc-url http://localhost:8545 \
-	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-	--contracts-path contracts \
-	--aligned \
-	--aligned.aggregator-address 0xFD471836031dc5108809D173A067e8486B9047A3 \
-	# --sp1 \
-	# --risc0 \
-	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
-	--deposit-rich \
-	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../fixtures/genesis/l2.json
+ETHREX_L2_ALIGNED=true \
+ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xFD471836031dc5108809D173A067e8486B9047A3 \
+ETHREX_L2_SP1=true \ # optional
+ETHREX_L2_RISC0=true \ # optional
+make deploy-l1
 ```
 
 You will see that some deposits fail with the following error:
@@ -205,11 +196,15 @@ cargo run deposit-to-batcher \
 --amount 1ether
 ```
 
-3. Start our l2 node, set `--l1.bridge-address` and `--l1.on-chain-proposer-address` with the values printed in step 1 if they differ with the ones below (they are deterministic so shouldn't change):
+3. Start our l2 node, set `--l1.bridge-address` and `--l1.on-chain-proposer-address`:
 
 ```
 cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address 0x64e731315f33c5dfd03107958cb58f189bda3f2b --l1.on-chain-proposer-address 0x458277bb9707e8e6a8143305b11feff3166c17db --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet
+ETHREX_ALIGNED_MODE=true \
+ETHREX_ALIGNED_BEACON_URL=http://127.0.0.1:58801 \
+ETHREX_ALIGNED_NETWORK=devnet \
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
+make init-l2-no-metrics
 ```
 
 Suggestion:
