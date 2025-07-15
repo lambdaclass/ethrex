@@ -20,7 +20,7 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
 };
 use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{send_after, CastResponse, GenServer, GenServerHandle};
+use spawned_concurrency::tasks::{send_after, CallResponse, CastResponse, GenServer, GenServerHandle};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
@@ -63,13 +63,19 @@ pub struct EthrexMonitor {
 }
 
 #[derive(Clone)]
-pub enum InMessage {
+pub enum CastInMessage {
     Monitor,
+}
+
+#[derive(Clone)]
+pub enum CallInMessage {
+    Finished,
 }
 
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
+    ShouldQuit(bool)
 }
 
 impl EthrexMonitor {
@@ -78,13 +84,14 @@ impl EthrexMonitor {
         store: Store,
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
-    ) -> Result<(), MonitorError> {
+    ) -> Result<GenServerHandle<Self>, MonitorError> {
         let state = EthrexMonitorState::new(sequencer_state, store, rollup_store, cfg).await?;
         let mut ethrex_monitor = EthrexMonitor::start(state);
         ethrex_monitor
-            .cast(InMessage::Monitor)
+            .cast(CastInMessage::Monitor)
             .await
-            .map_err(MonitorError::GenServerError)
+            .map_err(MonitorError::GenServerError)?;
+        Ok(ethrex_monitor)
     }
 
     pub async fn monitor(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
@@ -115,8 +122,8 @@ impl EthrexMonitor {
 
 
 impl GenServer for EthrexMonitor {
-    type CallMsg = Unused;
-    type CastMsg = InMessage;
+    type CallMsg = CallInMessage;
+    type CastMsg = CastInMessage;
     type OutMsg = OutMessage;
     type State = EthrexMonitorState;
     type Error = MonitorError;
@@ -162,6 +169,16 @@ impl GenServer for EthrexMonitor {
 
         }
         CastResponse::NoReply(state)
+    }
+
+    async fn handle_call(
+            &mut self,
+            _message: Self::CallMsg,
+            _handle: &GenServerHandle<Self>,
+            state: Self::State,
+        ) -> CallResponse<Self> {
+        let should_quit = state.should_quit;
+        CallResponse::Reply(state, OutMessage::ShouldQuit(should_quit))
     }
 }
 
