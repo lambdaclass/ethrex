@@ -107,21 +107,21 @@ impl EthrexMonitor {
         let mut terminal = state.terminal.lock().await;
         let widget = &mut state.widget;
 
-        draw(&mut terminal, widget)?;
+        widget.draw(&mut terminal)?;
 
         let timeout =
             Duration::from_millis(widget.tick_rate).saturating_sub(widget.last_tick.elapsed());
         if !event::poll(timeout)? {
-            on_tick(widget).await?;
+            widget.on_tick().await?;
             widget.last_tick = Instant::now();
             return Ok(());
         }
         let event = event::read()?;
         if let Some(key) = event.as_key_press_event() {
-            on_key_event(key.code, widget);
+            widget.on_key_event(key.code);
         }
         if let Some(mouse) = event.as_mouse_event() {
-            on_mouse_event(mouse.kind, widget);
+            widget.on_mouse_event(mouse.kind);
         }
 
         Ok(())
@@ -235,6 +235,69 @@ impl EthrexMonitorWidget {
             last_tick: Instant::now(),
         })
     }
+
+    fn draw(&mut self, terminal: &mut Terminal<impl Backend>) -> Result<(), MonitorError> {
+        terminal.draw(|frame| {
+            frame.render_widget(self, frame.area());
+        })?;
+        Ok(())
+    }
+
+    pub fn on_key_event(&mut self, code: KeyCode) {
+        match (&self.tabs, code) {
+            (TabsState::Logs, KeyCode::Left) => self.logger.transition(TuiWidgetEvent::LeftKey),
+            (TabsState::Logs, KeyCode::Down) => self.logger.transition(TuiWidgetEvent::DownKey),
+            (TabsState::Logs, KeyCode::Up) => self.logger.transition(TuiWidgetEvent::UpKey),
+            (TabsState::Logs, KeyCode::Right) => self.logger.transition(TuiWidgetEvent::RightKey),
+            (TabsState::Logs, KeyCode::Char('h')) => {
+                self.logger.transition(TuiWidgetEvent::HideKey)
+            }
+            (TabsState::Logs, KeyCode::Char('f')) => {
+                self.logger.transition(TuiWidgetEvent::FocusKey)
+            }
+            (TabsState::Logs, KeyCode::Char('+')) => {
+                self.logger.transition(TuiWidgetEvent::PlusKey)
+            }
+            (TabsState::Logs, KeyCode::Char('-')) => {
+                self.logger.transition(TuiWidgetEvent::MinusKey)
+            }
+            (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_quit = true,
+            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
+            _ => {}
+        }
+    }
+
+    pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
+        match (&self.tabs, kind) {
+            (TabsState::Logs, MouseEventKind::ScrollDown) => {
+                self.logger.transition(TuiWidgetEvent::NextPageKey)
+            }
+            (TabsState::Logs, MouseEventKind::ScrollUp) => {
+                self.logger.transition(TuiWidgetEvent::PrevPageKey)
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn on_tick(&mut self) -> Result<(), MonitorError> {
+        self.node_status.on_tick(&self.store).await;
+        self.global_chain_status
+            .on_tick(&self.eth_client, &self.store, &self.rollup_store)
+            .await;
+        self.mempool.on_tick(&self.rollup_client).await;
+        self.batches_table
+            .on_tick(&self.eth_client, &self.rollup_store)
+            .await?;
+        self.blocks_table.on_tick(&self.store).await?;
+        self.l1_to_l2_messages
+            .on_tick(&self.eth_client, &self.store)
+            .await?;
+        self.l2_to_l1_messages
+            .on_tick(&self.eth_client, &self.rollup_client)
+            .await?;
+
+        Ok(())
+    }
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>, MonitorError> {
@@ -257,68 +320,6 @@ fn restore_terminal(
     )
     .map_err(MonitorError::Io)?;
     terminal.show_cursor().map_err(MonitorError::Io)?;
-    Ok(())
-}
-
-fn draw(
-    terminal: &mut Terminal<impl Backend>,
-    state: &mut EthrexMonitorWidget,
-) -> Result<(), MonitorError> {
-    terminal.draw(|frame| {
-        frame.render_widget(state, frame.area());
-    })?;
-    Ok(())
-}
-
-pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorWidget) {
-    match (&state.tabs, code) {
-        (TabsState::Logs, KeyCode::Left) => state.logger.transition(TuiWidgetEvent::LeftKey),
-        (TabsState::Logs, KeyCode::Down) => state.logger.transition(TuiWidgetEvent::DownKey),
-        (TabsState::Logs, KeyCode::Up) => state.logger.transition(TuiWidgetEvent::UpKey),
-        (TabsState::Logs, KeyCode::Right) => state.logger.transition(TuiWidgetEvent::RightKey),
-        (TabsState::Logs, KeyCode::Char('h')) => state.logger.transition(TuiWidgetEvent::HideKey),
-        (TabsState::Logs, KeyCode::Char('f')) => state.logger.transition(TuiWidgetEvent::FocusKey),
-        (TabsState::Logs, KeyCode::Char('+')) => state.logger.transition(TuiWidgetEvent::PlusKey),
-        (TabsState::Logs, KeyCode::Char('-')) => state.logger.transition(TuiWidgetEvent::MinusKey),
-        (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => state.should_quit = true,
-        (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => state.tabs.next(),
-        _ => {}
-    }
-}
-
-pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorWidget) {
-    match (&state.tabs, kind) {
-        (TabsState::Logs, MouseEventKind::ScrollDown) => {
-            state.logger.transition(TuiWidgetEvent::NextPageKey)
-        }
-        (TabsState::Logs, MouseEventKind::ScrollUp) => {
-            state.logger.transition(TuiWidgetEvent::PrevPageKey)
-        }
-        _ => {}
-    }
-}
-
-pub async fn on_tick(state: &mut EthrexMonitorWidget) -> Result<(), MonitorError> {
-    state.node_status.on_tick(&state.store).await;
-    state
-        .global_chain_status
-        .on_tick(&state.eth_client, &state.store, &state.rollup_store)
-        .await;
-    state.mempool.on_tick(&state.rollup_client).await;
-    state
-        .batches_table
-        .on_tick(&state.eth_client, &state.rollup_store)
-        .await?;
-    state.blocks_table.on_tick(&state.store).await?;
-    state
-        .l1_to_l2_messages
-        .on_tick(&state.eth_client, &state.store)
-        .await?;
-    state
-        .l2_to_l1_messages
-        .on_tick(&state.eth_client, &state.rollup_client)
-        .await?;
-
     Ok(())
 }
 
