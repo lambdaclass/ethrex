@@ -628,9 +628,8 @@ where
                     log_peer_debug(&node, &format!("Received RLPX Error in msg {e}"));
                     break;
                 }
-                // `None` does not neccessary means EOF, so we will keep the loop running
-                // (See Framed::new)
-                None => (),
+                // None means the stream was closed
+                None => break,
             }
         }
     });
