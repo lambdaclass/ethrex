@@ -35,6 +35,8 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 pub const MAX_SNAPSHOT_READS: usize = 100;
 /// Panic message shown when the Store is initialized with a genesis that differs from the one already stored
 pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2";
+/// Interval at which the pruning task will run in seconds
+pub const PRUNING_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -131,7 +133,7 @@ impl Store {
 
         // Start the pruning task in the background
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(15));
+            let mut interval = tokio::time::interval(PRUNING_INTERVAL);
 
             loop {
                 let cancellation_token = cancellation_token.clone();
