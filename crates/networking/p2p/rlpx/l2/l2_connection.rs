@@ -92,11 +92,6 @@ impl L2ConnState {
     }
 }
 
-fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
-    // Until the RPC module can be included in the P2P crate, we skip the validation
-    true
-}
-
 pub(crate) async fn handle_based_capability_message(
     established: &mut Established,
     msg: L2Message,
