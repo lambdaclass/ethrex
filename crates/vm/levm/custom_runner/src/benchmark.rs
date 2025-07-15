@@ -7,8 +7,8 @@ use ethrex_common::H256;
 use ethrex_common::types::{Account, AccountInfo, code_hash};
 use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::str::FromStr;
-use std::{collections::HashMap, u64};
 
 #[derive(Deserialize, Debug, Default)]
 #[serde(default)]
@@ -122,7 +122,7 @@ pub fn one_u256() -> U256 {
 }
 
 pub fn high_u64() -> u64 {
-    u64::from(100_000_000_000u64)
+    100_000_000_000
 }
 
 pub fn high_u256() -> U256 {

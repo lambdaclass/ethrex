@@ -20,7 +20,6 @@ use std::{
     fs::{self, File},
     io::BufReader,
     sync::Arc,
-    u64,
 };
 
 const COINBASE: H160 = H160([0x77; 20]);
@@ -130,7 +129,7 @@ fn main() {
     print!("\n\nResult:");
     match result {
         Ok(report) => println!(" {:?}\n", report),
-        Err(e) => println!(" Error: {}\n", e.to_string()),
+        Err(e) => println!(" Error: {}\n", e),
     }
 
     // Print final stack and memory
@@ -227,7 +226,7 @@ fn setup_initial_state(
     let benchmark_pre_state: HashMap<Address, Account> = runner_input
         .pre
         .iter()
-        .map(|(addr, acc)| (addr.clone(), Account::from(acc.clone())))
+        .map(|(addr, acc)| (*addr, Account::from(acc.clone())))
         .collect();
     initial_state.extend(benchmark_pre_state);
     // Contract bytecode or initcode
@@ -252,7 +251,7 @@ fn mnemonic_to_bytecode(mnemonic: Vec<String>, verbose: bool) -> Bytes {
 
     while let Some(symbol) = mnemonic_iter.next() {
         let opcode = serde_json::from_str::<Opcode>(&format!("\"{}\"", symbol))
-            .expect(&format!("Failed to parse Opcode from symbol {symbol}"));
+            .unwrap_or_else(|_| panic!("Failed to parse Opcode from symbol {symbol}"));
 
         bytecode.push(opcode.into());
 
@@ -286,10 +285,8 @@ fn mnemonic_to_bytecode(mnemonic: Vec<String>, verbose: bool) -> Bytes {
             }
 
             bytecode.append(&mut decoded_value);
-        } else {
-            if verbose {
-                println!("Parsed {}", symbol);
-            }
+        } else if verbose {
+            println!("Parsed {}", symbol);
         }
     }
 
