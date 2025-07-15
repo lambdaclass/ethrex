@@ -249,10 +249,17 @@ impl Widget for &mut EthrexMonitor {
             .highlight_style(Style::default().add_modifier(Modifier::BOLD))
             .select(self.tabs.clone());
 
+        if chunks.len() < 2 {
+            render_index_slicing_error(area, buf);
+
+            return;
+        }
+
         tabs.render(chunks[0], buf);
 
         match self.tabs {
             TabsState::Overview => {
+                let original_chunk = chunks[1];
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
                     Constraint::Fill(1),
@@ -262,14 +269,27 @@ impl Widget for &mut EthrexMonitor {
                     Constraint::Fill(1),
                     Constraint::Length(1),
                 ])
-                .split(chunks[1]);
+                .split(original_chunk);
+                if chunks.len() < 7 {
+                    render_index_slicing_error(original_chunk, buf);
+
+                    return;
+                }
                 {
                     let constraints = vec![
                         Constraint::Fill(1),
                         Constraint::Length(LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS),
                     ];
 
-                    let chunks = Layout::horizontal(constraints).split(chunks[0]);
+                    let original_chunk = chunks[0];
+
+                    let chunks = Layout::horizontal(constraints).split(original_chunk);
+
+                    if chunks.len() < 2 {
+                        render_index_slicing_error(original_chunk, buf);
+
+                        return;
+                    }
 
                     let logo = Paragraph::new(ETHREX_LOGO)
                         .centered()
@@ -282,6 +302,12 @@ impl Widget for &mut EthrexMonitor {
                         let constraints = vec![Constraint::Fill(1), Constraint::Fill(1)];
 
                         let chunks = Layout::horizontal(constraints).split(chunks[1]);
+
+                        if chunks.len() < 2 {
+                            render_index_slicing_error(original_chunk, buf);
+
+                            return;
+                        }
 
                         let mut node_status_state = self.node_status.state.clone();
                         self.node_status
@@ -319,8 +345,9 @@ impl Widget for &mut EthrexMonitor {
                 help.render(chunks[6], buf);
             }
             TabsState::Logs => {
-                let chunks =
-                    Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(chunks[1]);
+                let original_chunk = chunks[1];
+                let chunks = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
+                    .split(original_chunk);
                 let log_widget = TuiLoggerSmartWidget::default()
                     .style_error(Style::default().fg(Color::Red))
                     .style_debug(Style::default().fg(Color::LightBlue))
@@ -336,6 +363,12 @@ impl Widget for &mut EthrexMonitor {
                     .output_line(false)
                     .state(&self.logger);
 
+                if chunks.len() < 2 {
+                    render_index_slicing_error(original_chunk, buf);
+
+                    return;
+                }
+
                 log_widget.render(chunks[0], buf);
 
                 let help = Line::raw("tab: switch tab |  Q: quit | ↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector").centered();
@@ -344,4 +377,9 @@ impl Widget for &mut EthrexMonitor {
             }
         };
     }
+}
+
+fn render_index_slicing_error(area: Rect, buf: &mut Buffer) {
+    let error_line = Line::raw("Index Slicing Error").centered();
+    error_line.render(area, buf);
 }
