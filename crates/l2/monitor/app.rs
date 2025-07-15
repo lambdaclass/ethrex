@@ -37,7 +37,6 @@ use crate::{
 };
 use tracing::error;
 
-
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
 #[derive(Clone)]
 pub struct EthrexMonitorWidget {
