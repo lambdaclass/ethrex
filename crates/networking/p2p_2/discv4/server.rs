@@ -450,12 +450,16 @@ impl GenServer for ConnectionHandler {
             } => {
                 debug!(received = "Neighbors", from = %format!("{sender_public_key:#x}"));
 
-                let mut kademlia = state.kademlia.table.lock().await;
+                let mut contacts = state.kademlia.table.lock().await;
+                let discarded_contacts = state.kademlia.discarded_contacts.lock().await;
 
                 for node in msg.nodes {
-                    if let Entry::Vacant(vacant_entry) = kademlia.entry(node.node_id()) {
-                        vacant_entry.insert(Contact::from(node));
-                        METRICS.record_new_contact().await;
+                    let node_id = node.node_id();
+                    if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
+                        if !discarded_contacts.contains(&node_id) {
+                            vacant_entry.insert(Contact::from(node));
+                            METRICS.record_new_contact().await;
+                        }
                     };
                 }
             }

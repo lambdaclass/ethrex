@@ -161,14 +161,18 @@ async fn main() {
             info!(
                 r#"
 elapsed: {}
-{} contacts ({} contacts/s)
+{} current contacts ({} contacts/s)
+{} discarded contacts
+{} total contacts
 {} peers ({} new peers/s)
 {} connection attempts ({} new connection attempts/s)
 {} failed connections
-failures: {:#?}"#,
+RLPx connection failures: {:#?}"#,
                 format_duration(start.elapsed()),
-                METRICS.contacts.get(),
+                METRICS.current_contacts.lock().await,
                 METRICS.new_contacts_rate.get().floor(),
+                METRICS.discarded_contacts.get(),
+                METRICS.total_contacts.get(),
                 METRICS.rlpx_conn_establishments.get(),
                 METRICS.rlpx_conn_establishments_rate.get().floor(),
                 METRICS.rlpx_conn_attempts.get(),
