@@ -19,13 +19,12 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
-use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{send_after, CallResponse, CastResponse, GenServer, GenServerHandle};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::based::sequencer_state::SequencerState;
-use crate::monitor::widget::{self, ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
+use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::{
     SequencerConfig,
     monitor::widget::{
@@ -34,7 +33,7 @@ use crate::{
     },
     sequencer::errors::MonitorError,
 };
-use tracing::{debug, error, info, warn};
+use tracing::error;
 #[derive(Clone)]
 pub struct EthrexMonitorState {
     pub title: String,
@@ -129,12 +128,9 @@ impl GenServer for EthrexMonitor {
     type Error = MonitorError;
 
     fn new() -> Self {
-        // setup terminal
-        enable_raw_mode().map_err(MonitorError::Io).unwrap();
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io).unwrap();
-        let backend = CrosstermBackend::new(stdout);
-        let terminal = Terminal::new(backend).map_err(MonitorError::Io).unwrap();
+        let terminal = setup_terminal().inspect_err(|err| {
+            error!("Error setting up terminal: {err}");
+        }).unwrap(); // GenServer new does not return a Result
         Self {
             terminal: Arc::new(Mutex::new(terminal)),
         }
@@ -157,16 +153,9 @@ impl GenServer for EthrexMonitor {
             );
         } else {
             let mut terminal = self.terminal.lock().await;
-            // restore terminal
-            disable_raw_mode().map_err(MonitorError::Io).unwrap();
-            execute!(
-                terminal.backend_mut(),
-                LeaveAlternateScreen,
-                DisableMouseCapture
-            )
-            .map_err(MonitorError::Io).unwrap();
-            terminal.show_cursor().map_err(MonitorError::Io).unwrap();
-
+            let _ = restore_terminal(&mut terminal).inspect_err(|err| {
+                error!("Error restoring terminal: {err}");
+            });
         }
         CastResponse::NoReply(state)
     }
@@ -242,6 +231,27 @@ impl EthrexMonitorState {
     }
 }
 
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>, MonitorError> {
+    enable_raw_mode().map_err(MonitorError::Io)?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io)?;
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = Terminal::new(backend).map_err(MonitorError::Io)?;
+    Ok(terminal)
+}
+
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<(), MonitorError> {
+    disable_raw_mode().map_err(MonitorError::Io)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .map_err(MonitorError::Io)?;
+    terminal.show_cursor().map_err(MonitorError::Io)?;
+    Ok(())
+}
+
 fn draw(terminal: &mut Terminal<impl Backend>, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
     terminal.draw(|frame| {
         frame.render_widget(state, frame.area());
@@ -249,24 +259,23 @@ fn draw(terminal: &mut Terminal<impl Backend>, state: &mut EthrexMonitorState) -
     Ok(())
 }
 
-pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) { // todo remove unwraps
-    let logger = &state.logger;
+pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) {
     match (&state.tabs, code) {
-        (TabsState::Logs, KeyCode::Left) => logger.transition(TuiWidgetEvent::LeftKey),
-        (TabsState::Logs, KeyCode::Down) => logger.transition(TuiWidgetEvent::DownKey),
-        (TabsState::Logs, KeyCode::Up) => logger.transition(TuiWidgetEvent::UpKey),
-        (TabsState::Logs, KeyCode::Right) => logger.transition(TuiWidgetEvent::RightKey),
+        (TabsState::Logs, KeyCode::Left) => state.logger.transition(TuiWidgetEvent::LeftKey),
+        (TabsState::Logs, KeyCode::Down) => state.logger.transition(TuiWidgetEvent::DownKey),
+        (TabsState::Logs, KeyCode::Up) => state.logger.transition(TuiWidgetEvent::UpKey),
+        (TabsState::Logs, KeyCode::Right) => state.logger.transition(TuiWidgetEvent::RightKey),
         (TabsState::Logs, KeyCode::Char('h')) => {
-            logger.transition(TuiWidgetEvent::HideKey)
+            state.logger.transition(TuiWidgetEvent::HideKey)
         }
         (TabsState::Logs, KeyCode::Char('f')) => {
-            logger.transition(TuiWidgetEvent::FocusKey)
+            state.logger.transition(TuiWidgetEvent::FocusKey)
         }
         (TabsState::Logs, KeyCode::Char('+')) => {
-            logger.transition(TuiWidgetEvent::PlusKey)
+            state.logger.transition(TuiWidgetEvent::PlusKey)
         }
         (TabsState::Logs, KeyCode::Char('-')) => {
-            logger.transition(TuiWidgetEvent::MinusKey)
+            state.logger.transition(TuiWidgetEvent::MinusKey)
         }
         (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => state.should_quit = true,
         (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => state.tabs.next(),
@@ -275,13 +284,12 @@ pub fn on_key_event(code: KeyCode, state: &mut EthrexMonitorState) { // todo rem
 }
 
 pub fn on_mouse_event(kind: MouseEventKind, state: &mut EthrexMonitorState) {
-    let logger = &state.logger;
     match (&state.tabs, kind) {
         (TabsState::Logs, MouseEventKind::ScrollDown) => {
-            logger.transition(TuiWidgetEvent::NextPageKey)
+            state.logger.transition(TuiWidgetEvent::NextPageKey)
         }
         (TabsState::Logs, MouseEventKind::ScrollUp) => {
-            logger.transition(TuiWidgetEvent::PrevPageKey)
+            state.logger.transition(TuiWidgetEvent::PrevPageKey)
         }
         _ => {}
     }
