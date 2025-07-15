@@ -453,12 +453,14 @@ impl Syncer {
         };
 
         if let Err((error, failure)) = res {
-            warn!("Failed to add block during FullSync: {error}");
             if let Some(BatchBlockProcessingFailure {
                 failed_block_hash,
                 last_valid_hash,
             }) = failure
             {
+                warn!(
+                    "Failed to add block with hash {failed_block_hash} during FullSync - error: {error}"
+                );
                 store
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
