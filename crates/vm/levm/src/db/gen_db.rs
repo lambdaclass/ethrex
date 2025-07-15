@@ -71,6 +71,11 @@ impl GeneralizedDatabase {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
+        // If the account was destroyed then we cannot rely on the DB to obtain its previous value
+        // This is critical when executing blocks in batches, as an account may be destroyed and created within the same batch
+        if self.destroyed_accounts.contains(&address) {
+            return Ok(Default::default());
+        }
         let value = self.store.get_storage_value(address, key)?;
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
@@ -305,8 +310,6 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<(), InternalError> {
-        let value = self.get_storage_value(address, key)?;
-
         let account_storage_backup = self
             .current_call_frame_mut()?
             .call_frame_backup
@@ -314,7 +317,17 @@ impl<'a> VM<'a> {
             .entry(address)
             .or_insert(HashMap::new());
 
-        account_storage_backup.entry(key).or_insert(value);
+        if !account_storage_backup.contains_key(&key) {
+            // We avoid getting the storage value again if its already backed up.
+            let value = self.get_storage_value(address, key)?;
+            self.current_call_frame_mut()?
+                .call_frame_backup
+                .original_account_storage_slots
+                .entry(address)
+                .and_modify(|x| {
+                    x.insert(key, value);
+                });
+        }
 
         Ok(())
     }
