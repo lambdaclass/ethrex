@@ -188,13 +188,13 @@ pub fn start_pruner_task(
                     }).await;
 
                     match result {
-                        Ok(Ok(())) => tracing::debug!("Pruning completed"),
-                        Ok(Err(e)) => tracing::error!("Pruning error: {:?}", e),
-                        Err(e) => tracing::error!("Task join error: {:?}", e),
+                        Ok(Ok(())) => tracing::debug!("[PRUNING] Pruning completed"),
+                        Ok(Err(e)) => tracing::error!("[PRUNING] Pruning error: {:?}", e),
+                        Err(e) => tracing::error!("[PRUNING] Task join error: {:?}", e),
                     }
                 }
                 _ = cancellation_token.cancelled() => {
-                    tracing::info!("Pruner task shutting down");
+                    tracing::info!("[PRUNING] Pruner task shutting down");
                     break;
                 }
             }
