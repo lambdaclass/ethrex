@@ -185,7 +185,7 @@ init-prover-risc0:
 	--http.port 3900;
 
 init-prover-exec:
-	cargo run --release --no-default-features --features "$(GPU?),exec,l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_exec" -- \
+	cargo run --release --no-default-features --features "$(GPU?),l2" --manifest-path ./prover/Cargo.toml --bin "ethrex_prover_exec" -- \
 	--http.addr 127.0.0.1 \
 	--http.port 3900;
 
