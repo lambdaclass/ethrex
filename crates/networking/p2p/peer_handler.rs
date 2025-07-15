@@ -50,6 +50,7 @@ pub struct PeerHandler {
     peer_table: Arc<Mutex<KademliaTable>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum BlockRequestOrder {
     OldToNew,
     NewToOld,
@@ -130,42 +131,62 @@ impl PeerHandler {
     ) -> Option<Vec<BlockHeader>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
-            let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                id: request_id,
-                startblock: start.into(),
-                limit: BLOCK_HEADER_LIMIT,
-                skip: 0,
-                reverse: matches!(order, BlockRequestOrder::NewToOld),
-            });
             let peer_channels = self
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
-            let mut responses = vec![];
+            let mut set = tokio::task::JoinSet::new();
             for (peer_id, mut peer_channel) in peer_channels {
-                if let Err(err) = peer_channel
-                    .connection
-                    .cast(CastMessage::BackendMessage(request.clone()))
-                    .await
-                {
-                    self.record_peer_failure(peer_id).await;
-                    debug!("Failed to send message to peer: {err:?}");
-                    continue;
-                }
-                let response = peer_channel.receiver.lock().await.recv();
-                responses.push(response);
-            }
-            let unpin_responses: Vec<_> = responses.into_iter().map(Box::pin).collect();
+                set.spawn(async move {
+                    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                        id: request_id,
+                        startblock: start.into(),
+                        limit: BLOCK_HEADER_LIMIT,
+                        skip: 0,
+                        reverse: matches!(order, BlockRequestOrder::NewToOld),
+                    });
 
-            let (response, _, _) = futures::future::select_all(unpin_responses).await;
-            let block_headers_response = match response {
+                    // TODO: error handling when we re-add peer scoring and penalization
+                    if let Err(err) = peer_channel
+                        .connection
+                        .cast(CastMessage::BackendMessage(request))
+                        .await
+                    {
+                        // self.record_peer_failure(peer_id).await;
+                        info!("Failed to send message to peer: {err:?}");
+                    }
+
+                    let mut response = peer_channel.receiver.lock().await;
+                    Some(response.recv().await)
+                });
+            }
+
+            let mut correct_response = None;
+            while let Some(first_response ) = set.join_next().await {
+                match first_response {
+                    Ok(Some(message)) => correct_response = message,
+                    Ok(None) => info!("Failed to receive message from peer [None]"),
+                    Err(err) => info!("Failed to receive message from peer: {err:?}"),
+                }
+            }
+
+            let block_headers_response = match correct_response {
                 Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
                     if id == request_id =>
                 {
+                    info!("[SYNCING] Received CORRECT block headers from peer");
                     Some(block_headers)
                 }
                 // Ignore replies that don't match the expected id (such as late responses)
-                Some(_) => continue,
-                None => None, // Retry request
+                Some(_) => 
+                {
+                    warn!("[SYNCING] Received INCORRECT block headers from peer");
+                    continue;
+                },
+                None => 
+                {
+                    warn!("[SYNCING] Missing block headers response");
+                    None
+                }, // Retry request
             };
 
             let Some(block_headers) = block_headers_response else {
