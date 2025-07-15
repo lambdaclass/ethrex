@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, future, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -135,7 +135,7 @@ impl PeerHandler {
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
             let mut set = tokio::task::JoinSet::new();
-            for (peer_id, mut peer_channel) in peer_channels {
+            for (_peer_id, mut peer_channel) in peer_channels {
                 set.spawn(async move {
                     let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
                         id: request_id,
@@ -161,12 +161,14 @@ impl PeerHandler {
             }
 
             let mut correct_response = None;
-            while let Some(first_response ) = set.join_next().await {
+            while let Some(first_response) = set.join_next().await {
                 match first_response {
-                    Ok(Some(response@Some(RLPxMessage::BlockHeaders(BlockHeaders { id, .. })))) if id == request_id  => {
+                    Ok(Some(
+                        response @ Some(RLPxMessage::BlockHeaders(BlockHeaders { id, .. })),
+                    )) if id == request_id => {
                         correct_response = response;
                         break;
-                    },
+                    }
                     Ok(_) => continue,
                     Err(err) => info!("Failed to receive message from peer: {err:?}"),
                 }
@@ -179,14 +181,10 @@ impl PeerHandler {
                     Some(block_headers)
                 }
                 // Ignore replies that don't match the expected id (such as late responses)
-                Some(_) => 
-                {
+                Some(_) => {
                     continue;
-                },
-                None => 
-                {
-                    None
-                }, // Retry request
+                }
+                None => None, // Retry request
             };
 
             let Some(block_headers) = block_headers_response else {
