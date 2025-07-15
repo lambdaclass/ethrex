@@ -314,8 +314,6 @@ impl Syncer {
                         .await?
                         .ok_or(SyncError::CorruptDB)?;
                     let block_number = block.header.number;
-                    info!("Executing block: {block_number}");
-
                     self.blockchain.add_block(&block).await?;
                     store.set_canonical_block(block_number, *hash).await?;
                     store.update_latest_block_number(block_number).await?;

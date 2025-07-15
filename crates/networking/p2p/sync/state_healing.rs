@@ -35,7 +35,7 @@ pub(crate) async fn heal_state_trie(
     peers: PeerHandler,
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
-    info!(
+    debug!(
         "Starting state healing, pre-existing paths: {}",
         paths.len()
     );
