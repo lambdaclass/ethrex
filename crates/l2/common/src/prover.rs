@@ -52,6 +52,7 @@ impl ProverType {
         }
     }
 
+    /// Used to call a getter for the REQUIRE_*_PROOF boolean in the OnChainProposer contract
     pub fn verifier_getter(&self) -> Option<String> {
         // These values have to match with the OnChainProposer.sol contract
         match self {
@@ -62,6 +63,8 @@ impl ProverType {
         }
     }
 
+    /// Fills the "vm_program_code" field of an AlignedVerificationData struct,
+    /// used for sending a proof to Aligned Layer.
     pub fn aligned_vm_program_code(&self) -> std::io::Result<Option<Vec<u8>>> {
         let path = match self {
             // for risc0, Aligned requires the image id
@@ -81,6 +84,8 @@ impl ProverType {
         std::fs::read(path).map(Some)
     }
 
+    /// Gets the verification key or image id for this prover backend, used for
+    /// proof verification. Aligned Layer uses a different vk in SP1's case.
     pub fn vk(&self, aligned: bool) -> std::io::Result<Option<Vec<u8>>> {
         let path = match &self {
             Self::RISC0 => format!(
