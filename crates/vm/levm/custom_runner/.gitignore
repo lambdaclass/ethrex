@@ -1,2 +1,3 @@
-input_*.json
 code_*.txt
+input_*.json
+!input_example.json

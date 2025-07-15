@@ -1,6 +1,7 @@
 ## LEVM Custom Runner
 
-Stack is represented from bottom to top. So for [1,2,3] 1 will be the element at the bottom and 3 will be the top. In LEVM our stack is implemented the other way around but I had to choose one way of doing it and this is the most conventional.
+Input Stack is represented from bottom to top. So for [1,2,3] 1 will be the element at the bottom and 3 will be the top. This is the most intuitive way of implementing a stack using a vec, that's why it's done this way.
+In LEVM our stack actually grows downwards because it has fixed size but for a json this wasn't the nicest approach I believe.
 
 
 The program expects 2 inputs:
