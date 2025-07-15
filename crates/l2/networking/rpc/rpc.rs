@@ -3,29 +3,15 @@ use crate::l2::l1_message::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
-use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
-use ethrex_p2p::peer_handler::PeerHandler;
-use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
-use ethrex_rpc::RpcHandler as L1RpcHandler;
+use ethrex_rpc::{ActiveFilters, RpcHandler as L1RpcHandler, RpcRequestWrapper};
 use ethrex_rpc::{
-    GasTipEstimator, NodeData, RpcRequestWrapper,
     types::transaction::SendRawTransactionRequest,
     utils::{RpcRequest, RpcRequestId},
 };
-use ethrex_storage::Store;
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    future::IntoFuture,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
-use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use std::{future::IntoFuture, net::SocketAddr, time::Duration};
+use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
 
@@ -61,44 +47,14 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
-#[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
-    storage: Store,
-    blockchain: Arc<Blockchain>,
-    jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
-    syncer: SyncManager,
-    peer_handler: PeerHandler,
-    client_version: String,
-    valid_delegation_addresses: Vec<Address>,
-    sponsor_pk: SecretKey,
-    rollup_store: StoreRollup,
+    service_context: RpcApiContext,
+    active_filters: ActiveFilters,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
-    let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let service_context = RpcApiContext {
-        l1_ctx: ethrex_rpc::RpcApiContext {
-            storage,
-            blockchain,
-            active_filters: active_filters.clone(),
-            syncer: Arc::new(syncer),
-            peer_handler,
-            node_data: NodeData {
-                jwt_secret,
-                local_p2p_node,
-                local_node_record,
-                client_version,
-            },
-            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-        },
-        valid_delegation_addresses,
-        sponsor_pk,
-        rollup_store,
-    };
 
     // Periodically clean up the active filters for the filters endpoints.
     tokio::task::spawn(async move {

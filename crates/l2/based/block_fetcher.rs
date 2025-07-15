@@ -88,6 +88,7 @@ impl BlockFetcherState {
         sequencer_state: SequencerState,
     ) -> Result<Self, BlockFetcherError> {
         let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
+        dbg!(cfg.eth.rpc_url.clone());
         let last_l1_block_fetched = eth_client
             .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
             .await?

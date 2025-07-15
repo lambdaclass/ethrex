@@ -1,15 +1,18 @@
+use std::collections::HashMap;
 use std::fs::read_to_string;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
+use ethrex_l2_rpc::RpcApiContext as L2RpcApiContext;
 use ethrex_p2p::kademlia::KademliaTable;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
+use ethrex_rpc::{GasTipEstimator, NodeData};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::warn;
@@ -26,7 +29,7 @@ use crate::utils::{get_client_version, read_jwtsecret_file};
 pub async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Arc<TokioMutex<KademliaTable>>,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -47,20 +50,34 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    // TODO: Refactor how filters are handled,
+    // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
+    let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let service_context = L2RpcApiContext {
+        l1_ctx: ethrex_rpc::RpcApiContext {
+            storage: store.clone(),
+            blockchain: blockchain.clone(),
+            active_filters: active_filters.clone(),
+            syncer: Arc::new(syncer),
+            peer_handler,
+            node_data: NodeData {
+                jwt_secret: read_jwtsecret_file(&opts.authrpc_jwtsecret),
+                local_p2p_node,
+                local_node_record,
+                client_version: get_client_version(),
+            },
+            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+        },
+        valid_delegation_addresses: get_valid_delegation_addresses(l2_opts),
+        sponsor_pk: l2_opts.sponsor_private_key,
+        rollup_store,
+    };
+
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
-        store,
-        blockchain,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
-        syncer,
-        peer_handler,
-        get_client_version(),
-        get_valid_delegation_addresses(l2_opts),
-        l2_opts.sponsor_private_key,
-        rollup_store,
+        service_context,
+        active_filters,
     );
 
     tracker.spawn(rpc_api);
