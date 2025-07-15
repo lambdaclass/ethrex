@@ -316,18 +316,6 @@ impl Syncer {
                     let block_number = block.header.number;
                     info!("Executing block: {block_number}");
 
-                    // TODO: The following code block is for debugging purposes only, please remove 
-                    {
-                        // Check if we have the parent
-                        let parent_block = store
-                            .get_block_by_hash(block.header.parent_hash)
-                            .await
-                            .unwrap()
-                            .unwrap();
-                        if !store.contains_state_node(parent_block.header.state_root)? {
-                            panic!("Missing state root for parent block")
-                        }
-                    }
                     self.blockchain.add_block(&block).await?;
                     store.set_canonical_block(block_number, *hash).await?;
                     store.update_latest_block_number(block_number).await?;
