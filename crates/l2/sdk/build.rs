@@ -5,6 +5,8 @@ use std::env;
 use std::path::Path;
 use std::process::Command;
 
+use ethrex_sdk_contract_utils::git_clone;
+
 fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let contracts_path = Path::new(&out_dir).join("contracts");
@@ -12,14 +14,9 @@ fn main() {
     get_contract_dependencies(&contracts_path);
 
     // Compile the ERC1967Proxy contract
-    let proxy_contract_path = "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-    ethrex_sdk_contract_utils::compile_contract(
-        &contracts_path,
-        &contracts_path.join(proxy_contract_path),
-        false,
-        None,
-    )
-    .expect("failed to compile ERC1967Proxy contract");
+    let proxy_contract_path = contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
+    ethrex_sdk_contract_utils::compile_contract(&contracts_path, &proxy_contract_path, false, None)
+        .expect("failed to compile ERC1967Proxy contract");
 
     let contract_bytecode_hex =
         std::fs::read_to_string(contracts_path.join("solc_out/ERC1967Proxy.bin"))
@@ -59,7 +56,17 @@ fn get_contract_dependencies(contracts_path: &Path) {
             std::process::exit(1);
         }
     } else {
-        ethrex_sdk_contract_utils::download_contract_deps(contracts_path)
-            .expect("failed to download contract dependencies");
+        std::fs::create_dir_all(contracts_path.join("lib"))
+            .expect("Failed to create contracts/lib");
+        git_clone(
+            "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+            contracts_path
+                .join("lib/openzeppelin-contracts-upgradeable")
+                .to_str()
+                .expect("Failed to convert path to str"),
+            None,
+            true,
+        )
+        .unwrap();
     }
 }

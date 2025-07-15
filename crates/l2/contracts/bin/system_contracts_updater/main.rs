@@ -64,7 +64,7 @@ fn add_with_proxy(
     genesis.alloc.insert(
         impl_address,
         GenesisAccount {
-            code: Bytes::from(hex::decode(code)?),
+            code: Bytes::from(code),
             storage: HashMap::new(),
             balance: U256::zero(),
             nonce: 1,
