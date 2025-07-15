@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752588288150,
+  "lastUpdate": 1752589757576,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7591,6 +7591,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.005985345291479821,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6de7196718fcf89781c20a190872011cabc85c99",
+          "message": "fix(l2): panic because of double init tracing (#3637)\n\n**Motivation**\n\nInit L2 was panicking because of a double call to init_tracing\n\n**Description**\n\n- Move back the init tracing call to after the subcommand execution\n- Inside the subcommands call init_tracing only if the subcommand is not\n`Subcommand::L2`",
+          "timestamp": "2025-07-15T13:09:19Z",
+          "tree_id": "367eb56892cd70c2b727e9330f073a618c389e94",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6de7196718fcf89781c20a190872011cabc85c99"
+        },
+        "date": 1752589741612,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0062080558139534885,
             "unit": "Mgas/s"
           }
         ]
