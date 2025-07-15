@@ -361,6 +361,7 @@ pub fn compile_contract(
 
     // Both the contract path and the output path are relative to where the Makefile is.
     if !Command::new("solc")
+        .arg("--optimize")
         .arg(bin_flag)
         .arg(
             "@openzeppelin/contracts=".to_string()
