@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752600492776,
+  "lastUpdate": 1752611380637,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7797,6 +7797,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012222820512820514,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b0a5da487e8a2ffc4f174a3d5629bdb1e581e7a0",
+          "message": "ci(l1): try running hive tests in CI with levm (#3566)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Run most recent hive tests in CI with LEVM.\n- I had to comment out 2 of them because they don't pass, it was\nexpected since we were running tests that were 6 months old so things\nhave changed.\n\n---------\n\nCo-authored-by: Copilot <175728472+Copilot@users.noreply.github.com>",
+          "timestamp": "2025-07-15T14:25:58Z",
+          "tree_id": "aa7582b6c137ea6e00b405c391832b9f826d9898",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b0a5da487e8a2ffc4f174a3d5629bdb1e581e7a0"
+        },
+        "date": 1752611379744,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006094666666666667,
             "unit": "Mgas/s"
           }
         ]
