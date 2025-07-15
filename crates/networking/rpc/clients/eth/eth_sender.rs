@@ -10,10 +10,12 @@ use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_common::types::{GenericTransaction, TxKind};
 use ethrex_common::{Address, U256};
+use ethrex_p2p::rlpx::l2::l2_connection::LeadSequencerVerifier;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde_json::json;
+use tokio::task::block_in_place;
 
 #[derive(Default, Clone, Debug)]
 pub struct Overrides {
@@ -30,6 +32,27 @@ pub struct Overrides {
     pub block: Option<BlockIdentifier>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LeadSequencerVerifierStruct {
+    pub on_chain_proposer: Address,
+    pub eth_client: EthClient,
+}
+impl LeadSequencerVerifier for LeadSequencerVerifierStruct {
+    fn validate_signature(&self, recovered_lead_sequencer: Address) -> bool {
+        // Implement the signature validation logic here
+        block_in_place(|| {
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create runtime")
+                .block_on(async {
+                    self.eth_client
+                        .call(self.on_chain_proposer, Bytes::new(), Overrides::default())
+                        .await
+                        .is_ok()
+                        && recovered_lead_sequencer == Address::zero() // Placeholder logic
+                })
+        })
+    }
+}
 impl EthClient {
     pub async fn call(
         &self,

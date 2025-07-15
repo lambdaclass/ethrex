@@ -28,10 +28,15 @@ pub struct L2ConnectedState {
     pub next_batch_broadcast: Instant,
 }
 
+#[async_trait::async_trait]
+pub trait LeadSequencerVerifier: std::fmt::Debug + Send + Sync {
+    fn validate_signature(&self, recovered_lead_sequencer: Address) -> bool;
+}
 #[derive(Debug, Clone)]
 pub struct P2PBasedContext {
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
+    pub lead_sequencer_verifier: Arc<dyn LeadSequencerVerifier>,
 }
 
 #[derive(Debug, Clone)]

@@ -23,7 +23,9 @@ use ethrex_l2_sdk::call_contract;
 use ethrex_p2p::network::peer_table;
 use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_rpc::{
-    EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
+    EthClient,
+    clients::{beacon::BeaconClient, eth::eth_sender::LeadSequencerVerifierStruct},
+    types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -180,6 +182,9 @@ impl Command {
 
                 let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
+                let eth_client =
+                    EthClient::new_with_multiple_urls(l2_sequencer_cfg.eth.rpc_url.clone())?;
+
                 // TODO: This should be handled differently, the current problem
                 // with using opts.node_opts.p2p_enabled is that with the removal
                 // of the l2 feature flag, p2p_enabled is set to true by default
@@ -199,6 +204,12 @@ impl Command {
                         Some(P2PBasedContext {
                             store_rollup: rollup_store.clone(),
                             committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
+                            lead_sequencer_verifier: Arc::new(LeadSequencerVerifierStruct {
+                                on_chain_proposer: l2_sequencer_cfg
+                                    .l1_committer
+                                    .on_chain_proposer_address,
+                                eth_client,
+                            }),
                         }),
                     )
                     .await;
