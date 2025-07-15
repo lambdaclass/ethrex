@@ -442,7 +442,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 160,
+            publicData.length == 192,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -467,9 +467,15 @@ contract OnChainProposer is
             batchCommitments[batchNumber]
                 .processedPrivilegedTransactionsRollingHash ==
                 privilegedTransactionsHash,
-            "OnChainProposer: privileged transaction hash public input does not match with committed transactions"
+            "OnChainProposer: privileged transactions hash public input does not match with committed transactions"
         );
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
+        bytes32 blobVersionedHash = bytes32(publicData[128:160]);
+        require(
+            batchCommitments[batchNumber].stateDiffKZGVersionedHash ==
+                blobVersionedHash,
+            "OnChainProposer: blob versioned hash public input does not match with committed hash"
+        );
+        bytes32 lastBlockHash = bytes32(publicData[160:192]);
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
