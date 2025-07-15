@@ -410,22 +410,11 @@ pub async fn deploy_with_proxy(
     contract_path: &Path,
     salt: &[u8],
 ) -> Result<ProxyDeployment, DeployError> {
-    let (implementation_tx_hash, implementation_address) = deploy_contract(
-        &[],
-        contract_path,
-        deployer,
-        salt,
-        eth_client,
-    )
-    .await?;
+    let (implementation_tx_hash, implementation_address) =
+        deploy_contract(&[], contract_path, deployer, salt, eth_client).await?;
 
-    let (proxy_tx_hash, proxy_address) = deploy_proxy(
-        deployer,
-        eth_client,
-        implementation_address,
-        salt,
-    )
-    .await?;
+    let (proxy_tx_hash, proxy_address) =
+        deploy_proxy(deployer, eth_client, implementation_address, salt).await?;
 
     Ok(ProxyDeployment {
         proxy_address,
