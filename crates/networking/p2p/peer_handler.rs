@@ -8,7 +8,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::timeout};
 
 use crate::{
     kademlia::{KademliaTable, PeerChannels, PeerData},
@@ -158,7 +158,12 @@ impl PeerHandler {
                     }
 
                     let mut receiver = peer_channel.receiver.lock().await;
-                    receiver.recv().await
+                    let Ok(response) =
+                        tokio::time::timeout(PEER_REPLY_TIMEOUT, receiver.recv()).await
+                    else {
+                        return None;
+                    };
+                    response
                 });
             }
 
