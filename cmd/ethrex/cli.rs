@@ -20,7 +20,7 @@ use crate::{
     initializers::{get_network, init_blockchain, init_store, open_store},
     l2,
     networks::Network,
-    utils::{self, get_client_version, set_datadir},
+    utils::{self, get_client_version, set_datadir, start_pruner_task},
 };
 
 #[allow(clippy::upper_case_acronyms)]
@@ -371,7 +371,7 @@ pub async fn import_blocks(
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
-    store.start_pruner_task(cancel_token);
+    start_pruner_task(store.clone(), cancel_token);
 
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -460,7 +460,7 @@ pub async fn export_blocks(
 ) {
     let data_dir = set_datadir(data_dir);
     let store = open_store(&data_dir);
-    store.start_pruner_task(cancel_token);
+    start_pruner_task(store.clone(), cancel_token);
 
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export

@@ -7,7 +7,6 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
@@ -26,7 +25,6 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -35,8 +33,6 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 pub const MAX_SNAPSHOT_READS: usize = 100;
 /// Panic message shown when the Store is initialized with a genesis that differs from the one already stored
 pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2";
-/// Interval at which the pruning task will run in seconds
-pub const PRUNING_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -125,40 +121,11 @@ impl Store {
     /// Starts the pruning task in the background. This task will run every 15 seconds
     /// and prune the state and storage tries. The function will return a join handle
     /// that can be used to wait for the task to finish.
-    pub fn start_pruner_task(
+    pub fn prune_state_and_storage_log(
         &self,
         cancellation_token: CancellationToken,
-    ) -> JoinHandle<Result<(), StoreError>> {
-        let store_clone = self.clone();
-
-        // Start the pruning task in the background
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(PRUNING_INTERVAL);
-
-            loop {
-                let cancellation_token = cancellation_token.clone();
-                tokio::select! {
-                    _ = interval.tick() => {
-                        // Execute pruning synchronously in a blocking task
-                        let result = tokio::task::spawn_blocking({
-                            let store = store_clone.clone();
-                            move || store.engine.prune_state_and_storage_log(cancellation_token)
-                        }).await;
-
-                        match result {
-                            Ok(Ok(())) => tracing::debug!("Pruning completed"),
-                            Ok(Err(e)) => tracing::error!("Pruning error: {:?}", e),
-                            Err(e) => tracing::error!("Task join error: {:?}", e),
-                        }
-                    }
-                    _ = cancellation_token.cancelled() => {
-                        tracing::info!("Pruner task shutting down");
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        })
+    ) -> Result<(), StoreError> {
+        self.engine.prune_state_and_storage_log(cancellation_token)
     }
 
     // SNAPSHOT RECONSTRUCTION STRATEGY

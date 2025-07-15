@@ -5,7 +5,7 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{NodeConfigFile, set_datadir, store_node_config_file},
+    utils::{NodeConfigFile, set_datadir, start_pruner_task, store_node_config_file},
 };
 use ethrex_blockchain::BlockchainType;
 use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
@@ -77,7 +77,7 @@ async fn main() -> eyre::Result<()> {
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let store = init_store(&data_dir, genesis).await;
-    store.start_pruner_task(cancel_token.clone());
+    start_pruner_task(store.clone(), cancel_token.clone());
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
