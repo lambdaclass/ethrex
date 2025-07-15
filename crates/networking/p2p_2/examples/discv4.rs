@@ -214,7 +214,7 @@ RLPx connection failures: {:#?}"#,
             println!("Received Ctrl+C, shutting down...");
             // restore_terminal(&mut terminal).expect("Failed to restore terminal");
             kademlia_counter_handle.abort();
-            store_peers_in_file(kademlia).await;
+            store_state_in_files(kademlia).await;
         }
         // _ = monitor.start(&mut terminal) => {
         //     println!("Monitor has exited, shutting down...");
@@ -271,7 +271,12 @@ async fn _read_peers_from_file() -> Vec<Node> {
         .unwrap_or_default()
 }
 
-async fn store_peers_in_file(kademlia: Kademlia) {
+async fn store_state_in_files(kademlia: Kademlia) {
+    store_new_peers(&kademlia).await;
+    store_new_contacts(&kademlia).await;
+}
+
+async fn store_new_peers(kademlia: &Kademlia) {
     let peers_node_ids = kademlia
         .peers
         .lock()
@@ -308,7 +313,8 @@ async fn store_peers_in_file(kademlia: Kademlia) {
 
     info!(
         new_peers = new_peers.len(),
-        total_known_peer = total_known_peers.len(),
+        previously_known_peers = total_known_peers.len(),
+        total_known_peers = new_peers.len() + total_known_peers.len(),
         "Storing peers to file"
     );
 
@@ -320,4 +326,40 @@ async fn store_peers_in_file(kademlia: Kademlia) {
     )
     .await
     .expect("Failed to write peers to file");
+}
+
+async fn store_new_contacts(kademlia: &Kademlia) {
+    let current_contacts = kademlia.table.lock().await;
+
+    let previously_known_contacts = tokio::fs::read("contacts.json")
+        .await
+        .ok()
+        .and_then(|data| serde_json::from_slice::<Vec<Node>>(&data).ok())
+        .unwrap_or_default();
+
+    let new_contacts = current_contacts
+        .iter()
+        .filter_map(|(c_id, c)| {
+            (!previously_known_contacts
+                .iter()
+                .any(|already_known_contact| already_known_contact.node_id() == *c_id))
+            .then_some(c.node.clone())
+        })
+        .collect::<Vec<_>>();
+
+    info!(
+        new_contacts = new_contacts.len(),
+        already_known_contacts = previously_known_contacts.len(),
+        total_known_contacts = new_contacts.len() + previously_known_contacts.len(),
+        "Storing contacts to file"
+    );
+
+    let contacts = [previously_known_contacts, new_contacts].concat();
+
+    tokio::fs::write(
+        "contacts.json",
+        serde_json::to_string_pretty(&contacts).expect("Failed to serialize contacts to JSON"),
+    )
+    .await
+    .expect("Failed to write contacts to file");
 }
