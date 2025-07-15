@@ -17,6 +17,10 @@ impl<'a> VM<'a> {
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let offset: usize = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 

@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
     utils::word_to_address,
@@ -84,19 +84,15 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
-
         let [offset] = *current_call_frame.stack.pop()?;
-
-        // If the offset is larger than the actual calldata, then you
-        // have no data to return.
-        if offset > calldata_size {
+        let Some(offset) = offset
+            .try_into()
+            .ok()
+            .filter(|&offset: &usize| offset <= current_call_frame.calldata.len())
+        else {
             current_call_frame.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
@@ -137,6 +133,15 @@ impl<'a> VM<'a> {
         let size: usize = size
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let calldata_offset: usize = match calldata_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -151,26 +156,20 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if calldata_offset > current_call_frame.calldata.len().into() {
-            memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
-
-        let calldata_offset: usize = calldata_offset
-            .try_into()
-            .map_err(|_err| InternalError::TypeConversion)?;
-
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(calldata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        if calldata_offset <= current_call_frame.calldata.len() {
+            for (i, byte) in current_call_frame
+                .calldata
+                .iter()
+                .skip(calldata_offset)
+                .take(size)
+                .enumerate()
+            {
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
+                }
             }
         }
+
         memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -193,10 +192,18 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
 
         let [destination_offset, code_offset, size] = *current_call_frame.stack.pop()?;
-
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let destination_offset: usize = match destination_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let code_offset: usize = match code_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
@@ -211,11 +218,7 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len().into() {
-            let code_offset: usize = code_offset
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
-
+        if code_offset < current_call_frame.bytecode.len() {
             for (i, byte) in current_call_frame
                 .bytecode
                 .iter()
@@ -268,6 +271,15 @@ impl<'a> VM<'a> {
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let offset: usize = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
         let current_memory_size = call_frame.memory.len();
 
         let address_was_cold = self.substate.accessed_addresses.insert(address);
@@ -291,10 +303,7 @@ impl<'a> VM<'a> {
         let bytecode = &self.db.get_account(address)?.code;
 
         let mut data = vec![0u8; size];
-        if offset < bytecode.len().into() {
-            let offset: usize = offset
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
+        if offset < bytecode.len() {
             for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
                 if let Some(data_byte) = data.get_mut(i) {
                     *data_byte = *byte;
@@ -327,12 +336,18 @@ impl<'a> VM<'a> {
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, returndata_offset, size] = *current_call_frame.stack.pop()?;
-        let returndata_offset: usize = returndata_offset
-            .try_into()
-            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let returndata_offset: usize = match returndata_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
