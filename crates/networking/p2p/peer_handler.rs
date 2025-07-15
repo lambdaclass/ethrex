@@ -134,9 +134,10 @@ impl PeerHandler {
             let peer_channels = self
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
-            let mut set = tokio::task::JoinSet::new();
+            let mut task_set = tokio::task::JoinSet::new();
+            // Request the block headers to all the active peers
             for (_peer_id, mut peer_channel) in peer_channels {
-                set.spawn(async move {
+                task_set.spawn(async move {
                     let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
                         id: request_id,
                         startblock: start.into(),
@@ -153,43 +154,33 @@ impl PeerHandler {
                     {
                         // self.record_peer_failure(peer_id).await;
                         info!("Failed to send message to peer: {err:?}");
+                        return None;
                     }
 
-                    let mut response = peer_channel.receiver.lock().await;
-                    Some(response.recv().await)
+                    let mut receiver = peer_channel.receiver.lock().await;
+                    receiver.recv().await
                 });
             }
 
-            let mut correct_response = None;
-            while let Some(first_response) = set.join_next().await {
-                match first_response {
-                    Ok(Some(
-                        response @ Some(RLPxMessage::BlockHeaders(BlockHeaders { id, .. })),
-                    )) if id == request_id => {
-                        correct_response = response;
+            let mut block_headers_response = None;
+            // Wait for the first valid BlockHeaders response
+            while let Some(response) = task_set.join_next().await {
+                match response {
+                    Ok(Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })))
+                        if id == request_id =>
+                    {
+                        block_headers_response = Some(block_headers);
                         break;
                     }
+                    // Ignore replies that don't match the expected id (such as late responses)
                     Ok(_) => continue,
                     Err(err) => info!("Failed to receive message from peer: {err:?}"),
                 }
             }
-
-            let block_headers_response = match correct_response {
-                Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                    if id == request_id =>
-                {
-                    Some(block_headers)
-                }
-                // Ignore replies that don't match the expected id (such as late responses)
-                Some(_) => {
-                    continue;
-                }
-                None => None, // Retry request
-            };
+            drop(task_set);
 
             let Some(block_headers) = block_headers_response else {
-                warn!("[SYNCING] Missing block headers response");
-                return None;
+                continue;
             };
 
             if are_block_headers_chained(&block_headers, &order) {
@@ -201,6 +192,7 @@ impl PeerHandler {
             }
 
             warn!("[SYNCING] Didn't receive block headers from peer");
+            // self.record_peer_failure(peer_id).await;
         }
         None
     }
