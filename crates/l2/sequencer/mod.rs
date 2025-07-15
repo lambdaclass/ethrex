@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
 use crate::monitor::EthrexMonitor;
+use crate::sequencer::errors::MonitorError;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -39,7 +40,8 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
-) {
+) -> Result<(), errors::SequencerError> {
+    // Todo: add correct error handling
     let initial_status = if cfg.based.based {
         SequencerStatus::default()
     } else {
@@ -57,14 +59,14 @@ pub async fn start_l2(
     )
     .await
     .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
-        return;
+        return Ok(());
     };
 
     if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
         error!(
             "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
         );
-        return;
+        return Ok(());
     }
 
     let _ = L1Watcher::spawn(
@@ -168,8 +170,7 @@ pub async fn start_l2(
             rollup_store.clone(),
             &cfg,
         )
-        .await
-        .unwrap();
+        .await?;
 
         task_set.spawn(async move {
             let mut finished = false;
@@ -177,7 +178,7 @@ pub async fn start_l2(
                 let message = ethrex_monitor
                     .call(monitor::app::CallInMessage::Finished)
                     .await
-                    .unwrap();
+                    .map_err(MonitorError::GenServerError)?;
                 if let monitor::app::OutMessage::ShouldQuit(should_quit) = message {
                     finished = should_quit;
                 }
@@ -210,4 +211,6 @@ pub async fn start_l2(
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
+
+    Ok(())
 }

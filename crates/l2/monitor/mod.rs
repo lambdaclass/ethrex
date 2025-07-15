@@ -7,9 +7,3 @@ pub(crate) mod utils;
 pub(crate) mod widget;
 
 pub use app::EthrexMonitor;
-use ethrex_storage::Store;
-use ethrex_storage_rollup::StoreRollup;
-
-use crate::SequencerConfig;
-use crate::based::sequencer_state::SequencerState;
-use crate::sequencer::errors::SequencerError;
