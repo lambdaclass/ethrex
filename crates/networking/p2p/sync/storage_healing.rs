@@ -47,8 +47,7 @@ pub(crate) async fn storage_healer(
     let healing_start = Instant::now();
     let mut total_healed = 0;
     while !(stale || cancel_token.is_cancelled()) {
-        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION
-        {
+        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
             let speed = healing_start
                 .elapsed()
