@@ -133,7 +133,6 @@ async fn heal_storage_batch(
         // Sort nodes by trie & update current batch
         let mut nodes_to_commit = HashMap::new();
         for (acc_path, paths) in batch.iter_mut() {
-            // TODO: check if we can do this without opening a trie
             let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
             // Collect fetched nodes for that particular trie
             let trie_nodes = nodes
