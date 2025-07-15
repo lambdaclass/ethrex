@@ -26,6 +26,7 @@ pub struct L2ConnectedState {
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
+    pub lead_sequencer_verifier: Arc<dyn LeadSequencerVerifier>,
 }
 
 #[async_trait::async_trait]
@@ -81,6 +82,7 @@ impl L2ConnState {
                     committer_key: ctxt.committer_key.clone(),
                     next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
                     next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
+                    lead_sequencer_verifier: ctxt.lead_sequencer_verifier.clone(),
                 };
                 *self = L2ConnState::Connected(state);
                 Ok(())
@@ -220,7 +222,10 @@ async fn should_process_new_block(
         RLPxError::CryptographyError(e.to_string())
     })?;
 
-    if !validate_signature(recovered_lead_sequencer) {
+    if !l2_state
+        .lead_sequencer_verifier
+        .validate_signature(recovered_lead_sequencer)
+    {
         return Ok(false);
     }
     let mut signature = [0u8; 68];
@@ -273,7 +278,10 @@ async fn should_process_batch_sealed(
             RLPxError::CryptographyError(e.to_string())
         })?;
 
-    if !validate_signature(recovered_lead_sequencer) {
+    if !l2_state
+        .lead_sequencer_verifier
+        .validate_signature(recovered_lead_sequencer)
+    {
         return Ok(false);
     }
 

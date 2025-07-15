@@ -44,11 +44,14 @@ impl LeadSequencerVerifier for LeadSequencerVerifierStruct {
             tokio::runtime::Runtime::new()
                 .expect("Failed to create runtime")
                 .block_on(async {
-                    self.eth_client
+                    let current_lead_sequencer: Address = self
+                        .eth_client
                         .call(self.on_chain_proposer, Bytes::new(), Overrides::default())
                         .await
-                        .is_ok()
-                        && recovered_lead_sequencer == Address::zero() // Placeholder logic
+                        .expect("Failed to call on_chain_proposer")
+                        .parse()
+                        .expect("Failed to parse current lead sequencer address");
+                    current_lead_sequencer == recovered_lead_sequencer
                 })
         })
     }
