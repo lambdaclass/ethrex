@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752572027085,
+  "lastUpdate": 1752588288150,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3685,6 +3685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210167237419,
             "range": "± 1043679222",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6de7196718fcf89781c20a190872011cabc85c99",
+          "message": "fix(l2): panic because of double init tracing (#3637)\n\n**Motivation**\n\nInit L2 was panicking because of a double call to init_tracing\n\n**Description**\n\n- Move back the init tracing call to after the subcommand execution\n- Inside the subcommands call init_tracing only if the subcommand is not\n`Subcommand::L2`",
+          "timestamp": "2025-07-15T13:09:19Z",
+          "tree_id": "367eb56892cd70c2b727e9330f073a618c389e94",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6de7196718fcf89781c20a190872011cabc85c99"
+        },
+        "date": 1752588277813,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209776915502,
+            "range": "± 1259799176",
             "unit": "ns/iter"
           }
         ]
