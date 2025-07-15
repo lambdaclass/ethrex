@@ -27,8 +27,16 @@ pub async fn start_block_producer(
             finalized_block_hash: head_block_hash,
         };
 
+        let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(duration) => duration.as_secs(),
+            Err(e) => {
+                return Err(EngineClientError::SystemFailed(format!(
+                    "SystemTime error: {e}"
+                )));
+            }
+        };
         let payload_attributes = PayloadAttributesV3 {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            timestamp,
             prev_randao: H256::zero(),
             suggested_fee_recipient: coinbase_address,
             parent_beacon_block_root: Some(parent_beacon_block_root),
