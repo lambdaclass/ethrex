@@ -450,6 +450,33 @@ pub async fn deploy_with_proxy(
     })
 }
 
+/// Same as `deploy_with_proxy`, but takes the contract bytecode directly instead of a path.
+pub async fn deploy_with_proxy_from_bytecode(
+    deployer_private_key: SecretKey,
+    eth_client: &EthClient,
+    bytecode: &[u8],
+    salt: &[u8],
+) -> Result<ProxyDeployment, DeployError> {
+    let (implementation_tx_hash, implementation_address) =
+        deploy_contract_from_bytecode(&[], bytecode, &deployer_private_key, salt, eth_client)
+            .await?;
+
+    let (proxy_tx_hash, proxy_address) = deploy_proxy(
+        deployer_private_key,
+        eth_client,
+        implementation_address,
+        salt,
+    )
+    .await?;
+
+    Ok(ProxyDeployment {
+        proxy_address,
+        proxy_tx_hash,
+        implementation_address,
+        implementation_tx_hash,
+    })
+}
+
 async fn create2_deploy(
     salt: &[u8],
     init_code: &[u8],

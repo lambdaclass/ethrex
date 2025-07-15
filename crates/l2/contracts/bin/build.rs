@@ -6,14 +6,15 @@ use std::{env, fs, path::Path};
 
 fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
-    let contracts_path = Path::new(&out_dir).join("contracts");
+    let output_contracts_path = Path::new(&out_dir).join("contracts");
+    let contracts_path = Path::new("../../crates/l2/contracts/src");
 
-    download_contract_deps(&contracts_path);
+    download_contract_deps(&output_contracts_path);
 
     // ERC1967Proxy contract.
     compile_contract(
-        &contracts_path,
-        &contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol"),
+        &output_contracts_path,
+        &output_contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol"),
         "ERC1967Proxy",
         false,
         None,
@@ -21,8 +22,9 @@ fn main() {
 
     // SP1VerifierGroth16 contract
     compile_contract(
-        &contracts_path,
-        &contracts_path.join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
+        &output_contracts_path,
+        &output_contracts_path
+            .join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
         "SP1Verifier",
         false,
         None,
@@ -32,13 +34,13 @@ fn main() {
     let remappings = [
         (
             "@openzeppelin/contracts",
-            contracts_path.join(
+            output_contracts_path.join(
                 "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts",
             ),
         ),
         (
             "@openzeppelin/contracts-upgradeable",
-            contracts_path.join("lib/openzeppelin-contracts-upgradeable/contracts"),
+            output_contracts_path.join("lib/openzeppelin-contracts-upgradeable/contracts"),
         ),
     ];
     let remappings: Vec<(&str, &Path)> =
@@ -46,24 +48,36 @@ fn main() {
 
     // L1 contracts
     let l1_contracts = [
-        (Path::new("src/l1/OnChainProposer.sol"), "OnChainProposer"),
-        (Path::new("src/l1/CommonBridge.sol"), "CommonBridge"),
+        (
+            &contracts_path.join("src/l1/OnChainProposer.sol"),
+            "OnChainProposer",
+        ),
+        (
+            &contracts_path.join("src/l1/CommonBridge.sol"),
+            "CommonBridge",
+        ),
     ];
     for (path, name) in l1_contracts {
-        compile_contract(&contracts_path, path, name, false, Some(&remappings));
+        compile_contract(&output_contracts_path, path, name, false, Some(&remappings));
     }
     // L2 contracts
     let l2_contracts = [
-        (Path::new("src/l2/CommonBridgeL2.sol"), "CommonBridgeL2"),
-        (Path::new("src/l2/L2ToL1Messenger.sol"), "L2ToL1Messenger"),
+        (
+            &contracts_path.join("src/l2/CommonBridgeL2.sol"),
+            "CommonBridgeL2",
+        ),
+        (
+            &contracts_path.join("src/l2/L2ToL1Messenger.sol"),
+            "L2ToL1Messenger",
+        ),
     ];
     for (path, name) in l2_contracts {
-        compile_contract(&contracts_path, path, name, true, Some(&remappings));
+        compile_contract(&output_contracts_path, path, name, true, Some(&remappings));
     }
 
     compile_contract(
-        &contracts_path,
-        Path::new("src/l2/L2Upgradeable.sol"),
+        &output_contracts_path,
+        &contracts_path.join("src/l2/L2Upgradeable.sol"),
         "UpgradeableSystemContract",
         true,
         Some(&remappings),
@@ -71,27 +85,27 @@ fn main() {
 
     // Based contracts
     compile_contract(
-        &contracts_path,
-        Path::new("src/l1/based/SequencerRegistry.sol"),
+        &output_contracts_path,
+        &contracts_path.join("src/l1/based/SequencerRegistry.sol"),
         "SequencerRegistry",
         false,
         Some(&remappings),
     );
     ethrex_l2_sdk::compile_contract(
-        &contracts_path,
-        Path::new("src/l1/based/OnChainProposer.sol"),
+        &output_contracts_path,
+        &contracts_path.join("src/l1/based/OnChainProposer.sol"),
         false,
         Some(&remappings),
     )
     .unwrap();
 
     // To avoid colision with the original OnChainProposer bytecode, we rename it to OnChainProposerBased
-    let original_path = contracts_path.join("solc_out/OnChainProposer.bin");
+    let original_path = output_contracts_path.join("solc_out/OnChainProposer.bin");
     let bytecode_hex =
         fs::read_to_string(&original_path).expect("Failed to read OnChainProposer.bin");
     let bytecode = hex::decode(bytecode_hex.trim()).expect("Failed to decode bytecode");
     fs::write(
-        contracts_path.join("solc_out/OnChainProposerBased.bytecode"),
+        output_contracts_path.join("solc_out/OnChainProposerBased.bytecode"),
         bytecode,
     )
     .expect("Failed to write renamed bytecode");

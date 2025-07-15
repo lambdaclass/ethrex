@@ -372,7 +372,7 @@ async fn test_erc20_roundtrip(
         .collect();
     compile_contract(
         contracts_path,
-        Path::new("contracts/src/example/L2ERC20.sol"),
+        &contracts_path.join("src/example/L2ERC20.sol"),
         false,
         Some(&remappings),
     )?;

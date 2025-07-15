@@ -9,9 +9,10 @@ pub enum ContractCompilationError {
 }
 
 pub fn compile_contract(
-    general_contracts_path: &Path,
-    contract_path: &str,
+    output_dir: &Path,
+    contract_path: &Path,
     runtime_bin: bool,
+    remappings: Option<&[(&str, &Path)]>,
 ) -> Result<(), ContractCompilationError> {
     let bin_flag = if runtime_bin {
         "--bin-runtime"
@@ -20,48 +21,30 @@ pub fn compile_contract(
     };
 
     let mut cmd = Command::new("solc");
-    cmd.arg(bin_flag)
-        .arg(
-            "@openzeppelin/contracts=".to_string()
-                + general_contracts_path
-                    .join("lib")
-                    .join("openzeppelin-contracts-upgradeable")
-                    .join("lib")
-                    .join("openzeppelin-contracts")
-                    .join("contracts")
-                    .to_str()
-                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg(
-            "@openzeppelin/contracts-upgradeable=".to_string()
-                + general_contracts_path
-                    .join("lib")
-                    .join("openzeppelin-contracts-upgradeable")
-                    .join("contracts")
-                    .to_str()
-                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg(
-            general_contracts_path
-                .join(contract_path)
-                .to_str()
-                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg("--via-ir")
-        .arg("-o")
-        .arg(
-            general_contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            general_contracts_path
-                .to_str()
-                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
-        );
+    cmd.arg(bin_flag);
+
+    apply_remappings(&mut cmd, remappings)?;
+
+    cmd.arg(
+        contract_path
+            .to_str()
+            .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+    )
+    .arg("--via-ir")
+    .arg("-o")
+    .arg(
+        output_dir
+            .join("solc_out")
+            .to_str()
+            .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+    )
+    .arg("--overwrite")
+    .arg("--allow-paths")
+    .arg(
+        output_dir
+            .to_str()
+            .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+    );
 
     let cmd_succeeded = cmd
         .spawn()
@@ -74,10 +57,9 @@ pub fn compile_contract(
         })?
         .success();
 
-    // Both the contract path and the output path are relative to where the Makefile is.
     if !cmd_succeeded {
         return Err(ContractCompilationError::CompilationError(
-            format!("Failed to compile {contract_path}").to_owned(),
+            format!("Failed to compile {contract_path:?}").to_owned(),
         ));
     }
 

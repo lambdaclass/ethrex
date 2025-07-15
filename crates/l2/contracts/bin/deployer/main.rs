@@ -14,7 +14,7 @@ use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
+    calldata::encode_calldata, deploy_contract, deploy_with_proxy, deploy_with_proxy_from_bytecode,
     get_address_from_secret_key, initialize_contract,
 };
 use ethrex_rpc::{
@@ -101,10 +101,6 @@ async fn main() -> Result<(), DeployerError> {
         Some(opts.maximum_allowed_max_fee_per_blob_gas),
     )?;
 
-    download_contract_deps(&opts)?;
-
-    compile_contracts(&opts)?;
-
     let contract_addresses = deploy_contracts(&eth_client, &opts).await?;
 
     initialize_contracts(contract_addresses, &eth_client, &opts).await?;
@@ -119,43 +115,6 @@ async fn main() -> Result<(), DeployerError> {
 
     write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
     trace!("Deployer binary finished successfully");
-    Ok(())
-}
-
-fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
-    ethrex_l2_sdk::download_contract_deps(&opts.contracts_path).map_err(DeployerError::from)
-}
-
-fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
-    trace!("Compiling contracts");
-    compile_contract(
-        &opts.contracts_path,
-        "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
-        false,
-    )?;
-    if opts.deploy_based_contracts {
-        info!("Compiling based contracts");
-        compile_contract(
-            &opts.contracts_path,
-            "src/l1/based/SequencerRegistry.sol",
-            false,
-        )?;
-        compile_contract(
-            &opts.contracts_path,
-            "src/l1/based/OnChainProposer.sol",
-            false,
-        )?;
-    } else {
-        info!("Compiling OnChainProposer contract");
-        compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
-    }
-    compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
-    compile_contract(
-        &opts.contracts_path,
-        "lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol",
-        false,
-    )?;
-    trace!("Contracts compiled");
     Ok(())
 }
 
