@@ -77,7 +77,7 @@ fn main() {
     let bytecode = mnemonic_to_bytecode(mnemonic, cli.verbose);
 
     if cli.verbose {
-        println!("Final bytecode: {}", printable_bytes(bytecode.clone()));
+        println!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
     }
 
     // Now we want to initialize the VM, so we set up the environment and database.
@@ -244,14 +244,6 @@ fn setup_initial_state(
     }
 
     initial_state
-}
-
-fn printable_bytes(bytecode: Bytes) -> String {
-    let mut result = String::new();
-    for byte in bytecode.iter() {
-        result.push_str(&format!("{:02x}", byte));
-    }
-    result
 }
 
 /// Parse mnemonics, converting them into bytecode.
