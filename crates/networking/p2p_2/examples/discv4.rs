@@ -84,6 +84,24 @@ pub const MAINNET_BOOTNODES_ENODES: [&str; 16] = [
 async fn main() {
     init_tracing();
 
+    let store =
+        Store::new("./db", ethrex_storage::EngineType::InMemory).expect("Failed to create store");
+
+    let genesis =
+        serde_json::from_str(MAINNET_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to create genesis block");
+
+    // TODO: Replace the above with this.
+    // let store = Store::new_from_genesis("./db", ethrex_storage::EngineType::InMemory, genesis_path)
+
+    let fork_id = store
+        .get_fork_id()
+        .await
+        .expect("Failed to retrieve fork id");
+
     let signer = SigningKey::random(&mut OsRng);
 
     let local_node = Node::new(
@@ -104,6 +122,7 @@ async fn main() {
     let _ = DiscoveryServer::spawn(
         local_node.clone(),
         signer.clone(),
+        &fork_id,
         udp_socket.clone(),
         kademlia.clone(),
         bootnodes(&MAINNET_BOOTNODES_ENODES),
@@ -116,6 +135,7 @@ async fn main() {
     let _ = DiscoverySideCar::spawn(
         local_node.clone(),
         signer.clone(),
+        &fork_id,
         udp_socket,
         kademlia.clone(),
     )
@@ -124,18 +144,8 @@ async fn main() {
         error!("Failed to start discovery side car: {e}");
     });
 
-    let local_node_record =
-        NodeRecord::from_node(&local_node, 1, &signer).expect("Failed to create local node record");
-
-    let store =
-        Store::new("./db", ethrex_storage::EngineType::InMemory).expect("Failed to create store");
-
-    let genesis =
-        serde_json::from_str(MAINNET_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("Failed to create genesis block");
+    let local_node_record = NodeRecord::from_node(&local_node, 1, &signer, &fork_id)
+        .expect("Failed to create local node record");
 
     let blockchain = Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1).into();
 
@@ -150,7 +160,7 @@ async fn main() {
         "0.0.1".to_owned(),
     );
 
-    let _ = RLPxInitiator::spawn(context, local_node, signer, kademlia.clone())
+    let _ = RLPxInitiator::spawn(context, local_node, signer, &fork_id, kademlia.clone())
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");

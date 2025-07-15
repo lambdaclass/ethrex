@@ -292,7 +292,12 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(node: &Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+    pub fn from_node(
+        node: &Node,
+        seq: u64,
+        signer: &SigningKey,
+        fork_id: &ForkId,
+    ) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -305,15 +310,15 @@ impl NodeRecord {
                 record
                     .pairs
                     .push(("ip".into(), ipv4_addr.encode_to_vec().into()));
-            },
-            IpAddr::V6(ipv6_addr) =>{ 
+            }
+            IpAddr::V6(ipv6_addr) => {
                 record
                     .pairs
                     .push(("id".into(), "v6".encode_to_vec().into()));
                 record
                     .pairs
                     .push(("ip6".into(), ipv6_addr.encode_to_vec().into()));
-            },
+            }
         };
         record.pairs.push((
             "secp256k1".into(),
@@ -332,6 +337,8 @@ impl NodeRecord {
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
 
         record.signature = record.sign_record(signer)?;
+
+        record.set_fork_id(fork_id, signer)?;
 
         Ok(record)
     }
