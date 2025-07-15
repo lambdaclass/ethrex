@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752612901779,
+  "lastUpdate": 1752618159051,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3805,6 +3805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208924546190,
             "range": "± 467483655",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fd98ef02d3634246651f8879e9d70feb1dd0653a",
+          "message": "fix(l2): install solc in missing workflows (#3649)\n\n**Motivation**\n\nIn #3443, we missed installing solc in some workflows.\n\nCloses None",
+          "timestamp": "2025-07-15T21:20:05Z",
+          "tree_id": "66735758ea212d38ae32deee8ccf38901cad506a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fd98ef02d3634246651f8879e9d70feb1dd0653a"
+        },
+        "date": 1752618146539,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210593029392,
+            "range": "± 416815067",
             "unit": "ns/iter"
           }
         ]
