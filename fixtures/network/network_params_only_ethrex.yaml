@@ -10,8 +10,9 @@ ethereum_metrics_exporter_enabled: true
 network_params:
   # The address of the staking contract address on the Eth1 chain
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
-  genesis_gaslimit: 60000000 # 60M gas limit for genesis block
+  genesis_gaslimit: 300000000 # 300M gas limit for genesis block
   electra_fork_epoch: 0
+  seconds_per_slot: 4
 
 additional_services:
   - dora
@@ -22,7 +23,10 @@ spamoor_params:
   spammers:
     - scenario: eoatx
       config:
-        throughput: 3000
+        throughput: 1000
+        gas_limit: 100000
+        amount: 1000
+        random_amount: true
 
 grafana_params:
   additional_dashboards: ["./ethrex_l1_perf.json"]
