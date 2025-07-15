@@ -95,10 +95,10 @@ pub(crate) async fn heal_state_trie(
             break;
         }
     }
-    info!("State Healing stopped, signaling storage healer");
+    debug!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle
     if !paths.is_empty() {
-        info!("Caching {} paths for the next cycle", paths.len());
+        debug!("Caching {} paths for the next cycle", paths.len());
         store.set_state_heal_paths(paths.clone()).await?;
     }
     // Send empty batch to signal that no more batches are incoming
