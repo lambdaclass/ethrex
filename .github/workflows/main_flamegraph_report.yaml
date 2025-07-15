@@ -8,6 +8,8 @@ permissions:
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["**"]
   workflow_dispatch:
 
 env:
@@ -282,6 +284,12 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       # We need a reth version that requires a rustc version <= 1.87.0
       - name: Checkout reth
