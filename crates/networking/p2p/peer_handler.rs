@@ -150,7 +150,6 @@ impl PeerHandler {
                         .cast(CastMessage::BackendMessage(request))
                         .await
                     {
-                        // self.record_peer_failure(peer_id).await;
                         info!("Failed to send message to peer: {err:?}");
                         return None;
                     }
@@ -187,15 +186,11 @@ impl PeerHandler {
             };
 
             if are_block_headers_chained(&block_headers, &order) {
-                // self.record_peer_success(peer_id).await;
                 return Some(block_headers);
             } else {
                 warn!("[SYNCING] Received invalid headers from peer");
-                // self.record_peer_critical_failure(peer_id).await;
             }
-
             warn!("[SYNCING] Didn't receive block headers from peer");
-            // self.record_peer_failure(peer_id).await;
         }
         None
     }
