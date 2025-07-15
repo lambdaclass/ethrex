@@ -13,6 +13,7 @@ use tracing::{debug, error, info};
 use crate::{
     discv4::messages::{FindNodeMessage, Message, PingMessage},
     kademlia::Kademlia,
+    metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::get_msg_expiration_from_seconds,
 };
@@ -36,6 +37,7 @@ pub struct DiscoverySideCarState {
 
     revalidation_period: Duration,
     lookup_period: Duration,
+    prune_period: Duration,
 
     kademlia: Kademlia,
 }
@@ -57,6 +59,7 @@ impl DiscoverySideCarState {
 
             revalidation_period: Duration::from_secs(5),
             lookup_period: Duration::from_secs(5),
+            prune_period: Duration::from_secs(5),
         }
     }
 
@@ -168,6 +171,8 @@ impl DiscoverySideCar {
 
         let _ = server.cast(InMessage::Lookup).await;
 
+        let _ = server.cast(InMessage::Prune).await;
+
         Ok(())
     }
 }
@@ -215,8 +220,10 @@ impl GenServer for DiscoverySideCar {
             Self::CastMsg::Prune => {
                 debug!(received = "Prune");
 
-                // Once we have a pruning strategy, we can implement it here.
-                // For now, no one is pruned.
+                prune(&state).await;
+
+                send_after(state.prune_period, handle.clone(), Self::CastMsg::Prune);
+
                 CastResponse::NoReply(state)
             }
         }
@@ -224,27 +231,46 @@ impl GenServer for DiscoverySideCar {
 }
 
 async fn revalidate(state: &DiscoverySideCarState) {
-    for contact in state.kademlia.table.lock().await.values() {
-        let _ = state.ping(&contact.node).await.inspect_err(
-            |e| error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?e),
-        );
+    for contact in state.kademlia.table.lock().await.values_mut() {
+        if contact.disposable {
+            continue;
+        }
+
+        if let Err(err) = state.ping(&contact.node).await {
+            error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+            contact.disposable = true;
+            METRICS.record_discarded_contact().await;
+        }
     }
 }
 
 async fn lookup(state: &DiscoverySideCarState) {
     for contact in state.kademlia.table.lock().await.values_mut() {
-        if contact.n_find_node_sent == 20 {
+        if contact.n_find_node_sent == 20 || contact.disposable {
             continue;
         }
 
-        let _ = state.send_find_node(&contact.node).await.inspect_err(
-            |e| error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?e),
-        );
+        if let Err(err) = state.send_find_node(&contact.node).await {
+            error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+            contact.disposable = true;
+            METRICS.record_discarded_contact().await;
+        }
 
         contact.n_find_node_sent += 1;
     }
 }
 
 async fn prune(state: &DiscoverySideCarState) {
-    // Remove nodes tagged as disposable.
+    let mut contacts = state.kademlia.table.lock().await;
+    let mut discarded_contacts = state.kademlia.discarded_contacts.lock().await;
+
+    let disposable_contacts = contacts
+        .iter()
+        .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
+        .collect::<Vec<_>>();
+
+    for contact_to_discard_id in disposable_contacts {
+        contacts.remove(&contact_to_discard_id);
+        discarded_contacts.insert(contact_to_discard_id);
+    }
 }

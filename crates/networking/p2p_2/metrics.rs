@@ -17,8 +17,10 @@ pub struct Metrics {
 
     pub new_contacts_events: Arc<Mutex<VecDeque<SystemTime>>>,
     pub window_size: Duration,
-    pub contacts: IntCounter,
+    pub total_contacts: IntCounter,
+    pub current_contacts: Arc<Mutex<u64>>,
     pub new_contacts_rate: Gauge,
+    pub discarded_contacts: IntCounter,
 
     pub rlpx_conn_attempts: IntCounter,
     pub rlpx_conn_attempts_events: Arc<Mutex<VecDeque<SystemTime>>>,
@@ -46,8 +48,14 @@ impl Metrics {
     pub async fn record_new_contact(&self) {
         let mut events = self.new_contacts_events.lock().await;
         events.push_back(SystemTime::now());
-        self.contacts.inc();
+        self.total_contacts.inc();
+        self.increase_current_contacts().await;
         self.update_rate(&mut events, &self.new_contacts_rate).await;
+    }
+
+    pub async fn record_discarded_contact(&self) {
+        self.discarded_contacts.inc();
+        self.decrease_current_contacts().await;
     }
 
     pub async fn record_new_rlpx_conn_attempt(&self) {
@@ -72,6 +80,14 @@ impl Metrics {
         self.rlpx_conn_failures.inc();
         self.update_rlpx_conn_failures_counts(&reason).await;
         self.rlpx_conn_failures_reasons.lock().await.push(reason);
+    }
+
+    pub async fn increase_current_contacts(&self) {
+        *self.current_contacts.lock().await += 1
+    }
+
+    pub async fn decrease_current_contacts(&self) {
+        *self.current_contacts.lock().await -= 1
     }
 
     pub async fn update_rlpx_conn_failures_counts(&self, failure_reason: &RLPxError) {
@@ -303,6 +319,12 @@ impl Default for Metrics {
         )
         .expect("Failed to create contacts_rate gauge");
 
+        let discarded_contacts = IntCounter::new(
+            "discv4_discarded_contacts",
+            "Total number of discarded nodes",
+        )
+        .expect("Failed to create discarded_contacts counter");
+
         registry
             .register(Box::new(new_contacts_total.clone()))
             .expect("Failed to register new_contacts_total counter");
@@ -310,6 +332,10 @@ impl Default for Metrics {
         registry
             .register(Box::new(contacts_rate.clone()))
             .expect("Failed to register contacts_rate gauge");
+
+        registry
+            .register(Box::new(discarded_contacts.clone()))
+            .expect("Failed to register discarded_contacts counter");
 
         let attempted_rlpx_conn = IntCounter::new(
             "rlpx_attempted_rlpx_conn",
@@ -365,8 +391,10 @@ impl Default for Metrics {
             registry,
             new_contacts_events: Arc::new(Mutex::new(VecDeque::new())),
             window_size: Duration::from_secs(60),
-            contacts: new_contacts_total,
+            total_contacts: new_contacts_total,
+            current_contacts: Arc::new(Mutex::new(0)),
             new_contacts_rate: contacts_rate,
+            discarded_contacts,
             rlpx_conn_attempts: attempted_rlpx_conn,
             rlpx_conn_attempts_events: Arc::new(Mutex::new(VecDeque::new())),
             rlpx_conn_attempts_rate: attempted_rlpx_conn_rate,

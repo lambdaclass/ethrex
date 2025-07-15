@@ -13,6 +13,8 @@ use crate::types::Node;
 pub struct Contact {
     pub node: Node,
     pub n_find_node_sent: u64,
+    // This contact failed to respond our Ping.
+    pub disposable: bool,
 }
 
 impl From<Node> for Contact {
@@ -20,6 +22,7 @@ impl From<Node> for Contact {
         Self {
             node,
             n_find_node_sent: 0,
+            disposable: false,
         }
     }
 }
@@ -29,6 +32,7 @@ pub struct Kademlia {
     pub table: Arc<Mutex<HashMap<H256, Contact>>>,
     pub peers: Arc<Mutex<HashSet<H256>>>,
     pub already_tried_peers: Arc<Mutex<HashSet<H256>>>,
+    pub discarded_contacts: Arc<Mutex<HashSet<H256>>>,
 }
 
 impl Kademlia {
@@ -63,6 +67,7 @@ impl Default for Kademlia {
             table: Arc::new(Mutex::new(HashMap::new())),
             peers: Arc::new(Mutex::new(HashSet::default())),
             already_tried_peers: Arc::new(Mutex::new(HashSet::new())),
+            discarded_contacts: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }
