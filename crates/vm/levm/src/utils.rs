@@ -567,8 +567,8 @@ impl<'a> VM<'a> {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize_substate(&mut self) -> Result<(), VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = HashSet::new();
-        let mut initial_accessed_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
+        let mut initial_accessed_addresses = ahash::HashSet::default();
+        let mut initial_accessed_storage_slots: ahash::HashMap<Address, BTreeSet<H256>> = ahash::HashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(self.env.origin);
