@@ -1,6 +1,6 @@
 use std::{collections::hash_map::Entry, net::SocketAddr, sync::Arc};
 
-use ethrex_common::H512;
+use ethrex_common::{H512, types::ForkId};
 use k256::ecdsa::SigningKey;
 use keccak_hash::H256;
 use rand::{rngs::OsRng, seq::IteratorRandom};
@@ -67,14 +67,16 @@ impl DiscoveryServerState {
     async fn handle_listens(&self) -> Result<(), DiscoveryServerError> {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
         loop {
-            let (read, _from) = self.udp_socket.recv_from(&mut buf).await?;
+            let (read, from) = self.udp_socket.recv_from(&mut buf).await?;
             let Ok(packet) = Packet::decode(&buf[..read])
                 .inspect_err(|e| warn!(err = ?e, "Failed to decode packet"))
             else {
                 continue;
             };
             let mut conn_handle = ConnectionHandler::spawn(self.clone()).await;
-            let _ = conn_handle.cast(packet.into()).await;
+            let _ = conn_handle
+                .cast(ConnectionHandlerInMessage::from(packet, from))
+                .await;
         }
     }
 
@@ -206,25 +208,27 @@ impl DiscoveryServerState {
 
     async fn send_enr_response(
         &self,
-        node: &Node,
-        packet: &Packet,
+        request_hash: H256,
+        from: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: Packet expiration
-        let node_record = self.local_node_record.lock().await.clone();
+        let node_record = self.local_node_record.lock().await;
 
-        let msg = Message::ENRResponse(ENRResponseMessage::new(packet.get_hash(), node_record));
+        let msg = Message::ENRResponse(ENRResponseMessage::new(request_hash, node_record.clone()));
+
         let mut buf = vec![];
+
         msg.encode_with_header(&mut buf, &self.signer);
 
         let bytes_sent = self
             .udp_socket
-            .send_to(&buf, node.udp_addr())
+            .send_to(&buf, from)
             .await
             .map_err(DiscoveryServerError::MessageSendFailure)?;
 
         if bytes_sent != buf.len() {
             return Err(DiscoveryServerError::PartialMessageSent);
         }
+
         Ok(())
     }
 
@@ -267,6 +271,7 @@ impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
         signer: SigningKey,
+        fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
         bootnodes: Vec<Node>,
@@ -274,7 +279,7 @@ impl DiscoveryServer {
         info!("Starting Discovery Server");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer)
+            NodeRecord::from_node(&local_node, 1, &signer, fork_id)
                 .expect("Failed to create local node record"),
         ));
 
@@ -345,11 +350,16 @@ pub enum ConnectionHandlerInMessage {
         message: ENRResponseMessage,
         sender_public_key: H512,
     },
-    ENRRequest(Packet),
+    ENRRequest {
+        message: ENRRequestMessage,
+        from: SocketAddr,
+        hash: H256,
+        sender_public_key: H512,
+    },
 }
 
-impl From<Packet> for ConnectionHandlerInMessage {
-    fn from(packet: Packet) -> Self {
+impl ConnectionHandlerInMessage {
+    pub fn from(packet: Packet, from: SocketAddr) -> Self {
         match packet.get_message() {
             Message::Ping(msg) => Self::Ping {
                 message: msg.clone(),
@@ -366,7 +376,12 @@ impl From<Packet> for ConnectionHandlerInMessage {
                 message: msg.clone(),
                 sender_public_key: packet.get_public_key(),
             },
-            Message::ENRRequest(..) => Self::ENRRequest(packet),
+            Message::ENRRequest(msg) => Self::ENRRequest {
+                message: msg.clone(),
+                from,
+                hash: packet.get_hash(),
+                sender_public_key: packet.get_public_key(),
+            },
         }
     }
 }
@@ -463,25 +478,26 @@ impl GenServer for ConnectionHandler {
                     };
                 }
             }
-            Self::CastMsg::ENRRequest(packet) => {
-                debug!(received = "ENRRequest", from = %format!("{:#x}", packet.get_public_key()));
+            Self::CastMsg::ENRRequest {
+                message: _,
+                from,
+                hash,
+                sender_public_key,
+            } => {
+                debug!(received = "ENRRequest", from = %format!("{sender_public_key:#x}"));
 
-                let node_id = packet.get_node_id();
-
-                let table = state.kademlia.table.lock().await;
-
-                let Some(contact) = table.get(&node_id) else {
-                    drop(table);
+                if let Err(err) = state.send_enr_response(hash, from).await {
+                    error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
                     return CastResponse::Stop;
-                };
+                }
 
-                // We ignore if the message is expired
-                let _ = state
-                    .send_enr_response(&contact.node, &packet)
+                state
+                    .kademlia
+                    .table
+                    .lock()
                     .await
-                    .inspect_err(|err| error!("{}", err.to_string()));
-
-                debug!(packet = ?packet);
+                    .entry(node_id(&sender_public_key))
+                    .and_modify(|c| c.knows_us = true);
             }
             Self::CastMsg::ENRResponse {
                 message: msg,

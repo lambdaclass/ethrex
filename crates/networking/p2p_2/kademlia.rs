@@ -15,6 +15,8 @@ pub struct Contact {
     pub n_find_node_sent: u64,
     // This contact failed to respond our Ping.
     pub disposable: bool,
+    // Set to true after we send a successful ENRResponse to it.
+    pub knows_us: bool,
 }
 
 impl From<Node> for Contact {
@@ -23,6 +25,7 @@ impl From<Node> for Contact {
             node,
             n_find_node_sent: 0,
             disposable: false,
+            knows_us: true,
         }
     }
 }

@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use ethrex_common::types::ForkId;
 use k256::ecdsa::SigningKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -77,13 +78,14 @@ impl RLPxInitiator {
         context: P2PContext,
         local_node: Node,
         signer: SigningKey,
+        fork_id: &ForkId,
         // udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Result<(), RLPxInitiatorError> {
         info!("Starting RLPx Initiator");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer)
+            NodeRecord::from_node(&local_node, 1, &signer, fork_id)
                 .expect("Failed to create local node record"),
         ));
 
@@ -135,10 +137,13 @@ impl GenServer for RLPxInitiator {
 
 async fn look_for_peers(state: &RLPxInitiatorState) {
     info!("Looking for peers");
+
     let mut already_known_peers_table = state.kademlia.already_tried_peers.lock().await;
+
     for contact in state.kademlia.table.lock().await.values() {
-        if !already_known_peers_table.contains(&contact.node.node_id()) {
+        if !already_known_peers_table.contains(&contact.node.node_id()) && contact.knows_us {
             already_known_peers_table.insert(contact.node.node_id());
+
             RLPxConnection::spawn_as_initiator(state.context.clone(), &contact.node).await;
         }
     }

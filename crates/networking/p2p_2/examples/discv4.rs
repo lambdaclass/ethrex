@@ -83,6 +83,24 @@ pub const MAINNET_BOOTNODES_ENODES: [&str; 16] = [
 async fn main() {
     init_tracing();
 
+    let store =
+        Store::new("./db", ethrex_storage::EngineType::InMemory).expect("Failed to create store");
+
+    let genesis =
+        serde_json::from_str(MAINNET_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to create genesis block");
+
+    // TODO: Replace the above with this.
+    // let store = Store::new_from_genesis("./db", ethrex_storage::EngineType::InMemory, genesis_path)
+
+    let fork_id = store
+        .get_fork_id()
+        .await
+        .expect("Failed to retrieve fork id");
+
     let signer = SigningKey::random(&mut OsRng);
 
     let local_node = Node::new(
@@ -103,6 +121,7 @@ async fn main() {
     let _ = DiscoveryServer::spawn(
         local_node.clone(),
         signer.clone(),
+        &fork_id,
         udp_socket.clone(),
         kademlia.clone(),
         bootnodes(&MAINNET_BOOTNODES_ENODES),
@@ -115,6 +134,7 @@ async fn main() {
     let _ = DiscoverySideCar::spawn(
         local_node.clone(),
         signer.clone(),
+        &fork_id,
         udp_socket,
         kademlia.clone(),
     )
@@ -123,18 +143,8 @@ async fn main() {
         error!("Failed to start discovery side car: {e}");
     });
 
-    let local_node_record =
-        NodeRecord::from_node(&local_node, 1, &signer).expect("Failed to create local node record");
-
-    let store =
-        Store::new("./db", ethrex_storage::EngineType::InMemory).expect("Failed to create store");
-
-    let genesis =
-        serde_json::from_str(MAINNET_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("Failed to create genesis block");
+    let local_node_record = NodeRecord::from_node(&local_node, 1, &signer, &fork_id)
+        .expect("Failed to create local node record");
 
     let blockchain = Blockchain::new(EvmEngine::LEVM, store.clone(), BlockchainType::L1).into();
 
@@ -149,7 +159,7 @@ async fn main() {
         "0.0.1".to_owned(),
     );
 
-    let _ = RLPxInitiator::spawn(context, local_node, signer, kademlia.clone())
+    let _ = RLPxInitiator::spawn(context, local_node, signer, &fork_id, kademlia.clone())
         .await
         .inspect_err(|e| {
             error!("Failed to start RLPx Initiator: {e}");
@@ -203,7 +213,7 @@ RLPx connection failures: {:#?}"#,
             println!("Received Ctrl+C, shutting down...");
             // restore_terminal(&mut terminal).expect("Failed to restore terminal");
             kademlia_counter_handle.abort();
-            store_peers_in_file(kademlia).await;
+            store_state_in_files(kademlia).await;
         }
         // _ = monitor.start(&mut terminal) => {
         //     println!("Monitor has exited, shutting down...");
@@ -260,7 +270,12 @@ async fn _read_peers_from_file() -> Vec<Node> {
         .unwrap_or_default()
 }
 
-async fn store_peers_in_file(kademlia: Kademlia) {
+async fn store_state_in_files(kademlia: Kademlia) {
+    store_new_peers(&kademlia).await;
+    store_new_contacts(&kademlia).await;
+}
+
+async fn store_new_peers(kademlia: &Kademlia) {
     let peers_node_ids = kademlia
         .peers
         .lock()
@@ -297,7 +312,8 @@ async fn store_peers_in_file(kademlia: Kademlia) {
 
     info!(
         new_peers = new_peers.len(),
-        total_known_peer = total_known_peers.len(),
+        previously_known_peers = total_known_peers.len(),
+        total_known_peers = new_peers.len() + total_known_peers.len(),
         "Storing peers to file"
     );
 
@@ -309,4 +325,40 @@ async fn store_peers_in_file(kademlia: Kademlia) {
     )
     .await
     .expect("Failed to write peers to file");
+}
+
+async fn store_new_contacts(kademlia: &Kademlia) {
+    let current_contacts = kademlia.table.lock().await;
+
+    let previously_known_contacts = tokio::fs::read("contacts.json")
+        .await
+        .ok()
+        .and_then(|data| serde_json::from_slice::<Vec<Node>>(&data).ok())
+        .unwrap_or_default();
+
+    let new_contacts = current_contacts
+        .iter()
+        .filter_map(|(c_id, c)| {
+            (!previously_known_contacts
+                .iter()
+                .any(|already_known_contact| already_known_contact.node_id() == *c_id))
+            .then_some(c.node.clone())
+        })
+        .collect::<Vec<_>>();
+
+    info!(
+        new_contacts = new_contacts.len(),
+        already_known_contacts = previously_known_contacts.len(),
+        total_known_contacts = new_contacts.len() + previously_known_contacts.len(),
+        "Storing contacts to file"
+    );
+
+    let contacts = [previously_known_contacts, new_contacts].concat();
+
+    tokio::fs::write(
+        "contacts.json",
+        serde_json::to_string_pretty(&contacts).expect("Failed to serialize contacts to JSON"),
+    )
+    .await
+    .expect("Failed to write contacts to file");
 }

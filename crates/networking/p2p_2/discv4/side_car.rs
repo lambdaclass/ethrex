@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use ethrex_common::H512;
+use ethrex_common::{types::ForkId, H512};
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
 use rand::{rngs::OsRng, seq::IteratorRandom};
 use spawned_concurrency::{
@@ -172,13 +172,14 @@ impl DiscoverySideCar {
     pub async fn spawn(
         local_node: Node,
         signer: SigningKey,
+        fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Result<(), DiscoverySideCarError> {
         info!("Starting Discovery Side Car");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer)
+            NodeRecord::from_node(&local_node, 1, &signer, fork_id)
                 .expect("Failed to create local node record"),
         ));
 
