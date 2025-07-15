@@ -2,9 +2,17 @@
 
 ## Perf
 
-### 2025-07-07
+### 2025-07-15
 
 - Improve data copying in environment opcodes [#3508](https://github.com/lambdaclass/ethrex/pull/3508)
+
+### 2025-07-08
+
+- Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)
+
+### 2025-07-07
+
+- Improve blake2f [#3503](https://github.com/lambdaclass/ethrex/pull/3503)
 
 ### 2025-06-30
 
