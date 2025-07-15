@@ -111,11 +111,8 @@ impl PeerHandler {
         None
     }
 
-    /// Returns a vector containing the node id and channels for all the peers that support the given capability.
-    async fn get_all_peer_channels(
-        &self,
-        capabilities: &[Capability],
-    ) -> Vec<(H256, PeerChannels)> {
+    /// Returns a vector containing the channels for all the peers that support the given capability.
+    async fn get_all_peer_channels(&self, capabilities: &[Capability]) -> Vec<PeerChannels> {
         let table = self.peer_table.lock().await;
         table.get_all_peer_channels(capabilities)
     }
@@ -137,7 +134,7 @@ impl PeerHandler {
                 .await;
             let mut task_set = tokio::task::JoinSet::new();
             // Request the block headers to all the active peers
-            for (_peer_id, mut peer_channel) in peer_channels {
+            for mut peer_channel in peer_channels {
                 task_set.spawn(async move {
                     let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
                         id: request_id,

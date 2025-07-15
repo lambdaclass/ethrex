@@ -381,9 +381,9 @@ impl KademliaTable {
         })
     }
 
-    /// Returns a vector containing the node id and channels for all the peers that
+    /// Returns a vector containing the channels for all the peers that
     /// support the given capability, without considering their scores.
-    pub fn get_all_peer_channels(&self, capabilities: &[Capability]) -> Vec<(H256, PeerChannels)> {
+    pub fn get_all_peer_channels(&self, capabilities: &[Capability]) -> Vec<PeerChannels> {
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             peer.channels.is_some()
@@ -391,14 +391,8 @@ impl KademliaTable {
                     .iter()
                     .any(|cap| peer.supported_capabilities.contains(cap))
         };
-        let filtered_peers: Vec<&PeerData> = self.filter_peers(&filter).collect();
-        filtered_peers
-            .iter()
-            .filter_map(|peer| {
-                peer.channels
-                    .clone()
-                    .map(|channel| (peer.node.node_id(), channel))
-            })
+        self.filter_peers(&filter)
+            .filter_map(|peer| peer.channels.clone())
             .collect()
     }
 }
