@@ -41,6 +41,7 @@ lazy_static.workspace = true
 secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
+thiserror.workspace = true
 itertools = "0.14.0"
 tui-logger.workspace = true
 
@@ -48,6 +49,7 @@ cfg-if = "1.0.0"
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+url.workspace = true
 
 [[bin]]
 name = "ethrex"

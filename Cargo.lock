@@ -3907,11 +3907,13 @@ dependencies = [
  "serde",
  "serde_json",
  "tempdir",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
  "tui-logger",
+ "url",
  "vergen-git2",
 ]
 
@@ -3962,6 +3964,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4004,6 +4007,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-dev",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
@@ -4064,14 +4068,19 @@ version = "0.1.0"
 dependencies = [
  "axum 0.8.4",
  "bytes",
+ "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
  "ethrex-p2p",
+ "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-storage-rollup",
+ "hex",
  "keccak-hash",
+ "reqwest 0.12.20",
+ "rustc-hex",
  "secp256k1",
  "serde",
  "serde_json",
@@ -4079,6 +4088,7 @@ dependencies = [
  "tokio",
  "tower-http 0.6.6",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4288,6 +4298,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk-contract-utils",
@@ -4424,6 +4435,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-l2",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rpc",
  "ethrex-sdk",
  "eyre",
@@ -4431,6 +4443,7 @@ dependencies = [
  "hex",
  "keccak-hash",
  "lazy_static",
+ "reqwest 0.12.20",
  "secp256k1",
  "serde_json",
  "thiserror 2.0.12",
@@ -6580,6 +6593,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rpc",
  "ethrex-sdk",
  "eyre",
