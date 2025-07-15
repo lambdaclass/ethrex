@@ -684,7 +684,7 @@ impl StoreEngine for Store {
                 }
             } else {
                 // In case that we are in a reconstruct scenario (L2), we need to update the state and storage tries
-                // without the block number extension
+                // with an empty block number extension since we don't have a block number to write
                 for (node_hash, mut node_data) in update_batch.account_updates {
                     node_data.extend_from_slice(&[0u8; 8]);
                     tx.upsert::<StateTrieNodes>(node_hash, node_data)?;

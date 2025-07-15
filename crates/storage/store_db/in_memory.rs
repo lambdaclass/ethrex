@@ -132,71 +132,67 @@ impl Store {
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         // Validation first - fail fast
-        let (Some(first_block), Some(last_block)) =
+        let mut store = self.inner()?;
+
+        if let (Some(first_block), Some(last_block)) =
             (update_batch.blocks.first(), update_batch.blocks.last())
-        else {
-            return Ok(());
-        };
+        {
+            let parent_block: BlockNumHash = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
+            let final_block: BlockNumHash = (last_block.header.number, last_block.hash()).into();
 
-        let parent_block: BlockNumHash = (
-            first_block.header.number - 1,
-            first_block.header.parent_hash,
-        )
-            .into();
-        let final_block: BlockNumHash = (last_block.header.number, last_block.hash()).into();
-
-        // Preparar state trie updates
-        let mut state_trie_updates = Vec::new();
-        for (node_hash, node_data) in update_batch.account_updates {
-            tracing::debug!(
-                node_hash = hex::encode(node_hash),
-                parent_block_number = parent_block.block_number,
-                parent_block_hash = hex::encode(parent_block.block_hash),
-                final_block_number = final_block.block_number,
-                final_block_hash = hex::encode(final_block.block_hash),
-                "[WRITING STATE TRIE NODE]",
-            );
-            state_trie_updates.push((node_hash, node_data));
-        }
-
-        let mut storage_updates_by_address: HashMap<H256, Vec<(NodeHash, Vec<u8>)>> =
-            HashMap::new();
-        let mut storage_invalidations_by_address: HashMap<H256, Vec<H256>> = HashMap::new();
-
-        for (hashed_address, nodes, invalid_nodes) in update_batch.storage_updates {
-            let mut prepared_nodes = Vec::new();
-            for (node_hash, node_data) in nodes {
+            // Preparar state trie updates
+            let mut state_trie_updates = Vec::new();
+            for (node_hash, node_data) in update_batch.account_updates {
                 tracing::debug!(
-                    hashed_address = hex::encode(hashed_address.0),
                     node_hash = hex::encode(node_hash),
                     parent_block_number = parent_block.block_number,
                     parent_block_hash = hex::encode(parent_block.block_hash),
                     final_block_number = final_block.block_number,
                     final_block_hash = hex::encode(final_block.block_hash),
-                    "[WRITING STORAGE TRIE NODE]",
+                    "[WRITING STATE TRIE NODE]",
                 );
-                prepared_nodes.push((node_hash, node_data));
+                state_trie_updates.push((node_hash, node_data));
             }
-            storage_updates_by_address.insert(hashed_address, prepared_nodes);
 
-            storage_invalidations_by_address.insert(hashed_address, invalid_nodes);
-        }
+            let mut storage_updates_by_address: HashMap<H256, Vec<(NodeHash, Vec<u8>)>> =
+                HashMap::new();
+            let mut storage_invalidations_by_address: HashMap<H256, Vec<H256>> = HashMap::new();
 
-        let account_logs: Vec<_> = update_batch
-            .account_info_log_updates
-            .iter()
-            .cloned()
-            .map(|(addr, old_info, new_info)| AccountInfoLogEntry {
-                address: addr.0,
-                info: new_info,
-                previous_info: old_info,
-            })
-            .collect();
+            for (hashed_address, nodes, invalid_nodes) in update_batch.storage_updates {
+                let mut prepared_nodes = Vec::new();
+                for (node_hash, node_data) in nodes {
+                    tracing::debug!(
+                        hashed_address = hex::encode(hashed_address.0),
+                        node_hash = hex::encode(node_hash),
+                        parent_block_number = parent_block.block_number,
+                        parent_block_hash = hex::encode(parent_block.block_hash),
+                        final_block_number = final_block.block_number,
+                        final_block_hash = hex::encode(final_block.block_hash),
+                        "[WRITING STORAGE TRIE NODE]",
+                    );
+                    prepared_nodes.push((node_hash, node_data));
+                }
+                storage_updates_by_address.insert(hashed_address, prepared_nodes);
 
-        let storage_logs: Vec<_> = update_batch.storage_log_updates.to_vec();
+                storage_invalidations_by_address.insert(hashed_address, invalid_nodes);
+            }
 
-        {
-            let mut store = self.inner()?;
+            let account_logs: Vec<_> = update_batch
+                .account_info_log_updates
+                .iter()
+                .cloned()
+                .map(|(addr, old_info, new_info)| AccountInfoLogEntry {
+                    address: addr.0,
+                    info: new_info,
+                    previous_info: old_info,
+                })
+                .collect();
+
+            let storage_logs: Vec<_> = update_batch.storage_log_updates.to_vec();
 
             // Account info logs
             for log in account_logs {
@@ -275,12 +271,6 @@ impl StoreEngine for Store {
                     .or_default()
                     .insert(node_hash.0);
             }
-
-            // Code updates
-            for (hashed_address, code) in update_batch.code_updates {
-                store.account_codes.insert(hashed_address, code);
-            }
-
             // Process storage trie ref counts first
             for (hashed_address, prepared_nodes) in &storage_updates_by_address {
                 for (node_hash, _) in prepared_nodes {
@@ -323,35 +313,65 @@ impl StoreEngine for Store {
                         .insert((key_address, NodeHash::Hashed(node_hash)));
                 }
             }
+        } else {
+            // In case that we are in a reconstruct scenario (L2), we need to update the state and storage tries
+            {
+                let mut state_trie_store = store
+                    .state_trie_nodes
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
 
-            // Block storage
-            for block in update_batch.blocks {
-                let number = block.header.number;
-                let hash = block.hash();
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    store
-                        .transaction_locations
-                        .entry(transaction.compute_hash())
-                        .or_default()
-                        .push((number, hash, index as u64));
+                for (node_hash, node_data) in update_batch.account_updates {
+                    state_trie_store.insert(node_hash, node_data);
                 }
-                store.bodies.insert(hash, block.body);
-                store.headers.insert(hash, block.header);
-                store.block_numbers.insert(hash, number);
             }
 
-            // Receipts
-            for (block_hash, receipts) in update_batch.receipts {
-                for (index, receipt) in receipts.into_iter().enumerate() {
-                    store
-                        .receipts
-                        .entry(block_hash)
-                        .or_default()
-                        .insert(index as u64, receipt);
+            for (hashed_address, nodes, _invalidated_nodes) in update_batch.storage_updates {
+                let mut addr_store = store
+                    .storage_trie_nodes
+                    .entry(hashed_address)
+                    .or_default()
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
+                for (node_hash, node_data) in nodes {
+                    addr_store.insert(node_hash, node_data);
                 }
             }
         }
+
+        // Code updates
+        for (hashed_address, code) in update_batch.code_updates {
+            store.account_codes.insert(hashed_address, code);
+        }
+
+        // Block storage
+        for block in update_batch.blocks {
+            let number = block.header.number;
+            let hash = block.hash();
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                store
+                    .transaction_locations
+                    .entry(transaction.compute_hash())
+                    .or_default()
+                    .push((number, hash, index as u64));
+            }
+            store.bodies.insert(hash, block.body);
+            store.headers.insert(hash, block.header);
+            store.block_numbers.insert(hash, number);
+        }
+
+        // Receipts
+        for (block_hash, receipts) in update_batch.receipts {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                store
+                    .receipts
+                    .entry(block_hash)
+                    .or_default()
+                    .insert(index as u64, receipt);
+            }
+        }
+
         Ok(())
     }
 
