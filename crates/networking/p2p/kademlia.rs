@@ -392,15 +392,14 @@ impl KademliaTable {
                     .any(|cap| peer.supported_capabilities.contains(cap))
         };
         let filtered_peers: Vec<&PeerData> = self.filter_peers(&filter).collect();
-        let peer_channels = filtered_peers
+        filtered_peers
             .iter()
             .filter_map(|peer| {
                 peer.channels
                     .clone()
                     .map(|channel| (peer.node.node_id(), channel))
             })
-            .collect();
-        peer_channels
+            .collect()
     }
 }
 
