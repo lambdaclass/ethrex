@@ -14,7 +14,7 @@ use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    calldata::encode_calldata, deploy_contract, deploy_with_proxy, deploy_with_proxy_from_bytecode,
+    calldata::encode_calldata, deploy_contract_from_bytecode, deploy_with_proxy_from_bytecode,
     get_address_from_secret_key, initialize_contract,
 };
 use ethrex_rpc::{
@@ -158,10 +158,10 @@ async fn deploy_contracts(
 
     info!("Deploying CommonBridge");
 
-    let bridge_deployment = deploy_with_proxy(
+    let bridge_deployment = deploy_with_proxy_from_bytecode(
         opts.private_key,
         eth_client,
-        &opts.contracts_path.join("solc_out/CommonBridge.bin"),
+        COMMON_BRIDGE_BYTECODE,
         &salt,
     )
     .await?;
@@ -177,10 +177,10 @@ async fn deploy_contracts(
     let sequencer_registry_deployment = if opts.deploy_based_contracts {
         info!("Deploying SequencerRegistry");
 
-        let sequencer_registry_deployment = deploy_with_proxy(
+        let sequencer_registry_deployment = deploy_with_proxy_from_bytecode(
             opts.private_key,
             eth_client,
-            &opts.contracts_path.join("solc_out/SequencerRegistry.bin"),
+            SEQUENCER_REGISTRY_BYTECODE,
             &salt,
         )
         .await?;
@@ -199,9 +199,9 @@ async fn deploy_contracts(
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
-        let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
+        let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract_from_bytecode(
             &[],
-            &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
+            SP1_VERIFIER_BYTECODE,
             &opts.private_key,
             &salt,
             eth_client,

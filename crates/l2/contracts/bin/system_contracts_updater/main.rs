@@ -71,7 +71,6 @@ fn add_with_proxy(
         },
     );
 
-    let proxy_code = std::fs::read("contracts/solc_out/UpgradeableSystemContract.bin-runtime")?;
     let mut storage = HashMap::new();
     storage.insert(
         get_erc1967_slot("eip1967.proxy.implementation"),
@@ -84,7 +83,7 @@ fn add_with_proxy(
     genesis.alloc.insert(
         address,
         GenesisAccount {
-            code: Bytes::from(hex::decode(proxy_code)?),
+            code: Bytes::from(L2_UPGRADEABLE_RUNTIME),
             storage,
             balance: U256::zero(),
             nonce: 1,
@@ -100,14 +99,16 @@ fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsU
         ),
     )?);
 
-    let l2_bridge_runtime = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
-    add_with_proxy(&mut genesis, COMMON_BRIDGE_L2_ADDRESS, l2_bridge_runtime)?;
+    add_with_proxy(
+        &mut genesis,
+        COMMON_BRIDGE_L2_ADDRESS,
+        COMMON_BRIDGE_L2_RUNTIME.to_vec(),
+    )?;
 
-    let l1_messenger_runtime = std::fs::read("contracts/solc_out/L2ToL1Messenger.bin-runtime")?;
     add_with_proxy(
         &mut genesis,
         L2_TO_L1_MESSENGER_ADDRESS,
-        l1_messenger_runtime,
+        L2_TO_L1_MESSENGER_RUNTIME.to_vec(),
     )?;
 
     write_genesis_as_json(genesis, Path::new(l2_genesis_path)).map_err(std::io::Error::other)?;

@@ -7,7 +7,6 @@ use std::{env, fs, path::Path};
 fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let output_contracts_path = Path::new(&out_dir).join("contracts");
-    let contracts_path = Path::new("../../crates/l2/contracts/src");
 
     download_contract_deps(&output_contracts_path);
 
@@ -48,28 +47,16 @@ fn main() {
 
     // L1 contracts
     let l1_contracts = [
-        (
-            &contracts_path.join("src/l1/OnChainProposer.sol"),
-            "OnChainProposer",
-        ),
-        (
-            &contracts_path.join("src/l1/CommonBridge.sol"),
-            "CommonBridge",
-        ),
+        (&Path::new("src/l1/OnChainProposer.sol"), "OnChainProposer"),
+        (&Path::new("src/l1/CommonBridge.sol"), "CommonBridge"),
     ];
     for (path, name) in l1_contracts {
         compile_contract(&output_contracts_path, path, name, false, Some(&remappings));
     }
     // L2 contracts
     let l2_contracts = [
-        (
-            &contracts_path.join("src/l2/CommonBridgeL2.sol"),
-            "CommonBridgeL2",
-        ),
-        (
-            &contracts_path.join("src/l2/L2ToL1Messenger.sol"),
-            "L2ToL1Messenger",
-        ),
+        (&Path::new("src/l2/CommonBridgeL2.sol"), "CommonBridgeL2"),
+        (&Path::new("src/l2/L2ToL1Messenger.sol"), "L2ToL1Messenger"),
     ];
     for (path, name) in l2_contracts {
         compile_contract(&output_contracts_path, path, name, true, Some(&remappings));
@@ -77,7 +64,7 @@ fn main() {
 
     compile_contract(
         &output_contracts_path,
-        &contracts_path.join("src/l2/L2Upgradeable.sol"),
+        Path::new("src/l2/L2Upgradeable.sol"),
         "UpgradeableSystemContract",
         true,
         Some(&remappings),
@@ -86,14 +73,14 @@ fn main() {
     // Based contracts
     compile_contract(
         &output_contracts_path,
-        &contracts_path.join("src/l1/based/SequencerRegistry.sol"),
+        Path::new("src/l1/based/SequencerRegistry.sol"),
         "SequencerRegistry",
         false,
         Some(&remappings),
     );
     ethrex_l2_sdk::compile_contract(
         &output_contracts_path,
-        &contracts_path.join("src/l1/based/OnChainProposer.sol"),
+        Path::new("src/l1/based/OnChainProposer.sol"),
         false,
         Some(&remappings),
     )

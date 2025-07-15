@@ -2,6 +2,7 @@
 name = "ethrex_l2-contracts"
 version = "0.1.0"
 edition = "2024"
+build = "bin/build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -44,3 +45,7 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+
+[build-dependencies]
+ethrex-sdk = { path = "../../l2/sdk" }
+hex.workspace = true
