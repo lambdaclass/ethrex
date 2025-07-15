@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, NodeRef, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
@@ -316,7 +316,7 @@ impl Syncer {
                     let block_number = block.header.number;
                     info!("Executing block: {block_number}");
 
-                    // TODO: The following code block is for debugging purposes only, please remove 
+                    // TODO: The following code block is for debugging purposes only, please remove
                     {
                         // Check if we have the parent
                         let parent_block = store
@@ -790,22 +790,31 @@ impl Syncer {
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state
+/// Receives the account hash if the node is a storage node or None if it is a state node
 fn node_missing_children(
     node: &Node,
     parent_path: &Nibbles,
-    trie_state: &dyn TrieDB,
-) -> Result<Vec<Nibbles>, TrieError> {
+    store: &Store,
+    account_hash: Option<H256>,
+) -> Result<Vec<Nibbles>, StoreError> {
+    let contains_node = |child: &NodeRef| -> Result<bool, StoreError> {
+        if let Some(account_hash) = account_hash {
+            store.contains_storage_node(account_hash, child.compute_hash().finalize())
+        } else {
+            store.contains_state_node(child.compute_hash().finalize())
+        }
+    };
     let mut paths = Vec::new();
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
+                if child.is_valid() && contains_node(child)? {
                     paths.push(parent_path.append_new(index as u8));
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
+            if node.child.is_valid() && contains_node(&node.child)? {
                 paths.push(parent_path.concat(node.prefix.clone()));
             }
         }
