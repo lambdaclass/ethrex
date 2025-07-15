@@ -12,7 +12,7 @@ use std::{collections::HashMap, u64};
 
 #[derive(Deserialize, Debug, Default)]
 #[serde(default)]
-pub struct ExecutionInput {
+pub struct RunnerInput {
     pub fork: Fork,
     pub transaction: BenchTransaction,
     pub pre: HashMap<Address, BenchAccount>,

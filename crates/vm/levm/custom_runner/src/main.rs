@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use clap::Parser;
-use custom_runner::benchmark::{BenchAccount, BenchTransaction, ExecutionInput};
+use custom_runner::benchmark::{BenchAccount, BenchTransaction, RunnerInput};
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -42,16 +42,16 @@ fn main() {
     }
 
     // Mutable just to assign the code to the transaction if necessary
-    let mut benchmark: ExecutionInput = if let Some(input_file_path) = cli.input {
+    let mut runner_input: RunnerInput = if let Some(input_file_path) = cli.input {
         let input_file = File::open(&input_file_path)
             .unwrap_or_else(|_| panic!("Input file '{}' not found", input_file_path));
         let reader = BufReader::new(input_file);
         serde_json::from_reader(reader).expect("Failed to parse input file")
     } else {
-        ExecutionInput::default()
+        RunnerInput::default()
     };
 
-    // Code can be implicitely provided in the input so we don't have this as requirement.
+    // Code can be implicitely provided in the `pre` of the runner input so we don't have this as requirement.
     let code: Option<Bytes> = if let Some(code_file_path) = cli.code {
         let code = fs::read_to_string(&code_file_path)
             .expect("Failed to read bytecode file")
@@ -69,17 +69,20 @@ fn main() {
     // Now we want to initialize the VM, so we set up the environment and database.
     // Env
     let env = Environment {
-        origin: benchmark.transaction.sender,
-        gas_limit: benchmark.transaction.gas_limit,
-        gas_price: benchmark.transaction.gas_price,
+        origin: runner_input.transaction.sender,
+        gas_limit: runner_input.transaction.gas_limit,
+        gas_price: runner_input.transaction.gas_price,
         block_gas_limit: u64::MAX,
-        config: EVMConfig::new(benchmark.fork, EVMConfig::canonical_values(benchmark.fork)),
+        config: EVMConfig::new(
+            runner_input.fork,
+            EVMConfig::canonical_values(runner_input.fork),
+        ),
         coinbase: COINBASE,
         ..Default::default()
     };
 
     // DB
-    let initial_state = setup_initial_state(&mut benchmark, code);
+    let initial_state = setup_initial_state(&mut runner_input, code);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
     let mut db = GeneralizedDatabase::new(Arc::new(store), initial_state);
@@ -88,20 +91,23 @@ fn main() {
     let mut vm = VM::new(
         env,
         &mut db,
-        &Transaction::LegacyTransaction(LegacyTransaction::from(benchmark.transaction.clone())),
+        &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
         LevmCallTracer::disabled(),
         VMType::L1,
     )
     .expect("Failed to initialize VM");
 
     // Set initial stack and memory
-    println!("Setting initial stack: {:?}", benchmark.initial_stack);
+    println!("Setting initial stack: {:?}", runner_input.initial_stack);
     let stack = &mut vm.current_call_frame_mut().unwrap().stack;
-    for elem in benchmark.initial_stack {
+    for elem in runner_input.initial_stack {
         stack.push(&[elem]).expect("Stack Overflow");
     }
-    println!("Setting initial memory: 0x{:x}", benchmark.initial_memory);
-    vm.current_call_frame_mut().unwrap().memory = benchmark.initial_memory.into();
+    println!(
+        "Setting initial memory: 0x{:x}",
+        runner_input.initial_memory
+    );
+    vm.current_call_frame_mut().unwrap().memory = runner_input.initial_memory.into();
 
     // Execute Transaction
     let result = vm.execute();
@@ -117,9 +123,10 @@ fn main() {
     let callframe = vm.pop_call_frame().unwrap();
     println!(
         "Final Stack (bottom to top): {:?}",
-        &callframe.stack.values[callframe.stack.offset - 1..]
+        &callframe.stack.values[callframe.stack.offset..]
             .iter()
             .rev()
+            .map(|value| format!("0x{:x}", value))
             .collect::<Vec<_>>()
     );
     println!("Final Memory: 0x{}", hex::encode(callframe.memory));
@@ -128,7 +135,7 @@ fn main() {
     compare_initial_and_current_accounts(
         db.initial_accounts_state,
         db.current_accounts_state,
-        &benchmark.transaction,
+        &runner_input.transaction,
     );
 }
 
@@ -196,15 +203,15 @@ fn compare_initial_and_current_accounts(
 ///   - Call to a contract: Sets contract's code
 ///   - Create contract: Code becomes transaction calldata
 fn setup_initial_state(
-    benchmark: &mut ExecutionInput,
+    runner_input: &mut RunnerInput,
     bytecode: Option<Bytes>,
 ) -> HashMap<Address, Account> {
     // Default state has sender with some balance to send Tx, it can be overwritten though.
     let mut initial_state = HashMap::from([(
-        benchmark.transaction.sender,
+        runner_input.transaction.sender,
         Account::from(BenchAccount::default()),
     )]);
-    let benchmark_pre_state: HashMap<Address, Account> = benchmark
+    let benchmark_pre_state: HashMap<Address, Account> = runner_input
         .pre
         .iter()
         .map(|(addr, acc)| (addr.clone(), Account::from(acc.clone())))
@@ -212,13 +219,13 @@ fn setup_initial_state(
     initial_state.extend(benchmark_pre_state);
     // Contract bytecode or initcode
     if let Some(code) = bytecode {
-        if let Some(to) = benchmark.transaction.to {
+        if let Some(to) = runner_input.transaction.to {
             // Contract Bytecode, set code of recipient.
             let acc = initial_state.entry(to).or_default();
             acc.code = code;
         } else {
             // Initcode should be data of transaction
-            benchmark.transaction.data = code;
+            runner_input.transaction.data = code;
         }
     }
 
