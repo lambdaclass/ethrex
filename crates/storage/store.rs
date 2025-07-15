@@ -118,9 +118,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Starts the pruning task in the background. This task will run every 15 seconds
-    /// and prune the state and storage tries. The function will return a join handle
-    /// that can be used to wait for the task to finish.
+    /// /// Prune the state and storage trie from the pruning log
     pub fn prune_state_and_storage_log(
         &self,
         cancellation_token: CancellationToken,
