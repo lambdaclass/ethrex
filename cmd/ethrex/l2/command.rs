@@ -219,27 +219,19 @@ impl Command {
 
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
-                        info!("Server shut down started...");
-                        let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-                        info!("Storing config at {:?}...", node_config_path);
-                        cancel_token.cancel();
-                        let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-                        store_node_config_file(node_config, node_config_path).await;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
                         join_set.abort_all();
-                        info!("Server shutting down!");
                     }
                     _ = join_set.join_next() => {
-                        info!("Server shut down started...");
-                        let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-                        info!("Storing config at {:?}...", node_config_path);
-                        cancel_token.cancel();
-                        let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-                        store_node_config_file(node_config, node_config_path).await;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        info!("Server shutting down!");
                     }
                 }
+                info!("Server shut down started...");
+                let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+                info!("Storing config at {:?}...", node_config_path);
+                cancel_token.cancel();
+                let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+                store_node_config_file(node_config, node_config_path).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                info!("Server shutting down!");
             }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
