@@ -111,7 +111,7 @@ impl PeerHandler {
         None
     }
 
-    /// Returns all the peer channels that support the given capability.
+    /// Returns a vector containing the node id and channels for all the peers that support the given capability.
     async fn get_all_peer_channels(
         &self,
         capabilities: &[Capability],
