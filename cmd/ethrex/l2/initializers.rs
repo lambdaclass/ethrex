@@ -4,12 +4,11 @@ use std::sync::Arc;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
 use ethrex_p2p::kademlia::Kademlia;
-// use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::peer_handler::PeerHandler;
 // use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::warn;
@@ -35,7 +34,7 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
 ) {
-    // let peer_handler = PeerHandler::new(peer_table);
+    let peer_handler = PeerHandler::new(peer_table);
 
     // // Create SyncManager
     // let syncer = SyncManager::new(
@@ -56,7 +55,7 @@ pub async fn init_rpc_api(
         local_p2p_node,
         local_node_record,
         // syncer,
-        // peer_handler,
+        peer_handler,
         get_client_version(),
         get_valid_delegation_addresses(l2_opts),
         l2_opts.sponsor_private_key,

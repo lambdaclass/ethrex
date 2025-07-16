@@ -8,8 +8,7 @@ use ethrex_common::types::{ForkId, Genesis};
 use ethrex_p2p::{
     kademlia::Kademlia,
     network::P2PContext,
-    // network::public_key_from_signing_key,
-    // peer_handler::PeerHandler,
+    peer_handler::PeerHandler,
     // sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -111,7 +110,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
 ) {
-    // let peer_handler = PeerHandler::new(peer_table);
+    let peer_handler = PeerHandler::new(peer_table);
 
     // // Create SyncManager
     // let syncer = SyncManager::new(
@@ -132,7 +131,7 @@ pub async fn init_rpc_api(
         local_p2p_node,
         local_node_record,
         // syncer,
-        // peer_handler,
+        peer_handler,
         get_client_version(),
     );
 

@@ -1,7 +1,7 @@
 use std::{fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
-use ethrex_common::{H256, H512, types::ForkId};
-use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
+use ethrex_common::{H256, types::ForkId};
+use k256::{ecdsa::SigningKey,};
 use rand::rngs::OsRng;
 use spawned_concurrency::{
     messages::Unused,

@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    sync::Arc,
     time::Duration,
 };
 
@@ -12,10 +11,9 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use tokio::sync::Mutex;
 
 use crate::{
-    kademlia::{KademliaTable, PeerChannels, PeerData},
+    kademlia::{Kademlia, PeerChannels, PeerData},
     rlpx::{
         connection::server::CastMessage,
         eth::{
@@ -48,10 +46,10 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 // increasing them may be the cause of peers disconnection
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
-/// An abstraction over the [KademliaTable] containing logic to make requests to peers
+/// An abstraction over the [Kademlia] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
 }
 
 pub enum BlockRequestOrder {
@@ -60,14 +58,14 @@ pub enum BlockRequestOrder {
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: Arc<Mutex<KademliaTable>>) -> PeerHandler {
+    pub fn new(peer_table: Kademlia) -> PeerHandler {
         Self { peer_table }
     }
 
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
     /// This should only be used in tests as it won't be able to interact with the node's connected peers
     pub fn dummy() -> PeerHandler {
-        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
+        let dummy_peer_table = Kademlia::new();
         PeerHandler::new(dummy_peer_table)
     }
 
@@ -89,24 +87,18 @@ impl PeerHandler {
 
     /// Helper method to record successful peer response
     async fn record_peer_success(&self, peer_id: H256) {
-        if let Ok(mut table) = self.peer_table.try_lock() {
-            table.reward_peer(peer_id);
-        }
+        // self.peer_table.reward_peer(peer_id);
     }
 
     /// Helper method to record failed peer response
     async fn record_peer_failure(&self, peer_id: H256) {
-        if let Ok(mut table) = self.peer_table.try_lock() {
-            table.penalize_peer(peer_id);
-        }
+        // self.peer_table.penalize_peer(peer_id);
     }
 
     /// Helper method to record critical peer failure
     /// This is used when the peer returns invalid data or is otherwise unreliable
     async fn record_peer_critical_failure(&self, peer_id: H256) {
-        if let Ok(mut table) = self.peer_table.try_lock() {
-            table.critically_penalize_peer(peer_id);
-        }
+        // self.peer_table.critically_penalize_peer(peer_id);
     }
 
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
@@ -116,18 +108,11 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
-        for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
-            let table = self.peer_table.lock().await;
-            if let Some((id, channels)) = table.get_peer_channels(capabilities) {
-                return Some((id, channels));
-            };
-            // drop the lock early to no block the rest of processes
-            drop(table);
-            info!("[Sync] No peers available, retrying in 10 sec");
-            // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-        }
-        None
+        self.peer_table
+            .get_peer_channels(capabilities)
+            .await
+            .first()
+            .cloned()
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -847,26 +832,24 @@ impl PeerHandler {
     }
 
     /// Returns the PeerData for each connected Peer
-    /// Returns None if it fails to aquire the lock on the kademlia table
-    pub fn read_connected_peers(&self) -> Option<Vec<PeerData>> {
-        Some(
-            self.peer_table
-                .try_lock()
-                .ok()?
-                .filter_peers(&|peer| peer.is_connected)
-                .cloned()
-                .collect::<Vec<_>>(),
-        )
+    pub async fn read_connected_peers(&self) -> Vec<PeerData> {
+        self.peer_table
+            .peers
+            .lock()
+            .await
+            .iter()
+            .map(|(_, peer)| peer)
+            .cloned()
+            .collect()
     }
 
     pub async fn count_total_peers(&self) -> usize {
-        self.peer_table.lock().await.iter_peers().count()
+        self.peer_table.peers.lock().await.len()
     }
 
     pub async fn remove_peer(&self, peer_id: H256) {
-        debug!("Removing peer with id {:?}", peer_id);
-        let mut table = self.peer_table.lock().await;
-        table.replace_peer(peer_id);
+        // debug!("Removing peer with id {:?}", peer_id);
+        // self.peer_table.replace_peer(peer_id);
     }
 }
 

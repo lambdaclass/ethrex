@@ -6,3 +6,5 @@ pub mod message;
 pub mod p2p;
 pub mod snap;
 pub mod utils;
+
+pub use message::Message;

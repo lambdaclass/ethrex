@@ -2,6 +2,11 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
+use crate::rlpx::snap::{
+    AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
+    StorageRanges, TrieNodes,
+};
+
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
 use super::eth::status::StatusMessage;
@@ -28,7 +33,7 @@ pub trait RLPxMessage: Sized {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
 }
 #[derive(Debug, Clone)]
-pub(crate) enum Message {
+pub enum Message {
     Hello(HelloMessage),
     Disconnect(DisconnectMessage),
     Ping(PingMessage),
@@ -49,14 +54,14 @@ pub(crate) enum Message {
     BlockRangeUpdate(BlockRangeUpdate),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
-    // GetAccountRange(GetAccountRange),
-    // AccountRange(AccountRange),
-    // GetStorageRanges(GetStorageRanges),
-    // StorageRanges(StorageRanges),
-    // GetByteCodes(GetByteCodes),
-    // ByteCodes(ByteCodes),
-    // GetTrieNodes(GetTrieNodes),
-    // TrieNodes(TrieNodes),
+    GetAccountRange(GetAccountRange),
+    AccountRange(AccountRange),
+    GetStorageRanges(GetStorageRanges),
+    StorageRanges(StorageRanges),
+    GetByteCodes(GetByteCodes),
+    ByteCodes(ByteCodes),
+    GetTrieNodes(GetTrieNodes),
+    TrieNodes(TrieNodes),
 }
 
 impl Message {
@@ -85,14 +90,14 @@ impl Message {
             Message::Receipts(_) => ETH_CAPABILITY_OFFSET + Receipts::CODE,
             Message::BlockRangeUpdate(_) => ETH_CAPABILITY_OFFSET + BlockRangeUpdate::CODE,
             // snap capability
-            // Message::GetAccountRange(_) => SNAP_CAPABILITY_OFFSET + GetAccountRange::CODE,
-            // Message::AccountRange(_) => SNAP_CAPABILITY_OFFSET + AccountRange::CODE,
-            // Message::GetStorageRanges(_) => SNAP_CAPABILITY_OFFSET + GetStorageRanges::CODE,
-            // Message::StorageRanges(_) => SNAP_CAPABILITY_OFFSET + StorageRanges::CODE,
-            // Message::GetByteCodes(_) => SNAP_CAPABILITY_OFFSET + GetByteCodes::CODE,
-            // Message::ByteCodes(_) => SNAP_CAPABILITY_OFFSET + ByteCodes::CODE,
-            // Message::GetTrieNodes(_) => SNAP_CAPABILITY_OFFSET + GetTrieNodes::CODE,
-            // Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
+            Message::GetAccountRange(_) => SNAP_CAPABILITY_OFFSET + GetAccountRange::CODE,
+            Message::AccountRange(_) => SNAP_CAPABILITY_OFFSET + AccountRange::CODE,
+            Message::GetStorageRanges(_) => SNAP_CAPABILITY_OFFSET + GetStorageRanges::CODE,
+            Message::StorageRanges(_) => SNAP_CAPABILITY_OFFSET + StorageRanges::CODE,
+            Message::GetByteCodes(_) => SNAP_CAPABILITY_OFFSET + GetByteCodes::CODE,
+            Message::ByteCodes(_) => SNAP_CAPABILITY_OFFSET + ByteCodes::CODE,
+            Message::GetTrieNodes(_) => SNAP_CAPABILITY_OFFSET + GetTrieNodes::CODE,
+            Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
         }
     }
     pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
@@ -136,18 +141,18 @@ impl Message {
         } else {
             // snap capability
             match msg_id - SNAP_CAPABILITY_OFFSET {
-                // GetAccountRange::CODE => {
-                //     return Ok(Message::GetAccountRange(GetAccountRange::decode(data)?));
-                // }
-                // AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
-                // GetStorageRanges::CODE => {
-                //     return Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?));
-                // }
-                // StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
-                // GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
-                // ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
-                // GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
-                // TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
+                GetAccountRange::CODE => {
+                    return Ok(Message::GetAccountRange(GetAccountRange::decode(data)?));
+                }
+                AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
+                GetStorageRanges::CODE => {
+                    return Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?));
+                }
+                StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
+                GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
+                ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
+                GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
+                TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
         }
@@ -172,14 +177,14 @@ impl Message {
             Message::GetReceipts(msg) => msg.encode(buf),
             Message::Receipts(msg) => msg.encode(buf),
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
-            // Message::GetAccountRange(msg) => msg.encode(buf),
-            // Message::AccountRange(msg) => msg.encode(buf),
-            // Message::GetStorageRanges(msg) => msg.encode(buf),
-            // Message::StorageRanges(msg) => msg.encode(buf),
-            // Message::GetByteCodes(msg) => msg.encode(buf),
-            // Message::ByteCodes(msg) => msg.encode(buf),
-            // Message::GetTrieNodes(msg) => msg.encode(buf),
-            // Message::TrieNodes(msg) => msg.encode(buf),
+            Message::GetAccountRange(msg) => msg.encode(buf),
+            Message::AccountRange(msg) => msg.encode(buf),
+            Message::GetStorageRanges(msg) => msg.encode(buf),
+            Message::StorageRanges(msg) => msg.encode(buf),
+            Message::GetByteCodes(msg) => msg.encode(buf),
+            Message::ByteCodes(msg) => msg.encode(buf),
+            Message::GetTrieNodes(msg) => msg.encode(buf),
+            Message::TrieNodes(msg) => msg.encode(buf),
         }
     }
 }
@@ -203,14 +208,14 @@ impl Display for Message {
             Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
             Message::Receipts(_) => "eth:Receipts".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
-            // Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
-            // Message::AccountRange(_) => "snap:AccountRange".fmt(f),
-            // Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),
-            // Message::StorageRanges(_) => "snap:StorageRanges".fmt(f),
-            // Message::GetByteCodes(_) => "snap:GetByteCodes".fmt(f),
-            // Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
-            // Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
-            // Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
+            Message::AccountRange(_) => "snap:AccountRange".fmt(f),
+            Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),
+            Message::StorageRanges(_) => "snap:StorageRanges".fmt(f),
+            Message::GetByteCodes(_) => "snap:GetByteCodes".fmt(f),
+            Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
+            Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
+            Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
         }
     }
 }

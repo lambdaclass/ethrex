@@ -1,14 +1,16 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     sync::Arc,
 };
 
 use ethrex_common::H256;
+use spawned_concurrency::tasks::GenServerHandle;
+use spawned_rt::tasks::mpsc;
 use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::{
-    rlpx::p2p::Capability,
+    rlpx::{self, connection::server::RLPxConnection, p2p::Capability},
     types::{Node, NodeRecord},
 };
 
@@ -36,11 +38,13 @@ impl From<Node> for Contact {
 #[derive(Debug, Clone)]
 pub struct PeerData {
     pub node: Node,
-    pub record: NodeRecord,
+    pub record: Option<NodeRecord>,
     pub supported_capabilities: Vec<Capability>,
     /// Set to true if the connection is inbound (aka the connection was started by the peer and not by this node)
     /// It is only valid as long as is_connected is true
     pub is_connection_inbound: bool,
+    /// communication channels between the peer data and its active connection
+    pub channels: Option<PeerChannels>,
     // pub last_ping: u64,
     // pub last_pong: u64,
     // pub last_ping_hash: Option<H256>,
@@ -51,8 +55,6 @@ pub struct PeerData {
     // pub liveness: u16,
     // /// if a revalidation was sent to the peer, the bool marks if it has answered
     // pub revalidation: Option<bool>,
-    // /// communication channels between the peer data and its active connection
-    // pub channels: Option<PeerChannels>,
     // /// Starts as false when a node is added. Set to true when a connection becomes active. When a
     // /// connection fails, the peer record is removed, so no need to set it to false.
     // pub is_connected: bool,
@@ -61,20 +63,45 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new(node: Node, record: NodeRecord) -> Self {
+    pub fn new(node: Node, record: Option<NodeRecord>) -> Self {
         Self {
             node,
             record,
             supported_capabilities: Vec::new(),
             is_connection_inbound: false,
+            channels: None,
         }
     }
 }
 
 #[derive(Debug, Clone)]
+/// Holds the respective sender and receiver ends of the communication channels between the peer data and its active connection
+pub struct PeerChannels {
+    pub connection: GenServerHandle<RLPxConnection>,
+    pub receiver: Arc<Mutex<mpsc::Receiver<rlpx::Message>>>,
+}
+
+impl PeerChannels {
+    /// Sets up the communication channels for the peer
+    /// Returns the channel endpoints to send to the active connection's listen loop
+    pub(crate) fn create(
+        connection: GenServerHandle<RLPxConnection>,
+    ) -> (Self, mpsc::Sender<rlpx::Message>) {
+        let (connection_sender, receiver) = mpsc::channel::<rlpx::Message>();
+        (
+            Self {
+                connection,
+                receiver: Arc::new(Mutex::new(receiver)),
+            },
+            connection_sender,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Kademlia {
-    pub table: Arc<Mutex<HashMap<H256, Contact>>>,
-    pub peers: Arc<Mutex<HashSet<H256>>>,
+    pub table: Arc<Mutex<BTreeMap<H256, Contact>>>,
+    pub peers: Arc<Mutex<BTreeMap<H256, PeerData>>>,
     pub already_tried_peers: Arc<Mutex<HashSet<H256>>>,
     pub discarded_contacts: Arc<Mutex<HashSet<H256>>>,
     pub discovered_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
@@ -85,32 +112,45 @@ impl Kademlia {
         Self::default()
     }
 
-    pub async fn number_of_contacts(&self) -> u64 {
-        let contacts = self.table.lock().await;
-        contacts.len() as u64
-    }
-
-    pub async fn number_of_peers(&self) -> u64 {
-        let peers = self.peers.lock().await;
-        peers.len() as u64
-    }
-
-    pub async fn number_of_tried_peers(&self) -> u64 {
-        let peers = self.already_tried_peers.lock().await;
-        peers.len() as u64
-    }
-
-    pub async fn set_connected_peer(&mut self, node_id: H256) {
+    pub async fn set_connected_peer(&mut self, node: Node) {
         info!("New peer connected");
-        self.peers.lock().await.insert(node_id);
+
+        let new_peer_id = node.node_id();
+
+        let new_peer = PeerData::new(node, None);
+
+        self.peers.lock().await.insert(new_peer_id, new_peer);
+    }
+
+    pub async fn get_peer_channels(
+        &self,
+        capabilities: &[Capability],
+    ) -> Vec<(H256, PeerChannels)> {
+        self.peers
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(node_id, peer_data)| {
+                if peer_data
+                    .supported_capabilities
+                    .iter()
+                    .any(|cap| capabilities.contains(cap))
+                {
+                    let channels = peer_data.channels.clone()?;
+                    Some((*node_id, channels))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 
 impl Default for Kademlia {
     fn default() -> Self {
         Self {
-            table: Arc::new(Mutex::new(HashMap::new())),
-            peers: Arc::new(Mutex::new(HashSet::default())),
+            table: Arc::new(Mutex::new(BTreeMap::new())),
+            peers: Arc::new(Mutex::new(BTreeMap::new())),
             already_tried_peers: Arc::new(Mutex::new(HashSet::new())),
             discarded_contacts: Arc::new(Mutex::new(HashSet::new())),
             discovered_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, hash_map::Entry},
+    collections::{HashSet, btree_map::Entry},
     fs::read_to_string,
     net::SocketAddr,
     str::FromStr,
@@ -383,7 +383,7 @@ impl ConnectionHandlerInMessage {
                 sender_public_key: packet.get_public_key(),
             },
             Message::ENRRequest(msg) => Self::ENRRequest {
-                message: msg.clone(),
+                message: *msg,
                 from,
                 hash: packet.get_hash(),
                 sender_public_key: packet.get_public_key(),

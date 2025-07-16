@@ -6,7 +6,7 @@ use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
-// use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::peer_handler::PeerHandler;
 // use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -71,7 +71,7 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     // syncer: SyncManager,
-    // peer_handler: PeerHandler,
+    peer_handler: PeerHandler,
     client_version: String,
     valid_delegation_addresses: Vec<Address>,
     sponsor_pk: SecretKey,
@@ -86,7 +86,7 @@ pub async fn start_api(
             blockchain,
             active_filters: active_filters.clone(),
             // syncer: Arc::new(syncer),
-            // peer_handler,
+            peer_handler,
             node_data: NodeData {
                 jwt_secret,
                 local_p2p_node,

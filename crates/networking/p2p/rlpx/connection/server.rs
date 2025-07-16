@@ -361,7 +361,7 @@ where
     //     );
     // }
     init_capabilities(state, &mut stream).await?;
-    state.table.set_connected_peer(state.node.node_id()).await;
+    state.table.set_connected_peer(state.node.clone()).await;
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
@@ -520,7 +520,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &RL
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
     if !matches!(error, RLPxError::DisconnectReceived(_)) {
-        send_disconnect_message(state, match_disconnect_reason(&error)).await;
+        send_disconnect_message(state, match_disconnect_reason(error)).await;
     }
 
     // Discard peer from kademlia table in some cases
