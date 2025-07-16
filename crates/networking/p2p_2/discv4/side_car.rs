@@ -37,8 +37,14 @@ pub struct DiscoverySideCarState {
     udp_socket: Arc<UdpSocket>,
 
     revalidation_period: Duration,
+    /// The initial interval between peer lookups, until the number of contacts
+    /// reaches [target_contacts](DiscoverySideCarState::target_contacts).
+    initial_lookup_period: Duration,
     lookup_period: Duration,
     prune_period: Duration,
+
+    /// The target number of contacts to maintain in the Kademlia table.
+    target_contacts: usize,
 
     kademlia: Kademlia,
 }
@@ -72,9 +78,12 @@ impl DiscoverySideCarState {
             udp_socket,
             kademlia,
 
-            revalidation_period: Duration::from_secs(5),
-            lookup_period: Duration::from_secs(5),
+            revalidation_period: Duration::from_secs(12 * 60 * 60), // 12 hours
+            initial_lookup_period: Duration::from_secs(5),
+            lookup_period: Duration::from_secs(5 * 60), // 5 minutes
             prune_period: Duration::from_secs(5),
+
+            target_contacts: 50_000,
         }
     }
 
@@ -229,7 +238,8 @@ impl GenServer for DiscoverySideCar {
 
                 lookup(&state).await;
 
-                send_after(state.lookup_period, handle.clone(), Self::CastMsg::Lookup);
+                let period = get_lookup_period(&state).await;
+                send_after(period, handle.clone(), Self::CastMsg::Lookup);
 
                 CastResponse::NoReply(state)
             }
@@ -243,6 +253,14 @@ impl GenServer for DiscoverySideCar {
                 CastResponse::NoReply(state)
             }
         }
+    }
+}
+
+async fn get_lookup_period(state: &DiscoverySideCarState) -> Duration {
+    if state.kademlia.table.lock().await.len() < state.target_contacts {
+        state.initial_lookup_period
+    } else {
+        state.lookup_period
     }
 }
 
