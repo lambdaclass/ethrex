@@ -152,6 +152,8 @@ mod tests {
 
     #[test]
     fn test_holesky_genesis_block_hash() {
+        // Values taken from the geth codebase:
+        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
         assert_genesis_hash(
             PublicNetwork::Holesky,
             "b5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4",
@@ -160,6 +162,8 @@ mod tests {
 
     #[test]
     fn test_sepolia_genesis_block_hash() {
+        // Values taken from the geth codebase:
+        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
         assert_genesis_hash(
             PublicNetwork::Sepolia,
             "25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9",
@@ -168,6 +172,8 @@ mod tests {
 
     #[test]
     fn test_hoodi_genesis_block_hash() {
+        // Values taken from the geth codebase:
+        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
         assert_genesis_hash(
             PublicNetwork::Hoodi,
             "bbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b",
@@ -176,6 +182,8 @@ mod tests {
 
     #[test]
     fn test_mainnet_genesis_block_hash() {
+        // Values taken from the geth codebase:
+        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
         assert_genesis_hash(
             PublicNetwork::Mainnet,
             "d4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",
