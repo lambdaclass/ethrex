@@ -389,7 +389,7 @@ impl Command {
                                 .await
                                 .expect("Error applying account updates");
 
-                            let (new_state_root, state_updates, accounts_updates) =
+                            let (new_state_root, state_updates, storage_updates) =
                                 (
                                     account_updates_list.state_trie_hash,
                                     account_updates_list.state_updates,
@@ -398,10 +398,8 @@ impl Command {
 
                             let pseudo_update_batch = UpdateBatch {
                                 account_updates: state_updates,
-                                storage_updates: accounts_updates,
-                                blocks: vec![],
-                                receipts: vec![],
-                                code_updates: vec![],
+                                storage_updates,
+                                ..Default::default()
                             };
 
                             store.store_block_updates(pseudo_update_batch).await.expect("Error storing trie updates");

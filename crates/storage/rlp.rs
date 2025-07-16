@@ -1,7 +1,14 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
+#[cfg(feature = "redb")]
+use crate::store_db::codec::{
+    account_info_log_entry::AccountInfoLogEntry, account_storage_log_entry::AccountStorageLogEntry,
+    block_num_hash::BlockNumHash,
+};
 use bytes::Bytes;
+#[cfg(feature = "redb")]
+use ethrex_common::{Address, U256, types::AccountInfo};
 use ethrex_common::{
     H256,
     types::{
@@ -23,6 +30,22 @@ pub type AccountCodeRLP = Rlp<Bytes>;
 pub type AccountHashRLP = Rlp<H256>;
 pub type AccountStateRLP = Rlp<AccountState>;
 pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
+
+// Snapshot state RLP types
+#[cfg(feature = "redb")]
+pub type AccountInfoLogEntryRLP = Rlp<AccountInfoLogEntry>;
+#[cfg(feature = "redb")]
+pub type AccountStorageLogEntryRLP = Rlp<AccountStorageLogEntry>;
+#[cfg(feature = "redb")]
+pub type BlockNumHashRLP = Rlp<BlockNumHash>;
+#[cfg(feature = "redb")]
+pub type AccountAddressRLP = Rlp<Address>;
+#[cfg(feature = "redb")]
+pub type AccountInfoRLP = Rlp<AccountInfo>;
+#[cfg(feature = "redb")]
+pub type AccountStorageKeyRLP = Rlp<H256>;
+#[cfg(feature = "redb")]
+pub type AccountStorageValueRLP = Rlp<U256>;
 
 // Block types
 pub type BlockHashRLP = Rlp<BlockHash>;

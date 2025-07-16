@@ -1,30 +1,33 @@
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
+use crate::error::StoreError;
 use crate::rlp::{
-    AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP, TriePathsRLP,
+    AccountAddressRLP, AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountInfoLogEntryRLP,
+    AccountInfoRLP, AccountStateRLP, AccountStorageKeyRLP, AccountStorageLogEntryRLP,
+    AccountStorageValueRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockNumHashRLP, BlockRLP,
+    PayloadBundleRLP, ReceiptRLP, Rlp, TransactionHashRLP, TriePathsRLP, TupleRLP,
 };
 use crate::store::MAX_SNAPSHOT_READS;
+use crate::store_db::codec::account_info_log_entry::AccountInfoLogEntry;
+use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
+use crate::store_db::codec::block_num_hash::BlockNumHash;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
-use crate::{
-    error::StoreError,
-    rlp::{
-        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
-        PayloadBundleRLP, ReceiptRLP, TupleRLP,
-    },
-};
-use ethrex_common::types::{AccountState, BlockBody};
+use ethrex_common::H160;
 use ethrex_common::{
-    H256, U256,
+    Address, H256, U256,
     types::{
-        Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-        payload::PayloadBundle,
+        AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, Index, Receipt, payload::PayloadBundle,
     },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
-use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
+use redb::{
+    AccessGuard, Database, Key, MultimapTableDefinition, ReadableMultimapTable, ReadableTable,
+    TableDefinition, TypeName, Value,
+};
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
@@ -67,6 +70,22 @@ const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32],
     MultimapTableDefinition::new("StorageSnapshotTable");
 const STORAGE_HEAL_PATHS_TABLE: TableDefinition<AccountHashRLP, TriePathsRLP> =
     TableDefinition::new("StorageHealPaths");
+const CURRENT_SNAPSHOT_BLOCK_TABLE: TableDefinition<(), BlockNumHashRLP> =
+    TableDefinition::new("CurrentSnapshotBlock");
+const ACCOUNT_INFO_TABLE: TableDefinition<AccountAddressRLP, AccountInfoRLP> =
+    TableDefinition::new("AccountInfo");
+const ACCOUNT_STORAGE_TABLE: TableDefinition<
+    (AccountAddressRLP, AccountStorageKeyRLP),
+    AccountStorageValueRLP,
+> = TableDefinition::new("AccountStorage");
+const ACCOUNTS_STATE_WRITE_LOG_TABLE: MultimapTableDefinition<
+    BlockNumHashRLP,
+    (BlockNumHashRLP, AccountInfoLogEntryRLP),
+> = MultimapTableDefinition::new("AccountsStateWriteLog");
+const ACCOUNTS_STORAGE_WRITE_LOG_TABLE: MultimapTableDefinition<
+    BlockNumHashRLP,
+    (BlockNumHashRLP, AccountStorageLogEntryRLP),
+> = MultimapTableDefinition::new("AccountsStorageWriteLog");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -301,22 +320,414 @@ impl RedBStore {
             .transpose()
             .map_err(StoreError::from)
     }
+
+    /// Process account info logs and revert changes to the account_info_table
+    fn process_account_info_logs(
+        &self,
+        state_logs_table: &redb::MultimapTable<
+            BlockNumHashRLP,
+            (BlockNumHashRLP, AccountInfoLogEntryRLP),
+        >,
+        account_info_table: &mut redb::Table<AccountAddressRLP, AccountInfoRLP>,
+        block_key: &BlockNumHashRLP,
+    ) -> Result<Option<BlockNumHash>, StoreError> {
+        let mut parent_block = None;
+
+        for log_entry in state_logs_table.get(block_key)? {
+            tracing::warn!("UNDO: found state log for {block_key:?}");
+            let value_guard = log_entry?;
+            let (parent_block_rlp, account_log_rlp) = value_guard.value();
+
+            let log: AccountInfoLogEntry = account_log_rlp.to()?;
+
+            // Revert account info to previous state
+            if log.previous_info == AccountInfo::default() {
+                account_info_table.remove(&log.address.into())?;
+            } else {
+                account_info_table.insert(&log.address.into(), &log.previous_info.into())?;
+            }
+
+            // All logs for the same block should have the same parent
+            parent_block = Some(parent_block_rlp.to()?);
+        }
+
+        Ok(parent_block)
+    }
+
+    /// Process storage logs and revert changes to the account_storage_table
+    fn process_storage_logs(
+        &self,
+        storage_logs_table: &redb::MultimapTable<
+            BlockNumHashRLP,
+            (BlockNumHashRLP, AccountStorageLogEntryRLP),
+        >,
+        account_storage_table: &mut redb::Table<
+            (AccountAddressRLP, AccountStorageKeyRLP),
+            AccountStorageValueRLP,
+        >,
+        block_key: &BlockNumHashRLP,
+    ) -> Result<Option<BlockNumHash>, StoreError> {
+        let mut parent_block = None;
+
+        for log_entry in storage_logs_table.get(block_key)? {
+            tracing::warn!("UNDO: found storage log for {block_key:?}");
+            let value_guard = log_entry?;
+            let (parent_block_rlp, storage_log_rlp) = value_guard.value();
+
+            let log: AccountStorageLogEntry = storage_log_rlp.to()?;
+
+            // Revert storage value to previous state
+            let storage_key = (log.address.into(), log.slot.into());
+            if log.old_value.is_zero() {
+                account_storage_table.remove(&storage_key)?;
+            } else {
+                account_storage_table.insert(&storage_key, &log.old_value.into())?;
+            }
+
+            // All logs for the same block should have the same parent
+            parent_block = Some(parent_block_rlp.to()?);
+        }
+
+        Ok(parent_block)
+    }
+
+    /// Process account info logs during replay and apply new state to account_info_table
+    fn replay_account_info_logs(
+        &self,
+        state_logs_table: &redb::MultimapTable<
+            BlockNumHashRLP,
+            (BlockNumHashRLP, AccountInfoLogEntryRLP),
+        >,
+        account_info_table: &mut redb::Table<AccountAddressRLP, AccountInfoRLP>,
+        block_key: &BlockNumHashRLP,
+        expected_parent: BlockNumHash,
+    ) -> Result<bool, StoreError> {
+        let mut logs_found = false;
+
+        for log_entry in state_logs_table.get(block_key)? {
+            let value_guard = log_entry?;
+            let (parent_block_rlp, account_log_rlp) = value_guard.value();
+
+            let parent_block: BlockNumHash = parent_block_rlp.to()?;
+
+            // Only process logs that match expected parent transition
+            if parent_block != expected_parent {
+                continue;
+            }
+
+            if !logs_found {
+                tracing::debug!("REPLAY: Found account info logs for block {:?}", block_key);
+                logs_found = true;
+            }
+
+            let log: AccountInfoLogEntry = account_log_rlp.to()?;
+
+            // Apply the new state (not the previous state like in undo)
+            if log.info == AccountInfo::default() {
+                account_info_table.remove(&log.address.into())?;
+            } else {
+                account_info_table.insert(&log.address.into(), &log.info.into())?;
+            }
+        }
+
+        Ok(logs_found)
+    }
+
+    /// Process storage logs during replay and apply new state to account_storage_table
+    fn replay_storage_logs(
+        &self,
+        storage_logs_table: &redb::MultimapTable<
+            BlockNumHashRLP,
+            (BlockNumHashRLP, AccountStorageLogEntryRLP),
+        >,
+        account_storage_table: &mut redb::Table<
+            (AccountAddressRLP, AccountStorageKeyRLP),
+            AccountStorageValueRLP,
+        >,
+        block_key: &BlockNumHashRLP,
+        expected_parent: BlockNumHash,
+    ) -> Result<bool, StoreError> {
+        let mut logs_found = false;
+
+        for log_entry in storage_logs_table.get(block_key)? {
+            let value_guard = log_entry?;
+            let (parent_block_rlp, storage_log_rlp) = value_guard.value();
+
+            let parent_block: BlockNumHash = parent_block_rlp.to()?;
+
+            // Only process logs that match expected parent transition
+            if parent_block != expected_parent {
+                continue;
+            }
+
+            if !logs_found {
+                tracing::debug!("REPLAY: Found storage logs for block {:?}", block_key);
+                logs_found = true;
+            }
+
+            let log: AccountStorageLogEntry = storage_log_rlp.to()?;
+
+            // Apply the new value (not the old value like in undo)
+            let storage_key = (log.address.into(), log.slot.into());
+            if log.new_value.is_zero() {
+                account_storage_table.remove(&storage_key)?;
+            } else {
+                account_storage_table.insert(&storage_key, &log.new_value.into())?;
+            }
+        }
+
+        Ok(logs_found)
+    }
 }
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+        {
+            // Get current snapshot metadata or return if none exists
+            let Some(snapshot_metadata) = self.read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())? else {
+                tracing::info!(
+                    "UNDO: No snapshot metadata found, reached end of non-canonical chain"
+                );
+                return Ok(());
+            };
+            let current_snapshot: BlockNumHash = snapshot_metadata.value().to()?;
+
+            // Open all required tables
+            let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+            let mut account_storage_table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+            let state_logs_table = write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+            let storage_logs_table =
+                write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
+            let mut snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+
+            let mut current_block = current_snapshot;
+            loop {
+                let Some(canonical_hash) =
+                    self.get_block_hash_by_block_number(current_block.block_number)?
+                else {
+                    tracing::info!(
+                        "UNDO: No canonical hash found for block {}",
+                        current_block.block_number
+                    );
+                    break;
+                };
+
+                // If current block is canonical, we're done
+                if canonical_hash == current_block.block_hash {
+                    break;
+                }
+
+                let block_key: BlockNumHashRLP = current_block.into();
+
+                // Process account info logs and get parent block
+                let account_parent = self.process_account_info_logs(
+                    &state_logs_table,
+                    &mut account_info_table,
+                    &block_key,
+                )?;
+
+                // Process storage logs and get parent block
+                let storage_parent = self.process_storage_logs(
+                    &storage_logs_table,
+                    &mut account_storage_table,
+                    &block_key,
+                )?;
+
+                // Move to parent block (both logs should have same parent)
+                let Some(parent) = account_parent.or(storage_parent) else {
+                    tracing::info!("UNDO: No more logs found, reached end of non-canonical chain");
+                    break;
+                };
+                current_block = parent;
+            }
+
+            // Update snapshot metadata to current position
+            let block: BlockNumHashRLP = current_block.into();
+            snapshot_table.insert((), block)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    async fn replay_writes_until_head(&self, head_hash: H256) -> Result<(), StoreError> {
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
+        {
+            // Get current snapshot metadata or return if none exists
+            let Some(snapshot_metadata) = self.read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())? else {
+                return Ok(());
+            };
+            let current_snapshot: BlockNumHash = snapshot_metadata.value().to()?;
+
+            // Open all required tables
+            let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+            let mut account_storage_table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+            let state_logs_table = write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+            let storage_logs_table =
+                write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
+            let mut snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+
+            let mut block_num_hash = current_snapshot;
+
+            // Walk through canonical blocks from current snapshot to head
+            let mut current_block_num = current_snapshot.block_number + 1;
+
+            loop {
+                // Get canonical hash for current block number
+                let Some(canonical_hash) =
+                    self.get_block_hash_by_block_number(current_block_num)?
+                else {
+                    // If no canonical hash found, we've reached the end of the canonical chain
+                    break;
+                };
+
+                let old_block_num_hash = block_num_hash;
+                block_num_hash = BlockNumHash {
+                    block_number: current_block_num,
+                    block_hash: canonical_hash,
+                };
+
+                // Create key to search for logs for this block transition
+                let block_key: BlockNumHashRLP = block_num_hash.into();
+
+                // Process account info logs for this block
+                let account_logs_found = self.replay_account_info_logs(
+                    &state_logs_table,
+                    &mut account_info_table,
+                    &block_key,
+                    old_block_num_hash,
+                )?;
+
+                // Process storage logs for this block
+                let storage_logs_found = self.replay_storage_logs(
+                    &storage_logs_table,
+                    &mut account_storage_table,
+                    &block_key,
+                    old_block_num_hash,
+                )?;
+
+                // If no logs found for this transition, continue to next block
+                if !account_logs_found && !storage_logs_found {
+                    current_block_num += 1;
+                    continue;
+                }
+
+                // Check if we've reached the target head
+                if head_hash == block_num_hash.block_hash {
+                    tracing::info!("REPLAY: Reached target head block {:?}", head_hash);
+                    break;
+                }
+
+                current_block_num += 1;
+            }
+
+            // Update snapshot metadata to final position
+            let final_block: BlockNumHashRLP = block_num_hash.into();
+            snapshot_table.insert((), final_block)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read_sync(CURRENT_SNAPSHOT_BLOCK_TABLE, ())?
+            .map(|a| {
+                a.value()
+                    .to()
+                    .map(|block_num_hash: BlockNumHash| block_num_hash.block_hash)
+            })
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write().map_err(Box::new)?;
             {
-                // store account updates
+                // We only need to update the flat tables if the update batch contains blocks
+                // We should review what to do in a reconstruct scenario, do we need to update the snapshot state?
+                if let (Some(first_block), Some(last_block)) = (update_batch.blocks.first(), update_batch.blocks.last()) {
+
+                    let parent_block = BlockNumHash{
+                        block_number: first_block.header.number - 1,
+                        block_hash: first_block.header.parent_hash,
+                    };
+                    let final_block = BlockNumHash{block_number: last_block.header.number, block_hash:last_block.hash()};
+
+                    // Write account info logs
+                    let mut state_logs_table = write_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+                    for (addr, old_info, new_info) in update_batch.account_info_log_updates.iter().cloned() {
+                        let log_entry = AccountInfoLogEntry {
+                            address: addr.0,
+                            info: new_info,
+                            previous_info: old_info,
+                        };
+
+                        let key: BlockNumHashRLP = final_block.into();
+                        let value = (parent_block.into(), log_entry.into());
+                        state_logs_table.insert(key, value)?;
+                    }
+
+                    // Write storage logs
+                    let mut storage_logs_table = write_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
+                    for entry in update_batch.storage_log_updates.iter().cloned() {
+                        let key: BlockNumHashRLP = final_block.into();
+                        let value = (parent_block.into(), entry.into());
+                        storage_logs_table.insert(key, value)?;
+                    }
+
+                    // Check if we need to update flat tables
+                    let current_snapshot = {
+                        let snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+                        snapshot_table.get(())?
+                            .map(|v| v.value().to())
+                            .transpose()?
+                            .unwrap_or_default()
+                    };
+
+                    if current_snapshot == parent_block {
+                        // Update flat tables with new state
+                        let mut account_info_table = write_txn.open_table(ACCOUNT_INFO_TABLE)?;
+                        let mut account_storage_table = write_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+
+                        // Apply account info changes to flat tables
+                        for (addr, _old_info, new_info) in update_batch.account_info_log_updates {
+                            let address_key = <H160 as Into<AccountAddressRLP>>::into(addr.0);
+                            if new_info != AccountInfo::default() {
+                                let new_info_rlp: AccountInfoRLP = new_info.into();
+                                account_info_table.insert(address_key, new_info_rlp)?;
+                            } else {
+                                account_info_table.remove(address_key)?;
+                            }
+                        }
+
+                        // Apply storage changes to flat tables
+                        for entry in update_batch.storage_log_updates {
+                            let storage_key = (entry.address.into(), entry.slot.into());
+                            if !entry.new_value.is_zero() {
+                                let new_value_rlp: AccountStorageValueRLP = entry.new_value.into();
+                                account_storage_table.insert(storage_key, new_value_rlp)?;
+                            } else {
+                                account_storage_table.remove(storage_key)?;
+                            }
+                        }
+
+                        // Update snapshot metadata
+                        let mut snapshot_table = write_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+                        let final_block_rlp: BlockNumHashRLP = final_block.into();
+                        snapshot_table.insert((), final_block_rlp)?;
+                    }
+                }
+
+                // Store account trie updates
                 let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
                 for (node_hash, node_data) in update_batch.account_updates {
                     state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
                 }
 
-                // store code updates
+                // Store code updates
                 let mut code_store = write_txn.open_table(ACCOUNT_CODES_TABLE)?;
                 for (hashed_address, code) in update_batch.code_updates {
                     let account_code_hash = <H256 as Into<AccountCodeHashRLP>>::into(hashed_address);
@@ -324,6 +735,7 @@ impl StoreEngine for RedBStore {
                     code_store.insert(account_code_hash, account_code)?;
                 }
 
+                // Store storage trie updates
                 let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
                 for (hashed_address, nodes) in update_batch.storage_updates {
                     for (node_hash, node_data) in nodes {
@@ -334,13 +746,13 @@ impl StoreEngine for RedBStore {
                     }
                 }
 
+                // Store block data
                 let mut transaction_table = write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
                 let mut bodies = write_txn.open_table(BLOCK_BODIES_TABLE)?;
                 let mut headers = write_txn.open_table(HEADERS_TABLE)?;
                 let mut block_numbers = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
 
                 for block in update_batch.blocks {
-                    // store block
                     let number = block.header.number;
                     let hash = <H256 as Into<BlockHashRLP>>::into(block.hash());
 
@@ -363,6 +775,7 @@ impl StoreEngine for RedBStore {
                     block_numbers.insert(hash, number)?;
                 }
 
+                // Store receipts
                 let mut receipts_table = write_txn.open_table(RECEIPTS_TABLE)?;
                 for (block_hash, receipts) in update_batch.receipts {
                     for (index, receipt) in receipts.into_iter().enumerate() {
@@ -1357,6 +1770,133 @@ impl StoreEngine for RedBStore {
         )
         .await
     }
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        tracing::info!("Setting up genesis flat account storage");
+
+        // Prepare all key-value pairs for batch write
+        let key_values: Vec<_> = genesis_accounts
+            .iter()
+            .filter(|(_, _, val)| !val.is_zero()) // Insert only non-zero values
+            .map(|(addr, slot, val)| {
+                let address = <Address as Into<AccountAddressRLP>>::into(*addr);
+                let key = <H256 as Into<AccountStorageKeyRLP>>::into(*slot);
+                let value = <U256 as Into<AccountStorageValueRLP>>::into(*val);
+                ((address, key), value)
+            })
+            .collect();
+
+        tracing::info!("Finished preparing key-value pairs for batch write");
+
+        // Use batch write instead of individual inserts
+        self.write_batch(ACCOUNT_STORAGE_TABLE, key_values).await?;
+
+        tracing::info!("Finished batch write");
+
+        // Update snapshot metadata
+        self.write(
+            CURRENT_SNAPSHOT_BLOCK_TABLE,
+            (),
+            BlockNumHash {
+                block_number: genesis_block_number,
+                block_hash: genesis_block_hash,
+            }
+            .into(),
+        )
+        .await?;
+
+        tracing::info!(
+            "Finished setting up genesis flat account storage for {} accounts",
+            genesis_accounts.len()
+        );
+        Ok(())
+    }
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        let read_txn = self.db.begin_read().map_err(Box::new)?;
+        let table = read_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+
+        let composite_key = (
+            <Address as Into<AccountAddressRLP>>::into(address),
+            <H256 as Into<AccountStorageKeyRLP>>::into(key),
+        );
+
+        table
+            .get(composite_key)?
+            .map(|v| v.value().to())
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        tracing::info!("Setting up genesis flat account info");
+
+        // Prepare all key-value pairs for batch write (only non-removed accounts)
+        let key_values: Vec<_> = genesis_accounts
+            .iter()
+            .filter(|(_, _, _, _, removed)| !removed) // Only non-removed accounts
+            .map(|(addr, nonce, balance, code_hash, _)| {
+                let address = <Address as Into<AccountAddressRLP>>::into(*addr);
+                let account_info = AccountInfoRLP::from(AccountInfo {
+                    nonce: *nonce,
+                    balance: *balance,
+                    code_hash: *code_hash,
+                });
+                (address, account_info)
+            })
+            .collect();
+
+        tracing::info!(
+            "Prepared {} account info entries for batch write",
+            key_values.len()
+        );
+
+        // Use batch write instead of individual inserts
+        self.write_batch(ACCOUNT_INFO_TABLE, key_values).await?;
+
+        tracing::info!("Finished batch write");
+
+        // Update snapshot metadata
+        self.write(
+            CURRENT_SNAPSHOT_BLOCK_TABLE,
+            (),
+            BlockNumHash {
+                block_number: genesis_block_number,
+                block_hash: genesis_block_hash,
+            }
+            .into(),
+        )
+        .await?;
+
+        tracing::info!(
+            "Finished setting up genesis flat account info for {} accounts",
+            genesis_accounts.len()
+        );
+        Ok(())
+    }
+
+    fn get_current_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        self.read_sync(
+            ACCOUNT_INFO_TABLE,
+            <Address as Into<AccountAddressRLP>>::into(address),
+        )?
+        .map(|p| p.value().to())
+        .transpose()
+        .map_err(StoreError::RLPDecode)
+    }
 }
 
 impl redb::Value for ChainDataIndex {
@@ -1459,6 +1999,11 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(SNAP_STATE_TABLE)?;
     table_creation_txn.open_table(STATE_SNAPSHOT_TABLE)?;
     table_creation_txn.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+    table_creation_txn.open_table(ACCOUNT_INFO_TABLE)?;
+    table_creation_txn.open_table(ACCOUNT_STORAGE_TABLE)?;
+    table_creation_txn.open_table(CURRENT_SNAPSHOT_BLOCK_TABLE)?;
+    table_creation_txn.open_multimap_table(ACCOUNTS_STATE_WRITE_LOG_TABLE)?;
+    table_creation_txn.open_multimap_table(ACCOUNTS_STORAGE_WRITE_LOG_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)
