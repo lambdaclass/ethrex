@@ -69,7 +69,7 @@ impl EthrexMonitor {
             EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
 
         let mut monitor = EthrexMonitor {
-            title: if cfg.based.enable {
+            title: if cfg.based.enabled {
                 "Based Ethrex Monitor".to_string()
             } else {
                 "Ethrex Monitor".to_string()
