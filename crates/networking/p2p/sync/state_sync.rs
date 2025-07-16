@@ -22,7 +22,7 @@ use tracing::{debug, info};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, bytecode_fetcher,
+        MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
         seconds_to_readable, storage_fetcher::storage_fetcher,
     },
 };
@@ -41,6 +41,7 @@ pub(crate) async fn state_sync(
     peers: PeerHandler,
     key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
     // Spawn tasks to fetch each state trie segment
     let mut state_trie_tasks = tokio::task::JoinSet::new();
@@ -57,6 +58,7 @@ pub(crate) async fn state_sync(
             key_checkpoints.map(|chs| chs[i]),
             state_sync_progress.clone(),
             storage_trie_rebuilder_sender.clone(),
+            bytecode_sender.clone(),
         ));
     }
     // Check for pivot staleness
@@ -89,6 +91,7 @@ async fn state_sync_segment(
     checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
@@ -108,14 +111,8 @@ async fn state_sync_segment(
         ));
         return Ok((segment_number, false, start_account_hash));
     }
-    // Spawn storage & bytecode fetchers
-    let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+    // Spawn storage fetcher
     let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
-    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-        bytecode_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
     let storage_fetcher_handle = tokio::spawn(storage_fetcher(
         storage_receiver,
         peers.clone(),
@@ -212,9 +209,7 @@ async fn state_sync_segment(
     ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
-    bytecode_sender.send(vec![]).await?;
     storage_fetcher_handle.await??;
-    bytecode_fetcher_handle.await??;
     if !stale {
         // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
         start_account_hash = STATE_TRIE_SEGMENTS_END[segment_number]

@@ -607,6 +607,12 @@ impl Syncer {
                 self.peers.clone(),
             ));
         };
+        let bytecode_sender = self
+            .bytecode_fetcher
+            .as_ref()
+            .ok_or(SyncError::Unexpected)?
+            .sender
+            .clone();
         // Spawn storage healer earlier so we can start healing stale storages
         // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
         let storage_healer_cancell_token = self.cancel_token.child_token();
@@ -633,7 +639,7 @@ impl Syncer {
             let storage_trie_rebuilder_sender = self
                 .trie_rebuilder
                 .as_ref()
-                .ok_or(SyncError::Trie(TrieError::InconsistentTree))?
+                .ok_or(SyncError::Unexpected)?
                 .storage_rebuilder_sender
                 .clone();
 
@@ -643,6 +649,7 @@ impl Syncer {
                 self.peers.clone(),
                 key_checkpoints,
                 storage_trie_rebuilder_sender,
+                bytecode_sender.clone(),
             )
             .await?;
             if stale_pivot {
@@ -655,10 +662,7 @@ impl Syncer {
         // Wait for the trie rebuilder to finish
         info!("Waiting for the trie rebuild to finish");
         let rebuild_start = Instant::now();
-        let rebuilder = self
-            .trie_rebuilder
-            .take()
-            .ok_or(SyncError::Trie(TrieError::InconsistentTree))?;
+        let rebuilder = self.trie_rebuilder.take().ok_or(SyncError::Unexpected)?;
         rebuilder.complete().await?;
 
         info!(
@@ -669,8 +673,13 @@ impl Syncer {
         store.clear_snapshot().await?;
 
         // Perform Healing
-        let state_heal_complete =
-            heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+        let state_heal_complete = heal_state_trie(
+            state_root,
+            store.clone(),
+            self.peers.clone(),
+            bytecode_sender,
+        )
+        .await?;
         // Wait for storage healer to end
         if state_heal_complete {
             state_healing_ended.store(true, Ordering::Relaxed);
@@ -681,6 +690,13 @@ impl Syncer {
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
         }
+        // Wait for the bytecode fetcher to finish
+        info!("Waiting for the trie rebuild to finish");
+        self.bytecode_fetcher
+            .take()
+            .ok_or(SyncError::Unexpected)?
+            .complete()
+            .await?;
         Ok(state_heal_complete && storage_heal_complete)
     }
 }
@@ -745,6 +761,8 @@ enum SyncError {
     BodiesNotFound,
     #[error("Range received is invalid")]
     InvalidRangeReceived,
+    #[error("Unexpected Error")]
+    Unexpected,
 }
 
 impl<T> From<SendError<T>> for SyncError {

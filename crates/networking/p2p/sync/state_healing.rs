@@ -20,8 +20,8 @@ use tracing::{debug, info};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE,
-        SHOW_PROGRESS_INTERVAL_DURATION, node_missing_children,
+        MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION,
+        node_missing_children,
     },
 };
 
