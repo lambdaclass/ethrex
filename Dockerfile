@@ -17,7 +17,10 @@ WORKDIR /ethrex
 # Copy all source code to calculate the dependency recipe.
 # This layer is fast and will be invalidated on any source change.
 FROM chef AS planner
-COPY . .
+COPY crates ./crates
+COPY tooling ./tooling
+COPY cmd ./cmd
+COPY Cargo.* .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # --- Builder Stage ---
@@ -36,8 +39,11 @@ RUN cargo chef cook --release --recipe-path recipe.json
 RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
     && chmod +x /usr/bin/solc
 
+# Optional build flags
 ARG BUILD_FLAGS=""
-COPY . .
+COPY crates ./crates
+COPY cmd ./cmd
+COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
 # --- Final Image ---
