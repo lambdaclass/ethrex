@@ -9,7 +9,7 @@ use ethrex_rlp::{
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockNumHash {
     pub block_number: BlockNumber,
     pub block_hash: BlockHash,

@@ -9,6 +9,8 @@ pub struct LibmdbxTrieDB<T: Table> {
 
 use ethrex_trie::TrieDB;
 
+use crate::trie_db::utils::node_hash_to_fixed_size;
+
 impl<T> LibmdbxTrieDB<T>
 where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
@@ -26,13 +28,25 @@ where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        tracing::debug!(
+            node_hash = hex::encode(node_hash_to_fixed_size(key)),
+            "[QUERYING STATE TRIE NODE]",
+        );
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(key).map_err(TrieError::DbError)
+        let mut res = txn.get::<T>(key).map_err(TrieError::DbError)?;
+        if let Some(v) = &mut res {
+            // Nodes are stored with 8 extra bytes at the end to store the block number
+            // Remove the last 8 bytes that contain the block number
+            v.truncate(v.len() - 8);
+        }
+        Ok(res)
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        for (key, value) in key_values {
+        for (key, mut value) in key_values {
+            // Add 8 extra bytes to store the block number
+            value.extend_from_slice(&[0u8; 8]);
             txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)

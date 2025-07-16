@@ -6,10 +6,15 @@ use ethrex_common::types::{
     Index, Receipt, Transaction, payload::PayloadBundle,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
+use tokio_util::sync::CancellationToken;
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
+
+/// The number of blocks to keep when pruning, we keep the last `KEEP_BLOCKS` of the state and
+/// storage tries.
+pub const KEEP_BLOCKS: u64 = 1024;
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -28,6 +33,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Must be called after [`undo_writes_until_canonical`](StoreEngine::undo_writes_until_canonical)
     /// to complete reorg recovery.
     async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
+
+    /// Prune the state and storage trie from the pruning log
+    /// It will iterate over the pruning log and remove nodes from the state and storage tries
+    /// that are older than the [`KEEP_BLOCKS`] value.
+    fn prune_state_and_storage_log(
+        &self,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
