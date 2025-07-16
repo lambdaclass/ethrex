@@ -2353,6 +2353,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2395,6 +2396,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-dev",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
@@ -2447,6 +2449,35 @@ dependencies = [
  "serde",
  "sha3",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "ethrex-l2-rpc"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "ethereum-types 0.15.1",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2-common",
+ "ethrex-p2p",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "ethrex-storage-rollup",
+ "hex",
+ "keccak-hash",
+ "reqwest 0.12.22",
+ "rustc-hex",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2574,6 +2605,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-l2-common",
+ "ethrex-l2-rpc",
  "ethrex-rlp",
  "ethrex-rpc",
  "eyre",
