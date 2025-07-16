@@ -57,18 +57,14 @@ fn main() {
     let l2_contracts = [
         (&Path::new("src/l2/CommonBridgeL2.sol"), "CommonBridgeL2"),
         (&Path::new("src/l2/L2ToL1Messenger.sol"), "L2ToL1Messenger"),
+        (
+            &Path::new("src/l2/L2Upgradeable.sol"),
+            "UpgradeableSystemContract",
+        ),
     ];
     for (path, name) in l2_contracts {
         compile_contract(&output_contracts_path, path, name, true, Some(&remappings));
     }
-
-    compile_contract(
-        &output_contracts_path,
-        Path::new("src/l2/L2Upgradeable.sol"),
-        "UpgradeableSystemContract",
-        true,
-        Some(&remappings),
-    );
 
     // Based contracts
     compile_contract(
