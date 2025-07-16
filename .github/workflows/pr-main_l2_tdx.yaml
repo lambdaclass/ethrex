@@ -22,22 +22,14 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
       - name: Install solc
         uses: pontem-network/get-solc@master
         with:
           version: v0.8.29
           token: ${{ secrets.GITHUB_TOKEN || '' }}
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: "true"
 
       - name: Build prover
         run: |

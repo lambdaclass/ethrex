@@ -226,14 +226,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError> {
-        self.inner()?
-            .headers
-            .extend(block_hashes.into_iter().zip(block_headers));
+    async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.inner()?.headers.extend(
+            block_headers
+                .into_iter()
+                .map(|header| (header.hash(), header)),
+        );
         Ok(())
     }
 
@@ -267,13 +265,14 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        for block in blocks {
-            self.inner()?
-                .canonical_hashes
-                .insert(block.header.number, block.hash());
+    async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(u64, H256)],
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        for (n, h) in numbers_and_hashes {
+            store.canonical_hashes.insert(*n, *h);
         }
-
         Ok(())
     }
 

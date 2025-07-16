@@ -23,14 +23,14 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
 
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+      - name: Install solc
+        uses: pontem-network/get-solc@master
         with:
-          toolchain: ${{ vars.RUST_VERSION }}
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Build ethrex binary
         run: cargo build --bin ethrex

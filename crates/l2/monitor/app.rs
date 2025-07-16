@@ -31,6 +31,8 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
+
 pub struct EthrexMonitor {
     pub title: String,
     pub should_quit: bool,
@@ -50,6 +52,7 @@ pub struct EthrexMonitor {
     pub rollup_client: EthClient,
     pub store: Store,
     pub rollup_store: StoreRollup,
+    pub last_scroll: Instant,
 }
 
 impl EthrexMonitor {
@@ -58,14 +61,14 @@ impl EthrexMonitor {
         store: Store,
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
-    ) -> Self {
-        let eth_client = EthClient::new(cfg.eth.rpc_url.first().expect("No RPC URLs provided"))
-            .expect("Failed to create EthClient");
+    ) -> Result<Self, MonitorError> {
+        let eth_client = EthClient::new(cfg.eth.rpc_url.first().ok_or(MonitorError::RPCListEmpty)?)
+            .map_err(MonitorError::EthClientError)?;
         // TODO: De-hardcode the rollup client URL
         let rollup_client =
-            EthClient::new("http://localhost:1729").expect("Failed to create RollupClient");
+            EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
 
-        EthrexMonitor {
+        let mut monitor = EthrexMonitor {
             title: if cfg.based.based {
                 "Based Ethrex Monitor".to_string()
             } else {
@@ -74,40 +77,22 @@ impl EthrexMonitor {
             should_quit: false,
             tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
-            global_chain_status: GlobalChainStatusTable::new(
-                &eth_client,
-                cfg,
-                &store,
-                &rollup_store,
-            )
-            .await,
+            global_chain_status: GlobalChainStatusTable::new(cfg),
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(sequencer_state.clone(), &store).await,
-            mempool: MempoolTable::new(&rollup_client).await,
-            batches_table: BatchesTable::new(
-                cfg.l1_committer.on_chain_proposer_address,
-                &eth_client,
-                &rollup_store,
-            )
-            .await,
-            blocks_table: BlocksTable::new(&store).await,
-            l1_to_l2_messages: L1ToL2MessagesTable::new(
-                cfg.l1_watcher.bridge_address,
-                &eth_client,
-                &store,
-            )
-            .await,
-            l2_to_l1_messages: L2ToL1MessagesTable::new(
-                cfg.l1_watcher.bridge_address,
-                &eth_client,
-                &rollup_client,
-            )
-            .await,
+            node_status: NodeStatusTable::new(sequencer_state.clone()),
+            mempool: MempoolTable::new(),
+            batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
+            blocks_table: BlocksTable::new(),
+            l1_to_l2_messages: L1ToL2MessagesTable::new(cfg.l1_watcher.bridge_address),
+            l2_to_l1_messages: L2ToL1MessagesTable::new(cfg.l1_watcher.bridge_address),
             eth_client,
             rollup_client,
             store,
             rollup_store,
-        }
+            last_scroll: Instant::now(),
+        };
+        monitor.on_tick().await?;
+        Ok(monitor)
     }
 
     pub async fn start(mut self) -> Result<(), MonitorError> {
@@ -147,7 +132,7 @@ impl EthrexMonitor {
 
             let timeout = Duration::from_millis(self.tick_rate).saturating_sub(last_tick.elapsed());
             if !event::poll(timeout)? {
-                self.on_tick().await;
+                self.on_tick().await?;
                 last_tick = Instant::now();
                 continue;
             }
@@ -196,6 +181,13 @@ impl EthrexMonitor {
     }
 
     pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
+        let now = Instant::now();
+        if now.duration_since(self.last_scroll) < SCROLL_DEBOUNCE_DURATION {
+            return; // Ignore the scroll — too soon
+        }
+
+        self.last_scroll = now;
+
         match (&self.tabs, kind) {
             (TabsState::Logs, MouseEventKind::ScrollDown) => {
                 self.logger.transition(TuiWidgetEvent::NextPageKey)
@@ -207,22 +199,24 @@ impl EthrexMonitor {
         }
     }
 
-    pub async fn on_tick(&mut self) {
-        self.node_status.on_tick(&self.store).await;
+    pub async fn on_tick(&mut self) -> Result<(), MonitorError> {
+        self.node_status.on_tick(&self.store).await?;
         self.global_chain_status
             .on_tick(&self.eth_client, &self.store, &self.rollup_store)
-            .await;
-        self.mempool.on_tick(&self.rollup_client).await;
+            .await?;
+        self.mempool.on_tick(&self.rollup_client).await?;
         self.batches_table
             .on_tick(&self.eth_client, &self.rollup_store)
-            .await;
-        self.blocks_table.on_tick(&self.store).await;
+            .await?;
+        self.blocks_table.on_tick(&self.store).await?;
         self.l1_to_l2_messages
             .on_tick(&self.eth_client, &self.store)
-            .await;
+            .await?;
         self.l2_to_l1_messages
             .on_tick(&self.eth_client, &self.rollup_client)
-            .await;
+            .await?;
+
+        Ok(())
     }
 }
 
