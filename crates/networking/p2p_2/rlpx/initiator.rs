@@ -36,11 +36,14 @@ pub struct RLPxInitiatorState {
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
     // udp_socket: Arc<UdpSocket>,
+    initial_lookup_period: Duration,
     lookup_period: Duration,
     // lookup_period: Duration,
     kademlia: Kademlia,
     /// The target number of RLPx connections to reach.
     target_peers: usize,
+    /// The limit on the number of tried connections.
+    limit_tried_peers: usize,
 }
 
 impl RLPxInitiatorState {
@@ -72,8 +75,10 @@ impl RLPxInitiatorState {
             signer,
             // udp_socket,
             kademlia,
+            initial_lookup_period: Duration::from_secs(60), // 1 minute
             lookup_period: Duration::from_secs(3),
             target_peers: 50,
+            limit_tried_peers: 50_000,
         }
     }
 }
@@ -140,14 +145,11 @@ impl GenServer for RLPxInitiator {
 
                 look_for_peers(&state).await;
 
-                let num_peers = state.kademlia.peers.lock().await.len();
-                if num_peers <= state.target_peers {
-                    send_after(
-                        state.lookup_period,
-                        handle.clone(),
-                        Self::CastMsg::LookForPeers,
-                    );
-                }
+                send_after(
+                    get_lookup_interval(&state).await,
+                    handle.clone(),
+                    Self::CastMsg::LookForPeers,
+                );
 
                 CastResponse::NoReply(state)
             }
@@ -155,15 +157,27 @@ impl GenServer for RLPxInitiator {
     }
 }
 
+async fn get_lookup_interval(state: &RLPxInitiatorState) -> Duration {
+    let num_peers = state.kademlia.table.lock().await.len();
+    let num_tried_peers = state.kademlia.already_tried_peers.lock().await.len();
+
+    if num_peers < state.target_peers && num_tried_peers < state.limit_tried_peers {
+        state.initial_lookup_period
+    } else {
+        state.lookup_period
+    }
+}
+
 async fn look_for_peers(state: &RLPxInitiatorState) {
     info!("Looking for peers");
 
-    let mut already_known_peers_table = state.kademlia.already_tried_peers.lock().await;
+    let peers = state.kademlia.table.lock().await;
+    let mut already_tried_peers_table = state.kademlia.already_tried_peers.lock().await;
 
-    for contact in state.kademlia.table.lock().await.values() {
+    for contact in peers.values() {
         let node_id = contact.node.node_id();
-        if !already_known_peers_table.contains(&node_id) && contact.knows_us {
-            already_known_peers_table.insert(node_id);
+        if !already_tried_peers_table.contains(&node_id) && contact.knows_us {
+            already_tried_peers_table.insert(node_id);
 
             RLPxConnection::spawn_as_initiator(state.context.clone(), &contact.node).await;
 
