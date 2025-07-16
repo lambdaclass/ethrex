@@ -16,7 +16,7 @@ use ethrex_levm::{
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use log::{debug, error, info};
-use runner::input::{BenchAccount, BenchTransaction, RunnerInput};
+use runner::input::{InputAccount, InputTransaction, RunnerInput};
 use std::io::Write;
 use std::{
     collections::HashMap,
@@ -156,7 +156,7 @@ fn main() {
 fn compare_initial_and_current_accounts(
     initial_accounts: HashMap<Address, Account>,
     current_accounts: HashMap<Address, Account>,
-    transaction: &BenchTransaction,
+    transaction: &InputTransaction,
 ) {
     info!("\nState Diff:");
     for (addr, acc) in current_accounts {
@@ -221,14 +221,14 @@ fn setup_initial_state(
     // Default state has sender with some balance to send Tx, it can be overwritten though.
     let mut initial_state = HashMap::from([(
         runner_input.transaction.sender,
-        Account::from(BenchAccount::default()),
+        Account::from(InputAccount::default()),
     )]);
-    let benchmark_pre_state: HashMap<Address, Account> = runner_input
+    let input_pre_state: HashMap<Address, Account> = runner_input
         .pre
         .iter()
         .map(|(addr, acc)| (*addr, Account::from(acc.clone())))
         .collect();
-    initial_state.extend(benchmark_pre_state);
+    initial_state.extend(input_pre_state);
     // Contract bytecode or initcode
     if bytecode != Bytes::new() {
         if let Some(to) = runner_input.transaction.to {

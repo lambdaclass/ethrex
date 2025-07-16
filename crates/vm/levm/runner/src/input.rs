@@ -1,11 +1,11 @@
 use crate::deserialize::{
-    deserialize_hex_bytes, deserialize_u256_str, deserialize_u256_valued_hashmap,
-    deserialize_u256_vec, deserialize_u64_str,
+    deserialize_hex_bytes, deserialize_u64_str, deserialize_u256_str,
+    deserialize_u256_valued_hashmap, deserialize_u256_vec,
 };
 use bytes::Bytes;
-use ethrex_common::types::{code_hash, Account, AccountInfo};
 use ethrex_common::H256;
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::types::{Account, AccountInfo, code_hash};
+use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -14,8 +14,8 @@ use std::str::FromStr;
 #[serde(default)]
 pub struct RunnerInput {
     pub fork: Fork,
-    pub transaction: BenchTransaction,
-    pub pre: HashMap<Address, BenchAccount>,
+    pub transaction: InputTransaction,
+    pub pre: HashMap<Address, InputAccount>,
     #[serde(deserialize_with = "deserialize_hex_bytes")]
     pub initial_memory: Bytes,
     #[serde(deserialize_with = "deserialize_u256_vec")]
@@ -24,7 +24,7 @@ pub struct RunnerInput {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(default)]
-pub struct BenchAccount {
+pub struct InputAccount {
     #[serde(deserialize_with = "deserialize_u256_str")]
     pub balance: U256,
     #[serde(deserialize_with = "deserialize_hex_bytes")]
@@ -33,8 +33,8 @@ pub struct BenchAccount {
     pub storage: HashMap<U256, U256>,
 }
 
-impl From<BenchAccount> for Account {
-    fn from(account: BenchAccount) -> Self {
+impl From<InputAccount> for Account {
+    fn from(account: InputAccount) -> Self {
         Account {
             info: AccountInfo {
                 code_hash: code_hash(&account.code),
@@ -51,9 +51,9 @@ impl From<BenchAccount> for Account {
     }
 }
 
-impl Default for BenchAccount {
+impl Default for InputAccount {
     fn default() -> Self {
-        BenchAccount {
+        InputAccount {
             balance: high_u256(),
             code: Bytes::new(),
             storage: HashMap::new(),
@@ -64,7 +64,7 @@ impl Default for BenchAccount {
 // Super basic transaction data
 #[derive(Deserialize, Debug, Clone)]
 #[serde(default)]
-pub struct BenchTransaction {
+pub struct InputTransaction {
     pub to: Option<Address>,
     pub sender: Address,
     #[serde(deserialize_with = "deserialize_u64_str")]
@@ -77,9 +77,9 @@ pub struct BenchTransaction {
     pub data: Bytes,
 }
 
-impl Default for BenchTransaction {
+impl Default for InputTransaction {
     fn default() -> Self {
-        BenchTransaction {
+        InputTransaction {
             to: default_recipient(),
             sender: default_sender(),
             gas_limit: high_u64(),
@@ -90,8 +90,8 @@ impl Default for BenchTransaction {
     }
 }
 
-impl From<BenchTransaction> for ethrex_common::types::LegacyTransaction {
-    fn from(tx: BenchTransaction) -> Self {
+impl From<InputTransaction> for ethrex_common::types::LegacyTransaction {
+    fn from(tx: InputTransaction) -> Self {
         ethrex_common::types::LegacyTransaction {
             nonce: 0,
             gas_price: tx.gas_price.try_into().unwrap(),
