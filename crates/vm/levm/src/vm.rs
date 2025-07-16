@@ -72,10 +72,8 @@ impl<'a> VM<'a> {
         tracer: LevmCallTracer,
         vm_type: VMType,
     ) -> Result<Self, VMError> {
-        // Initialize the database backup field as before
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        // Create the VM instance with initial values
         let mut vm = Self {
             call_frames: vec![],
             env,
@@ -91,10 +89,8 @@ impl<'a> VM<'a> {
             vm_type,
         };
 
-        // Perform the setup, propagating any errors
         vm.setup_vm()?;
 
-        // Return the fully set-up VM instance
         Ok(vm)
     }
 
