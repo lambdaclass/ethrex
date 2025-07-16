@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752649462720,
+  "lastUpdate": 1752649715865,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8061,6 +8061,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0057531551724137936,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fd98ef02d3634246651f8879e9d70feb1dd0653a",
+          "message": "fix(l2): install solc in missing workflows (#3649)\n\n**Motivation**\n\nIn #3443, we missed installing solc in some workflows.\n\nCloses None",
+          "timestamp": "2025-07-15T21:20:05Z",
+          "tree_id": "66735758ea212d38ae32deee8ccf38901cad506a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fd98ef02d3634246651f8879e9d70feb1dd0653a"
+        },
+        "date": 1752649702624,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001203545536519387,
             "unit": "Mgas/s"
           }
         ]
