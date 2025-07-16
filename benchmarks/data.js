@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752622513977,
+  "lastUpdate": 1752625964910,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3835,6 +3835,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210593029392,
             "range": "± 416815067",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5c7a30485164c7db8ed43304a4577a0d0451cc54",
+          "message": "feat(l2): add support for web3signer (#2714)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nMany operators will want to use a remote signer instead of having the\nprivate keys on the same server as the sequencer.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nReplace all uses of a private key with a new `Signer` enum. This signer\ncan be either `Local` or `Remote` and can be lately extended. This aims\nto standardise the way all kind of messages are signed across the L2 and\nfacilitate the setup via flags or environment\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: fedacking <francisco.gauna@lambdaclass.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-07-15T23:34:22Z",
+          "tree_id": "166bed55b2d252034634dd4fb89fe704a900bb8e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5c7a30485164c7db8ed43304a4577a0d0451cc54"
+        },
+        "date": 1752625953942,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210342433098,
+            "range": "± 948167720",
             "unit": "ns/iter"
           }
         ]
