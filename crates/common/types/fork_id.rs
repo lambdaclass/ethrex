@@ -9,6 +9,8 @@ use ethrex_rlp::{
 use ethereum_types::H32;
 use tracing::debug;
 
+use crate::constants::MAINNET_GENESIS_HASH;
+
 use super::{BlockHash, BlockHeader, BlockNumber, ChainConfig};
 
 // See https://github.com/ethereum/go-ethereum/blob/530adfc8e3ef9c8b6356facecdec10b30fb81d7d/core/forkid/forkid.go#L51
@@ -27,7 +29,7 @@ impl ForkId {
         head_timestamp: u64,
         head_block_number: u64,
     ) -> Self {
-        let genesis_hash = genesis_header.hash();
+        let genesis_hash = &MAINNET_GENESIS_HASH;
         let (block_number_based_forks, timestamp_based_forks) =
             chain_config.gather_forks(genesis_header);
 
@@ -65,7 +67,7 @@ impl ForkId {
         chain_config: ChainConfig,
         genesis_header: BlockHeader,
     ) -> bool {
-        let genesis_hash = genesis_header.hash();
+        let genesis_hash = &MAINNET_GENESIS_HASH;
         let (block_number_based_forks, timestamp_based_forks) =
             chain_config.gather_forks(genesis_header);
 
@@ -86,7 +88,7 @@ impl ForkId {
         }
 
         let forks = [block_number_based_forks, timestamp_based_forks].concat();
-        let valid_combinations = get_all_fork_id_combinations(forks, genesis_hash);
+        let valid_combinations = get_all_fork_id_combinations(forks, **genesis_hash);
 
         let mut is_subset = true;
 
