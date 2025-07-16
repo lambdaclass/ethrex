@@ -32,7 +32,7 @@ const IV: AlignTo32<[u64; 8]> = AlignTo32([
     0x5be0cd19137e2179,
 ]);
 
-// https://github.com/sneves/blake2-avx2/blob/master/blake2b.c#L64
+// Based on https://github.com/sneves/blake2-avx2/blob/master/blake2b.c#L64
 #[target_feature(enable = "avx2")]
 fn word_permutation(
     rounds_to_permute: usize,
