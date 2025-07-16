@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
 	libc6 \
 	libssl-dev \
 	ca-certificates \
+	curl \
+	git \
 	&& rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
@@ -20,6 +22,10 @@ FROM chef AS builder
 COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
 RUN cargo chef cook --release --recipe-path recipe.json
+
+# Install solc for build scripts
+RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+	&& chmod +x /usr/bin/solc
 
 COPY . .
 RUN cargo build --release --features "rollup_storage_libmdbx"

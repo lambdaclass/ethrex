@@ -44,7 +44,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{error, info};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
@@ -180,7 +180,10 @@ impl Command {
                     l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+                let l2_sequencer_cfg =
+                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
+                        error!("{err}");
+                    })?;
 
                 let eth_client =
                     EthClient::new_with_multiple_urls(l2_sequencer_cfg.eth.rpc_url.clone())?;
@@ -216,7 +219,7 @@ impl Command {
                 } else {
                     info!("P2P is disabled");
                 }
-
+              
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
