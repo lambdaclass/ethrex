@@ -12,7 +12,7 @@ You can provide input, bytecode or both. If input is not provided default values
 `CREATE` transactions can be sent if the `to` field of the json is `null`, remember that the initcode has to contain a return instruction with the bytecode at the end. Example of this in `initcode_example.txt`.
 
 Additional Notes:
-- In bytecode file, numbers in `PUSH` opcodes can be written both in hex and decimal. Hex values must have `0x` as a prefix. Also, numbers will be automatically padded, so you can do for example `PUSH3 0x1f` and it will be equivalent to `PUSH3 0x00001f`
+- In bytecode file, numbers in `PUSH` opcodes can be written both in hex and decimal. Hex values must have `0x` as a prefix. Also, numbers will be automatically padded, so you can do for example `PUSH3 0x1f` and it will be equivalent to `PUSH3 0x00001f`. You can't push a value greater than the number of bytes in the PUSH, for example, `PUSH2 0x10000` or `PUSH1 256` will panic.
 
 - Input Stack is represented from bottom to top. So for [1,2,3] 1 will be the element at the bottom and 3 will be the top. This is the most intuitive way of implementing a stack using a vec, that's why it's done this way.
 In LEVM our stack actually grows downwards because it has fixed size but for a json this wasn't the nicest approach I believe.

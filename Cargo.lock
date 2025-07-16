@@ -9720,6 +9720,8 @@ dependencies = [
  "hex",
  "json5",
  "log",
+ "num-bigint 0.4.6",
+ "num-traits",
  "serde",
  "serde_json",
 ]

@@ -16,6 +16,8 @@ use ethrex_levm::{
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use log::{debug, error, info};
+use num_bigint::BigUint;
+use num_traits::Num;
 use runner::input::{InputAccount, InputTransaction, RunnerInput};
 use std::io::Write;
 use std::{
@@ -261,22 +263,19 @@ fn mnemonics_to_bytecode(mnemonics: Vec<String>) -> Bytes {
             let value = mnemonic_iter
                 .next()
                 .expect("Expected a value after PUSH opcode");
-            let mut decoded_value = if value.starts_with("0x") {
-                hex::decode(value.trim_start_matches("0x"))
-                    .expect("Failed to decode PUSH value as hex")
-            } else {
-                let decimal_value: u64 = value
-                    .parse()
-                    .expect("Failed to parse PUSH value as decimal");
-                let mut bytes = vec![];
-                let mut temp = decimal_value;
-                while temp > 0 {
-                    bytes.push((temp & 0xFF) as u8);
-                    temp >>= 8;
-                }
-                bytes.reverse();
-                bytes
+            let mut decoded_value = {
+                let s = value.trim_start_matches("0x");
+                let radix = if s.len() != value.len() { 16 } else { 10 };
+                BigUint::from_str_radix(s, radix)
+                    .expect("Failed to parse PUSH value")
+                    .to_bytes_be()
             };
+            if decoded_value.len() > push_size {
+                panic!(
+                    "Value {} exceeds the maximum size of {} bytes for PUSH{}",
+                    value, push_size, push_size
+                );
+            }
             if decoded_value.len() < push_size {
                 let padding = vec![0u8; push_size - decoded_value.len()];
                 decoded_value = [padding, decoded_value].concat();
