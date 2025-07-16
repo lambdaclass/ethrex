@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752692489267,
+  "lastUpdate": 1752693108526,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8532,6 +8532,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0061793148148148146,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f61eecdc5b15f3b35a14edc1ddab871c8ed64468",
+          "message": "feat(l2): monitor handle index slicing (#3611)\n\n**Motivation**\nMonitor had unhandled index slicing in its code.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nAdded new variants for `MonitorError` and used them to remove the index\nslicing in the monitor\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n**How to test**\n\n- Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n- Run a Sequencer (I suggest `make restart` in `crates/l2`).\n- Run the prover with `make init-prover` in `crates/l2`.\n- Run `make test` in `crates/l2`.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses\nhttps://github.com/orgs/lambdaclass/projects/37/views/10?pane=issue&itemId=118823704&issue=lambdaclass%7Cethrex%7C3537",
+          "timestamp": "2025-07-16T18:41:49Z",
+          "tree_id": "e64b43c58d56f1187206e6b98a9a253805277cfb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f61eecdc5b15f3b35a14edc1ddab871c8ed64468"
+        },
+        "date": 1752693099511,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006066963636363636,
             "unit": "Mgas/s"
           }
         ]
