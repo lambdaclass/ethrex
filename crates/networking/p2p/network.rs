@@ -7,6 +7,7 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
+        initiator::{RLPxInitiator, RLPxInitiatorError},
         message::Message,
     },
     types::{Node, NodeRecord},
@@ -75,6 +76,8 @@ pub enum NetworkError {
     DiscoveryServerError(#[from] DiscoveryServerError),
     #[error("Failed to start discovery side car: {0}")]
     DiscoverySideCarError(#[from] DiscoverySideCarError),
+    #[error("Failed to start RLPx Initiator: {0}")]
+    RLPxInitiatorError(#[from] RLPxInitiatorError),
 }
 
 pub fn peer_table() -> Kademlia {
@@ -116,6 +119,12 @@ pub async fn start_network(
     .inspect_err(|e| {
         error!("Failed to start discovery side car: {e}");
     })?;
+
+    RLPxInitiator::spawn(context.clone())
+        .await
+        .inspect_err(|e| {
+            error!("Failed to start RLPx Initiator: {e}");
+        })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
