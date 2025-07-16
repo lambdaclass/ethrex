@@ -1,49 +1,20 @@
-use std::{fs::OpenOptions, io::Write, path::PathBuf};
-
 use ethrex_common::types::AccountUpdate;
 use ethrex_levm::{
+    db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     vm::VM,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_vm::backends;
-use keccak_hash::H256;
+use keccak_hash::{H256, keccak};
 
 use crate::runner_v2::{
     error::RunnerError,
-    types::{Test, TestCase, TransactionExpectedException},
+    types::{TestCase, TransactionExpectedException},
 };
 
-pub fn create_report(
-    res: Result<(), RunnerError>,
-    test_case: &TestCase,
-    test: &Test,
-) -> Result<(), RunnerError> {
-    let report_path = PathBuf::from("./runner_v2/runner_report.txt");
-    let mut report = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(report_path)
-        .map_err(|err| RunnerError::FailedToCreateReportFile(err.to_string()))?;
-    let content = if res.is_ok() {
-        format!(
-            "Test checks succeded for test: {:?}, with fork {:?},  in path: {:?}.\n",
-            test.name, test_case.fork, test.path
-        )
-    } else {
-        format!(
-            "Test checks failed for test: {:?}, with fork: {:?},  in path: {:?}.\n",
-            test.name, test_case.fork, test.path,
-        )
-    };
-    report
-        .write_all(content.as_bytes())
-        .map_err(|err| RunnerError::FailedToWriteReport(err.to_string()))?;
-
-    Ok(())
-}
-
-/// Verify if the test has given the expected results: if an exception was expected, check it was the corresponding
+/// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
 /// exception. If no exception was expected verify the result root.
 pub async fn check_test_case_results(
     vm: &mut VM<'_>,
@@ -51,19 +22,23 @@ pub async fn check_test_case_results(
     store: Store,
     test_case: &TestCase,
     execution_result: Result<ExecutionReport, VMError>,
-) -> Result<(), RunnerError> {
-    // Verify expected exception.
+) -> Result<bool, RunnerError> {
     if test_case.expects_exception() {
-        check_exception(
-            // we can `unwrap()` here because we previously check that exception is some with `expects_exception()`.
-            test_case.post.expected_exception.clone().unwrap(),
+        // Verify in case an exception was expected.
+        let exception_ok = check_exception(
+            test_case.post.expected_exceptions.clone().unwrap(),
             execution_result,
-        )?;
+        );
+        Ok(exception_ok)
     } else {
+        // Verify hashed logs.
+        let logs_ok = check_logs(test_case, &execution_result.clone().unwrap());
+        // Verify accounts' post state.
+        let accounts_state_ok = check_accounts_state(vm.db, test_case);
         // Verify expected root hash.
-        check_root(vm, initial_block_hash, store, test_case).await?;
+        let root_ok = check_root(vm, initial_block_hash, store, test_case).await?;
+        Ok(logs_ok && accounts_state_ok && root_ok)
     }
-    Ok(())
 }
 
 pub async fn check_root(
@@ -71,14 +46,14 @@ pub async fn check_root(
     initial_block_hash: H256,
     store: Store,
     test_case: &TestCase,
-) -> Result<(), RunnerError> {
+) -> Result<bool, RunnerError> {
     let account_updates = backends::levm::LEVM::get_state_transitions(vm.db)
         .map_err(|_| RunnerError::FailedToGetAccountsUpdates)?;
     let post_state_root = post_state_root(&account_updates, initial_block_hash, store).await;
     if post_state_root != test_case.post.hash {
-        return Err(RunnerError::RootMismatch);
+        return Ok(false);
     }
-    Ok(())
+    Ok(true)
 }
 
 pub async fn post_state_root(
@@ -97,13 +72,12 @@ pub async fn post_state_root(
 pub fn check_exception(
     expected_exceptions: Vec<TransactionExpectedException>,
     execution_result: Result<ExecutionReport, VMError>,
-) -> Result<(), RunnerError> {
-    if execution_result.is_ok() {
-        return Err(RunnerError::TxSucceededAndExceptionWasExpected);
-    } else if !exception_is_expected(expected_exceptions, execution_result.err().unwrap()) {
-        return Err(RunnerError::DifferentExceptionWasExpected);
+) -> bool {
+    if execution_result.is_err() {
+        exception_is_expected(expected_exceptions, execution_result.err().unwrap())
+    } else {
+        false
     }
-    Ok(())
 }
 
 fn exception_is_expected(
@@ -182,4 +156,43 @@ fn exception_is_expected(
             )
         )
     })
+}
+
+pub fn check_accounts_state(db: &GeneralizedDatabase, test_case: &TestCase) -> bool {
+    if test_case.post.state.is_some() {
+        let expected_accounts_state = test_case.post.state.clone().unwrap();
+        let current_accounts_state = db.current_accounts_state.clone();
+        for (addr, state) in expected_accounts_state {
+            let current_state = if current_accounts_state.contains_key(&addr) {
+                current_accounts_state.get(&addr).unwrap()
+            } else {
+                return false;
+            };
+            let code_matches = current_state.code == state.code;
+            let balance_matches = current_state.info.balance == state.balance;
+            let nonce_matches = current_state.info.nonce == state.nonce;
+            let mut storage_matches = true;
+            for (storage_key, content) in state.storage {
+                let key = &H256::from(storage_key.to_big_endian());
+                if current_state.storage.contains_key(key) {
+                    if *current_state.storage.get(key).unwrap() != content {
+                        storage_matches = false;
+                    }
+                } else {
+                    storage_matches = false;
+                }
+            }
+            if !(code_matches && balance_matches && nonce_matches && storage_matches) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub fn check_logs(test_case: &TestCase, execution_report: &ExecutionReport) -> bool {
+    let mut encoded_logs = Vec::new();
+    execution_report.logs.encode(&mut encoded_logs);
+    let hashed_logs = keccak(encoded_logs);
+    test_case.post.logs == hashed_logs
 }

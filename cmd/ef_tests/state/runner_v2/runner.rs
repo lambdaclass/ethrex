@@ -1,30 +1,36 @@
+use std::fs;
+
 use ethrex_common::{
     U256,
     types::{EIP1559Transaction, EIP7702Transaction, Transaction, TxKind},
 };
 use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM};
 
-use tokio::fs;
 
 use crate::runner_v2::{
     error::RunnerError,
-    result_check::{check_test_case_results, create_report},
+    report::create_report,
+    result_check::check_test_case_results,
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
 };
 
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     // Remove previous report if it exists.
-    let _ = fs::remove_file("./runner_v2/runner_report.txt").await;
+    let _ = fs::remove_file("./runner_v2/success_report.txt");
+    let _ = fs::remove_file("./runner_v2/failure_report.txt");
 
     for test in tests {
+        println!("Executing test: {}", test.name);
         run_test(&test).await?;
     }
     Ok(())
 }
 
 pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
+    let mut failing_test_cases = Vec::new();
     for test_case in &test.test_cases {
+        // Setup VM for transaction.
         let (mut db, initial_block_hash, storage) = load_initial_state(test).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case)?;
@@ -32,18 +38,25 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
         let vm_type = ethrex_levm::vm::VMType::L1;
         let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, vm_type);
 
-        let execution_report = vm.execute();
-        let res = check_test_case_results(
+        // Execute transaction with VM.
+        let execution_result = vm.execute();
+
+        // Verify transaction execution results where the ones expected by the test case.
+        let checks_passed = check_test_case_results(
             &mut vm,
             initial_block_hash,
             storage,
             test_case,
-            execution_report,
+            execution_result,
         )
-        .await;
+        .await?;
 
-        create_report(res, test_case, test)?;
+        // If test case did not pass the checks, add it to failing test cases record (for future reporting)
+        if !checks_passed {
+            failing_test_cases.push(test_case);
+        }
     }
+    create_report((test, failing_test_cases))?;
     Ok(())
 }
 

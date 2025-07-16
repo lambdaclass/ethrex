@@ -157,23 +157,26 @@ impl Tests {
             .get("data")
             .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
             .as_usize();
+        let value_index = raw_post
+            .indexes
+            .get("value")
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
+            .as_usize();
+        let gas_index = raw_post
+            .indexes
+            .get("gas")
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
+            .as_usize();
         let access_list_raw = raw_tx.access_lists.clone().unwrap_or_default();
         let mut access_list = Vec::new();
         if !access_list_raw.is_empty() {
             access_list = access_list_raw[data_index].clone();
         }
         let test_case = TestCase {
+            vector: (data_index, value_index, gas_index),
             data: raw_tx.data[data_index].clone(),
-            value: raw_tx.value[raw_post
-                .indexes
-                .get("value")
-                .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-                .as_usize()],
-            gas: raw_tx.gas_limit[raw_post
-                .indexes
-                .get("gas")
-                .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-                .as_usize()],
+            value: raw_tx.value[value_index],
+            gas: raw_tx.gas_limit[gas_index],
             tx_bytes: raw_post.txbytes.clone(),
             gas_price: raw_tx.gas_price,
             nonce: raw_tx.nonce,
@@ -191,7 +194,7 @@ impl Tests {
                 hash: raw_post.hash,
                 logs: raw_post.logs,
                 state: raw_post.state.clone(),
-                expected_exception: raw_post.expect_exception.clone(),
+                expected_exceptions: raw_post.expect_exception.clone(),
             },
         };
         Ok(test_case)
@@ -293,6 +296,7 @@ pub struct Env {
 /// after the transaction is executed.
 #[derive(Deserialize, Debug, Clone)]
 pub struct TestCase {
+    pub vector: (usize, usize, usize),
     pub data: Bytes,
     pub gas: u64,
     pub value: U256,
@@ -314,7 +318,7 @@ pub struct TestCase {
 impl TestCase {
     /// Tells whether the execution of the test case should give an exception as a result.
     pub fn expects_exception(&self) -> bool {
-        self.post.expected_exception.is_some()
+        self.post.expected_exceptions.is_some()
     }
 }
 
@@ -322,8 +326,8 @@ impl TestCase {
 pub struct Post {
     pub hash: H256,
     pub logs: H256,
-    pub state: HashMap<Address, AccountState>,
-    pub expected_exception: Option<Vec<TransactionExpectedException>>,
+    pub state: Option<HashMap<Address, AccountState>>,
+    pub expected_exceptions: Option<Vec<TransactionExpectedException>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -433,7 +437,7 @@ pub struct RawPostValue {
     // we add the default because some tests don't have this field
     #[serde(default, deserialize_with = "deserialize_hex_bytes")]
     pub txbytes: Bytes,
-    pub state: HashMap<Address, AccountState>,
+    pub state: Option<HashMap<Address, AccountState>>,
 }
 
 #[derive(Debug, Deserialize)]

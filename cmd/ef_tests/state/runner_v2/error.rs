@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RunnerError {
     RootMismatch,
     FailedToGetAccountsUpdates,
@@ -21,4 +21,5 @@ pub enum RunnerError {
     FailedToDeserializeField(String),
     FailedToCreateReportFile(String),
     FailedToGetIndexValue(String),
+    PostAccountStateMismatch(String),
 }
