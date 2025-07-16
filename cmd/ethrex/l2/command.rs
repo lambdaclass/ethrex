@@ -206,7 +206,7 @@ impl Command {
                             // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
                             // This should be replaced with the Signer enum once the refactor is complete.
                             committer_key: Arc::new(
-                                SecretKey::from_slice(&[0_u8; 32])
+                                SecretKey::from_slice(&hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").expect("Invalid committer key"))
                                     .expect("Failed to create committer key"),
                             ),
                         }),
