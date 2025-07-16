@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752664703344,
+  "lastUpdate": 1752681547128,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3895,6 +3895,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214578696934,
             "range": "± 514225987",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8a568cabc9875a7667dd4bf5ce881ec6f26f1e82",
+          "message": "refactor(l2): remove expects in L2 monitor (#3615)\n\n**Motivation**\n\nWe want to handle errors gracefully.\n\n**Description**\n\nRemoves usage of .expect\n\n**How to test**\n\n- Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n- Run a Sequencer (I suggest `make restart` in `crates/l2`).\n- Run the prover with `make init-prover` in `crates/l2`.\n- Run `make test` in `crates/l2`.\n\nCloses #3535\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-07-16T15:02:36Z",
+          "tree_id": "5803a4e78ee60df8c6ab4713467b393e4d4cfac4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8a568cabc9875a7667dd4bf5ce881ec6f26f1e82"
+        },
+        "date": 1752681535326,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211114097547,
+            "range": "± 403796172",
             "unit": "ns/iter"
           }
         ]
