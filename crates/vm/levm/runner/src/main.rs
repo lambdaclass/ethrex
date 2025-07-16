@@ -52,7 +52,8 @@ fn main() {
         .format(|buf, record| writeln!(buf, "{}", record.args()))
         .init();
 
-    // Mutable just to assign the code to the transaction if necessary
+    // Parse input
+    // Input is mutable just to assign bytecode to the transaction recipient if provided
     let mut runner_input: RunnerInput = if let Some(input_file_path) = cli.input {
         debug!("Reading input file: {}", input_file_path);
         let input_file = File::open(&input_file_path)
@@ -64,8 +65,8 @@ fn main() {
         RunnerInput::default()
     };
 
-    let mnemonic: Vec<String> = if let Some(code_file_path) = cli.code {
-        debug!("Reading code file: {}", code_file_path);
+    let mnemonics: Vec<String> = if let Some(code_file_path) = cli.code {
+        debug!("Reading mnemonics file: {}", code_file_path);
         fs::read_to_string(&code_file_path)
             .expect("Failed to read bytecode file")
             .split_ascii_whitespace()
@@ -75,7 +76,7 @@ fn main() {
         vec![]
     };
 
-    let bytecode = mnemonic_to_bytecode(mnemonic);
+    let bytecode = mnemonics_to_bytecode(mnemonics);
 
     debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
 
@@ -245,8 +246,8 @@ fn setup_initial_state(
 }
 
 /// Parse mnemonics, converting them into bytecode.
-fn mnemonic_to_bytecode(mnemonic: Vec<String>) -> Bytes {
-    let mut mnemonic_iter = mnemonic.into_iter();
+fn mnemonics_to_bytecode(mnemonics: Vec<String>) -> Bytes {
+    let mut mnemonic_iter = mnemonics.into_iter();
     let mut bytecode: Vec<u8> = Vec::new();
 
     while let Some(symbol) = mnemonic_iter.next() {
