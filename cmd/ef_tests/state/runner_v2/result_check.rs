@@ -95,13 +95,13 @@ pub fn check_exception(
 ) -> Result<(), RunnerError> {
     if execution_result.is_ok() {
         return Err(RunnerError::TxSucceededAndExceptionWasExpected);
-    } else if !exception_is_expected(expected_exceptions, execution_result.err().unwrap()) {
+    } else if !exception_matches_expected(expected_exceptions, execution_result.err().unwrap()) {
         return Err(RunnerError::DifferentExceptionWasExpected);
     }
     Ok(())
 }
 
-fn exception_is_expected(
+fn exception_matches_expected(
     expected_exceptions: Vec<TransactionExpectedException>,
     returned_error: VMError,
 ) -> bool {
