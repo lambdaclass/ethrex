@@ -20,6 +20,7 @@ use ethrex_storage::Store;
 use ethrex_vm::EvmEngine;
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
 use rand::rngs::OsRng;
+use serde_json::json;
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
@@ -178,6 +179,7 @@ elapsed: {}
 {} peers ({} new peers/s)
 {} connection attempts ({} new connection attempts/s)
 {} failed connections
+Known peers from mainnet: {}
 RLPx connection failures: {:#?}"#,
                 format_duration(start.elapsed()),
                 METRICS.current_contacts.lock().await,
@@ -189,6 +191,37 @@ RLPx connection failures: {:#?}"#,
                 METRICS.rlpx_conn_attempts.get(),
                 METRICS.rlpx_conn_attempts_rate.get().floor(),
                 METRICS.rlpx_conn_failures.get(),
+                {
+                    let discovered = METRICS.discovered_mainnet_peers.lock().await.len();
+                    let we_failed_to_ping = METRICS.failed_to_ping_mainnet_peers.lock().await.len();
+                    let pinged = METRICS.pinged_mainnet_peers.lock().await.len();
+                    let answered_our_ping =
+                        METRICS.answered_our_ping_mainnet_peers.lock().await.len();
+                    let didnt_answer_our_ping = pinged - we_failed_to_ping - answered_our_ping;
+                    let connected = METRICS.connected_mainnet_peers.lock().await.len();
+                    let connection_attempts = METRICS
+                        .connection_attempts_to_mainnet_peers
+                        .lock()
+                        .await
+                        .len();
+                    let connection_failures = METRICS
+                        .connection_failures_to_mainnet_peers
+                        .lock()
+                        .await
+                        .len();
+                    serde_json::to_string_pretty(&json!({
+                        "discovered": discovered,
+                        "we failed to ping": we_failed_to_ping,
+                        "didn't answer our ping": didnt_answer_our_ping,
+                        "pinged": pinged,
+                        "answered our ping": answered_our_ping,
+                        "connection attempts": connection_attempts,
+                        "connection failures": connection_failures,
+                        "connection failure reasons": *METRICS.connection_failures_to_mainnet_peers_reasons_counts.lock().await,
+                        "connected": connected
+                    }))
+                    .expect("Failed to pritty print known mainnet peers counters")
+                },
                 METRICS.rlpx_conn_failures_reasons_counts.lock().await,
             );
             // info!(

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -36,6 +36,7 @@ pub struct Kademlia {
     pub peers: Arc<Mutex<HashSet<H256>>>,
     pub already_tried_peers: Arc<Mutex<HashSet<H256>>>,
     pub discarded_contacts: Arc<Mutex<HashSet<H256>>>,
+    pub discovered_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
 }
 
 impl Kademlia {
@@ -71,6 +72,7 @@ impl Default for Kademlia {
             peers: Arc::new(Mutex::new(HashSet::default())),
             already_tried_peers: Arc::new(Mutex::new(HashSet::new())),
             discarded_contacts: Arc::new(Mutex::new(HashSet::new())),
+            discovered_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }

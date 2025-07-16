@@ -1,9 +1,10 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::{Arc, LazyLock},
     time::{Duration, SystemTime},
 };
 
+use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
@@ -33,6 +34,15 @@ pub struct Metrics {
     pub rlpx_conn_failures_reasons: Arc<Mutex<Vec<RLPxError>>>,
     pub rlpx_conn_failures_reasons_counts: Arc<Mutex<BTreeMap<String, u64>>>,
     pub rlpx_conn_failures: IntCounter,
+
+    pub discovered_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub pinged_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub failed_to_ping_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub answered_our_ping_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connected_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connection_attempts_to_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connection_failures_to_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub connection_failures_to_mainnet_peers_reasons_counts: Arc<Mutex<BTreeMap<String, u64>>>,
 
     start_time: SystemTime,
 }
@@ -78,7 +88,9 @@ impl Metrics {
         let mut events = self.rlpx_conn_establishments_events.lock().await;
         events.push_back(SystemTime::now());
         self.rlpx_conn_failures.inc();
-        self.update_rlpx_conn_failures_counts(&reason).await;
+        let mut failures_grouped_by_reason = self.rlpx_conn_failures_reasons_counts.lock().await;
+        self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, &reason)
+            .await;
         self.rlpx_conn_failures_reasons.lock().await.push(reason);
     }
 
@@ -88,183 +100,6 @@ impl Metrics {
 
     pub async fn decrease_current_contacts(&self) {
         *self.current_contacts.lock().await -= 1
-    }
-
-    pub async fn update_rlpx_conn_failures_counts(&self, failure_reason: &RLPxError) {
-        let mut failures_grouped_by_reason = self.rlpx_conn_failures_reasons_counts.lock().await;
-
-        match failure_reason {
-            RLPxError::HandshakeError(reason) if reason == "Network Id does not match" => {
-                failures_grouped_by_reason
-                    .entry("HandshakeError - Chain ID Mismatch".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::HandshakeError(reason)
-                if reason == "Eth protocol version does not match" =>
-            {
-                failures_grouped_by_reason
-                    .entry("HandshakeError - Eth Protocol Version Mismatch".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::HandshakeError(reason) if reason == "Genesis does not match" => {
-                failures_grouped_by_reason
-                    .entry("HandshakeError - Genesis Mismatch".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::HandshakeError(reason) if reason == "Invalid Fork Id" => {
-                failures_grouped_by_reason
-                    .entry("HandshakeError - Fork ID Mismatch".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::HandshakeError(_) => {
-                failures_grouped_by_reason
-                    .entry("HandshakeError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::StateError(_) => {
-                failures_grouped_by_reason
-                    .entry("StateError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::NoMatchingCapabilities() => {
-                failures_grouped_by_reason
-                    .entry("NoMatchingCapabilities".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::Disconnected() => {
-                failures_grouped_by_reason
-                    .entry("Disconnected".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::DisconnectReceived(disconnect_reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("DisconnectReceived - {disconnect_reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::DisconnectSent(disconnect_reason) => {
-                failures_grouped_by_reason
-                    .entry(format!("DisconnectSent - {disconnect_reason}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::NotFound(_) => {
-                failures_grouped_by_reason
-                    .entry("NotFound".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidPeerId() => {
-                failures_grouped_by_reason
-                    .entry("InvalidPeerId".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidRecoveryId() => {
-                failures_grouped_by_reason
-                    .entry("InvalidRecoveryId".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidMessageLength() => {
-                failures_grouped_by_reason
-                    .entry("InvalidMessageLength".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::MessageNotHandled(_) => {
-                failures_grouped_by_reason
-                    .entry("MessageNotHandled".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::BadRequest(_) => {
-                failures_grouped_by_reason
-                    .entry("BadRequest".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::RLPDecodeError(rlpdecode_error) => {
-                failures_grouped_by_reason
-                    .entry("RLPDecodeError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::RLPEncodeError(rlpencode_error) => {
-                failures_grouped_by_reason
-                    .entry("RLPEncodeError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::StoreError(store_error) => {
-                failures_grouped_by_reason
-                    .entry("StoreError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::CryptographyError(_) => {
-                failures_grouped_by_reason
-                    .entry("CryptographyError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::BroadcastError(_) => {
-                failures_grouped_by_reason
-                    .entry("BroadcastError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::RecvError(recv_error) => {
-                failures_grouped_by_reason
-                    .entry("RecvError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::SendMessage(_) => {
-                failures_grouped_by_reason
-                    .entry("SendMessage".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::MempoolError(mempool_error) => {
-                failures_grouped_by_reason
-                    .entry("MempoolError".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::IoError(error) => {
-                failures_grouped_by_reason
-                    .entry(format!("IoError - {error}"))
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidMessageFrame(_) => {
-                failures_grouped_by_reason
-                    .entry("InvalidMessageFrame".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::IncompatibleProtocol => {
-                failures_grouped_by_reason
-                    .entry("IncompatibleProtocol".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-            RLPxError::InvalidBlockRange => {
-                failures_grouped_by_reason
-                    .entry("InvalidBlockRange".to_owned())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-        }
     }
 
     pub async fn update_rate(&self, events: &mut VecDeque<SystemTime>, rate_gauge: &Gauge) {
@@ -298,6 +133,209 @@ impl Metrics {
                 events.pop_front();
             } else {
                 break;
+            }
+        }
+    }
+
+    pub async fn new_discovered_mainnet_peer(&self, node_id: H256) -> bool {
+        self.discovered_mainnet_peers.lock().await.insert(node_id)
+    }
+
+    pub async fn new_failure_pinging_mainnet_peer(&self, node_id: H256) -> bool {
+        self.failed_to_ping_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id)
+    }
+
+    pub async fn new_pinged_mainnet_peer(&self, node_id: H256) -> bool {
+        self.pinged_mainnet_peers.lock().await.insert(node_id)
+    }
+
+    pub async fn new_contacted_mainnet_peer(&self, node_id: H256) -> bool {
+        self.answered_our_ping_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id)
+    }
+
+    pub async fn new_connected_mainnet_peer(&self, node_id: H256) -> bool {
+        self.connected_mainnet_peers.lock().await.insert(node_id)
+    }
+
+    pub async fn new_connection_attempt_to_mainnet_peer(&self, node_id: H256) -> bool {
+        self.connection_attempts_to_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id)
+    }
+
+    pub async fn new_connection_failure_to_mainnet_peer(
+        &self,
+        node_id: H256,
+        failure_reason: &RLPxError,
+    ) {
+        self.connection_failures_to_mainnet_peers
+            .lock()
+            .await
+            .insert(node_id);
+        let mut failures_grouped_by_reason = self
+            .connection_failures_to_mainnet_peers_reasons_counts
+            .lock()
+            .await;
+        self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, failure_reason)
+            .await;
+    }
+
+    pub async fn update_failures_grouped_by_reason(
+        &self,
+        failures_grouped_by_reason: &mut BTreeMap<String, u64>,
+        failure_reason: &RLPxError,
+    ) {
+        match failure_reason {
+            RLPxError::HandshakeError(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("HandshakeError - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::StateError(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("StateError - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::NoMatchingCapabilities() => {
+                failures_grouped_by_reason
+                    .entry("NoMatchingCapabilities".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::Disconnected() => {
+                failures_grouped_by_reason
+                    .entry("Disconnected".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::DisconnectReceived(disconnect_reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("DisconnectReceived - {disconnect_reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::DisconnectSent(disconnect_reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("DisconnectSent - {disconnect_reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::NotFound(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("NotFound - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::InvalidPeerId() => {
+                failures_grouped_by_reason
+                    .entry("InvalidPeerId".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::InvalidRecoveryId() => {
+                failures_grouped_by_reason
+                    .entry("InvalidRecoveryId".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::InvalidMessageLength() => {
+                failures_grouped_by_reason
+                    .entry("InvalidMessageLength".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::MessageNotHandled(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("MessageNotHandled - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::BadRequest(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("BadRequest - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::RLPDecodeError(rlpdecode_error) => {
+                failures_grouped_by_reason
+                    .entry(format!("RLPDecodeError - {rlpdecode_error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::RLPEncodeError(rlpencode_error) => {
+                failures_grouped_by_reason
+                    .entry(format!("RLPEncodeError - {rlpencode_error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::StoreError(store_error) => {
+                failures_grouped_by_reason
+                    .entry(format!("StoreError - {store_error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::CryptographyError(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("CryptographyError - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::BroadcastError(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("BroadcastError - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::RecvError(recv_error) => {
+                failures_grouped_by_reason
+                    .entry(format!("RecvError - {recv_error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::SendMessage(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("SendMessage - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::MempoolError(mempool_error) => {
+                failures_grouped_by_reason
+                    .entry(format!("MempoolError - {mempool_error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::IoError(error) => {
+                failures_grouped_by_reason
+                    .entry(format!("IoError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::InvalidMessageFrame(reason) => {
+                failures_grouped_by_reason
+                    .entry(format!("InvalidMessageFrame - {reason}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::IncompatibleProtocol => {
+                failures_grouped_by_reason
+                    .entry("IncompatibleProtocol".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            RLPxError::InvalidBlockRange => {
+                failures_grouped_by_reason
+                    .entry("InvalidBlockRange".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
             }
         }
     }
@@ -404,6 +442,18 @@ impl Default for Metrics {
             rlpx_conn_failures: failed_rlpx_conn,
             rlpx_conn_failures_reasons: Arc::new(Mutex::new(Vec::new())),
             rlpx_conn_failures_reasons_counts: Arc::new(Mutex::new(BTreeMap::new())),
+
+            discovered_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            failed_to_ping_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            pinged_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            answered_our_ping_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connected_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connection_attempts_to_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connection_failures_to_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            connection_failures_to_mainnet_peers_reasons_counts: Arc::new(Mutex::new(
+                BTreeMap::new(),
+            )),
+
             start_time: SystemTime::now(),
         }
     }

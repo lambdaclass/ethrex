@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
+    fs::read_to_string,
     net::SocketAddr,
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -66,6 +68,7 @@ pub struct RLPxConnectionState(pub InnerState);
 
 #[derive(Clone)]
 pub struct Initiator {
+    _geth_peers: Vec<H256>,
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
 }
@@ -79,6 +82,7 @@ pub struct Receiver {
 
 #[derive(Clone)]
 pub struct Established {
+    pub _geth_peers: Vec<H256>,
     pub(crate) signer: SigningKey,
     // Sending part of the TcpStream to connect with the remote peer
     // The receiving part is owned by the stream listen loop task
@@ -126,7 +130,20 @@ impl RLPxConnectionState {
     }
 
     pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
+        let _geth_peers = serde_json::from_str::<Vec<String>>(
+            &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
+                .expect("Failed to read geth_peers.json"),
+        )
+        .expect("Failed to parse geth_peers.json")
+        .iter()
+        .map(|e| {
+            Node::from_str(e)
+                .expect("Failed to parse bootnode enode")
+                .node_id()
+        })
+        .collect::<Vec<_>>();
         Self(InnerState::Initiator(Initiator {
+            _geth_peers,
             context,
             node: node.clone(),
         }))
@@ -190,12 +207,28 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        METRICS.record_new_rlpx_conn_attempt().await;
-
-        let (mut established_state, stream) = match handshake::perform(state.0).await {
+        let (mut established_state, stream) = match handshake::perform(state.0.clone()).await {
             Ok(result) => result,
             Err(reason) => {
+                {
+                    match state.0 {
+                        InnerState::Initiator(Initiator {
+                            _geth_peers, node, ..
+                        }) => {
+                            let node_id = node.node_id();
+                            if _geth_peers.contains(&node_id) {
+                                METRICS
+                                    .new_connection_failure_to_mainnet_peer(node_id, &reason)
+                                    .await;
+                            }
+                        }
+                        InnerState::Receiver(Receiver { .. }) => {}
+                        InnerState::Established(Established { .. }) => {}
+                    };
+                }
+
                 METRICS.record_new_rlpx_conn_failure(reason).await;
+
                 return Err(RLPxError::Disconnected());
             }
         };
@@ -210,14 +243,32 @@ impl GenServer for RLPxConnection {
             )
             .await;
 
+            let Established {
+                _geth_peers, node, ..
+            } = established_state;
+            let node_id = node.node_id();
+            if _geth_peers.contains(&node_id) {
+                METRICS
+                    .new_connection_failure_to_mainnet_peer(node_id, &reason)
+                    .await;
+            }
+
             METRICS.record_new_rlpx_conn_failure(reason).await;
 
             Err(RLPxError::Disconnected())
         } else {
             // New state
-            state.0 = InnerState::Established(established_state);
+            state.0 = InnerState::Established(established_state.clone());
 
             METRICS.record_new_rlpx_conn_established().await;
+
+            let Established {
+                _geth_peers, node, ..
+            } = established_state;
+            let node_id = node.node_id();
+            if _geth_peers.contains(&node_id) {
+                METRICS.new_connected_mainnet_peer(node_id).await;
+            }
 
             Ok(state)
         }

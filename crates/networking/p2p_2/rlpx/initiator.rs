@@ -1,6 +1,6 @@
-use std::{sync::Arc, time::Duration};
+use std::{fs::read_to_string, str::FromStr, sync::Arc, time::Duration};
 
-use ethrex_common::types::ForkId;
+use ethrex_common::{H256, types::ForkId};
 use k256::ecdsa::SigningKey;
 use spawned_concurrency::{
     messages::Unused,
@@ -11,6 +11,7 @@ use tracing::{debug, info};
 
 use crate::{
     kademlia::Kademlia,
+    metrics::METRICS,
     network::P2PContext,
     types::{Node, NodeRecord},
 };
@@ -29,6 +30,7 @@ pub enum RLPxInitiatorError {
 
 #[derive(Debug, Clone)]
 pub struct RLPxInitiatorState {
+    _geth_peers: Vec<H256>,
     context: P2PContext,
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
@@ -48,7 +50,20 @@ impl RLPxInitiatorState {
         // udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
+        let _geth_peers = serde_json::from_str::<Vec<String>>(
+            &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
+                .expect("Failed to read geth_peers.json"),
+        )
+        .expect("Failed to parse geth_peers.json")
+        .iter()
+        .map(|e| {
+            Node::from_str(e)
+                .expect("Failed to parse bootnode enode")
+                .node_id()
+        })
+        .collect::<Vec<_>>();
         Self {
+            _geth_peers,
             context,
             local_node,
             local_node_record,
@@ -141,10 +156,18 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
     let mut already_known_peers_table = state.kademlia.already_tried_peers.lock().await;
 
     for contact in state.kademlia.table.lock().await.values() {
-        if !already_known_peers_table.contains(&contact.node.node_id()) && contact.knows_us {
-            already_known_peers_table.insert(contact.node.node_id());
+        let node_id = contact.node.node_id();
+        if !already_known_peers_table.contains(&node_id) && contact.knows_us {
+            already_known_peers_table.insert(node_id);
 
             RLPxConnection::spawn_as_initiator(state.context.clone(), &contact.node).await;
+
+            METRICS.record_new_rlpx_conn_attempt().await;
+            if state._geth_peers.contains(&node_id) {
+                METRICS
+                    .new_connection_attempt_to_mainnet_peer(node_id)
+                    .await;
+            }
         }
     }
 }
