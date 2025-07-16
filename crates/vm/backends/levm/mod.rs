@@ -8,6 +8,7 @@ use crate::constants::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::types::TxType;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -20,6 +21,7 @@ use ethrex_levm::EVMConfig;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::precompiles::is_precompile;
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -56,35 +58,57 @@ impl LEVM {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
             // Shortcut for transfer transactions.
+            // NOTE:
+            // Validaciones de una transacción (prepare_execution) (ej: suficiente funds)
+            // Pagar a la coinbase (finalize_execution)
+            // Handlear casos de reversión
+            // Revertir el transfer de value, consumirle el gas limit al sender, pagarle de todas formas a la coinbase.
+            // DONE - Transacciones de tipo 4 consumen más de 21k, tienen más complejidad
+            // DONE - Transacciones con access_list no vacía (que en realidad los transfers no tienen, pero hay que fijarse igual) también tiene lógica de costo de gas adicional
+            // DONE - Hay que asegurarse que el recipient no sea un precompile!
+            // DONE - Chequear que el código del recipient sea empty
+            // DONE - Validar que sender no sea un contrato (esto se hace viendo que no tenga bytecode o que si tiene bytecode que este tenga el EOF_PREFIX (0xef), porque podría tener una delegate account)
             if let TxKind::Call(tx_recipient) = tx.to() {
-                if tx.data().is_empty() {
-                    let account = match db.current_accounts_state.entry(tx_sender) {
+                let chain_config = db.store.get_chain_config()?;
+                let fork = chain_config.fork(block.header.timestamp);
+                let access_list = tx.access_list();
+                let is_precompile = is_precompile(&tx_recipient, fork);
+                let is_transaction_type_3 = tx.tx_type() == TxType::EIP4844;
+                let is_transaction_type_4 = tx.tx_type() == TxType::EIP7702;
+                // let is_transaction_type_4 = tx.authorization_list().is_some();
+                let code = db.get_account(tx_recipient)?.code.clone();
+                if tx.data().is_empty()
+                    && !is_precompile
+                    && access_list.is_empty()
+                    && !is_transaction_type_3
+                    && !is_transaction_type_4
+                    && code.is_empty()
+                {
+                    let sender_account = match db.current_accounts_state.entry(tx_sender) {
                         Entry::Occupied(entry) => entry.into_mut(),
                         Entry::Vacant(entry) => {
                             let account = db.store.get_account(tx_sender)?;
                             db.initial_accounts_state.insert(tx_sender, account.clone());
-
                             entry.insert(account)
                         }
                     };
-                    account.info.balance = account
+                    sender_account.info.balance = sender_account
                         .info
                         .balance
                         .checked_sub(tx.value())
                         .ok_or(InternalError::Overflow)?;
-                    account.info.nonce += 1;
+                    sender_account.info.nonce += 1;
 
-                    let account = match db.current_accounts_state.entry(tx_recipient) {
+                    let recipient_account = match db.current_accounts_state.entry(tx_recipient) {
                         Entry::Occupied(entry) => entry.into_mut(),
                         Entry::Vacant(entry) => {
                             let account = db.store.get_account(tx_recipient)?;
                             db.initial_accounts_state
                                 .insert(tx_recipient, account.clone());
-
                             entry.insert(account)
                         }
                     };
-                    account.info.balance = account
+                    recipient_account.info.balance = recipient_account
                         .info
                         .balance
                         .checked_add(tx.value())
