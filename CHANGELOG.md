@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2025-07-14
+### 2025-07-16
 
 - Improve levm memory model [#3564](https://github.com/lambdaclass/ethrex/pull/3564)
+- 
+### 2025-07-15
+
+- Add sstore bench [#3552](https://github.com/lambdaclass/ethrex/pull/3552)
 
 ### 2025-07-08
 
