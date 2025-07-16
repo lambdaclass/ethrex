@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752659152501,
+  "lastUpdate": 1752660057998,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8177,6 +8177,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0061793148148148146,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ea331e09542d0ffd819d81af32d7a192a3b80f6a",
+          "message": "perf(levm): add sstore bench, allow unoptimized bench contracts and improve bench makefile (#3552)\n\n**Motivation**\n\n- Adds a sstore benchmark, however we need to disable solc optimizations\nfor this contract otherwise it removes most code.\n- Improved the makefile adding a command to samply an individual\nbenchmark\n\nhttps://share.firefox.dev/44MVD2V",
+          "timestamp": "2025-07-16T06:07:39Z",
+          "tree_id": "05d165ee245374bc2320e881bc6c28a6c30b1895",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ea331e09542d0ffd819d81af32d7a192a3b80f6a"
+        },
+        "date": 1752660057053,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006094666666666667,
             "unit": "Mgas/s"
           }
         ]
