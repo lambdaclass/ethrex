@@ -167,6 +167,8 @@ pub fn get_client_version() -> String {
     )
 }
 
+/// Start the pruning task in the background, it will run every [`PRUNING_INTERVAL`]
+/// seconds
 pub fn start_pruner_task(
     store: Store,
     cancellation_token: CancellationToken,
@@ -181,7 +183,6 @@ pub fn start_pruner_task(
             let cancellation_token = cancellation_token.clone();
             tokio::select! {
                 _ = interval.tick() => {
-                    // Execute pruning synchronously in a blocking task
                     let result = tokio::task::spawn_blocking({
                         let store = store_clone.clone();
                         move || store.prune_state_and_storage_log(cancellation_token)
