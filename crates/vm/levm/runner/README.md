@@ -1,4 +1,4 @@
-## LEVM Custom Runner
+## LEVM Runner
 
 Summary: You can send a transaction directly to the EVM specifying things like fork, bytecode, pre-state and setting an initial stack and memory for testing/benchmarking purposes. After execution it will print the final stack and memory, state diff and execution result.
 

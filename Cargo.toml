@@ -23,7 +23,7 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
-  "crates/vm/levm/custom_runner",
+  "crates/vm/levm/runner",
   "tooling/genesis",
   "tooling/hive_report",
   "tooling/load_test",

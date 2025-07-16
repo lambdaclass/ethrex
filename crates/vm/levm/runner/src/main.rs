@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use clap::Parser;
-use custom_runner::benchmark::{BenchAccount, BenchTransaction, RunnerInput};
 use env_logger::Env;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
@@ -17,6 +16,7 @@ use ethrex_levm::{
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use log::{debug, info};
+use runner::benchmark::{BenchAccount, BenchTransaction, RunnerInput};
 use std::{
     collections::HashMap,
     fs::{self, File},

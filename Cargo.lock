@@ -2678,25 +2678,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "custom_runner"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap 4.5.40",
- "env_logger 0.11.8",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-levm",
- "ethrex-storage",
- "ethrex-vm",
- "hex",
- "json5",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9723,6 +9704,25 @@ name = "ruint-macro"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
+
+[[package]]
+name = "runner"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "clap 4.5.40",
+ "env_logger 0.11.8",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-levm",
+ "ethrex-storage",
+ "ethrex-vm",
+ "hex",
+ "json5",
+ "log",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "rustc-demangle"

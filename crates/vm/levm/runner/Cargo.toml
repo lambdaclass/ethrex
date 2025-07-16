@@ -1,11 +1,10 @@
 [package]
-name = "custom_runner"
+name = "runner"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ethrex-levm = { path = "../" }
-# revm_comparison = { path = "../bench/revm_comparison" }
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true

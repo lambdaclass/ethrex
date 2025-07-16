@@ -1,11 +1,11 @@
 use crate::deserialize::{
-    deserialize_hex_bytes, deserialize_u64_str, deserialize_u256_str,
-    deserialize_u256_valued_hashmap, deserialize_u256_vec,
+    deserialize_hex_bytes, deserialize_u256_str, deserialize_u256_valued_hashmap,
+    deserialize_u256_vec, deserialize_u64_str,
 };
 use bytes::Bytes;
+use ethrex_common::types::{code_hash, Account, AccountInfo};
 use ethrex_common::H256;
-use ethrex_common::types::{Account, AccountInfo, code_hash};
-use ethrex_common::{Address, U256, types::Fork};
+use ethrex_common::{types::Fork, Address, U256};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::str::FromStr;
