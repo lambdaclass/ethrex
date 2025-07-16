@@ -90,7 +90,7 @@ contract OnChainProposer is
     bool public REQUIRE_TDX_PROOF;
 
     /// @notice True if verification is done through Aligned Layer instead of smart contract verifiers.
-    bool public ALIGNED;
+    bool public ALIGNED_MODE;
 
     modifier onlySequencer() {
         require(
@@ -141,7 +141,7 @@ contract OnChainProposer is
         TDX_VERIFIER_ADDRESS = tdxverifier;
 
         // Aligned Layer constants
-        ALIGNED = aligned;
+        ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         batchCommitments[0] = BatchCommitmentInfo(
@@ -253,7 +253,7 @@ contract OnChainProposer is
         bytes memory tdxSignature
     ) external override onlySequencer whenNotPaused {
         require(
-            !ALIGNED,
+            !ALIGNED_MODE,
             "Batch verification should be done via Aligned Layer. Call verifyBatchesAligned() instead."
         );
 
@@ -323,7 +323,7 @@ contract OnChainProposer is
         bytes32[][] calldata risc0MerkleProofsList
     ) external override onlySequencer whenNotPaused {
         require(
-            ALIGNED,
+            ALIGNED_MODE,
             "Batch verification should be done via smart contract verifiers. Call verifyBatch() instead."
         );
         require( firstBatchNumber == lastVerifiedBatch + 1,
