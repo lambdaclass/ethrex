@@ -2608,6 +2608,7 @@ dependencies = [
  "ethrex-l2-rpc",
  "ethrex-rlp",
  "ethrex-rpc",
+ "ethrex-sdk-contract-utils",
  "eyre",
  "hex",
  "itertools 0.13.0",
@@ -2619,6 +2620,14 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-sdk-contract-utils"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.12",
  "tracing",
 ]
 

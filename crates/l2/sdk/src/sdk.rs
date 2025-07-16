@@ -1,3 +1,4 @@
+use std::ops::Add;
 use std::{fs::read_to_string, path::Path};
 
 use bytes::Bytes;
@@ -20,7 +21,7 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod calldata;
-mod l1_to_l2_tx_data;
+pub mod l1_to_l2_tx_data;
 
 pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 
@@ -34,14 +35,22 @@ pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
     0xdd, 0x0d, 0xab, 0x2a,
 ]);
 
+// 0x000000000000000000000000000000000000ffff
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xff,
 ]);
 
+// 0x000000000000000000000000000000000000fffe
 pub const L2_TO_L1_MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
+]);
+
+// 0xee110000000000000000000000000000000011ff
+pub const ADDRESS_ALIASING: Address = H160([
+    0xee, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x11, 0xff,
 ]);
 
 pub const L2_WITHDRAW_SIGNATURE: &str = "withdraw(address)";
@@ -551,4 +560,10 @@ pub fn address_to_word(address: Address) -> U256 {
 
 pub fn get_erc1967_slot(name: &str) -> U256 {
     U256::from_big_endian(&keccak(name).0) - U256::one()
+}
+
+pub fn get_address_alias(address: Address) -> Address {
+    let address = U256::from_big_endian(&address.to_fixed_bytes());
+    let alias = address.add(U256::from_big_endian(&ADDRESS_ALIASING.to_fixed_bytes()));
+    H160::from_slice(&alias.to_big_endian()[12..32])
 }
