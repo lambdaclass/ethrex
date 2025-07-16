@@ -31,6 +31,7 @@ RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/downl
     && chmod +x /usr/bin/solc
 
 COPY . .
+ENV COMPILE_CONTRACTS=true
 RUN cargo build --release --manifest-path crates/l2/contracts/Cargo.toml
 
 FROM --platform=${BUILDPLATFORM} ubuntu:24.04

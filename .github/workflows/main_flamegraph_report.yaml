@@ -26,12 +26,6 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
-
       - name: Cache Extra Binaries
         id: cache-binaries
         uses: actions/cache@v4
@@ -176,12 +170,6 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
-
       - name: Cache Extra Binaries
         id: cache-binaries
         uses: actions/cache@v4
@@ -282,12 +270,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
-
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       # We need a reth version that requires a rustc version <= 1.87.0
       - name: Checkout reth

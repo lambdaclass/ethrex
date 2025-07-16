@@ -18,6 +18,11 @@ For more information on how to run the L2 node with the prover attached to it, t
 ## Configuration
 
 The program that deploys our L2 contracts outputs the addresses in a `.env` file, that includes environment information used by each component, automatically loaded by our makefile.
+
+> [!NOTE]
+> The deployer depends on the SDK, which conditionally compiles the proxy contract. For the proxy bytecode to be embedded, the `COMPILE_CONTRACTS` env var must be set during compilation.
+> The `make init` command handles this automatically.
+
 Apart from these, each component accepts multiple configuration options, which can be configured either in the `.env`, or with CLI flags.
 More information is available in [the documentation for each component](./components.md).
 
