@@ -98,7 +98,7 @@ impl EthrexMonitor {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
         };
-        let mut ethrex_monitor = EthrexMonitor::start(state);
+        let mut ethrex_monitor = EthrexMonitor::start_blocking(state);
         ethrex_monitor
             .cast(CastInMessage::Monitor)
             .await
@@ -158,13 +158,14 @@ impl GenServer for EthrexMonitor {
                 handle.clone(),
                 Self::CastMsg::Monitor,
             );
+            CastResponse::NoReply(state)
         } else {
             let mut terminal = state.terminal.lock().await;
             let _ = restore_terminal(&mut terminal).inspect_err(|err| {
                 error!("Error restoring terminal: {err}");
             });
+            CastResponse::Stop
         }
-        CastResponse::NoReply(state)
     }
 
     async fn handle_call(
