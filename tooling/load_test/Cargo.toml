@@ -13,6 +13,7 @@ ethrex-sdk.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-l2-common.workspace = true
+ethrex-l2-rpc.workspace = true
 eyre.workspace = true
 keccak-hash.workspace = true
 tokio = { workspace = true, features = ["full"] }
