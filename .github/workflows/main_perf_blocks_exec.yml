@@ -30,6 +30,12 @@ jobs:
       - name: Install gnuplot
         run: sudo apt-get install -y gnuplot
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Run benchmark
         run: cd cmd/ethrex && cargo bench --bench import_blocks_benchmark -- --output-format bencher |sed 2d | tee output.txt
 

@@ -85,7 +85,7 @@ impl GlobalChainStatusTable {
         let last_committed_batch = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
-            .map_err(|_| MonitorError::GetLatestCommitedBatch)?;
+            .map_err(|_| MonitorError::GetLatestCommittedBatch)?;
 
         let last_verified_batch = eth_client
             .get_last_verified_batch(on_chain_proposer_address)
