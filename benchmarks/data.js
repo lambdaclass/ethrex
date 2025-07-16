@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752682282051,
+  "lastUpdate": 1752684699257,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3925,6 +3925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211114097547,
             "range": "± 403796172",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "faa3dec1f9358872ac18b09e9bd994a80cb1231b",
+          "message": "feat(l1): decouple size of execution batch from header request size during full-sync (#3074)\n\n**Motivation**\nAllow us to configure the amount of blocks to execute in a single batch\nduring full sync. Currently, the only way to do this is by changing the\namount of block headers we ask for in each request.\nIn order to achieve this, this PR proposes adding the enum\n`BlockSyncState` with variants for Full and Snap sync so we can separate\nbehaviors between each mode and also allow each mode to keep its\nseparate state. This is key as we will need to persist headers and\nbodies through various fetch requests so we can build custom-sized\nexecution batches.\nIt also replaces the previous configurable env var `BlOCK_HEADER_LIMIT`\nwith `EXECUTE_BLOCK_BATCH`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `BlockSyncState` enum as a way to differentiate between each sync\nmode's state during block syncing phase.\n* Refactor `request_and_validate_block_bodies`: it now receives a slice\nof headers and returns the requested block bodies instead of the full\nblocks. This allowed us to completely get rid of header cloning.\n* `validate_block_body` now receives a reference to the head & body\ninstead of the full block (as a result of refactoring its only user)\n* `Store::add_block_headers` now only receives the headers (This lets us\nsimplify caller code)\n* Removed `search_head` variable as having both current & search head\nserves no purpose.\n* Abtract current_head selection into `BlockSyncState::get_current_head`\n* Fix bug in condition used to decide wether to switch from snap to full\nsync\n* `start_sync` no longer receives `current_head`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2894\n\n---------\n\nCo-authored-by: SDartayet <44068466+SDartayet@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-07-16T15:55:06Z",
+          "tree_id": "32e65b17e7d3493c84eea672f20281cf2df62aaa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/faa3dec1f9358872ac18b09e9bd994a80cb1231b"
+        },
+        "date": 1752684688631,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208732062852,
+            "range": "± 605900980",
             "unit": "ns/iter"
           }
         ]
