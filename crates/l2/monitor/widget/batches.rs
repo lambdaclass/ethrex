@@ -14,12 +14,13 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+// batch number | # blocks | # messages | commit tx hash | verify tx hash
+type BatchLine = (u64, u64, usize, Option<H256>, Option<H256>);
+
 #[derive(Default)]
 pub struct BatchesTable {
     pub state: TableState,
-    // batch number | # blocks | # messages | commit tx hash | verify tx hash
-    #[expect(clippy::type_complexity)]
-    pub items: Vec<(u64, u64, usize, Option<H256>, Option<H256>)>,
+    pub items: Vec<BatchLine>,
     last_l1_block_fetched: u64,
     on_chain_proposer_address: Address,
 }
