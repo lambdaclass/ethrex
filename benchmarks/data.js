@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752699874275,
+  "lastUpdate": 1752703203772,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8621,6 +8621,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006066963636363636,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3cf9507c3b63fe81929bb8ae2fd32de3fa049078",
+          "message": "feat(l2): make monitor quit (#3622)\n\n**Motivation**\nWhen the monitor is quitted with `Shift + Q` it closes the monitor but\ndoes not end the process\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nChanged the L2 task initialization to use `JoinSet` instead of a\n`TaskTracker`, so it can be joined and end the process if it ended.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n**How to test**\n\n- Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n- Run a Sequencer (I suggest `make restart` in `crates/l2`).\n- Run the prover with `make init-prover` in `crates/l2`.\n- Run `make test` in `crates/l2`.\n- Press `Shift + Q` to close the monitor\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses\nhttps://github.com/orgs/lambdaclass/projects/37/views/10?pane=issue&itemId=118808771&issue=lambdaclass%7Cethrex%7C3512",
+          "timestamp": "2025-07-16T20:07:24Z",
+          "tree_id": "b08bdd2932e3c056a571269355a21b4a1bbfb496",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3cf9507c3b63fe81929bb8ae2fd32de3fa049078"
+        },
+        "date": 1752703186304,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0011927899910634495,
             "unit": "Mgas/s"
           }
         ]
