@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752690304197,
+  "lastUpdate": 1752690340131,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3985,6 +3985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214261390548,
             "range": "± 281392533",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5839db8a7bec92df065433fed6ba6918142876fd",
+          "message": "fix(l1): set base fee per gas only if we're past London hardfork (#3659)\n\n**Motivation**\n\nWe found that we are computing the mainnet genesis block hash wrong.\n\n**Description**\n\nThis PR changes our `Genesis::get_block_header` function to only set the\n`base_fee_per_gas` if we're past the London hardfork, which introduced\nthis field. I also included some tests to verify the hash of each public\nnetwork matches some hardcoded values, checked against `geth`.",
+          "timestamp": "2025-07-16T17:29:18Z",
+          "tree_id": "01606b85d8cd095fec44bab8c407c1161820b624",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5839db8a7bec92df065433fed6ba6918142876fd"
+        },
+        "date": 1752690328383,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211550201925,
+            "range": "± 636088920",
             "unit": "ns/iter"
           }
         ]
