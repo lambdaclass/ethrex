@@ -15,8 +15,8 @@ use ethrex_levm::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
-use log::{debug, info};
-use runner::benchmark::{BenchAccount, BenchTransaction, RunnerInput};
+use log::{debug, error, info, warn};
+use runner::input::{BenchAccount, BenchTransaction, RunnerInput};
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -42,7 +42,7 @@ fn main() {
     let cli = Cli::parse();
 
     if cli.input.is_none() && cli.code.is_none() {
-        println!("Error: Either --input or --code must be provided.");
+        error!("Error: Either --input or --code must be provided.");
         return;
     }
 
@@ -108,12 +108,12 @@ fn main() {
     .expect("Failed to initialize VM");
 
     // Set initial stack and memory
-    println!("Setting initial stack: {:?}", runner_input.initial_stack);
+    info!("Setting initial stack: {:?}", runner_input.initial_stack);
     let stack = &mut vm.current_call_frame_mut().unwrap().stack;
     for elem in runner_input.initial_stack {
         stack.push(&[elem]).expect("Stack Overflow");
     }
-    println!(
+    info!(
         "Setting initial memory: 0x{:x}",
         runner_input.initial_memory
     );
@@ -125,13 +125,13 @@ fn main() {
     // Print execution result
     print!("\n\nResult:");
     match result {
-        Ok(report) => println!(" {:?}\n", report),
-        Err(e) => println!(" Error: {}\n", e),
+        Ok(report) => info!(" {:?}\n", report),
+        Err(e) => error!(" Error: {}\n", e),
     }
 
     // Print final stack and memory
     let callframe = vm.pop_call_frame().unwrap();
-    println!(
+    info!(
         "Final Stack (bottom to top): {:?}",
         &callframe.stack.values[callframe.stack.offset..]
             .iter()
@@ -139,7 +139,7 @@ fn main() {
             .map(|value| format!("0x{:x}", value))
             .collect::<Vec<_>>()
     );
-    println!("Final Memory: 0x{}", hex::encode(callframe.memory));
+    info!("Final Memory: 0x{}", hex::encode(callframe.memory));
 
     // Print Accounts diff
     compare_initial_and_current_accounts(
@@ -155,7 +155,7 @@ fn compare_initial_and_current_accounts(
     current_accounts: HashMap<Address, Account>,
     transaction: &BenchTransaction,
 ) {
-    println!("\nState Diff:");
+    info!("\nState Diff:");
     for (addr, acc) in current_accounts {
         // Instead of the if-else chain
         let account_label = match &addr {
@@ -164,7 +164,7 @@ fn compare_initial_and_current_accounts(
             a if *a == COINBASE => "Coinbase ",
             _ => "",
         };
-        println!("\n Checking {}Account: {:#x}", account_label, addr);
+        info!("\n Checking {}Account: {:#x}", account_label, addr);
 
         if let Some(prev) = initial_accounts.get(&addr) {
             if prev.info.balance != acc.info.balance {
@@ -174,28 +174,28 @@ fn compare_initial_and_current_accounts(
                 } else {
                     "-"
                 };
-                println!(
+                info!(
                     "    Balance changed: {} -> {} (Diff: {}{})",
                     prev.info.balance, acc.info.balance, balance_diff_sign, balance_diff
                 );
             }
 
             if prev.info.nonce != acc.info.nonce {
-                println!(
+                info!(
                     "    Nonce changed: {} -> {}",
                     prev.info.nonce, acc.info.nonce,
                 );
             }
 
             if prev.code != acc.code {
-                println!("    Code changed: {:?} -> {:?}", prev.code, acc.code);
+                info!("    Code changed: {:?} -> {:?}", prev.code, acc.code);
             }
 
             for (slot, value) in &acc.storage {
                 let default_value = U256::default();
                 let prev_value = prev.storage.get(slot).unwrap_or(&default_value);
                 if prev_value != value {
-                    println!(
+                    info!(
                         "    Storage slot {:?} changed: {:?} -> {:?}",
                         slot, prev_value, value
                     );

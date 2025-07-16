@@ -1,2 +1,2 @@
-pub mod benchmark;
 pub mod deserialize;
+pub mod input;
