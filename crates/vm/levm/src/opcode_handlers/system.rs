@@ -195,6 +195,10 @@ impl<'a> VM<'a> {
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
+        // Make sure we have enough memory to write the return data
+        // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
+        try_resize(&mut callframe.memory, new_memory_size)?;
+
         // Sender and recipient are the same in this case. But the code executed is from another account.
         let from = callframe.to;
         let to = callframe.to;
@@ -315,6 +319,10 @@ impl<'a> VM<'a> {
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
+        // Make sure we have enough memory to write the return data
+        // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
+        try_resize(&mut callframe.memory, new_memory_size)?;
+
         // OPERATION
         let from = callframe.msg_sender;
         let value = callframe.msg_value;
@@ -409,6 +417,10 @@ impl<'a> VM<'a> {
             cost.checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
+
+        // Make sure we have enough memory to write the return data
+        // This is also needed to make sure we expand the memory even in cases where we don't have return data (such as transfers)
+        try_resize(&mut callframe.memory, new_memory_size)?;
 
         // OPERATION
         let value = U256::zero();
