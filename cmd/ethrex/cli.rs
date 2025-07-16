@@ -8,7 +8,7 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
-// use ethrex_p2p::sync::SyncMode;
+use ethrex_p2p::sync::SyncMode;
 use ethrex_p2p::types::Node;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -66,8 +66,8 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    // #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
-    // pub syncmode: SyncMode,
+    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
+    pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
@@ -208,7 +208,7 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
-            // syncmode: Default::default(),
+            syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),

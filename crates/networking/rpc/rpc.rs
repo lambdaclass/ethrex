@@ -49,7 +49,7 @@ use axum_extra::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::peer_handler::PeerHandler;
-// use ethrex_p2p::sync_manager::SyncManager;
+use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_storage::Store;
@@ -78,7 +78,7 @@ pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
-    // pub syncer: Arc<SyncManager>,
+    pub syncer: Arc<SyncManager>,
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
     pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
@@ -121,7 +121,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    // syncer: SyncManager,
+    syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
 ) -> Result<(), RpcErr> {
@@ -132,7 +132,7 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        // syncer: Arc::new(syncer),
+        syncer: Arc::new(syncer),
         peer_handler,
         node_data: NodeData {
             jwt_secret,

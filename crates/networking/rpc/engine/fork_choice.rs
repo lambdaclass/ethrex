@@ -4,7 +4,7 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
-// use ethrex_p2p::sync::SyncMode;
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
@@ -210,12 +210,12 @@ async fn handle_forkchoice(
         }
     }
 
-    // if context.syncer.sync_mode() == SyncMode::Snap {
-    //     context
-    //         .syncer
-    //         .sync_to_head(fork_choice_state.head_block_hash);
-    //     return Ok((None, PayloadStatus::syncing().into()));
-    // }
+    if context.syncer.sync_mode() == SyncMode::Snap {
+        context
+            .syncer
+            .sync_to_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
+    }
 
     match apply_fork_choice(
         &context.storage,

@@ -5,7 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
 use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::peer_handler::PeerHandler;
-// use ethrex_p2p::sync_manager::SyncManager;
+use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -36,15 +36,15 @@ pub async fn init_rpc_api(
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
-    // // Create SyncManager
-    // let syncer = SyncManager::new(
-    //     peer_handler.clone(),
-    //     opts.syncmode.clone(),
-    //     cancel_token,
-    //     blockchain.clone(),
-    //     store.clone(),
-    // )
-    // .await;
+    // Create SyncManager
+    let syncer = SyncManager::new(
+        peer_handler.clone(),
+        opts.syncmode.clone(),
+        cancel_token,
+        blockchain.clone(),
+        store.clone(),
+    )
+    .await;
 
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
@@ -54,7 +54,7 @@ pub async fn init_rpc_api(
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
         local_node_record,
-        // syncer,
+        syncer,
         peer_handler,
         get_client_version(),
         get_valid_delegation_addresses(l2_opts),

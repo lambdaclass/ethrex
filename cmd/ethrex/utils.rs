@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use ethrex_common::types::Block;
 use ethrex_p2p::{
     kademlia::Kademlia,
-    // sync::SyncMode,
+    sync::SyncMode,
     types::{Node, NodeRecord},
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -17,9 +17,7 @@ use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
-    sync::Arc,
 };
-use tokio::sync::Mutex;
 use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
@@ -30,13 +28,14 @@ pub struct NodeConfigFile {
 
 impl NodeConfigFile {
     pub async fn new(table: Kademlia, node_record: NodeRecord) -> Self {
-        let mut connected_peers = vec![];
+        let connected_peers = table
+            .peers
+            .lock()
+            .await
+            .iter()
+            .map(|(_id, peer)| peer.node.clone())
+            .collect::<Vec<_>>();
 
-        // for peer in table.lock().await.iter_peers() {
-        //     if peer.is_connected {
-        //         connected_peers.push(peer.node.clone());
-        //     }
-        // }
         NodeConfigFile {
             known_peers: connected_peers,
             node_record,
@@ -84,15 +83,15 @@ pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
     EvmEngine::try_from(s.to_owned()).map_err(|e| eyre::eyre!("{e}"))
 }
 
-// pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
-//     match s {
-//         "full" => Ok(SyncMode::Full),
-//         "snap" => Ok(SyncMode::Snap),
-//         other => Err(eyre::eyre!(
-//             "Invalid syncmode {other:?} expected either snap or full",
-//         )),
-//     }
-// }
+pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
+    match s {
+        "full" => Ok(SyncMode::Full),
+        "snap" => Ok(SyncMode::Snap),
+        other => Err(eyre::eyre!(
+            "Invalid syncmode {other:?} expected either snap or full",
+        )),
+    }
+}
 
 pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
     // NOTE: this blocks until hostname can be resolved

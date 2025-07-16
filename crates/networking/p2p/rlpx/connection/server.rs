@@ -20,9 +20,10 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
 };
+use spawned_rt::tasks::mpsc;
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, broadcast, mpsc::Sender},
+    sync::{Mutex, broadcast},
     task,
 };
 use tokio_stream::StreamExt;
@@ -30,10 +31,11 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    kademlia::Kademlia,
+    kademlia::{Kademlia, PeerChannels},
     metrics::METRICS,
     network::P2PContext,
     rlpx::{
+        Message,
         connection::{codec::RLPxCodec, handshake},
         error::RLPxError,
         eth::{
@@ -44,12 +46,15 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
         },
-        message::Message,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
+    },
+    snap::{
+        process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
+        process_trie_nodes_request,
     },
     types::Node,
 };
@@ -109,7 +114,7 @@ pub struct Established {
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Kademlia,
-    pub(crate) backend_channel: Option<Sender<Message>>,
+    pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
     pub(crate) inbound: bool,
 }
 
@@ -342,10 +347,10 @@ where
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
-    // let (peer_channels, sender) = PeerChannels::create(handle.clone());
+    let (peer_channels, sender) = PeerChannels::create(handle.clone());
 
     // Updating the state to establish the backend channel
-    // state.backend_channel = Some(sender);
+    state.backend_channel = Some(sender);
 
     // NOTE: if the peer came from the discovery server it will already be inserted in the table
     // but that might not always be the case, so we try to add it to the table
@@ -733,10 +738,10 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
         }
-        // Message::GetAccountRange(req) => {
-        //     let response = process_account_range_request(req, state.storage.clone())?;
-        //     send(state, Message::AccountRange(response)).await?
-        // }
+        Message::GetAccountRange(req) => {
+            let response = process_account_range_request(req, state.storage.clone())?;
+            send(state, Message::AccountRange(response)).await?
+        }
         Message::Transactions(txs) if peer_supports_eth => {
             if state.blockchain.is_synced() {
                 let mut valid_txs = vec![];
@@ -820,24 +825,24 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 msg.handle(&state.node, &state.blockchain).await?;
             }
         }
-        // Message::GetStorageRanges(req) => {
-        //     let response = process_storage_ranges_request(req, state.storage.clone())?;
-        //     send(state, Message::StorageRanges(response)).await?
-        // }
-        // Message::GetByteCodes(req) => {
-        //     let response = process_byte_codes_request(req, state.storage.clone())?;
-        //     send(state, Message::ByteCodes(response)).await?
-        // }
-        // Message::GetTrieNodes(req) => {
-        //     let response = process_trie_nodes_request(req, state.storage.clone())?;
-        //     send(state, Message::TrieNodes(response)).await?
-        // }
+        Message::GetStorageRanges(req) => {
+            let response = process_storage_ranges_request(req, state.storage.clone())?;
+            send(state, Message::StorageRanges(response)).await?
+        }
+        Message::GetByteCodes(req) => {
+            let response = process_byte_codes_request(req, state.storage.clone())?;
+            send(state, Message::ByteCodes(response)).await?
+        }
+        Message::GetTrieNodes(req) => {
+            let response = process_trie_nodes_request(req, state.storage.clone())?;
+            send(state, Message::TrieNodes(response)).await?
+        }
         // Send response messages to the backend
-        // message @ Message::AccountRange(_)
-        // | message @ Message::StorageRanges(_)
-        // | message @ Message::ByteCodes(_)
-        // | message @ Message::TrieNodes(_)
-        message @ Message::BlockBodies(_)
+        message @ Message::AccountRange(_)
+        | message @ Message::StorageRanges(_)
+        | message @ Message::ByteCodes(_)
+        | message @ Message::TrieNodes(_)
+        | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts(_) => {
             state
@@ -845,8 +850,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 .as_mut()
                 // TODO: this unwrap() is temporary, until we fix the backend process to use spawned
                 .expect("Backend channel is not available")
-                .send(message)
-                .await?
+                .send(message)?
         }
         // TODO: Add new message types and handlers as they are implemented
         message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
