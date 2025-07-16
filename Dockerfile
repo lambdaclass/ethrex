@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     libc6 \
     libssl-dev \
     ca-certificates \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
@@ -29,6 +31,11 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # --- Application Build Stage ---
 # Copy the full, up-to-date source code and build the application.
 # This uses the cached dependencies from the builder stage.
+
+# Install solc for build scripts
+RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+    && chmod +x /usr/bin/solc
+
 ARG BUILD_FLAGS=""
 COPY . .
 RUN cargo build --release $BUILD_FLAGS
