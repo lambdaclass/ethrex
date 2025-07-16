@@ -22,7 +22,7 @@ use ethrex_common::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     rc::Rc,
 };
 
@@ -40,7 +40,7 @@ pub enum VMType {
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub accessed_addresses: HashSet<Address>,
-    pub accessed_storage_slots: HashMap<Address, BTreeSet<H256>>,
+    pub accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,
@@ -56,7 +56,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
-    pub storage_original_values: HashMap<(Address, H256), U256>,
+    pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
@@ -84,7 +84,7 @@ impl<'a> VM<'a> {
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
             substate_backups: vec![],
-            storage_original_values: HashMap::new(),
+            storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),

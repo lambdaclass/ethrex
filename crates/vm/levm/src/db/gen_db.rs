@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,13 +17,12 @@ use crate::vm::VM;
 use super::CacheDB;
 use super::Database;
 use std::collections::HashSet;
-use std::collections::hash_map::Entry;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
-    pub initial_accounts_state: HashMap<Address, Account>,
+    pub initial_accounts_state: BTreeMap<Address, Account>,
     pub tx_backup: Option<CallFrameBackup>,
     /// For keeping track of all destroyed accounts during block execution.
     /// Used in get_state_transitions for edge case in which account is destroyed and re-created afterwards
@@ -132,8 +132,8 @@ impl<'a> VM<'a> {
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, InternalError> {
         let account = match self.db.current_accounts_state.entry(address) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
                 let account = self.db.store.get_account(address)?;
                 self.db
                     .initial_accounts_state
