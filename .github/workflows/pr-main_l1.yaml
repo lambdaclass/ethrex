@@ -25,6 +25,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Required for build scripts
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Run cargo check
         run: cargo check --workspace
 
@@ -47,6 +54,13 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      # Required for build scripts
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Run tests
         run: |
