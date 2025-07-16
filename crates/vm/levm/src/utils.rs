@@ -19,8 +19,7 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
-    types::{Fork, tx_fields::*},
+    types::{tx_fields::*, Fork}, utils::u256_to_big_endian, Address, H256, U256
 };
 use ethrex_common::{
     types::{Account, TxKind},
@@ -212,7 +211,7 @@ pub fn get_blob_gas_price(
 
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&word.to_big_endian()[12..])
+    Address::from_slice(&u256_to_big_endian(word)[12..])
 }
 
 // ================== EIP-7702 related functions =====================

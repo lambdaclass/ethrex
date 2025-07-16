@@ -268,6 +268,7 @@ impl<'a> VM<'a> {
     }
 
     /// Gets storage value of an account, caching it if not already cached.
+    #[inline(always)]
     pub fn get_storage_value(
         &mut self,
         address: Address,
