@@ -316,8 +316,8 @@ pub enum MonitorError {
     GetLatestBatch,
     #[error("Failed to get latest verified batch")]
     GetLatestVerifiedBatch,
-    #[error("Failed to get commited batch")]
-    GetLatestCommitedBatch,
+    #[error("Failed to get committed batch")]
+    GetLatestCommittedBatch,
     #[error("Failed to get last L1 block fetched")]
     GetLastFetchedL1,
     #[error("Failed to get pending privileged transactions")]
