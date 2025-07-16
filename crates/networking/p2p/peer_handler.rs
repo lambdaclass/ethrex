@@ -144,6 +144,7 @@ impl PeerHandler {
                         reverse: matches!(order, BlockRequestOrder::NewToOld),
                     });
 
+                    let mut receiver = peer_channel.receiver.lock().await;
                     // TODO: error handling when we re-add peer scoring and penalization
                     if let Err(err) = peer_channel
                         .connection
@@ -154,7 +155,6 @@ impl PeerHandler {
                         return None;
                     }
 
-                    let mut receiver = peer_channel.receiver.lock().await;
                     let Ok(response) =
                         tokio::time::timeout(PEER_REPLY_TIMEOUT, receiver.recv()).await
                     else {
