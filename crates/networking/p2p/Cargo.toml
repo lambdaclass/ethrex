@@ -23,6 +23,8 @@ snap.workspace = true
 serde.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
+keccak-hash.workspace = true
+prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
 futures = "0.3.31"
@@ -49,5 +51,5 @@ default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
 
-[lints.clippy] 
-unwrap_used = "deny" 
+[lints.clippy]
+unwrap_used = "deny"

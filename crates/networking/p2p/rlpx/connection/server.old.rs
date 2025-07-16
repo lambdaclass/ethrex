@@ -1,8 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::read_to_string,
     net::SocketAddr,
-    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -30,8 +28,8 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    kademlia::Kademlia,
-    metrics::METRICS,
+    discv4::server::MAX_PEERS_TCP_CONNECTIONS,
+    kademlia::{KademliaTable, PeerChannels},
     network::P2PContext,
     rlpx::{
         connection::{codec::RLPxCodec, handshake},
@@ -51,6 +49,10 @@ use crate::{
         },
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
+    snap::{
+        process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
+        process_trie_nodes_request,
+    },
     types::Node,
 };
 
@@ -68,7 +70,6 @@ pub struct RLPxConnectionState(pub InnerState);
 
 #[derive(Clone)]
 pub struct Initiator {
-    _geth_peers: Vec<H256>,
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
 }
@@ -82,7 +83,6 @@ pub struct Receiver {
 
 #[derive(Clone)]
 pub struct Established {
-    pub _geth_peers: Vec<H256>,
     pub(crate) signer: SigningKey,
     // Sending part of the TcpStream to connect with the remote peer
     // The receiving part is owned by the stream listen loop task
@@ -108,7 +108,7 @@ pub struct Established {
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
-    pub(crate) table: Kademlia,
+    pub(crate) table: Arc<Mutex<KademliaTable>>,
     pub(crate) backend_channel: Option<Sender<Message>>,
     pub(crate) inbound: bool,
 }
@@ -130,20 +130,7 @@ impl RLPxConnectionState {
     }
 
     pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
-        let _geth_peers = serde_json::from_str::<Vec<String>>(
-            &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
-                .expect("Failed to read geth_peers.json"),
-        )
-        .expect("Failed to parse geth_peers.json")
-        .iter()
-        .map(|e| {
-            Node::from_str(e)
-                .expect("Failed to parse bootnode enode")
-                .node_id()
-        })
-        .collect::<Vec<_>>();
         Self(InnerState::Initiator(Initiator {
-            _geth_peers,
             context,
             node: node.clone(),
         }))
@@ -207,69 +194,20 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = match handshake::perform(state.0.clone()).await {
-            Ok(result) => result,
-            Err(reason) => {
-                {
-                    match state.0 {
-                        InnerState::Initiator(Initiator {
-                            _geth_peers, node, ..
-                        }) => {
-                            let node_id = node.node_id();
-                            if _geth_peers.contains(&node_id) {
-                                METRICS
-                                    .new_connection_failure_to_mainnet_peer(node_id, &reason)
-                                    .await;
-                            }
-                        }
-                        InnerState::Receiver(Receiver { .. }) => {}
-                        InnerState::Established(Established { .. }) => {}
-                    };
-                }
-
-                METRICS.record_new_rlpx_conn_failure(reason).await;
-
-                return Err(RLPxError::Disconnected());
-            }
-        };
-
+        let (mut established_state, stream) = handshake::perform(state.0).await?;
         log_peer_debug(&established_state.node, "Starting RLPx connection");
 
         if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
             connection_failed(
                 &mut established_state,
                 "Failed to initialize RLPx connection",
-                &reason,
+                reason,
             )
             .await;
-
-            let Established {
-                _geth_peers, node, ..
-            } = established_state;
-            let node_id = node.node_id();
-            if _geth_peers.contains(&node_id) {
-                METRICS
-                    .new_connection_failure_to_mainnet_peer(node_id, &reason)
-                    .await;
-            }
-
-            METRICS.record_new_rlpx_conn_failure(reason).await;
-
             Err(RLPxError::Disconnected())
         } else {
             // New state
-            state.0 = InnerState::Established(established_state.clone());
-
-            METRICS.record_new_rlpx_conn_established().await;
-
-            let Established {
-                _geth_peers, node, ..
-            } = established_state;
-            let node_id = node.node_id();
-            if _geth_peers.contains(&node_id) {
-                METRICS.new_connected_mainnet_peer(node_id).await;
-            }
-
+            state.0 = InnerState::Established(established_state);
             Ok(state)
         }
     }
@@ -342,26 +280,25 @@ where
 
     // Handshake OK: handle connection
     // Create channels to communicate directly to the peer
-    // let (peer_channels, sender) = PeerChannels::create(handle.clone());
+    let (peer_channels, sender) = PeerChannels::create(handle.clone());
 
     // Updating the state to establish the backend channel
-    // state.backend_channel = Some(sender);
+    state.backend_channel = Some(sender);
 
     // NOTE: if the peer came from the discovery server it will already be inserted in the table
     // but that might not always be the case, so we try to add it to the table
     // Note: we don't ping the node we let the validation service do its job
-    // {
-    //     let mut table_lock = state.table.lock().await;
-    //     table_lock.insert_node_forced(state.node.clone());
-    //     table_lock.init_backend_communication(
-    //         state.node.node_id(),
-    //         peer_channels,
-    //         state.capabilities.clone(),
-    //         state.inbound,
-    //     );
-    // }
+    {
+        let mut table_lock = state.table.lock().await;
+        table_lock.insert_node_forced(state.node.clone());
+        table_lock.init_backend_communication(
+            state.node.node_id(),
+            peer_channels,
+            state.capabilities.clone(),
+            state.inbound,
+        );
+    }
     init_capabilities(state, &mut stream).await?;
-    state.table.set_connected_peer(state.node.node_id()).await;
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
@@ -489,16 +426,18 @@ where
     Ok(())
 }
 
-async fn post_handshake_checks(table: Kademlia) -> Result<(), RLPxError> {
+async fn post_handshake_checks(
+    table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+) -> Result<(), RLPxError> {
     // Check if connected peers exceed the limit
-    // let peer_count = {
-    //     let table_lock = table.lock().await;
-    //     table_lock.count_connected_peers()
-    // };
+    let peer_count = {
+        let table_lock = table.lock().await;
+        table_lock.count_connected_peers()
+    };
 
-    // if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
-    //     return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
-    // }
+    if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
+        return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
+    }
 
     Ok(())
 }
@@ -514,7 +453,7 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
         });
 }
 
-async fn connection_failed(state: &mut Established, error_text: &str, error: &RLPxError) {
+async fn connection_failed(state: &mut Established, error_text: &str, error: RLPxError) {
     log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
 
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
@@ -536,7 +475,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &RL
                 &state.node,
                 &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
             );
-            // state.table.lock().await.replace_peer(state.node.node_id());
+            state.table.lock().await.replace_peer(state.node.node_id());
         }
     }
 
@@ -679,8 +618,9 @@ where
                     log_peer_debug(&node, &format!("Received RLPX Error in msg {e}"));
                     break;
                 }
-                // None means the stream was closed
-                None => break,
+                // `None` does not neccessary means EOF, so we will keep the loop running
+                // (See Framed::new)
+                None => (),
             }
         }
     });
@@ -733,10 +673,10 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
         }
-        // Message::GetAccountRange(req) => {
-        //     let response = process_account_range_request(req, state.storage.clone())?;
-        //     send(state, Message::AccountRange(response)).await?
-        // }
+        Message::GetAccountRange(req) => {
+            let response = process_account_range_request(req, state.storage.clone())?;
+            send(state, Message::AccountRange(response)).await?
+        }
         Message::Transactions(txs) if peer_supports_eth => {
             if state.blockchain.is_synced() {
                 let mut valid_txs = vec![];
@@ -820,24 +760,24 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 msg.handle(&state.node, &state.blockchain).await?;
             }
         }
-        // Message::GetStorageRanges(req) => {
-        //     let response = process_storage_ranges_request(req, state.storage.clone())?;
-        //     send(state, Message::StorageRanges(response)).await?
-        // }
-        // Message::GetByteCodes(req) => {
-        //     let response = process_byte_codes_request(req, state.storage.clone())?;
-        //     send(state, Message::ByteCodes(response)).await?
-        // }
-        // Message::GetTrieNodes(req) => {
-        //     let response = process_trie_nodes_request(req, state.storage.clone())?;
-        //     send(state, Message::TrieNodes(response)).await?
-        // }
+        Message::GetStorageRanges(req) => {
+            let response = process_storage_ranges_request(req, state.storage.clone())?;
+            send(state, Message::StorageRanges(response)).await?
+        }
+        Message::GetByteCodes(req) => {
+            let response = process_byte_codes_request(req, state.storage.clone())?;
+            send(state, Message::ByteCodes(response)).await?
+        }
+        Message::GetTrieNodes(req) => {
+            let response = process_trie_nodes_request(req, state.storage.clone())?;
+            send(state, Message::TrieNodes(response)).await?
+        }
         // Send response messages to the backend
-        // message @ Message::AccountRange(_)
-        // | message @ Message::StorageRanges(_)
-        // | message @ Message::ByteCodes(_)
-        // | message @ Message::TrieNodes(_)
-        message @ Message::BlockBodies(_)
+        message @ Message::AccountRange(_)
+        | message @ Message::StorageRanges(_)
+        | message @ Message::ByteCodes(_)
+        | message @ Message::TrieNodes(_)
+        | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts(_) => {
             state

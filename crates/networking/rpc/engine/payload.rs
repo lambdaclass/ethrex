@@ -4,7 +4,7 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
-use ethrex_p2p::sync::SyncMode;
+// use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -551,10 +551,10 @@ async fn handle_new_payload_v1_v2(
     // We have validated ancestors, the parent is correct
     let latest_valid_hash = block.header.parent_hash;
 
-    if context.syncer.sync_mode() == SyncMode::Snap {
-        warn!("Snap sync in progress, skipping new payload validation");
-        return Ok(PayloadStatus::syncing());
-    }
+    // if context.syncer.sync_mode() == SyncMode::Snap {
+    //     warn!("Snap sync in progress, skipping new payload validation");
+    //     return Ok(PayloadStatus::syncing());
+    // }
 
     // All checks passed, execute payload
     let payload_status = try_execute_payload(&block, &context, latest_valid_hash).await?;
@@ -643,7 +643,7 @@ async fn try_execute_payload(
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
-            context.syncer.sync_to_head(block_hash);
+            // context.syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state

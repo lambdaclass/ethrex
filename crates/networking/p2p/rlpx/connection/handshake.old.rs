@@ -1,5 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet}, fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::Arc,
 };
 
 use crate::{
@@ -63,13 +65,13 @@ pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
     let (context, node, framed, inbound) = match state {
-        InnerState::Initiator(Initiator { context, node, .. }) => {
+        InnerState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
                     log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
-                    // context.table.lock().await.replace_peer(node.node_id());
+                    context.table.lock().await.replace_peer(node.node_id());
                     return Err(error)?;
                 }
             };
@@ -114,18 +116,6 @@ pub(crate) async fn perform(
     let (sink, stream) = framed.split();
     Ok((
         Established {
-            _geth_peers: serde_json::from_str::<Vec<String>>(
-                &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
-                    .expect("Failed to read geth_peers.json"),
-            )
-            .expect("Failed to parse geth_peers.json")
-            .iter()
-            .map(|e| {
-                Node::from_str(e)
-                    .expect("Failed to parse bootnode enode")
-                    .node_id()
-            })
-            .collect::<Vec<_>>(),
             signer: context.signer.clone(),
             sink: Arc::new(Mutex::new(sink)),
             node: node.clone(),
@@ -148,10 +138,7 @@ pub(crate) async fn perform(
 }
 
 async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
-    match addr {
-        SocketAddr::V4(_) => TcpSocket::new_v4()?.connect(addr).await,
-        SocketAddr::V6(_) => TcpSocket::new_v6()?.connect(addr).await,
-    }
+    TcpSocket::new_v4()?.connect(addr).await
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(

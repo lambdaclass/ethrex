@@ -4,13 +4,15 @@ use crate::{
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{ForkId, Genesis};
 use ethrex_p2p::{
-    kademlia::KademliaTable,
-    network::{P2PContext, public_key_from_signing_key},
-    peer_handler::PeerHandler,
-    sync_manager::SyncManager,
+    kademlia::Kademlia,
+    network::P2PContext,
+    // network::public_key_from_signing_key,
+    // peer_handler::PeerHandler,
+    // sync_manager::SyncManager,
     types::{Node, NodeRecord},
+    utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
@@ -101,7 +103,7 @@ pub fn init_blockchain(
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,
@@ -109,17 +111,17 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
+    // let peer_handler = PeerHandler::new(peer_table);
 
-    // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_handler.clone(),
-        opts.syncmode.clone(),
-        cancel_token,
-        blockchain.clone(),
-        store.clone(),
-    )
-    .await;
+    // // Create SyncManager
+    // let syncer = SyncManager::new(
+    //     peer_handler.clone(),
+    //     opts.syncmode.clone(),
+    //     cancel_token,
+    //     blockchain.clone(),
+    //     store.clone(),
+    // )
+    // .await;
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
@@ -129,8 +131,8 @@ pub async fn init_rpc_api(
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
         local_node_record,
-        syncer,
-        peer_handler,
+        // syncer,
+        // peer_handler,
         get_client_version(),
     );
 
@@ -146,10 +148,11 @@ pub async fn init_network(
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
+    fork_id: &ForkId,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -171,13 +174,13 @@ pub async fn init_network(
         get_client_version(),
     );
 
-    context.set_fork_id().await.expect("Set fork id");
+    // context.set_fork_id().await.expect("Set fork id");
 
-    ethrex_p2p::start_network(context, bootnodes)
+    ethrex_p2p::start_network(context, bootnodes, fork_id)
         .await
         .expect("Network starts");
 
-    tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
+    tracker.spawn(ethrex_p2p::periodically_show_peer_stats());
 }
 
 #[cfg(feature = "dev")]
@@ -318,12 +321,13 @@ pub fn get_local_node_record(
     data_dir: &str,
     local_p2p_node: &Node,
     signer: &SigningKey,
+    fork_id: &ForkId,
 ) -> NodeRecord {
     let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
     match read_node_config_file(config_file) {
         Ok(ref mut config) => {
-            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
+            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer, fork_id)
                 .expect("Node record could not be created from local node")
         }
         Err(_) => {
@@ -331,7 +335,7 @@ pub fn get_local_node_record(
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            NodeRecord::from_node(local_p2p_node, timestamp, signer)
+            NodeRecord::from_node(local_p2p_node, timestamp, signer, fork_id)
                 .expect("Node record could not be created from local node")
         }
     }

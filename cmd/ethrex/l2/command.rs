@@ -138,6 +138,8 @@ impl Command {
                 let store = init_store(&data_dir, genesis).await;
                 let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
 
+                let fork_id = store.get_fork_id().await?;
+
                 let blockchain =
                     init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
 
@@ -149,9 +151,11 @@ impl Command {
                     &data_dir,
                     &local_p2p_node,
                     &signer,
+                    &fork_id,
                 )));
 
-                let peer_table = peer_table(local_p2p_node.node_id());
+                // let peer_table = peer_table(local_p2p_node.node_id());
+                let peer_table = peer_table();
 
                 // TODO: Check every module starts properly.
                 let tracker = TaskTracker::new();
@@ -193,6 +197,7 @@ impl Command {
                         store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
+                        &fork_id,
                     )
                     .await;
                 } else {

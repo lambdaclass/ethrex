@@ -8,7 +8,7 @@ use ethrex::{
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use ethrex_blockchain::BlockchainType;
-use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
+use ethrex_p2p::{kademlia::Kademlia, network::peer_table, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]
@@ -46,7 +46,7 @@ async fn set_sync_block(store: &Store) {
 async fn server_shutdown(
     data_dir: String,
     cancel_token: &CancellationToken,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
@@ -74,7 +74,10 @@ async fn main() -> eyre::Result<()> {
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
+
     let store = init_store(&data_dir, genesis).await;
+
+    let fork_id = store.get_fork_id().await?;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
@@ -89,9 +92,11 @@ async fn main() -> eyre::Result<()> {
         &data_dir,
         &local_p2p_node,
         &signer,
+        &fork_id,
     )));
 
-    let peer_table = peer_table(local_p2p_node.node_id());
+    // let peer_table = peer_table(local_p2p_node.node_id());
+    let peer_table = peer_table();
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -134,6 +139,7 @@ async fn main() -> eyre::Result<()> {
                     store.clone(),
                     tracker.clone(),
                     blockchain.clone(),
+                    &fork_id,
                 )
                 .await;
             } else {

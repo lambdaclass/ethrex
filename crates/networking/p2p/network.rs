@@ -1,44 +1,35 @@
-use crate::discv4::server::{DiscoveryError, Discv4Server};
-use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
-use crate::rlpx::message::Message as RLPxMessage;
-use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
-use crate::types::{Node, NodeRecord};
-use ethrex_blockchain::Blockchain;
-use ethrex_common::{H256, H512};
-use ethrex_storage::Store;
-use k256::{
-    ecdsa::SigningKey,
-    elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
+use crate::{
+    discv4::{
+        server::{DiscoveryServer, DiscoveryServerError},
+        side_car::{DiscoverySideCar, DiscoverySideCarError},
+    },
+    kademlia::Kademlia,
+    metrics::METRICS,
+    rlpx::{
+        connection::server::{RLPxConnBroadcastSender, RLPxConnection},
+        message::Message,
+    },
+    types::{Node, NodeRecord},
 };
-use std::{io, net::SocketAddr, sync::Arc};
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::ForkId;
+use ethrex_storage::Store;
+use k256::ecdsa::SigningKey;
+use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
-    net::{TcpListener, TcpSocket},
+    net::{TcpListener, TcpSocket, UdpSocket},
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
-// Totally arbitrary limit on how
-// many messages the connections can queue,
-// if we miss messages to broadcast, maybe
-// we should bump this limit.
-pub const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
-
-pub fn peer_table(node_id: H256) -> Arc<Mutex<KademliaTable>> {
-    Arc::new(Mutex::new(KademliaTable::new(node_id)))
-}
-
-#[derive(Debug)]
-pub enum NetworkError {
-    DiscoveryStart(DiscoveryError),
-}
+pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
 #[derive(Clone, Debug)]
 pub struct P2PContext {
     pub tracker: TaskTracker,
     pub signer: SigningKey,
-    pub table: Arc<Mutex<KademliaTable>>,
+    pub table: Kademlia,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: RLPxConnBroadcastSender,
@@ -54,14 +45,14 @@ impl P2PContext {
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
         signer: SigningKey,
-        peer_table: Arc<Mutex<KademliaTable>>,
+        peer_table: Kademlia,
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
-            Arc<RLPxMessage>,
+            Arc<Message>,
         )>(MAX_MESSAGES_TO_BROADCAST);
 
         P2PContext {
@@ -76,36 +67,56 @@ impl P2PContext {
             client_version,
         }
     }
-
-    pub async fn set_fork_id(&self) -> Result<(), String> {
-        if let Ok(fork_id) = self.storage.get_fork_id().await {
-            self.local_node_record
-                .lock()
-                .await
-                .set_fork_id(&fork_id, &self.signer)?
-        }
-        Ok(())
-    }
 }
 
-pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
-    let discovery = Discv4Server::try_new(context.clone())
-        .await
-        .map_err(NetworkError::DiscoveryStart)?;
+#[derive(Debug, thiserror::Error)]
+pub enum NetworkError {
+    #[error("Failed to start discovery server: {0}")]
+    DiscoveryServerError(#[from] DiscoveryServerError),
+    #[error("Failed to start discovery side car: {0}")]
+    DiscoverySideCarError(#[from] DiscoverySideCarError),
+}
 
-    info!(
-        "Starting discovery service at {}",
-        context.local_node.udp_addr()
-    );
-    discovery
-        .start(bootnodes)
-        .await
-        .map_err(NetworkError::DiscoveryStart)?;
+pub fn peer_table() -> Kademlia {
+    Kademlia::new()
+}
 
-    info!(
-        "Listening for requests at {}",
-        context.local_node.tcp_addr()
+pub async fn start_network(
+    context: P2PContext,
+    bootnodes: Vec<Node>,
+    fork_id: &ForkId,
+) -> Result<(), NetworkError> {
+    let udp_socket = Arc::new(
+        UdpSocket::bind(context.local_node.udp_addr())
+            .await
+            .expect("Failed to bind udp socket"),
     );
+
+    DiscoveryServer::spawn(
+        context.local_node.clone(),
+        context.signer.clone(),
+        fork_id,
+        udp_socket.clone(),
+        context.table.clone(),
+        bootnodes,
+    )
+    .await
+    .inspect_err(|e| {
+        error!("Failed to start discovery server: {e}");
+    })?;
+
+    DiscoverySideCar::spawn(
+        context.local_node.clone(),
+        context.signer.clone(),
+        fork_id,
+        udp_socket,
+        context.table.clone(),
+    )
+    .await
+    .inspect_err(|e| {
+        error!("Failed to start discovery side car: {e}");
+    })?;
+
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
     Ok(())
@@ -139,37 +150,81 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
-    let public_key = PublicKey::from(signer.verifying_key());
-    let encoded = public_key.to_encoded_point(false);
-    H512::from_slice(&encoded.as_bytes()[1..])
+pub async fn periodically_show_peer_stats() {
+    let start = std::time::Instant::now();
+    loop {
+        info!(
+            r#"
+elapsed: {}
+{} current contacts ({} contacts/s)
+{} discarded contacts
+{} total contacts
+{} peers ({} new peers/s)
+{} connection attempts ({} new connection attempts/s)
+{} failed connections
+Known peers from mainnet: {}
+RLPx connection failures: {:#?}"#,
+            format_duration(start.elapsed()),
+            METRICS.current_contacts.lock().await,
+            METRICS.new_contacts_rate.get().floor(),
+            METRICS.discarded_contacts.get(),
+            METRICS.total_contacts.get(),
+            METRICS.rlpx_conn_establishments.get(),
+            METRICS.rlpx_conn_establishments_rate.get().floor(),
+            METRICS.rlpx_conn_attempts.get(),
+            METRICS.rlpx_conn_attempts_rate.get().floor(),
+            METRICS.rlpx_conn_failures.get(),
+            {
+                let discovered = METRICS.discovered_mainnet_peers.lock().await.len();
+                let we_failed_to_ping = METRICS.failed_to_ping_mainnet_peers.lock().await.len();
+                let pinged = METRICS.pinged_mainnet_peers.lock().await.len();
+                let answered_our_ping = METRICS.answered_our_ping_mainnet_peers.lock().await.len();
+                let didnt_answer_our_ping = pinged - we_failed_to_ping - answered_our_ping;
+                let connected = METRICS.connected_mainnet_peers.lock().await.len();
+                let connection_attempts = METRICS
+                    .connection_attempts_to_mainnet_peers
+                    .lock()
+                    .await
+                    .len();
+                let connection_failures = METRICS
+                    .connection_failures_to_mainnet_peers
+                    .lock()
+                    .await
+                    .len();
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "discovered": discovered,
+                    "we failed to ping": we_failed_to_ping,
+                    "didn't answer our ping": didnt_answer_our_ping,
+                    "pinged": pinged,
+                    "answered our ping": answered_our_ping,
+                    "connection attempts": connection_attempts,
+                    "connection failures": connection_failures,
+                    "connection failure reasons": *METRICS.connection_failures_to_mainnet_peers_reasons_counts.lock().await,
+                    "connected": connected
+                }))
+                .expect("Failed to pritty print known mainnet peers counters")
+            },
+            METRICS.rlpx_conn_failures_reasons_counts.lock().await,
+        );
+        // info!(
+        //     contacts = kademlia_clone.table.lock().await.len(),
+        //     number_of_peers = number_of_peers,
+        //     number_of_tried_peers = number_of_tried_peers,
+        //     elapsed = format_duration(elapsed),
+        //     new_contacts_rate = %format!("{} contacts/s", METRICS.new_contacts_rate.get().floor()),
+        //     connection_attempts_rate = %format!("{} attempts/s", METRICS.attempted_rlpx_conn_rate.get().floor()),
+        //     connection_establishments_rate = %format!("{} establishments/s", METRICS.established_rlpx_conn_rate.get().floor()),
+        //     failed_connections = METRICS.failed_rlpx_conn.get(),
+        // );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
-/// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
-pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
-    let mut interval = tokio::time::interval(INTERVAL_DURATION);
-    loop {
-        // clone peers to keep the lock short
-        let peers: Vec<kademlia::PeerData> =
-            peer_table.lock().await.iter_peers().cloned().collect();
-        let total_peers = peers.len();
-        let active_peers = peers
-            .iter()
-            .filter(|peer| -> bool { peer.channels.as_ref().is_some() })
-            .count();
-        let snap_active_peers = peers
-            .iter()
-            .filter(|peer| -> bool {
-                peer.channels.as_ref().is_some()
-                    && SUPPORTED_SNAP_CAPABILITIES
-                        .iter()
-                        .any(|cap| peer.supported_capabilities.contains(cap))
-            })
-            .count();
-        info!(
-            "Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}"
-        );
-        interval.tick().await;
-    }
+fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
 }

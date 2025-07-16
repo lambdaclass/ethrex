@@ -10,7 +10,6 @@ use ethrex_rlp::{
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
-use std::net::Ipv6Addr;
 use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -18,7 +17,7 @@ use std::{
     sync::OnceLock,
 };
 
-use crate::utils::node_id;
+use crate::rlpx::utils::node_id;
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -167,12 +166,10 @@ impl Node {
         let encoded = verifying_key.to_encoded_point(false);
         let public_key = H512::from_slice(&encoded.as_bytes()[1..]);
 
-        let ip: IpAddr = match (pairs.ip, pairs.ip6) {
-            (None, None) => return Err("Ip not found in record, can't construct node".to_string()),
-            (None, Some(ipv6)) => IpAddr::from(Ipv6Addr::from_bits(ipv6)),
-            (Some(ipv4), None) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
-            (Some(ipv4), Some(ipv6)) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
-        };
+        let ip = pairs
+            .ip
+            .map(|p| IpAddr::from(Ipv4Addr::from_bits(p)))
+            .ok_or("Ip not found in record, can't construct node")?;
 
         // both udp and tcp can be defined in the pairs or only one
         // in the latter case, we have to default both ports to the one provided
@@ -236,7 +233,6 @@ pub struct NodeRecord {
 pub struct NodeRecordPairs {
     pub id: Option<String>,
     pub ip: Option<u32>,
-    pub ip6: Option<u128>,
     // the record structure reference says that tcp_port and udp_ports are big-endian integers
     // but they are actually encoded as 2 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/f544fc3b4659aeca24a6de83f820dd61ea9b39db/p2p/enr/entries.go#L60-L78
     // I think the confusion comes from the fact that geth decodes the bytes and then builds an IPV4/6 big-integer structure.
@@ -259,7 +255,6 @@ impl NodeRecord {
             match key.as_str() {
                 "id" => decoded_pairs.id = String::decode(&value).ok(),
                 "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
-                "ip6" => decoded_pairs.ip6 = u128::decode(&value).ok(),
                 "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
                 "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
                 "secp256k1" => {
@@ -292,34 +287,17 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(
-        node: &Node,
-        seq: u64,
-        signer: &SigningKey,
-        fork_id: &ForkId,
-    ) -> Result<Self, String> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
         };
-        match node.ip {
-            IpAddr::V4(ipv4_addr) => {
-                record
-                    .pairs
-                    .push(("id".into(), "v4".encode_to_vec().into()));
-                record
-                    .pairs
-                    .push(("ip".into(), ipv4_addr.encode_to_vec().into()));
-            }
-            IpAddr::V6(ipv6_addr) => {
-                record
-                    .pairs
-                    .push(("id".into(), "v6".encode_to_vec().into()));
-                record
-                    .pairs
-                    .push(("ip6".into(), ipv6_addr.encode_to_vec().into()));
-            }
-        };
+        record
+            .pairs
+            .push(("id".into(), "v4".encode_to_vec().into()));
+        record
+            .pairs
+            .push(("ip".into(), node.ip.encode_to_vec().into()));
         record.pairs.push((
             "secp256k1".into(),
             signer
@@ -337,8 +315,6 @@ impl NodeRecord {
             .push(("udp".into(), node.udp_port.encode_to_vec().into()));
 
         record.signature = record.sign_record(signer)?;
-
-        record.set_fork_id(fork_id, signer)?;
 
         Ok(record)
     }
@@ -451,5 +427,90 @@ impl RLPEncode for Node {
             .encode_field(&self.tcp_port)
             .encode_field(&self.public_key)
             .finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        network::public_key_from_signing_key,
+        types::{Node, NodeRecord},
+    };
+    use ethrex_common::H512;
+    use k256::ecdsa::SigningKey;
+    use std::{net::SocketAddr, str::FromStr};
+
+    #[test]
+    fn parse_node_from_enode_string() {
+        let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303";
+        let bootnode = Node::from_enode_url(input).unwrap();
+        let public_key = H512::from_str(
+            "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
+            .unwrap();
+        let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
+        let expected_bootnode = Node::new(
+            socket_address.ip(),
+            socket_address.port(),
+            socket_address.port(),
+            public_key,
+        );
+        assert_eq!(bootnode, expected_bootnode);
+    }
+
+    #[test]
+    fn parse_node_with_discport_from_enode_string() {
+        let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303?discport=30305";
+        let node = Node::from_enode_url(input).unwrap();
+        let public_key = H512::from_str(
+            "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
+            .unwrap();
+        let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
+        let expected_bootnode = Node::new(
+            socket_address.ip(),
+            30305,
+            socket_address.port(),
+            public_key,
+        );
+        assert_eq!(node, expected_bootnode);
+    }
+
+    #[test]
+    fn parse_node_from_enr_string() {
+        // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
+        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
+        let node = Node::from_enr_url(enr_string).unwrap();
+        let public_key =
+            H512::from_str("0xca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd31387574077f301b421bc84df7266c44e9e6d569fc56be00812904767bf5ccd1fc7f")
+                .unwrap();
+        let socket_address = SocketAddr::from_str("127.0.0.1:30303").unwrap();
+        let expected_node = Node::new(
+            socket_address.ip(),
+            socket_address.port(),
+            socket_address.port(),
+            public_key,
+        );
+        assert_eq!(node, expected_node);
+    }
+
+    #[test]
+    fn encode_node_record_to_enr_url() {
+        // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
+        let signer = SigningKey::from_slice(&[
+            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
+            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        ])
+        .unwrap();
+        let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
+
+        let node = Node::new(
+            addr.ip(),
+            addr.port(),
+            addr.port(),
+            public_key_from_signing_key(&signer),
+        );
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
+
+        assert_eq!(record.enr_url().unwrap(), expected_enr_string);
     }
 }
