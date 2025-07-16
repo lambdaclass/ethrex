@@ -192,12 +192,7 @@ impl L2ToL1MessagesTable {
                 eth_client,
             )
             .await;
-            let start = log
-                .log
-                .data
-                .len()
-                .checked_sub(32)
-                .ok_or(MonitorError::LogsDataTooShort(log.log.data.len()))?;
+            let start = log.log.data.len().saturating_sub(32);
             match *log.log.topics.first().ok_or(MonitorError::LogsTopics(0))? {
                 topic if topic == eth_withdrawal_topic => {
                     processed_logs.push((
