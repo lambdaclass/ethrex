@@ -26,10 +26,10 @@ const COINBASE: H160 = H160([0x77; 20]);
 
 #[derive(Parser)]
 struct Cli {
-    #[arg(long)]
+    #[arg(long, help = "Path to the input JSON file")]
     input: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Path to the bytecode file")]
     code: Option<String>,
 
     #[arg(long, short, action = clap::ArgAction::SetTrue)]
