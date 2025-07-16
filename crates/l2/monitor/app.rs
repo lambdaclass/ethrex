@@ -64,23 +64,23 @@ pub struct EthrexMonitorWidget {
 
 #[derive(Clone)]
 pub struct EthrexMonitorState {
-    pub widget: EthrexMonitorWidget,
+    widget: EthrexMonitorWidget,
     terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
 }
 
 pub struct EthrexMonitor {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CastInMessage {
     Monitor,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CallInMessage {
     Finished,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum OutMessage {
     Done,
     ShouldQuit(bool),
