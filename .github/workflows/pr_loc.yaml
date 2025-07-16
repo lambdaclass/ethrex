@@ -14,19 +14,15 @@ jobs:
     # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
     if: github.event.pull_request.head.repo.fork == false
     steps:
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ vars.RUST_VERSION }}
-          components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Checkout Base
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
 
       - name: Run Lines of Code Counter for base
         run: cd tooling/loc && make loc-detailed
@@ -40,6 +36,11 @@ jobs:
         with:
           clean: "false" # Don't clean the workspace, so we can keep the previous report
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
 
       - name: Run Lines of Code Counter for PR
         run: cd tooling/loc && make loc-detailed

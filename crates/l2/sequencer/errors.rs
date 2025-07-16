@@ -3,10 +3,12 @@ use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_common::Address;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
+use ethrex_l2_rpc::signer::SignerError;
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
@@ -43,6 +45,8 @@ pub enum SequencerError {
     FailedAccessingRollUpStore(#[from] RollupStoreError),
     #[error("Failed to resolve network")]
     AlignedNetworkError(String),
+    #[error("Failed to start EthrexMonitor: {0}")]
+    MonitorError(#[from] MonitorError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -239,6 +243,8 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
+    #[error("Failed to sign error: {0}")]
+    FailedToSignError(#[from] SignerError),
     #[error("Privileged Transaction error: {0}")]
     PrivilegedTransactionError(#[from] PrivilegedTransactionError),
     // TODO: Avoid propagating GenServerErrors outside GenServer modules
@@ -289,4 +295,20 @@ pub enum ConnectionHandlerError {
     // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MonitorError {
+    #[error("Failed because of io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Failed to fetch {0:?} logs from {1}, {2}")]
+    LogsSignatures(Vec<String>, Address, #[source] EthClientError),
+    #[error("Failed to get batch by number {0}: {1}")]
+    RollupStore(u64, #[source] RollupStoreError),
+    #[error("Batch {0} not found in the rollup store")]
+    BatchNotFound(u64),
+    #[error("Failed to get block by number {0}, {1}")]
+    GetBlockByNumber(u64, #[source] StoreError),
+    #[error("Block {0} not found in the store")]
+    BlockNotFound(u64),
 }
