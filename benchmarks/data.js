@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752690456076,
+  "lastUpdate": 1752691020450,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4015,6 +4015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211550201925,
             "range": "± 636088920",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "da2a576606ba61563712c4bdd5cf9ac2041292ff",
+          "message": "fix(l2): use GITHUB_TOKEN for sp1up and rzup actions (#3655)\n\n**Motivation**\n\nThe SP1 toolchain fails sometimes to install with a generic \"Failed to\nfetch releases list\" error, but the cause may be an [API rate\nlimit](https://github.com/succinctlabs/sp1/issues/2320#issuecomment-2955903435)\n\nThe Risc0 toolchain has the same problem, explicitly returning an API\nrate limit error.\n\nWe bypass this by authenticating using the `GITHUB_TOKEN`",
+          "timestamp": "2025-07-16T17:40:57Z",
+          "tree_id": "8de80b667d3234524c46387e1ff9abfe9787da58",
+          "url": "https://github.com/lambdaclass/ethrex/commit/da2a576606ba61563712c4bdd5cf9ac2041292ff"
+        },
+        "date": 1752691009511,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211276035301,
+            "range": "± 590085126",
             "unit": "ns/iter"
           }
         ]
