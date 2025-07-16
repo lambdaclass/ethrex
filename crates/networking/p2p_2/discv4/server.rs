@@ -1,4 +1,10 @@
-use std::{collections::hash_map::Entry, net::SocketAddr, sync::Arc};
+use std::{
+    collections::{HashSet, hash_map::Entry},
+    fs::read_to_string,
+    net::SocketAddr,
+    str::FromStr,
+    sync::Arc,
+};
 
 use ethrex_common::{H512, types::ForkId};
 use k256::ecdsa::SigningKey;
@@ -40,6 +46,7 @@ pub enum DiscoveryServerError {
 
 #[derive(Debug, Clone)]
 pub struct DiscoveryServerState {
+    _geth_peers: HashSet<H256>,
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
@@ -55,7 +62,21 @@ impl DiscoveryServerState {
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
+        let _geth_peers = serde_json::from_str::<Vec<String>>(
+            &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
+                .expect("Failed to read geth_peers.json"),
+        )
+        .expect("Failed to parse geth_peers.json")
+        .iter()
+        .map(|e| {
+            Node::from_str(e)
+                .expect("Failed to parse bootnode enode")
+                .node_id()
+        })
+        .collect::<HashSet<_>>();
+
         Self {
+            _geth_peers,
             local_node,
             local_node_record,
             signer,
@@ -283,8 +304,13 @@ impl DiscoveryServer {
                 .expect("Failed to create local node record"),
         ));
 
-        let state =
-            DiscoveryServerState::new(local_node, local_node_record, signer, udp_socket, kademlia);
+        let state = DiscoveryServerState::new(
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            kademlia.clone(),
+        );
 
         let mut server = DiscoveryServer::start(state.clone());
 
@@ -296,6 +322,12 @@ impl DiscoveryServer {
             let _ = state.ping(&bootnode).await.inspect_err(|e| {
                 error!("Failed to ping bootnode: {e}");
             });
+
+            kademlia
+                .table
+                .lock()
+                .await
+                .insert(bootnode.node_id(), bootnode.into());
         }
 
         Ok(())
@@ -437,6 +469,12 @@ impl GenServer for ConnectionHandler {
             }
             Self::CastMsg::Pong(packet) => {
                 debug!(received = "Pong", from = %format!("{:#x}", packet.get_public_key()));
+
+                let node_id = packet.get_node_id();
+
+                if state._geth_peers.contains(&node_id) {
+                    METRICS.new_contacted_mainnet_peer(node_id).await;
+                }
             }
             Self::CastMsg::FindNode(packet) => {
                 let node_id = packet.get_node_id();
@@ -471,6 +509,19 @@ impl GenServer for ConnectionHandler {
                 for node in msg.nodes {
                     let node_id = node.node_id();
                     if let Entry::Vacant(vacant_entry) = contacts.entry(node_id) {
+                        if state._geth_peers.contains(&node_id) {
+                            let was_unknown = state
+                                .kademlia
+                                .discovered_mainnet_peers
+                                .lock()
+                                .await
+                                .insert(node_id);
+
+                            if was_unknown {
+                                METRICS.new_discovered_mainnet_peer(node_id).await;
+                            }
+                        }
+
                         if !discarded_contacts.contains(&node_id) {
                             vacant_entry.insert(Contact::from(node));
                             METRICS.record_new_contact().await;

@@ -20,6 +20,7 @@ use ethrex_storage::Store;
 use ethrex_vm::EvmEngine;
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
 use rand::rngs::OsRng;
+use serde_json::json;
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
@@ -57,6 +58,10 @@ pub const HOODI_BOOTNODES_ENODES: [&str; 16] = [
 
 pub const MAINNET_GENESIS_CONTENTS: &str =
     include_str!("../../../../cmd/ethrex/networks/mainnet/genesis.json");
+
+// pub const MAINNET_BOOTNODES_ENODES: [&str; 1] = [
+//     "enode://f070a8dc0ec1b1ca687e9e26cd57a70fca2957c37f801ace47f9cc9d7e50e8267a3972653b2dc4dc4b02b269017db4b1f2fd29231d1d275f5fc2397ca05774d3@146.59.110.220:30303",
+// ];
 pub const MAINNET_BOOTNODES_ENODES: [&str; 16] = [
     // Ethereum Foundation Go Bootnodes
     "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
@@ -88,6 +93,7 @@ async fn main() {
 
     let genesis =
         serde_json::from_str(MAINNET_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
+
     store
         .add_initial_state(genesis)
         .await
@@ -177,6 +183,7 @@ elapsed: {}
 {} peers ({} new peers/s)
 {} connection attempts ({} new connection attempts/s)
 {} failed connections
+Known peers from mainnet: {}
 RLPx connection failures: {:#?}"#,
                 format_duration(start.elapsed()),
                 METRICS.current_contacts.lock().await,
@@ -188,6 +195,37 @@ RLPx connection failures: {:#?}"#,
                 METRICS.rlpx_conn_attempts.get(),
                 METRICS.rlpx_conn_attempts_rate.get().floor(),
                 METRICS.rlpx_conn_failures.get(),
+                {
+                    let discovered = METRICS.discovered_mainnet_peers.lock().await.len();
+                    let we_failed_to_ping = METRICS.failed_to_ping_mainnet_peers.lock().await.len();
+                    let pinged = METRICS.pinged_mainnet_peers.lock().await.len();
+                    let answered_our_ping =
+                        METRICS.answered_our_ping_mainnet_peers.lock().await.len();
+                    let didnt_answer_our_ping = pinged - we_failed_to_ping - answered_our_ping;
+                    let connected = METRICS.connected_mainnet_peers.lock().await.len();
+                    let connection_attempts = METRICS
+                        .connection_attempts_to_mainnet_peers
+                        .lock()
+                        .await
+                        .len();
+                    let connection_failures = METRICS
+                        .connection_failures_to_mainnet_peers
+                        .lock()
+                        .await
+                        .len();
+                    serde_json::to_string_pretty(&json!({
+                        "discovered": discovered,
+                        "we failed to ping": we_failed_to_ping,
+                        "didn't answer our ping": didnt_answer_our_ping,
+                        "pinged": pinged,
+                        "answered our ping": answered_our_ping,
+                        "connection attempts": connection_attempts,
+                        "connection failures": connection_failures,
+                        "connection failure reasons": *METRICS.connection_failures_to_mainnet_peers_reasons_counts.lock().await,
+                        "connected": connected
+                    }))
+                    .expect("Failed to pritty print known mainnet peers counters")
+                },
                 METRICS.rlpx_conn_failures_reasons_counts.lock().await,
             );
             // info!(

@@ -1,6 +1,6 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
-use ethrex_common::{types::ForkId, H512};
+use ethrex_common::{H256, H512, types::ForkId};
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
 use rand::{rngs::OsRng, seq::IteratorRandom};
 use spawned_concurrency::{
@@ -30,6 +30,7 @@ pub enum DiscoverySideCarError {
 
 #[derive(Debug, Clone)]
 pub struct DiscoverySideCarState {
+    _geth_peers: Vec<H256>,
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
@@ -50,7 +51,21 @@ impl DiscoverySideCarState {
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
+        let _geth_peers = serde_json::from_str::<Vec<String>>(
+            &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
+                .expect("Failed to read geth_peers.json"),
+        )
+        .expect("Failed to parse geth_peers.json")
+        .iter()
+        .map(|e| {
+            Node::from_str(e)
+                .expect("Failed to parse bootnode enode")
+                .node_id()
+        })
+        .collect::<Vec<_>>();
+
         Self {
+            _geth_peers,
             local_node,
             local_node_record,
             signer,
@@ -257,10 +272,25 @@ async fn revalidate(state: &DiscoverySideCarState) {
             continue;
         }
 
-        if let Err(err) = state.ping(&contact.node).await {
-            error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
-            contact.disposable = true;
-            METRICS.record_discarded_contact().await;
+        let node_id = contact.node.node_id();
+
+        match state.ping(&contact.node).await {
+            Ok(_) => {
+                if state._geth_peers.contains(&node_id) {
+                    METRICS.new_pinged_mainnet_peer(node_id).await;
+                }
+            }
+            Err(err) => {
+                error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+
+                contact.disposable = true;
+
+                METRICS.record_discarded_contact().await;
+
+                if state._geth_peers.contains(&node_id) {
+                    METRICS.new_failure_pinging_mainnet_peer(node_id).await;
+                }
+            }
         }
     }
 }
