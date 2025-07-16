@@ -41,7 +41,7 @@ use std::{
 };
 use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{error, info};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
@@ -200,7 +200,10 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+                let l2_sequencer_cfg =
+                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
+                        error!("{err}");
+                    })?;
 
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
