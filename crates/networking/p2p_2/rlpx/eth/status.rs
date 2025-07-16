@@ -5,7 +5,6 @@ use crate::rlpx::utils::snappy_decompress;
 use crate::rlpx::{error::RLPxError, p2p::Capability};
 use bytes::BufMut;
 use ethrex_common::U256;
-use ethrex_common::constants::MAINNET_GENESIS_HASH;
 use ethrex_common::types::{BlockHash, ForkId};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_rlp::structs::Decoder;
@@ -59,7 +58,7 @@ impl StatusMessage {
             .get_block_header(lastest_block)?
             .ok_or(RLPxError::NotFound(format!("Block {lastest_block}")))?;
 
-        let genesis = &MAINNET_GENESIS_HASH;
+        let genesis = genesis_header.hash();
         let lastest_block_hash = block_header.hash();
         let fork_id = ForkId::new(
             chain_config,
@@ -74,13 +73,13 @@ impl StatusMessage {
                 network_id,
                 total_difficulty,
                 block_hash: lastest_block_hash,
-                genesis: **genesis,
+                genesis,
                 fork_id,
             })),
             69 => Ok(StatusMessage::StatusMessage69(StatusMessage69 {
                 eth_version: eth.version,
                 network_id,
-                genesis: **genesis,
+                genesis,
                 fork_id,
                 earliest_block: 0,
                 lastest_block,
