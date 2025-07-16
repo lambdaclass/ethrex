@@ -171,15 +171,11 @@ async fn test_upgrade(
 
     let contracts_path = Path::new("contracts");
     get_contract_dependencies(contracts_path);
-    let remappings_raw = [(
+    let remappin = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
-    let remappings: Vec<(&str, &Path)> = remappings_raw
-        .iter()
-        .map(|(s, p)| (*s, p.as_path()))
-        .collect();
     compile_contract(
         contracts_path,
         Path::new("contracts/src/l2/CommonBridgeL2.sol"),
@@ -366,15 +362,11 @@ async fn test_erc20_roundtrip(
     let contracts_path = Path::new("contracts");
 
     get_contract_dependencies(contracts_path);
-    let remappings_raw = [(
+    let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
     )];
-    let remappings: Vec<(&str, &Path)> = remappings_raw
-        .iter()
-        .map(|(s, p)| (*s, p.as_path()))
-        .collect();
     compile_contract(
         contracts_path,
         &contracts_path.join("src/example/L2ERC20.sol"),

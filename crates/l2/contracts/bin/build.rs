@@ -2,7 +2,10 @@
 //! This script downloads dependencies and compiles contracts to be embedded as constants in the deployer.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::{env, fs, path::Path};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
@@ -30,7 +33,7 @@ fn main() {
     );
 
     // Get the openzeppelin contracts remappings
-    let remappings = [
+    let remappings = vec![
         (
             "@openzeppelin/contracts",
             output_contracts_path.join(
@@ -42,8 +45,6 @@ fn main() {
             output_contracts_path.join("lib/openzeppelin-contracts-upgradeable/contracts"),
         ),
     ];
-    let remappings: Vec<(&str, &Path)> =
-        remappings.iter().map(|(s, p)| (*s, p.as_path())).collect();
 
     // L1 contracts
     let l1_contracts = [
@@ -124,7 +125,7 @@ fn compile_contract(
     contract_path: &Path,
     contract_name: &str,
     runtime_bin: bool,
-    remappings: Option<&[(&str, &Path)]>,
+    remappings: Option<&[(&str, PathBuf)]>,
 ) {
     println!("Compiling {contract_name} contract");
     ethrex_l2_sdk::compile_contract(output_dir, contract_path, runtime_bin, remappings)

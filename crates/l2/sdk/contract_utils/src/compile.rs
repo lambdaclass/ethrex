@@ -1,4 +1,7 @@
-use std::{path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContractCompilationError {
@@ -12,7 +15,7 @@ pub fn compile_contract(
     output_dir: &Path,
     contract_path: &Path,
     runtime_bin: bool,
-    remappings: Option<&[(&str, &Path)]>,
+    remappings: Option<&[(&str, PathBuf)]>,
 ) -> Result<(), ContractCompilationError> {
     let bin_flag = if runtime_bin {
         "--bin-runtime"
@@ -68,7 +71,7 @@ pub fn compile_contract(
 
 fn apply_remappings(
     cmd: &mut Command,
-    remappings: Option<&[(&str, &Path)]>,
+    remappings: Option<&[(&str, PathBuf)]>,
 ) -> Result<(), ContractCompilationError> {
     if let Some(remaps) = remappings {
         for (prefix, path) in remaps {
