@@ -278,8 +278,13 @@ impl DiscoveryServer {
                 .expect("Failed to create local node record"),
         ));
 
-        let state =
-            DiscoveryServerState::new(local_node, local_node_record, signer, udp_socket, kademlia);
+        let state = DiscoveryServerState::new(
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            kademlia.clone(),
+        );
 
         let mut server = DiscoveryServer::start(state.clone());
 
@@ -498,7 +503,8 @@ impl GenServer for ConnectionHandler {
                     .table
                     .lock()
                     .await
-                    .entry(node_id(&sender_public_key)).and_modify(|c| c.knows_us = true);
+                    .entry(node_id(&sender_public_key))
+                    .and_modify(|c| c.knows_us = true);
             }
             Self::CastMsg::ENRResponse {
                 message: _msg,

@@ -90,6 +90,7 @@ async fn main() {
 
     let genesis =
         serde_json::from_str(MAINNET_GENESIS_CONTENTS).expect("Failed to parse genesis JSON");
+
     store
         .add_initial_state(genesis)
         .await
