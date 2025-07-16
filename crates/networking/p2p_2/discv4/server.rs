@@ -270,6 +270,12 @@ impl DiscoveryServer {
             let _ = state.ping(&bootnode).await.inspect_err(|e| {
                 error!("Failed to ping bootnode: {e}");
             });
+
+            kademlia
+                .table
+                .lock()
+                .await
+                .insert(bootnode.node_id(), bootnode.into());
         }
 
         Ok(())
