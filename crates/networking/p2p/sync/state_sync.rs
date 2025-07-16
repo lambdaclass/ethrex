@@ -133,7 +133,7 @@ async fn state_sync_segment(
             segment_number,
             start_account_hash,
         ));
-        info!(
+        debug!(
             "[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}"
         );
         if let Some((account_hashes, accounts, should_continue)) = peers
@@ -290,7 +290,11 @@ impl StateSyncProgress {
 }
 
 /// Continously shows the progress of state sync at set intervals
+<<<<<<< HEAD
 /// This task is endless, caller will need to abort it once it is no longer needed
+=======
+/// This task is endless, called will need to abort it once it is no longer needed
+>>>>>>> speed-up-healing
 async fn show_state_sync_progress(progress: StateSyncProgress) {
     // Rest for one interval so we don't start computing on empty progress
     sleep(SHOW_PROGRESS_INTERVAL_DURATION).await;
