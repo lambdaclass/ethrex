@@ -285,12 +285,12 @@ pub enum Subcommand {
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
-        let cancel_token = CancellationToken::new();
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
+                let cancel_token = CancellationToken::new();
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
@@ -321,7 +321,7 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last, cancel_token).await
+                export_blocks(&path, &opts.datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -456,11 +456,9 @@ pub async fn export_blocks(
     data_dir: &str,
     first_number: Option<u64>,
     last_number: Option<u64>,
-    cancel_token: CancellationToken,
 ) {
     let data_dir = set_datadir(data_dir);
     let store = open_store(&data_dir);
-    start_pruner_task(store.clone(), cancel_token);
 
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export

@@ -77,12 +77,12 @@ async fn main() -> eyre::Result<()> {
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
     let store = init_store(&data_dir, genesis).await;
-    start_pruner_task(store.clone(), cancel_token.clone());
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
+    start_pruner_task(store.clone(), cancel_token.clone());
 
     let signer = get_signer(&data_dir);
 
