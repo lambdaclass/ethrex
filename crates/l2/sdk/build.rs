@@ -13,13 +13,11 @@ fn main() {
 
     // If COMPILE_CONTRACTS is not set, skip the compilation step.
     if env::var_os("COMPILE_CONTRACTS").is_none() {
+        // Write an empty bytecode file to indicate that contracts are not compiled.
         std::fs::create_dir_all(contracts_path.join("solc_out"))
             .expect("failed to create contracts output directory");
-        std::fs::write(
-            contracts_path.join("solc_out/ERC1967Proxy.bytecode"),
-            vec![],
-        )
-        .expect("failed to write ERC1967Proxy bytecode");
+        std::fs::write(contracts_path.join("solc_out/ERC1967Proxy.bytecode"), &[])
+            .expect("failed to write ERC1967Proxy bytecode");
         return;
     }
 
