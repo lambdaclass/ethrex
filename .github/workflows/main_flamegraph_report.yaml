@@ -283,6 +283,12 @@ jobs:
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       # We need a reth version that requires a rustc version <= 1.87.0
       - name: Checkout reth
         uses: actions/checkout@v4
