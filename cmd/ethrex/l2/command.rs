@@ -42,7 +42,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{error, info};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
@@ -178,7 +178,10 @@ impl Command {
                     l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+                let l2_sequencer_cfg =
+                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
+                        error!("{err}");
+                    })?;
 
                 // TODO: This should be handled differently, the current problem
                 // with using opts.node_opts.p2p_enabled is that with the removal
@@ -205,7 +208,7 @@ impl Command {
                 } else {
                     info!("P2P is disabled");
                 }
-
+              
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
