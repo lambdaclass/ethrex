@@ -2683,6 +2683,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "clap 4.5.40",
+ "env_logger 0.11.8",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-levm",
@@ -2690,6 +2691,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "json5",
+ "log",
  "serde",
  "serde_json",
 ]
@@ -3496,6 +3498,19 @@ dependencies = [
  "log",
  "regex",
  "termcolor",
+]
+
+[[package]]
+name = "env_logger"
+version = "0.11.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c863f0904021b108aa8b2f55046443e6b1ebde8fd4a15c399893aae4fa069f"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "env_filter",
+ "jiff",
+ "log",
 ]
 
 [[package]]
@@ -6054,6 +6069,30 @@ name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
+
+[[package]]
+name = "jiff"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be1f93b8b1eb69c77f24bbb0afdf66f54b632ee39af40ca21c4365a1d7347e49"
+dependencies = [
+ "jiff-static",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03343451ff899767262ec32146f6d559dd759fdadf42ff0e227c7c48f72594b4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
 
 [[package]]
 name = "jobserver"
@@ -11711,7 +11750,7 @@ dependencies = [
  "dashmap 4.0.2",
  "dirs 3.0.2",
  "encoding_rs_io",
- "env_logger",
+ "env_logger 0.8.4",
  "grep-searcher",
  "ignore",
  "log",

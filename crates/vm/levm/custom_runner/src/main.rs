@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use clap::Parser;
 use custom_runner::benchmark::{BenchAccount, BenchTransaction, RunnerInput};
+use env_logger::Env;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -15,6 +16,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
+use log::{debug, info};
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -32,7 +34,7 @@ struct Cli {
     #[arg(long, help = "Path to the bytecode file")]
     code: Option<String>,
 
-    #[arg(long, short, action = clap::ArgAction::SetTrue)]
+    #[arg(long, short, action = clap::ArgAction::SetTrue, help = "Enable verbose logging")]
     verbose: bool,
 }
 
@@ -44,26 +46,23 @@ fn main() {
         return;
     }
 
+    let log_level = if cli.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
+
     // Mutable just to assign the code to the transaction if necessary
     let mut runner_input: RunnerInput = if let Some(input_file_path) = cli.input {
-        if cli.verbose {
-            println!("Reading input file: {}", input_file_path);
-        }
+        debug!("Reading input file: {}", input_file_path);
         let input_file = File::open(&input_file_path)
             .unwrap_or_else(|_| panic!("Input file '{}' not found", input_file_path));
         let reader = BufReader::new(input_file);
         serde_json::from_reader(reader).expect("Failed to parse input file")
     } else {
-        if cli.verbose {
-            println!("No input file provided, using default RunnerInput.");
-        }
+        debug!("No input file provided, using default RunnerInput.");
         RunnerInput::default()
     };
 
     let mnemonic: Vec<String> = if let Some(code_file_path) = cli.code {
-        if cli.verbose {
-            println!("Reading code file: {}", code_file_path);
-        }
+        debug!("Reading code file: {}", code_file_path);
         fs::read_to_string(&code_file_path)
             .expect("Failed to read bytecode file")
             .split_ascii_whitespace()
@@ -73,11 +72,9 @@ fn main() {
         vec![]
     };
 
-    let bytecode = mnemonic_to_bytecode(mnemonic, cli.verbose);
+    let bytecode = mnemonic_to_bytecode(mnemonic);
 
-    if cli.verbose {
-        println!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
-    }
+    debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
 
     // Now we want to initialize the VM, so we set up the environment and database.
     // Env
@@ -245,7 +242,7 @@ fn setup_initial_state(
 }
 
 /// Parse mnemonics, converting them into bytecode.
-fn mnemonic_to_bytecode(mnemonic: Vec<String>, verbose: bool) -> Bytes {
+fn mnemonic_to_bytecode(mnemonic: Vec<String>) -> Bytes {
     let mut mnemonic_iter = mnemonic.into_iter();
     let mut bytecode: Vec<u8> = Vec::new();
 
@@ -280,13 +277,12 @@ fn mnemonic_to_bytecode(mnemonic: Vec<String>, verbose: bool) -> Bytes {
                 let padding = vec![0u8; push_size - decoded_value.len()];
                 decoded_value = [padding, decoded_value].concat();
             }
-            if verbose {
-                println!("Parsed PUSH{} 0x{}", push_size, hex::encode(&decoded_value));
-            }
+
+            debug!("Parsed PUSH{} 0x{}", push_size, hex::encode(&decoded_value));
 
             bytecode.append(&mut decoded_value);
-        } else if verbose {
-            println!("Parsed {}", symbol);
+        } else {
+            debug!("Parsed {}", symbol);
         }
     }
 
