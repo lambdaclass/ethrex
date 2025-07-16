@@ -391,6 +391,7 @@ async fn deploy_proxy(
     implementation_address: Address,
     salt: &[u8],
 ) -> Result<(H256, Address), DeployError> {
+    #[allow(clippy::const_is_empty)]
     if ERC1967_PROXY_BYTECODE.is_empty() {
         return Err(DeployError::ProxyBytecodeNotFound);
     }
