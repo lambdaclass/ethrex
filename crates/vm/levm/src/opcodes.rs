@@ -1,6 +1,6 @@
-use serde::Deserialize;
+use strum::EnumString;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString)]
 pub enum Opcode {
     // Stop and Arithmetic Operations
     STOP = 0x00,

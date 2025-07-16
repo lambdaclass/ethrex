@@ -253,8 +253,7 @@ fn mnemonics_to_bytecode(mnemonics: Vec<String>) -> Bytes {
     let mut bytecode: Vec<u8> = Vec::new();
 
     while let Some(symbol) = mnemonic_iter.next() {
-        let opcode = serde_json::from_str::<Opcode>(&format!("\"{}\"", symbol))
-            .unwrap_or_else(|_| panic!("Failed to parse Opcode from symbol {symbol}"));
+        let opcode = symbol.parse::<Opcode>().expect("Invalid opcode");
 
         bytecode.push(opcode.into());
 

@@ -36,6 +36,7 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose
   "alloc",
   "experimental",
 ] }
+strum = { version = "0.27.1", features = ["derive"] }
 
 [dev-dependencies]
 hex.workspace = true
