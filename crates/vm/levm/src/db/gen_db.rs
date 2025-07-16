@@ -297,8 +297,9 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
         new_value: U256,
+        current_value: U256,
     ) -> Result<(), InternalError> {
-        self.backup_storage_slot(address, key)?;
+        self.backup_storage_slot(address, key, current_value)?;
 
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, new_value);
@@ -309,25 +310,15 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         key: H256,
+        current_value: U256,
     ) -> Result<(), InternalError> {
-        let account_storage_backup = self
-            .current_call_frame_mut()?
+        self.current_call_frame_mut()?
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)
-            .or_insert(HashMap::new());
-
-        if !account_storage_backup.contains_key(&key) {
-            // We avoid getting the storage value again if its already backed up.
-            let value = self.get_storage_value(address, key)?;
-            self.current_call_frame_mut()?
-                .call_frame_backup
-                .original_account_storage_slots
-                .entry(address)
-                .and_modify(|x| {
-                    x.insert(key, value);
-                });
-        }
+            .or_insert(HashMap::new())
+            .entry(key)
+            .or_insert(current_value);
 
         Ok(())
     }
