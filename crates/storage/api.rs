@@ -22,7 +22,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
 
     /// Sets the blocks as part of the canonical chain
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;
+    async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(BlockNumber, BlockHash)],
+    ) -> Result<(), StoreError>;
 
     /// Add block header
     async fn add_block_header(
@@ -32,11 +35,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Add a batch of block headers
-    async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError>;
+    async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError>;
 
     /// Obtain canonical block header
     fn get_block_header(

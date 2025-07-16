@@ -580,21 +580,24 @@ pub fn validate_block_header(
 }
 
 /// Validates that the body matches with the header
-pub fn validate_block_body(block: &Block) -> Result<(), InvalidBlockBodyError> {
+pub fn validate_block_body(
+    block_header: &BlockHeader,
+    block_body: &BlockBody,
+) -> Result<(), InvalidBlockBodyError> {
     // Validates that:
     //  - Transactions root and withdrawals root matches with the header
     //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
-    let computed_tx_root = compute_transactions_root(&block.body.transactions);
+    let computed_tx_root = compute_transactions_root(&block_body.transactions);
 
-    if block.header.transactions_root != computed_tx_root {
+    if block_header.transactions_root != computed_tx_root {
         return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
     }
 
-    if !block.body.ommers.is_empty() {
+    if !block_body.ommers.is_empty() {
         return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
     }
 
-    match (block.header.withdrawals_root, &block.body.withdrawals) {
+    match (block_header.withdrawals_root, &block_body.withdrawals) {
         (Some(withdrawals_root), Some(withdrawals)) => {
             let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
             if withdrawals_root != computed_withdrawals_root {
