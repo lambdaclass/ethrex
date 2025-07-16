@@ -263,8 +263,16 @@
 </ol>
 <p>For more information on how to run the L2 node with the prover attached to it, the <a href="./prover.html">Prover Docs</a> provides more insight.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
-<p>The program that deploys our L2 contracts outputs the addresses in a <code>.env</code> file, that includes environment information used by each component, automatically loaded by our makefile.
-Apart from these, each component accepts multiple configuration options, which can be configured either in the <code>.env</code>, or with CLI flags.
+<p>The program that deploys our L2 contracts outputs the addresses in a <code>.env</code> file, that includes environment information used by each component, automatically loaded by our makefile.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>The deployer depends on the SDK, which conditionally compiles the proxy contract. For the proxy bytecode to be embedded, the <code>COMPILE_CONTRACTS</code> env var must be set during compilation.
+The <code>make init</code> command handles this automatically.</p>
+</div>
+<p>Apart from these, each component accepts multiple configuration options, which can be configured either in the <code>.env</code>, or with CLI flags.
 More information is available in <a href="./components.html">the documentation for each component</a>.</p>
 <h2 id="guides"><a class="header" href="#guides">Guides</a></h2>
 <p>For more information on how to perform certain operations, go to <a href="./guides">Guides</a>.</p>

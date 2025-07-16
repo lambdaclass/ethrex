@@ -1097,8 +1097,16 @@ cd crates/blockchain/metrics
 </ol>
 <p>For more information on how to run the L2 node with the prover attached to it, the <a href="l2/./prover.html">Prover Docs</a> provides more insight.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
-<p>The program that deploys our L2 contracts outputs the addresses in a <code>.env</code> file, that includes environment information used by each component, automatically loaded by our makefile.
-Apart from these, each component accepts multiple configuration options, which can be configured either in the <code>.env</code>, or with CLI flags.
+<p>The program that deploys our L2 contracts outputs the addresses in a <code>.env</code> file, that includes environment information used by each component, automatically loaded by our makefile.</p>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>The deployer depends on the SDK, which conditionally compiles the proxy contract. For the proxy bytecode to be embedded, the <code>COMPILE_CONTRACTS</code> env var must be set during compilation.
+The <code>make init</code> command handles this automatically.</p>
+</div>
+<p>Apart from these, each component accepts multiple configuration options, which can be configured either in the <code>.env</code>, or with CLI flags.
 More information is available in <a href="l2/./components.html">the documentation for each component</a>.</p>
 <h2 id="guides"><a class="header" href="#guides">Guides</a></h2>
 <p>For more information on how to perform certain operations, go to <a href="l2/./guides">Guides</a>.</p>
@@ -3123,7 +3131,8 @@ SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 </ul>
 <h3 id="2-deploying-l1-contracts"><a class="header" href="#2-deploying-l1-contracts">2. Deploying L1 Contracts</a></h3>
 <p>In a console with <code>ethrex/crates/l2</code> as the current directory, run the following command:</p>
-<pre><code class="language-bash">cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+<pre><code class="language-bash">COMPILE_CONTRACTS=true \ 
+cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url &lt;L1_RPC_URL&gt; \
 	--private-key &lt;L1_PRIVATE_KEY&gt; \
 	--genesis-l1-path &lt;GENESIS_L1_PATH&gt; \
@@ -3144,7 +3153,8 @@ SP1_PROVER=cuda make build-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
   <span class="mdbook-alerts-icon"></span>
   note
 </p>
-<p>In this step we are initiallizing the <code>OnChainProposer</code> contract with the <code>ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS</code> and skipping the rest of verifiers.<br />
+<p>This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.<br />
+In this step we are initiallizing the <code>OnChainProposer</code> contract with the <code>ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS</code> and skipping the rest of verifiers.<br />
 Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.</p>
 </div>
 <h3 id="3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender"><a class="header" href="#3-deposit-funds-to-the-alignedbatcherpaymentservice-contract-from-the-proof-sender">3. Deposit funds to the <code>AlignedBatcherPaymentService</code> contract from the proof sender</a></h3>
@@ -3263,7 +3273,8 @@ let ws_stream_future =
 <ol>
 <li>In another terminal, let's deploy the L1 contracts specifying the <code>AlignedProofAggregatorService</code> contract address:</li>
 </ol>
-<pre><code>cd ethrex/crates/l2
+<pre><code class="language-bash">cd ethrex/crates/l2
+COMPILE_CONTRACTS=true \ 
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url http://localhost:8545 \
 	--private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -3279,6 +3290,13 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
 	--genesis-l2-path ../../fixtures/genesis/l2.json
 </code></pre>
+<div class="mdbook-alerts mdbook-alerts-note">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  note
+</p>
+<p>This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.</p>
+</div>
 <p>You will see that some deposits fail with the following error:</p>
 <pre><code>2025-06-18T19:19:24.066126Z  WARN ethrex_l2_l1_deployer: Failed to make deposits: Deployer EthClient error: eth_estimateGas request error: execution reverted: CommonBridge: amount to deposit is zero: CommonBridge: amount to deposit is zero
 </code></pre>
