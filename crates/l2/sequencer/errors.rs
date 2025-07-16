@@ -314,4 +314,6 @@ pub enum MonitorError {
     LogsData(usize),
     #[error("Failed to get logs data, data is too short: {0}")]
     LogsDataTooShort(usize),
+    #[error("Failed to get area chunks")]
+    Chunks,
 }
