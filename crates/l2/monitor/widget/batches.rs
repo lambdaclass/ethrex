@@ -14,8 +14,14 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
-// batch number | # blocks | # messages | commit tx hash | verify tx hash
-type BatchLine = (u64, u64, usize, Option<H256>, Option<H256>);
+#[derive(Clone)]
+pub struct BatchLine {
+    number: u64,
+    block_count: u64,
+    message_count: usize,
+    commit_tx: Option<H256>,
+    verify_tx: Option<H256>,
+}
 
 #[derive(Default)]
 pub struct BatchesTable {
@@ -61,11 +67,19 @@ impl BatchesTable {
             return Ok(());
         }
 
-        let mut from = self.items.last().ok_or(MonitorError::NoItemsInTable)?.0 - 1;
+        let mut from = self
+            .items
+            .last()
+            .ok_or(MonitorError::NoItemsInTable)?
+            .number
+            - 1;
 
         let refreshed_batches = Self::get_batches(
             &mut from,
-            self.items.first().ok_or(MonitorError::NoItemsInTable)?.0,
+            self.items
+                .first()
+                .ok_or(MonitorError::NoItemsInTable)?
+                .number,
             rollup_store,
         )
         .await?;
@@ -82,7 +96,7 @@ impl BatchesTable {
         on_chain_proposer_address: Address,
         eth_client: &EthClient,
         rollup_store: &StoreRollup,
-    ) -> Result<Vec<(u64, u64, usize, Option<H256>, Option<H256>)>, MonitorError> {
+    ) -> Result<Vec<BatchLine>, MonitorError> {
         let last_l2_batch_number = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
@@ -116,24 +130,19 @@ impl BatchesTable {
         Ok(new_batches)
     }
 
-    async fn process_batches(
-        new_batches: Vec<Batch>,
-    ) -> Vec<(u64, u64, usize, Option<H256>, Option<H256>)> {
+    async fn process_batches(new_batches: Vec<Batch>) -> Vec<BatchLine> {
         let mut new_blocks_processed = new_batches
             .iter()
-            .map(|batch| {
-                (
-                    batch.number,
-                    batch.last_block - batch.first_block + 1,
-                    batch.message_hashes.len(),
-                    batch.commit_tx,
-                    batch.verify_tx,
-                )
+            .map(|batch| BatchLine {
+                number: batch.number,
+                block_count: batch.last_block - batch.first_block + 1,
+                message_count: batch.message_hashes.len(),
+                commit_tx: batch.commit_tx,
+                verify_tx: batch.verify_tx,
             })
             .collect::<Vec<_>>();
 
-        new_blocks_processed
-            .sort_by(|(number_a, _, _, _, _), (number_b, _, _, _, _)| number_b.cmp(number_a));
+        new_blocks_processed.sort_by(|a, b| b.number.cmp(&a.number));
 
         new_blocks_processed
     }
@@ -150,25 +159,25 @@ impl StatefulWidget for &mut BatchesTable {
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
         ];
-        let rows = self.items.iter().map(
-            |(number, n_blocks, n_messages, commit_tx_hash, verify_tx_hash)| {
-                Row::new(vec![
-                    Span::styled(number.to_string(), Style::default()),
-                    Span::styled(n_blocks.to_string(), Style::default()),
-                    Span::styled(n_messages.to_string(), Style::default()),
-                    Span::styled(
-                        commit_tx_hash
-                            .map_or_else(|| "Uncommitted".to_string(), |hash| format!("{hash:#x}")),
-                        Style::default(),
-                    ),
-                    Span::styled(
-                        verify_tx_hash
-                            .map_or_else(|| "Unverified".to_string(), |hash| format!("{hash:#x}")),
-                        Style::default(),
-                    ),
-                ])
-            },
-        );
+        let rows = self.items.iter().map(|batch| {
+            Row::new(vec![
+                Span::styled(batch.number.to_string(), Style::default()),
+                Span::styled(batch.block_count.to_string(), Style::default()),
+                Span::styled(batch.message_count.to_string(), Style::default()),
+                Span::styled(
+                    batch
+                        .commit_tx
+                        .map_or_else(|| "Uncommitted".to_string(), |hash| format!("{hash:#x}")),
+                    Style::default(),
+                ),
+                Span::styled(
+                    batch
+                        .verify_tx
+                        .map_or_else(|| "Unverified".to_string(), |hash| format!("{hash:#x}")),
+                    Style::default(),
+                ),
+            ])
+        });
         let committed_batches_table = Table::new(rows, constraints)
             .header(
                 Row::new(vec![
