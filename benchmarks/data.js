@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752691020450,
+  "lastUpdate": 1752691256832,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4045,6 +4045,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211276035301,
             "range": "± 590085126",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d6548ff9a907773e67edff83ea7b687ffefdaa3d",
+          "message": "feat(l1): add gas used diff in error (#3644)\n\n**Motivation**\n\nWhen there's a gas mismatch, there's no way to tell what is the mismatch\nunless we print it manually. If it's present in the error, at least it\nappears in the test logs when it happens.\n\n**Description**\n\n- Adds used and expected fields for the GasUsedMismatchError.\n- Adds the fields in the block gas post-exec validation.",
+          "timestamp": "2025-07-16T17:44:51Z",
+          "tree_id": "bb7f853ecbc13f3c7b7d56fe3dce4a5025f9c716",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d6548ff9a907773e67edff83ea7b687ffefdaa3d"
+        },
+        "date": 1752691245313,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 206741197974,
+            "range": "± 302712237",
             "unit": "ns/iter"
           }
         ]
