@@ -22,10 +22,21 @@ jobs:
           repository: 'ethereum/solidity'
           ref: 'v0.8.29'
 
+      - name: Restore solc cache
+        uses: actions/cache@v4
+        id: cache-solc
+        with:
+          path: |
+            solidity/build
+            solidity/build/solc/solc
+          key: solc-v0.8.29
+
       - name: Install dependencies
+        if: steps.cache-solc.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y cmake g++ libboost-all-dev
 
       - name: Build solc
+        if: steps.cache-solc.outputs.cache-hit != 'true'
         run: |
           mkdir build
           cd build
