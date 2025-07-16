@@ -33,7 +33,7 @@ fn main() {
     );
 
     // Get the openzeppelin contracts remappings
-    let remappings = vec![
+    let remappings = [
         (
             "@openzeppelin/contracts",
             output_contracts_path.join(
