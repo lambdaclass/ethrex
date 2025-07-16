@@ -127,5 +127,7 @@ explorer_fontend: ## Installs explorer frontend
 	ansible-playbook -i inventory.ini explorer_frontend.yml
 
 metrics: ## Installs grafana and metrics
+	ALERTS_SLACK_CHANNEL=$(ALERTS_SLACK_CHANNEL)
+	ALERTS_SLACK_TOKEN=$(ALERTS_SLACK_TOKEN)
 	GRAFANA_PASSWORD=$(GRAFANA_PASSWORD)
 	ansible-playbook -i inventory.ini metrics.yml

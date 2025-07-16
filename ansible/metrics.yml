@@ -4,19 +4,28 @@
   vars:
     ansible_ssh_user: admin
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
-    local_grafana_dashboards: "{{ playbook_dir }}/../crates/blockchain/metrics/provisioning/grafana_provisioning/"
-    remote_grafana_dashboards: "/etc/grafana/provisioning/"
-    grafana_alerts:
-      - name: alerts
-        path: "{{ ethrex_dir }}/crates/blockchain/metrics/provisioning/grafana_provisioning/alerting"
+    alerts_slack_channel: "{{ lookup('env', 'ALERTS_SLACK_CHANNEL') | default('#aaa', true) }}"
+    alerts_slack_token: "{{ lookup('env', 'ALERTS_SLACK_TOKEN') | default('aaa', true) }}"
+    dashboards:
+      local: "{{ playbook_dir }}/../crates/blockchain/metrics/provisioning/grafana_provisioning/"
+      remote: "/etc/grafana/provisioning/"
+    alerts:
+      local: "{{ playbook_dir }}/../crates/blockchain/metrics/provisioning/grafana_provisioning/alerting"
+      remote: "/etc/grafana/provisioning/alerting/"
 
   tasks:
-    - name: Install rsync
+    - name: Install dependencies
       become: true
       apt:
         name:
           - rsync
+          - git
+          - make
+          - gpg
+          - zip
+          - unzip
         state: present
+        update_cache: true
 
     - name: Enable SSH agent forwarding
       become: true
@@ -68,20 +77,29 @@
           TARGET: localhost
       when: not grafana.stat.exists
 
-    - name: Synchronize Grafana dashboards (recursive copy of all folders and files)
+    - name: Create alerts directory
+      become: true
+      file:
+        path: "{{ alerts.remote }}"
+        state: directory
+        mode: '0755'
+        owner: grafana
+        group: grafana
+
+    - name: Synchronize Grafana dashboards and dashboards (recursive copy of all folders and files)
       become: true
       synchronize:
-        src: "{{ local_grafana_dashboards }}{{ item.path }}"
-        dest: "{{ remote_grafana_dashboards }}{{ item.path }}"
+        src: "{{ item.local }}"
+        dest: "{{ item.remote }}"
         rsync_opts:
           - "-avz"
       loop:
-        - name: l1_dashboards
-          path: "dashboards/"
-        - name: l2_dashboards
-          path: "dashboards/l2_dashboards/"
-        - name: common_dashboards
-          path: "dashboards/common_dashboards/"
+        - name: dashboards
+          local: "{{ dashboards.local }}"
+          remote: "{{ dashboards.remote }}"
+        - name: alerts
+          local: "{{ alerts.local }}"
+          remote: "{{ alerts.remote }}"
 
     - name: Update grafana provisioning for dashboards
       become: true
@@ -94,11 +112,11 @@
       vars:
         grafana_dashboards:
           - name: l1_dashboards
-            path: "{{ remote_grafana_dashboards }}"
+            path: "{{ dashboards.remote }}"
           - name: l2_dashboards
-            path: "{{ remote_grafana_dashboards }}l2_dashboards/"
+            path: "{{ dashboards.remote }}l2_dashboards/"
           - name: common_dashboards
-            path: "{{ remote_grafana_dashboards }}common_dashboards/"
+            path: "{{ dashboards.remote }}common_dashboards/"
 
     - name: Remove ProtectHome=true from grafana-server.service
       become: true
@@ -148,12 +166,30 @@
         group: grafana
         mode: '0644'
 
-    - name: Restart Grafana
+    - name: Replace Slack channel placeholder on remote
+      become: true
+      replace:
+        path: "{{ alerts.remote }}/contact_points.json"
+        regexp: '\$\{ALERTS_SLACK_CHANNEL\}'
+        replace: "{{ alerts_slack_channel }}"
+
+    - name: Replace Slack token placeholder on remote
+      become: true
+      replace:
+        path: "{{ alerts.remote }}/contact_points.json"
+        regexp: '\$\{ALERTS_SLACK_TOKEN\}'
+        replace: "{{ alerts_slack_token }}"
+
+
+    - name: Restart Grafana and Prometheus
       become: true
       systemd:
-        name: grafana-server
+        name: "{{ item.service }}"
         state: restarted
         daemon_reload: true
+      loop:
+        - service: grafana-server
+        - service: prometheus
 
     - name: Remove monitoring stack repo
       file:
