@@ -39,6 +39,8 @@ pub struct RLPxInitiatorState {
     lookup_period: Duration,
     // lookup_period: Duration,
     kademlia: Kademlia,
+    /// The target number of RLPx connections to reach.
+    target_peers: usize,
 }
 
 impl RLPxInitiatorState {
@@ -70,8 +72,8 @@ impl RLPxInitiatorState {
             signer,
             // udp_socket,
             kademlia,
-
             lookup_period: Duration::from_secs(3),
+            target_peers: 50,
         }
     }
 }
@@ -138,11 +140,14 @@ impl GenServer for RLPxInitiator {
 
                 look_for_peers(&state).await;
 
-                send_after(
-                    state.lookup_period,
-                    handle.clone(),
-                    Self::CastMsg::LookForPeers,
-                );
+                let num_peers = state.kademlia.peers.lock().await.len();
+                if num_peers <= state.target_peers {
+                    send_after(
+                        state.lookup_period,
+                        handle.clone(),
+                        Self::CastMsg::LookForPeers,
+                    );
+                }
 
                 CastResponse::NoReply(state)
             }
