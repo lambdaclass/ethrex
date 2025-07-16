@@ -367,6 +367,8 @@ pub enum DeployError {
     FailedToDecodeBytecode(#[from] hex::FromHexError),
     #[error("Failed to deploy contract: {0}")]
     FailedToDeploy(#[from] EthClientError),
+    #[error("Proxy bytecode not found. Make sure to compile the sdk with `COMPILE_CONTRACTS` set.")]
+    ProxyBytecodeNotFound,
 }
 
 pub async fn deploy_contract(
@@ -389,6 +391,10 @@ async fn deploy_proxy(
     implementation_address: Address,
     salt: &[u8],
 ) -> Result<(H256, Address), DeployError> {
+    if ERC1967_PROXY_BYTECODE.is_empty() {
+        return Err(DeployError::ProxyBytecodeNotFound);
+    }
+
     let mut init_code = ERC1967_PROXY_BYTECODE.to_vec();
 
     init_code.extend(H256::from(implementation_address).0);
