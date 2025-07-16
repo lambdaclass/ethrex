@@ -44,6 +44,8 @@ pub struct DiscoverySideCarState {
     lookup_period: Duration,
     prune_period: Duration,
 
+    /// The target number of RLPx connections to reach.
+    target_peers: usize,
     /// The target number of contacts to maintain in the Kademlia table.
     target_contacts: usize,
 
@@ -84,6 +86,7 @@ impl DiscoverySideCarState {
             lookup_period: Duration::from_secs(5 * 60), // 5 minutes
             prune_period: Duration::from_secs(5),
 
+            target_peers: 50,
             target_contacts: 50_000,
         }
     }
@@ -259,7 +262,8 @@ impl GenServer for DiscoverySideCar {
 
 async fn get_lookup_period(state: &DiscoverySideCarState) -> Duration {
     let number_of_contacts = state.kademlia.table.lock().await.len();
-    if number_of_contacts < state.target_contacts {
+    let number_of_peers = state.kademlia.peers.lock().await.len();
+    if number_of_peers < state.target_peers && number_of_contacts < state.target_contacts {
         state.initial_lookup_period
     } else {
         state.lookup_period
