@@ -8,6 +8,7 @@ use crate::constants::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+use ethrex_common::H160;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -51,60 +52,28 @@ impl LEVM {
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
+        println!(
+            "Executing block {}. It has {} transactions",
+            block.header.number,
+            block.body.transactions.len()
+        );
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
             // Shortcut for transfer transactions.
-            if let TxKind::Call(tx_recipient) = tx.to() {
-                if tx.data().is_empty() {
-                    let account = match db.current_accounts_state.entry(tx_sender) {
-                        Entry::Occupied(entry) => entry.into_mut(),
-                        Entry::Vacant(entry) => {
-                            let account = db.store.get_account(tx_sender)?;
-                            db.initial_accounts_state.insert(tx_sender, account.clone());
-
-                            entry.insert(account)
-                        }
-                    };
-                    account.info.balance = account
-                        .info
-                        .balance
-                        .checked_sub(tx.value())
-                        .ok_or(InternalError::Overflow)?;
-                    account.info.nonce += 1;
-
-                    let account = match db.current_accounts_state.entry(tx_recipient) {
-                        Entry::Occupied(entry) => entry.into_mut(),
-                        Entry::Vacant(entry) => {
-                            let account = db.store.get_account(tx_recipient)?;
-                            db.initial_accounts_state
-                                .insert(tx_recipient, account.clone());
-
-                            entry.insert(account)
-                        }
-                    };
-                    account.info.balance = account
-                        .info
-                        .balance
-                        .checked_add(tx.value())
-                        .ok_or(InternalError::Overflow)?;
-
-                    cumulative_gas_used += 21000;
-                    receipts.push(Receipt {
-                        tx_type: tx.tx_type(),
-                        succeeded: true,
-                        cumulative_gas_used,
-                        logs: vec![],
-                    });
-
-                    continue;
-                }
+            let was_transfer =
+                Self::try_execute_transfer(db, &tx, tx_sender, &mut cumulative_gas_used, &mut receipts)?;
+            if was_transfer {
+                println!("Transaction is a transfer, skipping further execution.");
+                continue;
             }
-
+            println!("Executiong call");
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
-
+            dbg!(report.gas_used);
             cumulative_gas_used += report.gas_used;
+            dbg!(cumulative_gas_used);
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result.clone(), TxResult::Success),
@@ -114,8 +83,8 @@ impl LEVM {
 
             receipts.push(receipt);
         }
-
         if let Some(withdrawals) = &block.body.withdrawals {
+            println!("Executing withdrawals");
             Self::process_withdrawals(db, withdrawals)?;
         }
 
@@ -128,6 +97,71 @@ impl LEVM {
         };
 
         Ok(BlockExecutionResult { receipts, requests })
+    }
+
+    fn try_execute_transfer(
+        db: &mut GeneralizedDatabase,
+        tx: &Transaction,
+        tx_sender: H160,
+        cumulative_gas_used: &mut u64,
+        receipts: &mut Vec<Receipt>,
+    ) -> Result<bool, EvmError> {
+        // This function is a placeholder for transfer execution logic.
+        // It should handle the transfer of funds between accounts.
+        let TxKind::Call(tx_recipient) = tx.to() else {
+            return Ok(false);
+        };
+
+        // We also need to check that there is no code associated with the recipient address.
+        if !tx.data().is_empty() {
+            return Ok(false);
+        }
+        let account = match db.current_accounts_state.entry(tx_sender) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let account = db.store.get_account(tx_sender)?;
+                if account.has_code() {
+                    return Ok(false);
+                }
+                db.initial_accounts_state.insert(tx_sender, account.clone());
+
+                entry.insert(account)
+            }
+        };
+
+        account.info.balance = account
+            .info
+            .balance
+            .checked_sub(tx.value())
+            .ok_or(InternalError::Overflow)?;
+        account.info.nonce += 1;
+
+        let account = match db.current_accounts_state.entry(tx_recipient) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let account = db.store.get_account(tx_recipient)?;
+                db.initial_accounts_state
+                    .insert(tx_recipient, account.clone());
+
+                entry.insert(account)
+            }
+        };
+        account.info.balance = account
+            .info
+            .balance
+            .checked_add(tx.value())
+            .ok_or(InternalError::Overflow)?;
+
+        *cumulative_gas_used += 21000;
+        dbg!(&cumulative_gas_used);
+        receipts.push(Receipt {
+            tx_type: tx.tx_type(),
+            succeeded: true,
+            cumulative_gas_used: *cumulative_gas_used,
+            logs: vec![],
+        });
+
+        Ok(true)
     }
 
     fn setup_env(
