@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 /// Interval at which the pruning task will run in seconds
-pub const PRUNING_INTERVAL: Duration = Duration::from_secs(15);
+pub const PRUNING_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Deserialize)]
 pub struct NodeConfigFile {
