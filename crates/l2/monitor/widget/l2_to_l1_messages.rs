@@ -34,18 +34,18 @@ impl L2ToL1MessageStatus {
         l2_tx_hash: H256,
         common_bridge_address: Address,
         eth_client: &EthClient,
-    ) -> Self {
+    ) -> Result<Self, MonitorError> {
         let withdrawal_is_claimed = {
             let calldata = encode_calldata(
                 "claimedWithdrawals(bytes32)",
                 &[Value::FixedBytes(l2_tx_hash.as_bytes().to_vec().into())],
             )
-            .expect("Failed to encode claimedWithdrawals(bytes32) calldata");
+            .map_err(MonitorError::CalldataEncodeError)?;
 
             let raw_withdrawal_is_claimed: H256 = eth_client
                 .call(common_bridge_address, calldata.into(), Overrides::default())
                 .await
-                .expect("Failed to call claimedWithdrawals(bytes32)")
+                .map_err(MonitorError::EthClientError)?
                 .parse()
                 .unwrap_or_default();
 
@@ -53,9 +53,9 @@ impl L2ToL1MessageStatus {
         };
 
         if withdrawal_is_claimed {
-            Self::WithdrawalClaimed
+            Ok(Self::WithdrawalClaimed)
         } else {
-            Self::WithdrawalInitiated
+            Ok(Self::WithdrawalInitiated)
         }
     }
 }
@@ -98,6 +98,7 @@ pub type L2ToL1MessageRow = (
     H256,    // L2 tx hash
 );
 
+#[derive(Default)]
 pub struct L2ToL1MessagesTable {
     pub state: TableState,
     pub items: Vec<L2ToL1MessageRow>,
@@ -106,25 +107,11 @@ pub struct L2ToL1MessagesTable {
 }
 
 impl L2ToL1MessagesTable {
-    pub async fn new(
-        common_bridge_address: Address,
-        eth_client: &EthClient,
-        rollup_client: &EthClient,
-    ) -> Result<Self, MonitorError> {
-        let mut last_l2_block_fetched = U256::zero();
-        let items = Self::fetch_new_items(
-            &mut last_l2_block_fetched,
+    pub fn new(common_bridge_address: Address) -> Self {
+        Self {
             common_bridge_address,
-            eth_client,
-            rollup_client,
-        )
-        .await?;
-        Ok(Self {
-            state: TableState::default(),
-            items,
-            last_l2_block_fetched,
-            common_bridge_address,
-        })
+            ..Default::default()
+        }
     }
 
     pub async fn on_tick(
@@ -143,19 +130,20 @@ impl L2ToL1MessagesTable {
 
         let n_new_latest_batches = new_l1_to_l2_messages.len();
         self.items.truncate(50 - n_new_latest_batches);
-        self.refresh_items(eth_client).await;
+        self.refresh_items(eth_client).await?;
         self.items.extend_from_slice(&new_l1_to_l2_messages);
         self.items.rotate_right(n_new_latest_batches);
 
         Ok(())
     }
 
-    async fn refresh_items(&mut self, eth_client: &EthClient) {
+    async fn refresh_items(&mut self, eth_client: &EthClient) -> Result<(), MonitorError> {
         for (_kind, status, .., l2_tx_hash) in self.items.iter_mut() {
             *status =
                 L2ToL1MessageStatus::for_tx(*l2_tx_hash, self.common_bridge_address, eth_client)
-                    .await;
+                    .await?;
         }
+        Ok(())
     }
 
     async fn fetch_new_items(
@@ -171,14 +159,14 @@ impl L2ToL1MessagesTable {
             rollup_client,
         )
         .await?;
-        Ok(Self::process_logs(&logs, common_bridge_address, eth_client).await)
+        Self::process_logs(&logs, common_bridge_address, eth_client).await
     }
 
     async fn process_logs(
         logs: &[RpcLog],
         common_bridge_address: Address,
         eth_client: &EthClient,
-    ) -> Vec<L2ToL1MessageRow> {
+    ) -> Result<Vec<L2ToL1MessageRow>, MonitorError> {
         let mut processed_logs = Vec::new();
 
         let eth_withdrawal_topic = keccak(b"WithdrawalInitiated(address,address,uint256)");
@@ -191,7 +179,7 @@ impl L2ToL1MessagesTable {
                 common_bridge_address,
                 eth_client,
             )
-            .await;
+            .await?;
             match log.log.topics[0] {
                 topic if topic == eth_withdrawal_topic => {
                     processed_logs.push((
@@ -221,7 +209,7 @@ impl L2ToL1MessagesTable {
             }
         }
 
-        processed_logs
+        Ok(processed_logs)
     }
 }
 
