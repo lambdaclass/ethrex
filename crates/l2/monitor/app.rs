@@ -201,7 +201,9 @@ impl EthrexMonitorWidget {
             tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
             global_chain_status: GlobalChainStatusTable::new(cfg),
-            logger: Arc::new(TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info)),
+            logger: Arc::new(
+                TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
+            ),
             node_status: NodeStatusTable::new(sequencer_state.clone()),
             mempool: MempoolTable::new(),
             batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
