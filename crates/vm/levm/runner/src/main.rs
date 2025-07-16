@@ -15,8 +15,9 @@ use ethrex_levm::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use runner::input::{BenchAccount, BenchTransaction, RunnerInput};
+use std::io::Write;
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -47,7 +48,9 @@ fn main() {
     }
 
     let log_level = if cli.verbose { "debug" } else { "info" };
-    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
+    env_logger::Builder::from_env(Env::default().default_filter_or(log_level))
+        .format(|buf, record| writeln!(buf, "{}", record.args()))
+        .init();
 
     // Mutable just to assign the code to the transaction if necessary
     let mut runner_input: RunnerInput = if let Some(input_file_path) = cli.input {
@@ -123,7 +126,7 @@ fn main() {
     let result = vm.execute();
 
     // Print execution result
-    print!("\n\nResult:");
+    info!("\n\nResult:");
     match result {
         Ok(report) => info!(" {:?}\n", report),
         Err(e) => error!(" Error: {}\n", e),
