@@ -71,8 +71,14 @@ struct OrchestratorHandle {
     sender: Sender<FetchTask>,
 }
 
-async fn orchestrate(_rx: Receiver<FetchTask>) {
-    todo!()
+async fn orchestrate(mut rx: Receiver<FetchTask>) {
+    while let Some(task) = rx.recv().await {
+        match task {
+            FetchTask::Storage { state_root, start_account_hash, end_account_hash } => {
+                info!("Received new task, state_root: {state_root:?}, start_account_hash: {start_account_hash:?}, end_account_hash: {end_account_hash:?}");
+            }
+        }
+    }
 }
 
 impl OrchestratorHandle {
