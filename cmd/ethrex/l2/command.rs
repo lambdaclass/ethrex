@@ -201,14 +201,21 @@ impl Command {
                         blockchain.clone(),
                         Some(P2PBasedContext {
                             store_rollup: rollup_store.clone(),
-                            committer_key: Arc::new(l2_sequencer_cfg.l1_committer.l1_private_key),
+                            // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
+                            // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
+                            // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
+                            // This should be replaced with the Signer enum once the refactor is complete.
+                            committer_key: Arc::new(
+                                SecretKey::from_slice(&[0_u8; 32])
+                                    .expect("Failed to create committer key"),
+                            ),
                         }),
                     )
                     .await;
                 } else {
                     info!("P2P is disabled");
                 }
-              
+
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
