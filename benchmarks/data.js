@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752691256832,
+  "lastUpdate": 1752692489267,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4075,6 +4075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 206741197974,
             "range": "± 302712237",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "91a41410d3020aadaba8379656bcbdfc1114d3cc",
+          "message": "feat(l2): implement address aliasing (#3451)\n\n**Motivation**\n\nWe want to prevent l1 contracts from forging transactions for existing\nl2 contracts.\n\n**Description**\n\nKeeps faked source addresses. Implements checks described on #3424.\n\nCloses #3424\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-07-16T18:04:08Z",
+          "tree_id": "e3c4a08556fe2d5e20afb42ca55a16c81b098104",
+          "url": "https://github.com/lambdaclass/ethrex/commit/91a41410d3020aadaba8379656bcbdfc1114d3cc"
+        },
+        "date": 1752692477723,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212352555477,
+            "range": "± 220069186",
             "unit": "ns/iter"
           }
         ]
