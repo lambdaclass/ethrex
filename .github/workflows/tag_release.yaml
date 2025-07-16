@@ -35,6 +35,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@master
         with:
@@ -75,6 +81,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
+
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@master
         with:
@@ -112,6 +124,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@master
@@ -160,6 +178,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@master
