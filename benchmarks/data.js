@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752686780462,
+  "lastUpdate": 1752690304197,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3955,6 +3955,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208732062852,
             "range": "± 605900980",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "77b2819356aa7b7c8c380cc6e1f9a430c4d7f2bb",
+          "message": "fix(l2): flamegraph and benchmark workflows (#3652)\n\n**Motivation**\n\nInstall solc to `flamegraph-reth` job. Successful run\n[here](https://github.com/lambdaclass/ethrex/actions/runs/16305540602/job/46050676065?pr=3652).\nCloses None",
+          "timestamp": "2025-07-16T17:28:06Z",
+          "tree_id": "7ba35bdbcc440aaceedaf28e067ee5f8b95399b0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/77b2819356aa7b7c8c380cc6e1f9a430c4d7f2bb"
+        },
+        "date": 1752690287100,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214261390548,
+            "range": "± 281392533",
             "unit": "ns/iter"
           }
         ]
