@@ -372,9 +372,9 @@ impl Widget for &mut EthrexMonitor {
         let result = self.render(area, buf);
         match result {
             Ok(_) => {}
-            Err(_) => {
+            Err(e) => {
                 buf.reset();
-                let error = Line::raw("Index Slicing Error").centered();
+                let error = Line::raw(format!("Error: {e}")).centered();
 
                 error.render(area, buf);
             }
