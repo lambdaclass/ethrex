@@ -33,12 +33,6 @@ jobs:
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         uses: ./.github/actions/setup-rust
 
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
-
       - name: Build binary
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         run: |
