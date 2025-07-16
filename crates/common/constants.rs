@@ -3,13 +3,6 @@ use keccak_hash::H256;
 use sha3::{Digest as _, Keccak256};
 use std::{str::FromStr, sync::LazyLock};
 
-pub static MAINNET_GENESIS_HASH: LazyLock<H256> = LazyLock::new(|| {
-    H256::from_slice(
-        &hex::decode("d4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3")
-            .expect("Failed to decode hex from string"),
-    )
-});
-
 // = Keccak256(RLP([])) as of EIP-3675
 pub static DEFAULT_OMMERS_HASH: LazyLock<H256> = LazyLock::new(|| {
     H256::from_slice(

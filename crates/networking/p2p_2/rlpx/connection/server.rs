@@ -131,7 +131,7 @@ impl RLPxConnectionState {
 
     pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
         let _geth_peers = serde_json::from_str::<Vec<String>>(
-            &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
+            &read_to_string("geth_peers.json")
                 .expect("Failed to read geth_peers.json"),
         )
         .expect("Failed to parse geth_peers.json")

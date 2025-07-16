@@ -1,4 +1,4 @@
-use ethrex_common::{constants::MAINNET_GENESIS_HASH, types::ForkId};
+use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 
 use crate::rlpx::{error::RLPxError, p2p::Capability};
@@ -16,7 +16,7 @@ pub async fn validate_status(
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
-    let genesis_hash = &MAINNET_GENESIS_HASH;
+    let genesis_hash = genesis_header.hash();
     let latest_block_number = storage.get_latest_block_number().await?;
     let latest_block_header = storage
         .get_block_header(latest_block_number)?
@@ -41,7 +41,7 @@ pub async fn validate_status(
         ));
     }
     //Check Genesis
-    if msg_data.get_genesis() != **genesis_hash {
+    if msg_data.get_genesis() != genesis_hash {
         return Err(RLPxError::HandshakeError(
             "Genesis does not match".to_string(),
         ));
