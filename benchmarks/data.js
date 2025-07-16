@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752645675312,
+  "lastUpdate": 1752647214751,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7973,6 +7973,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012200475319926875,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "448b778d849a2e08472c4cbbf3cac6da353ffd9e",
+          "message": "feat(l2): embed proxy contract in the SDK (#3443)\n\n**Description**\n\nThis PR adds a `build.rs` build script to the SDK to embed the\n`ERC1967Proxy` contract as a constant. As part of this, it also moves\nthe functions for downloading dependencies and compiling contracts to\nanother crate, since we need to use them inside the build script.\n\nChange list:\n\n- [x] Added build script\n- [x] Added installation of `solc` for compiling in the CI\n- [x] Updated dockerfiles to install solc before compiling\n- [x] Updated `service.nix` to clone dependencies before building.\n- [x] Removed `ERC1967Proxy` compilation steps from the Deployer.\n\nRelated to #3380\n\n---------\n\nCo-authored-by: avilagaston9 <gaston.avila@lambdaclass.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-07-15T18:33:33Z",
+          "tree_id": "bac1601d0b41721457f72a0f73e2693873ccdba1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/448b778d849a2e08472c4cbbf3cac6da353ffd9e"
+        },
+        "date": 1752647214276,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012290349907918968,
             "unit": "Mgas/s"
           }
         ]
