@@ -22,12 +22,27 @@ use tracing::{debug, info};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, bytecode_fetcher,
-        seconds_to_readable, storage_fetcher::storage_fetcher,
+        bytecode_fetcher, seconds_to_readable, storage_fetcher::storage_fetcher, OrchestratorHandle, MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START
     },
 };
 
 use super::{SHOW_PROGRESS_INTERVAL_DURATION, SyncError};
+
+
+#[derive(Debug, Clone)]
+/// Describes the task to be executed by a peer later.
+pub enum FetchTask {
+    // TODO: add bytecode
+    // Bytecode {
+
+    // },
+    Storage {
+        state_root: H256,
+        start_account_hash: H256,
+        end_account_hash: H256,
+    },
+}
+
 
 /// Downloads the leaf values of a Block's state trie by requesting snap state from peers
 /// Also downloads the storage tries & bytecodes for each downloaded account
@@ -41,6 +56,7 @@ pub(crate) async fn state_sync(
     peers: PeerHandler,
     key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    orchestrator: Sender<FetchTask>,
 ) -> Result<bool, SyncError> {
     // Spawn tasks to fetch each state trie segment
     let mut state_trie_tasks = tokio::task::JoinSet::new();
@@ -57,6 +73,7 @@ pub(crate) async fn state_sync(
             key_checkpoints.map(|chs| chs[i]),
             state_sync_progress.clone(),
             storage_trie_rebuilder_sender.clone(),
+            orchestrator.clone(),
         ));
     }
     // Check for pivot staleness
@@ -89,6 +106,7 @@ async fn state_sync_segment(
     checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    orchestrator: Sender<FetchTask>,
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
@@ -110,19 +128,27 @@ async fn state_sync_segment(
     }
     // Spawn storage & bytecode fetchers
     let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
-    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-        bytecode_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
-    let storage_fetcher_handle = tokio::spawn(storage_fetcher(
-        storage_receiver,
-        peers.clone(),
-        store.clone(),
+
+    // let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
+    // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
+    //     bytecode_receiver,
+    //     peers.clone(),
+    //     store.clone(),
+    // ));
+    // let storage_fetcher_handle = tokio::spawn(storage_fetcher(
+    //     storage_receiver,
+    //     peers.clone(),
+    //     store.clone(),
+    //     state_root,
+    //     storage_trie_rebuilder_sender.clone(),
+    // ));
+    
+    let task = FetchTask::Storage {
         state_root,
-        storage_trie_rebuilder_sender.clone(),
-    ));
+        start_account_hash,
+        end_account_hash: STATE_TRIE_SEGMENTS_END[segment_number],
+    };
+    orchestrator.send(task).await?;
     info!(
         "Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}"
     );
@@ -181,11 +207,12 @@ async fn state_sync_segment(
                 bytecode_sender.send(code_hashes).await?;
             }
             // Send hash and root batch to the storage fetcher
-            if !account_hashes_and_storage_roots.is_empty() {
-                storage_sender
-                    .send(account_hashes_and_storage_roots)
-                    .await?;
-            }
+            // TODO(SNAP): Check this 
+            // if !account_hashes_and_storage_roots.is_empty() {
+            //     storage_sender
+            //         .send(account_hashes_and_storage_roots)
+            //         .await?;
+            // }
             // Update Snapshot
             store
                 .write_snapshot_account_batch(account_hashes, accounts)
@@ -211,10 +238,10 @@ async fn state_sync_segment(
         start_account_hash,
     ));
     // Send empty batch to signal that no more batches are incoming
-    storage_sender.send(vec![]).await?;
-    bytecode_sender.send(vec![]).await?;
-    storage_fetcher_handle.await??;
-    bytecode_fetcher_handle.await??;
+    // storage_sender.send(vec![]).await?;
+    // bytecode_sender.send(vec![]).await?;
+    // storage_fetcher_handle.await??;
+    // bytecode_fetcher_handle.await??;
     if !stale {
         // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
         start_account_hash = STATE_TRIE_SEGMENTS_END[segment_number]

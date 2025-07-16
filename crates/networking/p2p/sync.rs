@@ -6,7 +6,7 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
-use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
+use crate::{peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST}, sync::state_sync::FetchTask};
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -27,8 +27,7 @@ use std::{
 };
 use storage_healing::storage_healer;
 use tokio::{
-    sync::mpsc::error::SendError,
-    time::{Duration, Instant},
+    sync::mpsc::{channel, error::SendError, Receiver, Sender}, task::JoinHandle, time::{Duration, Instant}
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -64,6 +63,33 @@ lazy_static::lazy_static! {
     };
 }
 
+#[derive(Debug)]
+struct OrchestratorHandle {
+    /// The orchestrator task handle
+    handle: JoinHandle<()>,
+    /// The orchestrator task sender
+    sender: Sender<FetchTask>,
+}
+
+async fn orchestrate(_rx: Receiver<FetchTask>) {
+    todo!()
+}
+
+impl OrchestratorHandle {
+    pub fn new() -> OrchestratorHandle {
+        let (tx, rx) = channel::<FetchTask>(MAX_CHANNEL_MESSAGES);
+        let handle = tokio::task::spawn(async move {
+            orchestrate(rx).await;
+        });
+        OrchestratorHandle { handle, sender: tx }
+    } 
+
+    pub fn new_sender(&self) -> Sender<FetchTask> {
+        self.sender.clone()
+    }
+        
+}   
+
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
     #[default]
@@ -87,6 +113,7 @@ pub struct Syncer {
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
+    orchestrator: OrchestratorHandle,
 }
 
 impl Syncer {
@@ -96,6 +123,7 @@ impl Syncer {
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
     ) -> Self {
+        let orchestrator = OrchestratorHandle::new();
         Self {
             snap_enabled,
             peers,
@@ -103,6 +131,7 @@ impl Syncer {
             trie_rebuilder: None,
             cancel_token,
             blockchain,
+            orchestrator,
         }
     }
 
@@ -119,6 +148,7 @@ impl Syncer {
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
             )),
+            orchestrator: OrchestratorHandle::new(),
         }
     }
 
@@ -630,6 +660,7 @@ impl Syncer {
                 self.peers.clone(),
                 key_checkpoints,
                 storage_trie_rebuilder_sender,
+                self.orchestrator.new_sender(),
             )
             .await?;
             if stale_pivot {
