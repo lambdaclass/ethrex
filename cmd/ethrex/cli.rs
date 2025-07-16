@@ -394,6 +394,10 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
+        let numbers_and_hashes = blocks
+            .iter()
+            .map(|b| (b.header.number, b.hash()))
+            .collect::<Vec<_>>();
         // Execute block by block
         for block in &blocks {
             let hash = block.hash();
@@ -418,7 +422,7 @@ pub async fn import_blocks(
         }
 
         _ = store
-            .mark_chain_as_canonical(&blocks)
+            .mark_chain_as_canonical(&numbers_and_hashes)
             .await
             .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 
