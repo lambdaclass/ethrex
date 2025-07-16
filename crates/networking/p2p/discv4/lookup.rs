@@ -144,7 +144,7 @@ impl Discv4LookupHandler {
         asked_peers: &mut HashSet<H512>,
         nodes_to_ask: &Vec<Node>,
     ) -> (Vec<Node>, u32) {
-        // send FIND_NODE as much as three times
+        // send FIND_NODE as many as three times
         let alpha = 3;
         let mut queries = 0;
         let mut nodes = vec![];
