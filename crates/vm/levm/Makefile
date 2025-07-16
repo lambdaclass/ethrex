@@ -1,4 +1,4 @@
-.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests render-benches
+.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests render-benches samply-run-bench
 
 all: test clippy fmt ## 🚀 Runs all tests, linter and formatter
 
@@ -38,6 +38,7 @@ BENCH_TRANSFER_ITERATIONS := 500
 BENCH_APPROVAL_ITERATIONS := 500
 BENCH_PUSH_ITERATIONS := 0 # unused, fixed size array to use stack
 BENCH_MSTOREBENCH_ITERATIONS := 0 # unused, fixed size array to use stack
+BENCH_SSTOREBENCH_ITERATIONS := 0 # unused, fixed size array to use stack
 
 # For manually testing you could add --show-output to hyperfine
 define run_benchmark
@@ -77,6 +78,7 @@ compile-contracts:
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
+	$(call run_benchmark,SstoreBench_no_opt,REPETITIONS_SLOW,BENCH_SSTOREBENCH_ITERATIONS)
 	$(call run_benchmark,MstoreBench,REPETITIONS,BENCH_MSTOREBENCH_ITERATIONS)
 	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
 	$(call run_benchmark,FibonacciRecursive,REPETITIONS_SLOW,BENCH_FIB_REC_ITERATIONS)
@@ -97,6 +99,7 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
 	$(call run_benchmark_ci,MstoreBench,REPETITIONS,BENCH_MSTOREBENCH_ITERATIONS)
+	$(call run_benchmark_ci,SstoreBench_no_opt,REPETITIONS_SLOW,BENCH_SSTOREBENCH_ITERATIONS)
 	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
 	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
@@ -125,6 +128,11 @@ flamegraph-levm-bench-generic:
 build-revm-comparison:
 	cd bench/revm_comparison && \
 		CARGO_TARGET_DIR=../../target \
+		cargo build --release --bin benchmark
+
+build-revm-comparison-debuginfo:
+	cd bench/revm_comparison && \
+		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=../../target \
 		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
@@ -161,3 +169,11 @@ flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test f
 samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
 	cd $(EFTEST_DIR) && \
 	$(MAKE) samply-run-ef-tests
+
+BENCH ?= *
+BENCH_REPS ?= 500
+BENCH_ITERS ?= 57
+
+samply-run-bench: ## ⚡️ Runs the provided bench with samply Pass BENCH=Fibonacci to choose the benchmark.
+	$(MAKE) build-revm-comparison-debuginfo
+	samply record -r 10000 target/release/benchmark levm $(BENCH) $(BENCH_REPS) $(BENCH_ITERS)
