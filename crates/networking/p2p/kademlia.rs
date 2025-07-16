@@ -15,6 +15,11 @@ pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
 const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
 
+/// Maximum Peer Score to avoid overflows upon weigh calculations
+const PEER_SCORE_UPPER_BOUND: i32 = 500;
+/// Mininum Peer Score, this is a soft bound that can be temporarily exceeded by a critical failure
+const PEER_SCORE_LOWER_BOUND: i32 = -500;
+
 #[derive(Clone, Debug, Default)]
 pub struct Bucket {
     pub peers: Vec<PeerData>,
@@ -458,7 +463,9 @@ impl PeerData {
 
     /// Simple scoring: +1 for success
     pub fn reward_peer(&mut self) {
-        self.score += 1;
+        if self.score < PEER_SCORE_UPPER_BOUND {
+            self.score += 1;
+        }
 
         debug!(
             "[PEERS] Rewarding peer with node_id {:?}, new score: {}",
@@ -469,11 +476,13 @@ impl PeerData {
 
     /// Simple scoring: -5 for critical failure, -1 for non-critical
     pub fn penalize_peer(&mut self, critical: bool) {
-        if critical {
-            self.score -= 5;
-        } else {
-            self.score -= 1;
-        };
+        if self.score > PEER_SCORE_LOWER_BOUND {
+            if critical {
+                self.score -= 5;
+            } else {
+                self.score -= 1;
+            };
+        }
 
         debug!(
             "[PEERS] Penalizing peer with node_id {:?}, new score: {}",

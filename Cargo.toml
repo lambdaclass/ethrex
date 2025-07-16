@@ -15,6 +15,7 @@ members = [
   "crates/l2/prover",
   "crates/l2/prover/zkvm/interface",
   "crates/l2/sdk",
+  "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
   "crates/l2/networking/rpc",
   "crates/networking/p2p",
@@ -96,6 +97,8 @@ axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
+rustc-hex = "2.1.0"
+url = "2.5.4"
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"

@@ -158,7 +158,7 @@ pub struct ProofCoordinatorState {
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     rpc_url: String,
-    l1_private_key: SecretKey,
+    tdx_private_key: SecretKey,
     blockchain: Arc<Blockchain>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
@@ -205,7 +205,7 @@ impl ProofCoordinatorState {
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
             rpc_url,
-            l1_private_key: config.l1_private_key,
+            tdx_private_key: config.tdx_private_key,
             blockchain,
             validium: config.validium,
             needed_proof_types,
@@ -520,14 +520,14 @@ async fn handle_setup(
             prepare_quote_prerequisites(
                 &state.eth_client,
                 &state.rpc_url,
-                &hex::encode(state.l1_private_key.as_ref()),
+                &hex::encode(state.tdx_private_key.as_ref()),
                 &hex::encode(&payload),
             )
             .await
             .map_err(|e| ProofCoordinatorError::Custom(format!("Could not setup TDX key {e}")))?;
             register_tdx_key(
                 &state.eth_client,
-                &state.l1_private_key,
+                &state.tdx_private_key,
                 state.on_chain_proposer_address,
                 payload,
             )
