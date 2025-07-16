@@ -52,13 +52,8 @@ pub async fn check_test_case_results(
     test_case: &TestCase,
     execution_result: Result<ExecutionReport, VMError>,
 ) -> Result<(), RunnerError> {
-    // Verify expected exception.
-    if test_case.expects_exception() {
-        check_exception(
-            // we can `unwrap()` here because we previously check that exception is some with `expects_exception()`.
-            test_case.post.expected_exception.clone().unwrap(),
-            execution_result,
-        )?;
+    if let Some(expected_exceptions) = test_case.post.expected_exception.clone() {
+        check_exception(expected_exceptions, execution_result)?;
     } else {
         // Verify expected root hash.
         check_root(vm, initial_block_hash, store, test_case).await?;
