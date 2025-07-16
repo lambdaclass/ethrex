@@ -11066,20 +11066,21 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.1.3"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbf2934bc56e7e8c07b155b7d858cd911d77d3c082cdafa01079a10733b59daa"
+checksum = "01bd46fef02d70d06e3e169d89eaddf1a3c8db6cb689a541705463f7a12260d7"
 dependencies = [
  "futures",
  "spawned-rt",
+ "thiserror 2.0.12",
  "tracing",
 ]
 
 [[package]]
 name = "spawned-rt"
-version = "0.1.3"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e467fb9d3e4f7a3bd2ff27c5bee8b8a681be0c352941d7412a0a58e18671748a"
+checksum = "a7105ceb2a49ea3566f29c57bdc164397d81db934ff6241e1a555df76069b657"
 dependencies = [
  "crossbeam",
  "tokio",
