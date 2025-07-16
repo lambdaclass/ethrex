@@ -250,6 +250,10 @@ impl ChainConfig {
         self.istanbul_block.is_some_and(|num| num <= block_number)
     }
 
+    pub fn is_london_activated(&self, block_number: BlockNumber) -> bool {
+        self.london_block.is_some_and(|num| num <= block_number)
+    }
+
     pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
@@ -377,7 +381,11 @@ impl Genesis {
             extra_data: self.extra_data.clone(),
             prev_randao: self.mix_hash,
             nonce: self.nonce,
-            base_fee_per_gas: self.base_fee_per_gas.or(Some(INITIAL_BASE_FEE)),
+            base_fee_per_gas: self.base_fee_per_gas.or_else(|| {
+                self.config
+                    .is_london_activated(0)
+                    .then_some(INITIAL_BASE_FEE)
+            }),
             withdrawals_root: self
                 .config
                 .is_shanghai_activated(self.timestamp)
