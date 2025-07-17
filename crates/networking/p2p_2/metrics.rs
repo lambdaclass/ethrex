@@ -44,6 +44,8 @@ pub struct Metrics {
     pub connection_failures_to_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
     pub connection_failures_to_mainnet_peers_reasons_counts: Arc<Mutex<BTreeMap<String, u64>>>,
 
+    pub connected_peers_client_type: Arc<Mutex<BTreeMap<String, u64>>>,
+
     start_time: SystemTime,
 }
 
@@ -76,12 +78,19 @@ impl Metrics {
             .await;
     }
 
-    pub async fn record_new_rlpx_conn_established(&self) {
+    pub async fn record_new_rlpx_conn_established(&self, client_name: &str) {
         let mut events = self.rlpx_conn_establishments_events.lock().await;
         events.push_back(SystemTime::now());
         self.rlpx_conn_establishments.inc();
         self.update_rate(&mut events, &self.rlpx_conn_establishments_rate)
             .await;
+        let mut clients = self.connected_peers_client_type.lock().await;
+        let split = client_name.split('/').collect::<Vec<&str>>();
+        let client_name = split.first().expect("Split always returns 1 element");
+        clients
+            .entry(client_name.to_string())
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
     }
 
     pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
@@ -453,6 +462,8 @@ impl Default for Metrics {
             connection_failures_to_mainnet_peers_reasons_counts: Arc::new(Mutex::new(
                 BTreeMap::new(),
             )),
+
+            connected_peers_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
             start_time: SystemTime::now(),
         }
