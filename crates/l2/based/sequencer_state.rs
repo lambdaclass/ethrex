@@ -22,7 +22,7 @@ impl From<SequencerStatus> for SequencerState {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, Copy)]
 pub enum SequencerStatus {
     Sequencing,
     #[default]

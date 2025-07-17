@@ -171,7 +171,7 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
     let current_state = state.sequencer_state.status().await;
 
     let new_status = determine_new_status(
-        &current_state,
+        current_state,
         node_is_up_to_date,
         lead_sequencer == state.sequencer_address,
     );
@@ -212,7 +212,7 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
 }
 
 fn determine_new_status(
-    current_state: &SequencerStatus,
+    current_state: SequencerStatus,
     node_is_up_to_date: bool,
     is_lead_sequencer: bool,
 ) -> SequencerStatus {
