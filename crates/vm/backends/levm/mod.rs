@@ -68,7 +68,7 @@ impl LEVM {
 
             receipts.push(receipt);
             let duration = start.elapsed();
-            println!("Time elapsed executing tx: {:.3}ms", duration.as_secs_f64() * 1000.0);
+            println!("Time elapsed executing tx: {:.3} micros", duration.as_secs_f64() * 1000000.0);
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
