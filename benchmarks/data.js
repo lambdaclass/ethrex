@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752752246133,
+  "lastUpdate": 1752754004425,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4195,6 +4195,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208193047892,
             "range": "± 1208961541",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d8aaed209910719f7f482fd6e3b2f33aefb1aba3",
+          "message": "chore(l1, l2): add claude/gemini files to .gitignore (#3653)",
+          "timestamp": "2025-07-17T11:04:04Z",
+          "tree_id": "c29a6ea2921f69d1cc96417821b0fc03dd1163cb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d8aaed209910719f7f482fd6e3b2f33aefb1aba3"
+        },
+        "date": 1752753993425,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209493098609,
+            "range": "± 354976637",
             "unit": "ns/iter"
           }
         ]
