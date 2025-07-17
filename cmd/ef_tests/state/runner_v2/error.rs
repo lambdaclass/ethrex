@@ -1,15 +1,16 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
+
+use ethrex_common::{Address, U256};
+use bytes::Bytes;
+use keccak_hash::H256;
+
 
 #[derive(Debug, Clone)]
 pub enum RunnerError {
-    RootMismatch,
     FailedToGetAccountsUpdates,
-    VMExecutionError(String),
     CurrentBaseFeeMissing,
     MaxPriorityFeePerGasMissing,
     MaxFeePerGasMissing,
-    TxSucceededAndExceptionWasExpected,
-    DifferentExceptionWasExpected,
     EIP7702ShouldNotBeCreateType,
     FailedToReadDirectory(PathBuf, String),
     FailedToConvertPath,
@@ -17,9 +18,8 @@ pub enum RunnerError {
     FailedToParseTestFile(PathBuf, String),
     FailedToOpenFile(String),
     FailedToWriteReport(String),
-    MissingJsonField(String),
-    FailedToDeserializeField(String),
     FailedToCreateReportFile(String),
     FailedToGetIndexValue(String),
-    PostAccountStateMismatch(String),
 }
+
+
