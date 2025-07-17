@@ -1318,6 +1318,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-crypto"
+version = "0.1.0"
+
+[[package]]
 name = "ethrex-l2-common"
 version = "0.1.0"
 dependencies = [
@@ -1345,6 +1349,7 @@ dependencies = [
  "datatest-stable",
  "derive_more 1.0.0",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-rlp",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
