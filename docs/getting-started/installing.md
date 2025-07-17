@@ -10,11 +10,20 @@ You can also [build the client from source](#building-from-source).
 ## Installing from pre-built binaries
 
 To install ethrex from pre-built binaries, first download the binaries for your platform from the [release page](https://github.com/lambdaclass/ethrex/releases).
-
-After that, extract the downloaded archive:
+You can also download it from the command line using `curl` or `wget`:
 
 ```sh
-tar -xvf ethrex*.tar.gz
+# For Linux x86_64
+curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_x86_64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_x86_64 -O ethrex
+
+# For Linux ARM
+curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_aarch64 -O ethrex
+
+# For MacOS
+curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-macos_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-macos_aarch64 -O ethrex
 ```
 
 And set the execution bit:
@@ -23,10 +32,10 @@ And set the execution bit:
 chmod +x ethrex
 ```
 
-After that, you can run the client as follows:
+After that, you can verify the program is working by running:
 
 ```sh
-./ethrex
+./ethrex --version
 ```
 
 > [!TIP]
