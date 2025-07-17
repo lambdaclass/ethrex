@@ -11,7 +11,11 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
+use secp256k1::SecretKey;
+use secp256k1::{
+    Secp256k1,
+    ecdsa::{RecoverableSignature, RecoveryId},
+};
 use sha3::{Digest, Keccak256};
 
 #[derive(Debug, PartialEq)]
@@ -55,17 +59,22 @@ impl Packet {
             return Err(PacketDecodeErr::HashMismatch);
         }
 
-        let digest = Keccak256::digest(encoded_msg);
-        let signature = &Signature::from_slice(&signature_bytes[0..64])
-            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
-        let rid =
-            RecoveryId::from_byte(signature_bytes[64]).ok_or(PacketDecodeErr::InvalidSignature)?;
+        let digest: [u8; 32] = Keccak256::digest(encoded_msg).into();
 
-        let peer_pk = VerifyingKey::recover_from_prehash(&digest, signature, rid)
+        let rid = RecoveryId::from_i32(signature_bytes[64].into())
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
-        let encoded = peer_pk.to_encoded_point(false);
 
-        let public_key = H512::from_slice(&encoded.as_bytes()[1..]);
+        let peer_pk = Secp256k1::new()
+            .recover_ecdsa(
+                &secp256k1::Message::from_digest(digest),
+                &RecoverableSignature::from_compact(&signature_bytes[0..64], rid)
+                    .map_err(|_| PacketDecodeErr::InvalidSignature)?,
+            )
+            .map_err(|_| PacketDecodeErr::InvalidSignature)?;
+
+        let encoded = peer_pk.serialize_uncompressed();
+
+        let public_key = H512::from_slice(&encoded[1..]);
         let signature = H520::from_slice(signature_bytes);
         let message = Message::decode_with_type(packet_type, &encoded_msg[1..])
             .map_err(PacketDecodeErr::RLPDecodeError)?;
@@ -125,22 +134,23 @@ impl std::fmt::Display for Message {
 }
 
 impl Message {
-    pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SigningKey) {
+    pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SecretKey) {
         let signature_size = 65_usize;
         let mut data: Vec<u8> = Vec::with_capacity(signature_size.next_power_of_two());
         data.resize(signature_size, 0);
 
         self.encode_with_type(&mut data);
 
-        let digest = Keccak256::digest(&data[signature_size..]);
+        let digest: [u8; 32] = Keccak256::digest(&data[signature_size..]).into();
 
-        let (signature, recovery_id) = node_signer
-            .sign_prehash_recoverable(&digest)
-            .expect("failed to sign");
-        let b = signature.to_bytes();
+        let secp = Secp256k1::new();
+        let signature =
+            secp.sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer);
 
-        data[..signature_size - 1].copy_from_slice(&b);
-        data[signature_size - 1] = recovery_id.to_byte();
+        let (recovery_id, signature) = signature.serialize_compact();
+
+        data[..signature_size - 1].copy_from_slice(&signature);
+        data[signature_size - 1] = recovery_id.to_i32() as u8;
 
         let hash = Keccak256::digest(&data[..]);
         buf.put_slice(&hash);
@@ -541,7 +551,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -572,7 +582,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -602,7 +612,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -626,7 +636,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -657,7 +667,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
         let msg = Message::Neighbors(NeighborsMessage::new(vec![node_1, node_2], expiration));
@@ -680,7 +690,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         let result = to_hex(&buf);
@@ -753,7 +763,7 @@ mod tests {
         let key_bytes =
             H256::from_str("2e6a09427ba14acc853cbbff291c75c3cb57754ac1e3df8df9cac086b3a83aa4")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         let result = to_hex(&buf);
@@ -906,7 +916,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -937,7 +947,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -956,7 +966,7 @@ mod tests {
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
         let mut buf = Vec::new();
 
@@ -1021,7 +1031,7 @@ mod tests {
         let key_bytes =
             H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         // corrupt signature first byte
@@ -1056,7 +1066,7 @@ mod tests {
         let key_bytes =
             H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
-        let signer = SigningKey::from_slice(key_bytes.as_bytes()).unwrap();
+        let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &signer);
         // byte 96 (first 32 are the msg digest) corresponds to the recover_id
