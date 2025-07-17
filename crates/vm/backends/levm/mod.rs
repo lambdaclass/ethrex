@@ -136,6 +136,8 @@ impl LEVM {
                         logs: vec![],
                     });
                     let pushed = Instant::now();
+                    let duration = start.elapsed();
+
                     println!("Time elapsed per section: 
                         config: {:.3} micros,
                         fork: {:.3} micros,
@@ -160,7 +162,6 @@ impl LEVM {
                         (augmented - created).as_secs_f64() * 1000000.0,
                         (pushed - augmented).as_secs_f64() * 1000000.0);
 
-                    let duration = start.elapsed();
                     println!("Time elapsed executing transfer tx: {:.3} micros", duration.as_secs_f64() * 1000000.0);
 
                     continue;
