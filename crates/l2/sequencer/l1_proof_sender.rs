@@ -164,12 +164,16 @@ impl GenServer for L1ProofSender {
 }
 
 async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSenderError> {
-    let last_sent_batch = state.rollup_store.get_latest_sent_batch_proof().await?;
     let last_verified_batch = state
         .eth_client
         .get_last_verified_batch(state.on_chain_proposer_address)
         .await?;
-    let batch_to_send = std::cmp::max(last_sent_batch, last_verified_batch) + 1;
+    let batch_to_send = if state.aligned_mode {
+        let last_sent_batch = state.rollup_store.get_latest_sent_batch_proof().await?;
+        std::cmp::max(last_sent_batch, last_verified_batch) + 1
+    } else {
+        last_verified_batch
+    };
 
     let last_committed_batch = state
         .eth_client
