@@ -55,6 +55,7 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            let start = Instant::now();
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type.clone())?;
 
             cumulative_gas_used += report.gas_used;
@@ -66,6 +67,8 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+            let duration = start.elapsed();
+            println!("Time elapsed executing tx: {:.3}ms", duration.as_secs_f64() * 1000.0);
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -136,14 +139,7 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
-
-        let start = Instant::now();
-        let res = vm.execute().map_err(VMError::into);
-        let duration = start.elapsed();
-
-        println!("Time elapsed executing tx: {:?}", duration.as_micros());
-
-        res
+        vm.execute().map_err(VMError::into)
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
