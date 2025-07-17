@@ -11,7 +11,7 @@ use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionRe
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::{self, Display},
     path::PathBuf,
     time::Duration,
@@ -523,7 +523,7 @@ impl EFTestReportForkResult {
         transaction_report: ExecutionReport,
         reason: String,
         failed_vector: TestVector,
-        levm_cache: HashMap<Address, Account>,
+        levm_cache: BTreeMap<Address, Account>,
     ) {
         self.failed_vectors.insert(
             failed_vector,
