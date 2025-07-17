@@ -1576,7 +1576,8 @@ fn l1_rich_wallet_private_key() -> SecretKey {
     let l1_rich_wallet_pk = std::env::var("INTEGRATION_TEST_L1_RICH_WALLET_PRIVATE_KEY")
         .map(|pk| pk.parse().expect("Invalid l1 rich wallet pk"))
         .unwrap_or(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY);
-    SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
+    dbg!(l1_rich_wallet_pk);
+    dbg!(SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap())
 }
 
 fn l2_return_transfer_private_key() -> SecretKey {
