@@ -21,7 +21,6 @@ use num_traits::Num;
 use runner::input::{InputAccount, InputTransaction, RunnerInput};
 use std::{collections::BTreeMap, io::Write};
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::BufReader,
     sync::Arc,
@@ -123,7 +122,11 @@ fn main() {
         "Setting initial memory: 0x{:x}",
         runner_input.initial_memory
     );
-    vm.current_call_frame_mut().unwrap().memory = runner_input.initial_memory.into();
+    let _ = vm
+        .current_call_frame_mut()
+        .unwrap()
+        .memory
+        .store_data(0, &runner_input.initial_memory);
 
     // Execute Transaction
     let result = vm.execute();
@@ -145,7 +148,8 @@ fn main() {
             .map(|value| format!("0x{:x}", value))
             .collect::<Vec<_>>()
     );
-    info!("Final Memory: 0x{}", hex::encode(callframe.memory));
+    let final_memory: Vec<u8> = callframe.memory.buffer.borrow()[0..callframe.memory.len].to_vec();
+    info!("Final Memory: 0x{}", hex::encode(final_memory));
 
     // Print Accounts diff
     compare_initial_and_current_accounts(
@@ -157,8 +161,8 @@ fn main() {
 
 /// Prints on screen difference between initial state and current one.
 fn compare_initial_and_current_accounts(
-    initial_accounts: HashMap<Address, Account>,
-    current_accounts: HashMap<Address, Account>,
+    initial_accounts: BTreeMap<Address, Account>,
+    current_accounts: BTreeMap<Address, Account>,
     transaction: &InputTransaction,
 ) {
     info!("\nState Diff:");
