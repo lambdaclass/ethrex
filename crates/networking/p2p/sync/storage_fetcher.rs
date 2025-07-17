@@ -30,9 +30,11 @@ struct LargeStorageRequest {
     last_key: H256,
 }
 
-/// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their storages in batches
-/// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
-/// Upon finish, remaining storages will be sent to the storage healer
+/// Waits for incoming account hashes & storage roots from the receiver channel endpoint,
+/// queues them, and fetches and stores their storages in batches.
+/// This function will remain active until either an empty vec is sent to the receiver or
+/// the pivot becomes stale.
+/// Upon finish, remaining storages will be sent to the storage healer.
 pub(crate) async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: PeerHandler,
@@ -152,9 +154,12 @@ async fn fetch_storage_batch(
     Ok((batch, true))
 }
 
-/// Waits for incoming large storage requests from the receiver channel endpoint, queues them, and fullfils them in parallel
-/// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
-/// Upon finish, remaining storages will be sent to the storage healer and storage rebuilder (so we can rebuild the partial tries)
+/// Waits for incoming large storage requests from the receiver channel endpoint,
+/// queues them, and fullfils them in parallel.
+/// This function will remain active until either an empty vec is sent to the receiver
+/// or the pivot becomes stale.
+/// Upon finish, remaining storages will be sent to the storage healer and storage
+/// rebuilder (so we can rebuild the partial tries)
 async fn large_storage_fetcher(
     mut receiver: Receiver<Vec<LargeStorageRequest>>,
     peers: PeerHandler,
@@ -193,7 +198,8 @@ async fn large_storage_fetcher(
     );
     if !pending_storage.is_empty() {
         // Send incomplete storages to the rebuilder and healer
-        // As these are large storages we should rebuild the partial tries instead of delegating them fully to the healer
+        // As these are large storages we should rebuild the partial tries
+        // instead of delegating them fully to the healer
         let heal_paths = pending_storage
             .iter()
             .map(|req| (req.account_hash, vec![Nibbles::default()]))
