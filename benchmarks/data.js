@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752779140087,
+  "lastUpdate": 1752779790620,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4525,6 +4525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209901785745,
             "range": "± 499411249",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "me+git@droak.sh",
+            "name": "Oak",
+            "username": "d-roak"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "96c7eeeabfc03ea6b8a20b92f5310cb59d7a63c8",
+          "message": "docs(l2): add quotes on init-prover command (#3304)\n\n**Motivation**\nCopy paste on the command provided in the docs doesn't work\n\n**Description**\n- Added quotes to the command mentioned\n\nCloses: none",
+          "timestamp": "2025-07-17T18:18:56Z",
+          "tree_id": "f41598ce40f7d42ba9c46c352b21d5f3ea010eed",
+          "url": "https://github.com/lambdaclass/ethrex/commit/96c7eeeabfc03ea6b8a20b92f5310cb59d7a63c8"
+        },
+        "date": 1752779778471,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 218209245887,
+            "range": "± 1568813520",
             "unit": "ns/iter"
           }
         ]
