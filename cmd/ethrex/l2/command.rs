@@ -40,7 +40,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
@@ -156,6 +156,7 @@ impl Command {
 
                 // TODO: Check every module starts properly.
                 let tracker = TaskTracker::new();
+                let mut join_set = JoinSet::new();
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -197,7 +198,7 @@ impl Command {
                         signer,
                         peer_table.clone(),
                         store.clone(),
-                        tracker.clone(),
+                        tracker,
                         blockchain.clone(),
                         Some(P2PBasedContext {
                             store_rollup: rollup_store.clone(),
@@ -229,20 +230,24 @@ impl Command {
                 )
                 .into_future();
 
-                tracker.spawn(l2_sequencer);
+                join_set.spawn(l2_sequencer);
 
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
-                        info!("Server shut down started...");
-                        let node_config_path = PathBuf::from(data_dir + "/node_config.json");
-                        info!("Storing config at {:?}...", node_config_path);
-                        cancel_token.cancel();
-                        let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-                        store_node_config_file(node_config, node_config_path).await;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        info!("Server shutting down!");
+                        join_set.abort_all();
+                    }
+                    _ = join_set.join_next() => {
                     }
                 }
+                info!("Server shut down started...");
+                let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+                info!("Storing config at {:?}...", node_config_path);
+                cancel_token.cancel();
+                let node_config =
+                    NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+                store_node_config_file(node_config, node_config_path).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                info!("Server shutting down!");
             }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {

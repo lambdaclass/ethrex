@@ -250,6 +250,10 @@ impl ChainConfig {
         self.istanbul_block.is_some_and(|num| num <= block_number)
     }
 
+    pub fn is_london_activated(&self, block_number: BlockNumber) -> bool {
+        self.london_block.is_some_and(|num| num <= block_number)
+    }
+
     pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
@@ -360,6 +364,26 @@ impl Genesis {
                 excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
             }
         }
+        let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
+            self.config
+                .is_london_activated(0)
+                .then_some(INITIAL_BASE_FEE)
+        });
+
+        let withdrawals_root = self
+            .config
+            .is_shanghai_activated(self.timestamp)
+            .then_some(compute_withdrawals_root(&[]));
+
+        let parent_beacon_block_root = self
+            .config
+            .is_cancun_activated(self.timestamp)
+            .then_some(H256::zero());
+
+        let requests_hash = self
+            .config
+            .is_prague_activated(self.timestamp)
+            .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
         BlockHeader {
             parent_hash: H256::zero(),
@@ -377,21 +401,12 @@ impl Genesis {
             extra_data: self.extra_data.clone(),
             prev_randao: self.mix_hash,
             nonce: self.nonce,
-            base_fee_per_gas: self.base_fee_per_gas.or(Some(INITIAL_BASE_FEE)),
-            withdrawals_root: self
-                .config
-                .is_shanghai_activated(self.timestamp)
-                .then_some(compute_withdrawals_root(&[])),
+            base_fee_per_gas,
+            withdrawals_root,
             blob_gas_used,
             excess_blob_gas,
-            parent_beacon_block_root: self
-                .config
-                .is_cancun_activated(self.timestamp)
-                .then_some(H256::zero()),
-            requests_hash: self
-                .config
-                .is_prague_activated(self.timestamp)
-                .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
+            parent_beacon_block_root,
+            requests_hash,
             ..Default::default()
         }
     }
