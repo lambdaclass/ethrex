@@ -1,10 +1,13 @@
+use std::env;
+
 use ef_tests_state::runner_v2::{error::RunnerError, parser::parse_dir, runner::run_tests};
 
 #[tokio::main]
 pub async fn main() -> Result<(), RunnerError> {
-    let test_path = "./runner_v2/test_files";
+    let args: Vec<String> = env::args().collect();
+    let path = &args[1];
     println!("Parsing test files...");
-    let tests = parse_dir(test_path.into())?;
+    let tests = parse_dir(path.into())?;
     println!("Finalized parsing. Executing tests...");
     run_tests(tests).await?;
     println!("Tests finalized running. Find the report at: './runner_v2/runner_report.txt'");

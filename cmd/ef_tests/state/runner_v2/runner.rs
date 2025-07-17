@@ -24,6 +24,7 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
 }
 
 pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
+    println!("Running test: {:?}", test.name);
     for test_case in &test.test_cases {
         let (mut db, initial_block_hash, storage) = load_initial_state(test).await;
         let env = get_vm_env_for_test(test.env, test_case)?;

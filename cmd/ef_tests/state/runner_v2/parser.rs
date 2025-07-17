@@ -7,6 +7,7 @@ use crate::runner_v2::{
 
 /// Parse a `.json` file of tests into a Vec<Test>.
 pub fn parse_file(path: PathBuf) -> Result<Vec<Test>, RunnerError> {
+    println!("Parsing test file: {:?}", path);
     let test_file = std::fs::File::open(path.clone())
         .map_err(|err| RunnerError::FailedToOpenFile(err.to_string()))?;
     let mut tests: Tests = serde_json::from_reader(test_file)
@@ -33,7 +34,7 @@ pub fn parse_dir(path: PathBuf) -> Result<Vec<Test>, RunnerError> {
         if entry_type.is_dir() {
             let dir_tests = parse_dir(entry.path())?;
             tests.push(dir_tests);
-        } else {
+        } else if entry.path().extension().is_some_and(|ext| ext == "json") {
             let file_tests = parse_file(entry.path())?;
             tests.push(file_tests);
         }
