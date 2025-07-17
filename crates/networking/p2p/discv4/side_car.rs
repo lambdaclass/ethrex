@@ -36,8 +36,19 @@ pub struct DiscoverySideCarState {
     udp_socket: Arc<UdpSocket>,
 
     revalidation_period: Duration,
+
+    /// The initial interval between peer lookups, until the number of peers reaches
+    /// [target_peers](DiscoverySideCarState::target_peers), or the number of
+    /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
+    initial_lookup_interval: Duration,
     lookup_period: Duration,
+
     prune_period: Duration,
+
+    /// The target number of RLPx connections to reach.
+    target_peers: u64,
+    /// The target number of contacts to maintain in the Kademlia table.
+    target_contacts: u64,
 
     kademlia: Kademlia,
 }
@@ -58,8 +69,12 @@ impl DiscoverySideCarState {
             kademlia,
 
             revalidation_period: Duration::from_secs(5),
-            lookup_period: Duration::from_secs(5),
+            initial_lookup_interval: Duration::from_secs(5),
+            lookup_period: Duration::from_secs(5 * 60), // 5 minutes
             prune_period: Duration::from_secs(5),
+
+            target_peers: 50,
+            target_contacts: 50_000,
         }
     }
 
@@ -208,7 +223,8 @@ impl GenServer for DiscoverySideCar {
 
                 lookup(&state).await;
 
-                send_after(state.lookup_period, handle.clone(), Self::CastMsg::Lookup);
+                let interval = get_lookup_interval(&state).await;
+                send_after(interval, handle.clone(), Self::CastMsg::Lookup);
 
                 CastResponse::NoReply(state)
             }
@@ -269,5 +285,16 @@ async fn prune(state: &DiscoverySideCarState) {
     for contact_to_discard_id in disposable_contacts {
         contacts.remove(&contact_to_discard_id);
         discarded_contacts.insert(contact_to_discard_id);
+    }
+}
+
+async fn get_lookup_interval(state: &DiscoverySideCarState) -> Duration {
+    let number_of_contacts = state.kademlia.table.lock().await.len() as u64;
+    let number_of_peers = state.kademlia.peers.lock().await.len() as u64;
+    if number_of_peers < state.target_peers && number_of_contacts < state.target_contacts {
+        state.initial_lookup_interval
+    } else {
+        info!("Reached target number of peers or contacts. Using longer lookup interval.");
+        state.lookup_period
     }
 }
