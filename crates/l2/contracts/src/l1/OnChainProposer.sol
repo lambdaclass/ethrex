@@ -88,6 +88,9 @@ contract OnChainProposer is
 
     bytes32 public RISC0_VERIFICATION_KEY;
 
+    /// @notice Chain ID of the network
+    uint256 public CHAIN_ID;
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -113,7 +116,8 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        address[] calldata sequencerAddresses
+        address[] calldata sequencerAddresses,
+        uint256 chainId
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -160,6 +164,8 @@ contract OnChainProposer is
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
+
+        CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -396,7 +402,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 224,
+            publicData.length == 256,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -434,8 +440,13 @@ contract OnChainProposer is
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
         );
+        uint256 chainId = uint256(bytes32(publicData[192:224]));
+        require(
+            chainId == CHAIN_ID,
+            "OnChainProposer: given chain id does not correspond to this network"
+        );
         uint256 nonPrivilegedTransactions = uint256(
-            bytes32(publicData[192:224])
+            bytes32(publicData[224:256])
         );
         require(
             ICommonBridge(BRIDGE).withinProcessingDeadline() ||

@@ -76,7 +76,7 @@ jobs:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
 
-  setup-hive:
+  setup-hive-fork:
     name: "Setup Hive"
     runs-on: ubuntu-latest
     env:
@@ -92,7 +92,26 @@ jobs:
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hive
+          name: hive-fork
+          path: hive
+
+  setup-hive-upstream:
+    name: "Setup Hive"
+    runs-on: ubuntu-latest
+    env:
+      HIVE_COMMIT_HASH: 276ca9deaee8e5831b11fa6e884a9479ee8ca140
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Hive
+        run: |
+          git clone --single-branch --branch master https://github.com/ethereum/hive
+          cd hive
+          git checkout --detach ${{ env.HIVE_COMMIT_HASH }}
+          go build .
+      - name: Upload hive artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive-upstream
           path: hive
 
   run-assertoor:
@@ -138,15 +157,17 @@ jobs:
   run-hive:
     name: Hive - ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: [docker_build, setup-hive]
+    needs: [docker_build, setup-hive-fork, setup-hive-upstream]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
       matrix:
         include:
           - name: "Rpc Compat tests"
+            hive_version: "fork"
             simulation: ethereum/rpc-compat
             test_pattern: ""
           - name: "Devp2p tests"
+            hive_version: "fork"
             simulation: devp2p
             test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
             # AccountRange and GetTrieNodes don't pass anymore.
@@ -186,7 +207,7 @@ jobs:
       - name: Download hive artifacts
         uses: actions/download-artifact@v4
         with:
-          name: hive
+          name: hive-${{ matrix.hive_version || 'upstream' }}
 
       - name: Load image
         run: |
