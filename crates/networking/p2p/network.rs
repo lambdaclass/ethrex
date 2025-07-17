@@ -165,7 +165,7 @@ pub async fn periodically_show_peer_stats() {
         let rlpx_connection_failures = METRICS.connection_attempt_failures.lock().await;
         let rlpx_connection_client_types = METRICS.peers_by_client_type.lock().await;
 
-        let rlpx_disconnections = METRICS.disconnections.lock().await;
+        let rlpx_disconnections = METRICS.disconnections_by_client_type.lock().await;
 
         info!(
             r#"
@@ -189,7 +189,10 @@ RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reaso
             peers = METRICS.peers.lock().await,
             new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
             peers_by_client = rlpx_connection_client_types,
-            lost_peers = rlpx_disconnections.values().sum::<u64>(),
+            lost_peers = rlpx_disconnections
+                .values()
+                .flat_map(|x| x.values())
+                .sum::<u64>(),
             rlpx_connections = METRICS.connection_establishments.get(),
             rlpx_connection_attempts = METRICS.connection_attempts.get(),
             new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
