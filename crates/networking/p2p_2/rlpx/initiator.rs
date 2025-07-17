@@ -42,8 +42,8 @@ pub struct RLPxInitiatorState {
     kademlia: Kademlia,
     /// The target number of RLPx connections to reach.
     target_peers: u64,
-    /// The limit on the number of tried connections.
-    limit_tried_peers: u64,
+    /// The rate at which to try new connections.
+    new_connections_per_lookup: u64,
 }
 
 impl RLPxInitiatorState {
@@ -75,9 +75,9 @@ impl RLPxInitiatorState {
             // udp_socket,
             kademlia,
             initial_lookup_period: Duration::from_secs(3),
-            lookup_period: Duration::from_secs(60),
+            lookup_period: Duration::from_secs(5 * 60),
             target_peers: 50,
-            limit_tried_peers: 50_000,
+            new_connections_per_lookup: 1000,
         }
     }
 }
@@ -158,9 +158,8 @@ impl GenServer for RLPxInitiator {
 
 async fn get_lookup_interval(state: &RLPxInitiatorState) -> Duration {
     let num_peers = state.kademlia.number_of_peers().await;
-    let num_tried_peers = state.kademlia.number_of_tried_peers().await;
 
-    if num_peers < state.target_peers && num_tried_peers < state.limit_tried_peers {
+    if num_peers < state.target_peers {
         state.initial_lookup_period
     } else {
         info!(
@@ -176,6 +175,8 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
     let peers = state.kademlia.table.lock().await;
     let mut already_tried_peers_table = state.kademlia.already_tried_peers.lock().await;
 
+    let mut tried_connections = 0;
+
     for contact in peers.values() {
         let node_id = contact.node.node_id();
         if !already_tried_peers_table.contains(&node_id) && contact.knows_us {
@@ -189,6 +190,14 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
                     .new_connection_attempt_to_mainnet_peer(node_id)
                     .await;
             }
+            tried_connections += 1;
+            if tried_connections >= state.new_connections_per_lookup {
+                break;
+            }
         }
+    }
+    if tried_connections != state.new_connections_per_lookup {
+        info!("Resetting list of tried connections.");
+        already_tried_peers_table.clear();
     }
 }
