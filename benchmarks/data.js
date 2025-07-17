@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752761343598,
+  "lastUpdate": 1752762476270,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4285,6 +4285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211147036442,
             "range": "± 953700413",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c0e0ce2933c1c72d943771abd58563355081c09f",
+          "message": "ci(l1): support multiple hive versions depending on simulation. (#3661)\n\n**Motivation**\nWe want to get rid of our hive fork and use the upstream. Unfortunately,\nwe can't completely rely on it yet because it would break.\n\n**Description**\n- While we fix the upstream, lets rely on two versions of Hive, our fork\none and the upstream",
+          "timestamp": "2025-07-17T13:31:45Z",
+          "tree_id": "3365e4d99a9a881624b7f54dfd3e3d7e9295904a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c0e0ce2933c1c72d943771abd58563355081c09f"
+        },
+        "date": 1752762464241,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211570268110,
+            "range": "± 505787130",
             "unit": "ns/iter"
           }
         ]
