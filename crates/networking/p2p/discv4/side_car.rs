@@ -1,7 +1,12 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use ethrex_common::types::ForkId;
 use k256::ecdsa::SigningKey;
+use keccak_hash::H256;
 use rand::rngs::OsRng;
 use spawned_concurrency::{
     messages::Unused,
@@ -12,7 +17,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     discv4::messages::{FindNodeMessage, Message, PingMessage},
-    kademlia::Kademlia,
+    kademlia::{Contact, Kademlia},
     metrics::METRICS,
     types::{Endpoint, Node, NodeRecord},
     utils::{get_msg_expiration_from_seconds, public_key_from_signing_key},
@@ -35,7 +40,11 @@ pub struct DiscoverySideCarState {
     signer: SigningKey,
     udp_socket: Arc<UdpSocket>,
 
-    revalidation_period: Duration,
+    /// Interval between revalidation checks.
+    revalidation_check_interval: Duration,
+    /// Interval between revalidations.
+    revalidation_interval: Duration,
+
     lookup_period: Duration,
     prune_period: Duration,
 
@@ -57,13 +66,15 @@ impl DiscoverySideCarState {
             udp_socket,
             kademlia,
 
-            revalidation_period: Duration::from_secs(5),
+            revalidation_check_interval: Duration::from_secs(5),
+            revalidation_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
+
             lookup_period: Duration::from_secs(5),
             prune_period: Duration::from_secs(5),
         }
     }
 
-    async fn ping(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
+    async fn ping(&self, node: &Node) -> Result<H256, DiscoverySideCarError> {
         let mut buf = Vec::new();
 
         // TODO: Parametrize this expiration.
@@ -87,6 +98,10 @@ impl DiscoverySideCarState {
 
         ping.encode_with_header(&mut buf, &self.signer);
 
+        let ping_hash: [u8; 32] = buf[..32]
+            .try_into()
+            .expect("first 32 bytes are the message hash");
+
         let bytes_sent = self
             .udp_socket
             .send_to(&buf, node.udp_addr())
@@ -99,7 +114,7 @@ impl DiscoverySideCarState {
 
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
-        Ok(())
+        Ok(H256::from(ping_hash))
     }
 
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
@@ -196,7 +211,7 @@ impl GenServer for DiscoverySideCar {
                 revalidate(&state).await;
 
                 send_after(
-                    state.revalidation_period,
+                    state.revalidation_check_interval,
                     handle.clone(),
                     Self::CastMsg::Revalidate,
                 );
@@ -227,16 +242,23 @@ impl GenServer for DiscoverySideCar {
 
 async fn revalidate(state: &DiscoverySideCarState) {
     for contact in state.kademlia.table.lock().await.values_mut() {
-        if contact.disposable {
+        if contact.disposable || !is_validation_needed(state, contact) {
             continue;
         }
 
-        if let Err(err) = state.ping(&contact.node).await {
-            error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
+        match state.ping(&contact.node).await {
+            Ok(ping_hash) => {
+                METRICS.record_ping_sent().await;
+                contact.validation_timestamp = Some(Instant::now());
+                contact.ping_hash = Some(ping_hash);
+            }
+            Err(err) => {
+                error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
 
-            contact.disposable = true;
+                contact.disposable = true;
 
-            METRICS.record_new_discarded_node().await;
+                METRICS.record_new_discarded_node().await;
+            }
         }
     }
 }
@@ -270,4 +292,21 @@ async fn prune(state: &DiscoverySideCarState) {
         contacts.remove(&contact_to_discard_id);
         discarded_contacts.insert(contact_to_discard_id);
     }
+}
+
+fn is_validation_needed(state: &DiscoverySideCarState, contact: &Contact) -> bool {
+    let sent_ping_ttl = Duration::from_secs(30);
+
+    let validation_is_stale = !contact.was_validated()
+        || contact
+            .validation_timestamp
+            .map(|ts| Instant::now().saturating_duration_since(ts) > state.revalidation_interval)
+            .unwrap_or(false);
+
+    let sent_ping_is_stale = contact
+        .validation_timestamp
+        .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
+        .unwrap_or(false);
+
+    validation_is_stale || sent_ping_is_stale
 }
