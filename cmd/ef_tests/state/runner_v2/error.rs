@@ -1,9 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
-
-use ethrex_common::{Address, U256};
-use bytes::Bytes;
-use keccak_hash::H256;
-
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum RunnerError {
@@ -21,5 +16,3 @@ pub enum RunnerError {
     FailedToCreateReportFile(String),
     FailedToGetIndexValue(String),
 }
-
-

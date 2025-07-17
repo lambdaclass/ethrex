@@ -6,7 +6,6 @@ use ethrex_common::{
 };
 use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM};
 
-
 use crate::runner_v2::{
     error::RunnerError,
     report::create_report,
@@ -42,7 +41,7 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
         let execution_result = vm.execute();
 
         // Verify transaction execution results where the ones expected by the test case.
-        let checks_passed = check_test_case_results(
+        let checks_result = check_test_case_results(
             &mut vm,
             initial_block_hash,
             storage,
@@ -52,11 +51,12 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
         .await?;
 
         // If test case did not pass the checks, add it to failing test cases record (for future reporting)
-        if !checks_passed {
-            failing_test_cases.push(test_case);
+        if !checks_result.passed {
+            failing_test_cases.push((test_case.fork, checks_result));
         }
     }
     create_report((test, failing_test_cases))?;
+
     Ok(())
 }
 

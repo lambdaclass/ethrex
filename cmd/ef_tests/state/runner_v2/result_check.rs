@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use ethrex_common::{types::{Account, AccountUpdate}, Address, U256};
+use ethrex_common::{
+    Address, U256,
+    types::{Account, AccountUpdate},
+};
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
@@ -13,9 +16,28 @@ use ethrex_vm::backends;
 use keccak_hash::{H256, keccak};
 
 use crate::runner_v2::{
-    error::{AccountMismatch, RunnerError},
+    error::RunnerError,
     types::{TestCase, TransactionExpectedException},
 };
+
+pub struct PostCheckResult {
+    pub passed: bool,
+    pub root_dif: Option<(H256, H256)>,
+    pub accounts_diff: Option<Vec<AccountMismatch>>,
+    pub logs_diff: Option<(H256, H256)>,
+    pub exception_diff: Option<(Vec<TransactionExpectedException>, Option<VMError>)>,
+}
+impl Default for PostCheckResult {
+    fn default() -> Self {
+        Self {
+            passed: true,
+            root_dif: None,
+            accounts_diff: None,
+            logs_diff: None,
+            exception_diff: None,
+        }
+    }
+}
 #[derive(Debug, Clone)]
 pub struct AccountMismatch {
     pub address: Address,
@@ -26,7 +48,7 @@ pub struct AccountMismatch {
     pub expected_code: Bytes,
     pub actual_code: Bytes,
     pub expected_storage: HashMap<U256, U256>,
-    pub actual_storage:  HashMap<H256, U256>,
+    pub actual_storage: HashMap<H256, U256>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
@@ -39,18 +61,22 @@ pub async fn check_test_case_results(
     execution_result: Result<ExecutionReport, VMError>,
 ) -> Result<PostCheckResult, RunnerError> {
     let mut checks_result = PostCheckResult::default();
-    checks_result.passed = true;
+
     if test_case.expects_exception() {
         // Verify in case an exception was expected.
         check_exception(
             test_case.post.expected_exceptions.clone().unwrap(),
             execution_result,
-            &mut checks_result
+            &mut checks_result,
         );
         Ok(checks_result)
     } else {
         // Verify hashed logs.
-        check_logs(test_case, &execution_result.clone().unwrap(), &mut checks_result);
+        check_logs(
+            test_case,
+            &execution_result.clone().unwrap(),
+            &mut checks_result,
+        );
         // Verify accounts' post state.
         check_accounts_state(vm.db, test_case, &mut checks_result);
         // Verify expected root hash.
@@ -64,7 +90,7 @@ pub async fn check_root(
     initial_block_hash: H256,
     store: Store,
     test_case: &TestCase,
-    check_result: &mut PostCheckResult
+    check_result: &mut PostCheckResult,
 ) -> Result<(), RunnerError> {
     let account_updates = backends::levm::LEVM::get_state_transitions(vm.db)
         .map_err(|_| RunnerError::FailedToGetAccountsUpdates)?;
@@ -74,15 +100,6 @@ pub async fn check_root(
         check_result.root_dif = Some((test_case.post.hash, post_state_root));
     }
     Ok(())
-}
-
-#[derive(Default)]
-pub struct PostCheckResult {
-    pub passed: bool,
-    pub root_dif: Option<(H256, H256)>,
-    pub accounts_diff: Option<Vec<AccountMismatch>>,
-    pub logs_diff: Option<(H256, H256)>,
-    pub exception_diff: Option<(Vec<TransactionExpectedException>, Option<VMError>)>
 }
 
 pub async fn post_state_root(
@@ -101,8 +118,8 @@ pub async fn post_state_root(
 pub fn check_exception(
     expected_exceptions: Vec<TransactionExpectedException>,
     execution_result: Result<ExecutionReport, VMError>,
-    check_result: &mut PostCheckResult
-)  {
+    check_result: &mut PostCheckResult,
+) {
     if execution_result.is_err() {
         let execution_err = execution_result.err().unwrap();
         if !exception_is_expected(expected_exceptions.clone(), execution_err.clone()) {
@@ -193,8 +210,12 @@ fn exception_is_expected(
     })
 }
 
-pub fn check_accounts_state(db: &GeneralizedDatabase, test_case: &TestCase, check_result: &mut PostCheckResult)  {
-    let mut accounts_diff= Vec::new();
+pub fn check_accounts_state(
+    db: &GeneralizedDatabase,
+    test_case: &TestCase,
+    check_result: &mut PostCheckResult,
+) {
+    let mut accounts_diff = Vec::new();
     if test_case.post.state.is_some() {
         let expected_accounts_state = test_case.post.state.clone().unwrap();
         let current_accounts_state = db.current_accounts_state.clone();
@@ -229,7 +250,7 @@ pub fn check_accounts_state(db: &GeneralizedDatabase, test_case: &TestCase, chec
                     expected_code: state.code,
                     actual_code: current_state.code.clone(),
                     expected_storage: state.storage,
-                    actual_storage: current_state.storage.clone()
+                    actual_storage: current_state.storage.clone(),
                 };
                 accounts_diff.push(account_mismatch);
             }
@@ -241,7 +262,11 @@ pub fn check_accounts_state(db: &GeneralizedDatabase, test_case: &TestCase, chec
     }
 }
 
-pub fn check_logs(test_case: &TestCase, execution_report: &ExecutionReport, checks_result: &mut PostCheckResult) {
+pub fn check_logs(
+    test_case: &TestCase,
+    execution_report: &ExecutionReport,
+    checks_result: &mut PostCheckResult,
+) {
     let mut encoded_logs = Vec::new();
     execution_report.logs.encode(&mut encoded_logs);
     let hashed_logs = keccak(encoded_logs);
