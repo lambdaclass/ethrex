@@ -3,15 +3,37 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::env;
 use std::path::Path;
-use std::process::Command;
 
 use ethrex_sdk_contract_utils::git_clone;
 
 fn main() {
+    println!("cargo::rerun-if-env-changed=COMPILE_CONTRACTS");
+    println!("cargo::rerun-if-changed=build.rs");
+
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let contracts_path = Path::new(&out_dir).join("contracts");
+    std::fs::create_dir_all(contracts_path.join("lib")).expect("Failed to create contracts/lib");
 
-    get_contract_dependencies(&contracts_path);
+    // If COMPILE_CONTRACTS is not set, skip the compilation step.
+    if env::var_os("COMPILE_CONTRACTS").is_none() {
+        // Write an empty bytecode file to indicate that contracts are not compiled.
+        std::fs::create_dir_all(contracts_path.join("solc_out"))
+            .expect("failed to create contracts output directory");
+        std::fs::write(contracts_path.join("solc_out/ERC1967Proxy.bytecode"), [])
+            .expect("failed to write ERC1967Proxy bytecode");
+        return;
+    }
+
+    git_clone(
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
+        contracts_path
+            .join("lib/openzeppelin-contracts-upgradeable")
+            .to_str()
+            .expect("Failed to convert path to str"),
+        None,
+        true,
+    )
+    .unwrap();
 
     // Compile the ERC1967Proxy contract
     let proxy_contract_path = contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol");
@@ -29,44 +51,4 @@ fn main() {
         contract_bytecode,
     )
     .expect("failed to write ERC1967Proxy bytecode");
-
-    println!("cargo::rerun-if-changed=build.rs");
-}
-
-/// Get contract dependencies.
-/// If the `CONTRACTS_PATH` environment variable is set, copy the contracts from that path.
-/// Otherwise, download the dependencies using `ethrex_sdk_contract_utils`.
-/// This is needed because we are unable to run `git clone` when building the SDK in a TEE environment.
-fn get_contract_dependencies(contracts_path: &Path) {
-    if let Some(source_path) = env::var_os("CONTRACTS_PATH") {
-        std::fs::create_dir_all(contracts_path)
-            .expect("failed to create contracts output directory");
-
-        let status = Command::new("cp")
-            .args([
-                "-r",
-                &source_path.to_string_lossy(),
-                &contracts_path.to_string_lossy(),
-            ])
-            .status()
-            .expect("failed to run cp -r");
-
-        if !status.success() {
-            eprintln!("`cp` command failed with status: {}", status);
-            std::process::exit(1);
-        }
-    } else {
-        std::fs::create_dir_all(contracts_path.join("lib"))
-            .expect("Failed to create contracts/lib");
-        git_clone(
-            "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
-            contracts_path
-                .join("lib/openzeppelin-contracts-upgradeable")
-                .to_str()
-                .expect("Failed to convert path to str"),
-            None,
-            true,
-        )
-        .unwrap();
-    }
 }
