@@ -134,9 +134,7 @@ pub(crate) async fn perform(
             inbound,
             l2_state: context
                 .based_context
-                .map_or(L2ConnState::Unsupported, |based_context| {
-                    L2ConnState::Disconnected(based_context)
-                }),
+                .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
         },
         stream,
     ))
