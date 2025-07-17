@@ -105,6 +105,16 @@ impl EthrexMonitor {
         };
         Ok(EthrexMonitor::start(state))
     }
+
+    pub async fn render(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
+        let mut terminal = state.terminal.lock().await;
+        let widget = &mut state.widget;
+
+        widget.draw(&mut terminal)?;
+
+        widget.on_tick().await?;
+        Ok(())
+    }
 }
 
 impl GenServer for EthrexMonitor {
@@ -139,15 +149,15 @@ impl GenServer for EthrexMonitor {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
+        _handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             CastInMessage::Render => {
-                let mut terminal = state.terminal.lock().await;
-                let widget = &mut state.widget;
-                let _ = widget.draw(&mut terminal);
-                let _ = widget.on_tick().await;
+                let _ = self
+                    .render(&mut state)
+                    .await
+                    .inspect_err(|err| error!("Rendering error: {err}"));
             }
             CastInMessage::Event(event) => {
                 let widget = &mut state.widget;
@@ -157,7 +167,10 @@ impl GenServer for EthrexMonitor {
                 if let Some(mouse) = event.as_mouse_event() {
                     widget.on_mouse_event(mouse.kind);
                 }
-                let _ = handle.clone().cast(Self::CastMsg::Render).await;
+                let _ = self
+                    .render(&mut state)
+                    .await
+                    .inspect_err(|err| error!("MRendering error: {err}"));
             }
         }
 
