@@ -2,7 +2,7 @@ use ef_tests_state::runner_v2::{error::RunnerError, parser::parse_dir, runner::r
 
 #[tokio::main]
 pub async fn main() -> Result<(), RunnerError> {
-    let test_path = "./runner_v2/test_files/";
+    let test_path = "./vectors/";
     println!("Parsing test files...");
     let tests = parse_dir(test_path.into())?;
     println!("Finalized parsing. Executing tests...");

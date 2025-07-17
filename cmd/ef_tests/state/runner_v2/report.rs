@@ -9,12 +9,29 @@ pub fn create_report(
 ) -> Result<(), RunnerError> {
     let test = test_result.0;
     let failed_test_cases = test_result.1;
-    if !failed_test_cases.is_empty() {
+    if failed_test_cases.is_empty() {
+        write_passing_tests_to_report(test);
+    } else {
         write_failed_tests_to_report(test, failed_test_cases);
     }
     Ok(())
 }
-
+pub fn write_passing_tests_to_report(test: &Test) {
+    let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
+    let mut report = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(successful_report_path)
+        .map_err(|err| RunnerError::FailedToCreateReportFile(err.to_string()))
+        .unwrap();
+    let content = format!(
+        "Test {:?} in path {:?} was SUCCESSFUL for all forks.\n",
+        test.name, test.path
+    );
+    let _ = report
+        .write_all(content.as_bytes())
+        .map_err(|err| RunnerError::FailedToWriteReport(err.to_string()));
+}
 pub fn write_failed_tests_to_report(test: &Test, failing_test_cases: Vec<(Fork, PostCheckResult)>) {
     let failing_report_path = PathBuf::from("./runner_v2/failure_report.txt");
     let mut report = OpenOptions::new()
