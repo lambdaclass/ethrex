@@ -73,13 +73,18 @@ impl LEVM {
             // DONE - Validar que sender no sea un contrato (esto se hace viendo que no tenga bytecode o que si tiene bytecode que este tenga el EOF_PREFIX (0xef), porque podría tener una delegate account)
             if let TxKind::Call(tx_recipient) = tx.to() {
                 let chain_config = db.store.get_chain_config()?;
+                let config_t = Instant::now();
                 let fork = chain_config.fork(block.header.timestamp);
+                let fork_t = Instant::now();
                 let access_list = tx.access_list();
                 let is_precompile = is_precompile(&tx_recipient, fork);
+                let ap = Instant::now();
                 let is_transaction_type_3 = tx.tx_type() == TxType::EIP4844;
                 let is_transaction_type_4 = tx.tx_type() == TxType::EIP7702;
+                let tx_p = Instant::now();
                 // let is_transaction_type_4 = tx.authorization_list().is_some();
                 let code = db.get_account(tx_recipient)?.code.clone();
+                let acc_code_get = Instant::now();
                 if tx.data().is_empty()
                     && !is_precompile
                     && access_list.is_empty()
@@ -87,6 +92,7 @@ impl LEVM {
                     && !is_transaction_type_4
                     && code.is_empty()
                 {
+                    let condition = Instant::now();
                     let sender_account = match db.current_accounts_state.entry(tx_sender) {
                         Entry::Occupied(entry) => entry.into_mut(),
                         Entry::Vacant(entry) => {
@@ -95,11 +101,13 @@ impl LEVM {
                             entry.insert(account)
                         }
                     };
+                    let acc_recovered = Instant::now();
                     sender_account.info.balance = sender_account
                         .info
                         .balance
                         .checked_sub(tx.value())
                         .ok_or(InternalError::Overflow)?;
+                    let reduced = Instant::now();
                     sender_account.info.nonce += 1;
 
                     let recipient_account = match db.current_accounts_state.entry(tx_recipient) {
@@ -111,11 +119,14 @@ impl LEVM {
                             entry.insert(account)
                         }
                     };
+                    let created = Instant::now();
                     recipient_account.info.balance = recipient_account
                         .info
                         .balance
                         .checked_add(tx.value())
                         .ok_or(InternalError::Overflow)?;
+
+                    let augmented = Instant::now();
 
                     cumulative_gas_used += 21000;
                     receipts.push(Receipt {
@@ -124,6 +135,31 @@ impl LEVM {
                         cumulative_gas_used,
                         logs: vec![],
                     });
+                    let pushed = Instant::now();
+                    println!("Time elapsed per section: 
+                        config: {:.3} micros,
+                        fork: {:.3} micros,
+                        access_list: {:.3} micros,
+                        tx_type: {:.3} micros,
+                        account code get: {:.3} micros,
+                        condition: {:.3} micros,
+                        account_recovered: {:.3} micros,
+                        reduced_balance: {:.3} micros,
+                        created_account: {:.3} micros,
+                        augmented_balance: {:.3} micros,
+                        pushed_receipt: {:.3} micros",
+                        (config_t - start).as_secs_f64() * 1000000.0,
+                        (fork_t - config_t).as_secs_f64() * 1000000.0,
+                        (ap - fork_t).as_secs_f64() * 1000000.0,
+                        (tx_p - ap).as_secs_f64() * 1000000.0,
+                        (acc_code_get - tx_p).as_secs_f64() * 1000000.0,
+                        (condition - acc_code_get).as_secs_f64() * 1000000.0,
+                        (acc_recovered - condition).as_secs_f64() * 1000000.0,
+                        (reduced - acc_recovered).as_secs_f64() * 1000000.0,
+                        (created - reduced).as_secs_f64() * 1000000.0,
+                        (augmented - created).as_secs_f64() * 1000000.0,
+                        (pushed - augmented).as_secs_f64() * 1000000.0);
+
                     let duration = start.elapsed();
                     println!("Time elapsed executing transfer tx: {:.3} micros", duration.as_secs_f64() * 1000000.0);
 
