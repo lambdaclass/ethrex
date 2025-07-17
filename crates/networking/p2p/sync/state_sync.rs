@@ -109,13 +109,13 @@ async fn state_sync_segment(
         return Ok((segment_number, false, start_account_hash));
     }
     // Spawn storage & bytecode fetchers
-    let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+    // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
     let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
-    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-        bytecode_receiver,
-        peers.clone(),
-        store.clone(),
-    ));
+    // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
+    //     bytecode_receiver,
+    //     peers.clone(),
+    //     store.clone(),
+    // ));
     let storage_fetcher_handle = tokio::spawn(storage_fetcher(
         storage_receiver,
         peers.clone(),
@@ -177,9 +177,9 @@ async fn state_sync_segment(
                 }
             }
             // Send code hash batch to the bytecode fetcher
-            if !code_hashes.is_empty() {
-                bytecode_sender.send(code_hashes).await?;
-            }
+            // if !code_hashes.is_empty() {
+            //     bytecode_sender.send(code_hashes).await?;
+            // }
             // Send hash and root batch to the storage fetcher
             if !account_hashes_and_storage_roots.is_empty() {
                 storage_sender
@@ -212,9 +212,9 @@ async fn state_sync_segment(
     ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
-    bytecode_sender.send(vec![]).await?;
+    // bytecode_sender.send(vec![]).await?;
     storage_fetcher_handle.await??;
-    bytecode_fetcher_handle.await??;
+    // bytecode_fetcher_handle.await??;
     if !stale {
         // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
         start_account_hash = STATE_TRIE_SEGMENTS_END[segment_number]
