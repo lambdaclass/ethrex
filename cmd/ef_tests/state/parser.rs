@@ -37,6 +37,9 @@ pub const SPECIFIC_IGNORED_TESTS: [&str; 1] = [
     "test_set_code_to_non_empty_storage[fork_Prague-state_test-zero_nonce]", // Skip because EIP-7702 has changed. See https://github.com/ethereum/EIPs/pull/9710
 ];
 
+// This constant is used as the reference from which to keep the relative path of the tests.
+const START_DIR_NAME: &str = "vectors";
+
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -44,17 +47,26 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
     println!("{}", "Parsing EF Tests".bold().cyan());
 
     let mut tests = Vec::new();
-    for test_dir in std::fs::read_dir(ef_general_state_tests_path.clone())
-        .map_err(|err| {
-            EFTestParseError::FailedToReadDirectory(format!(
-                "{:?}: {err}",
-                ef_general_state_tests_path.file_name()
-            ))
-        })?
-        .flatten()
-    {
-        let directory_tests = parse_ef_test_dir(test_dir, opts)?;
-        tests.extend(directory_tests);
+    if opts.paths {
+        for test_path in &opts.tests {
+            let mut full_path = ef_general_state_tests_path.clone();
+            full_path.push(test_path);
+            let tests_from_files = parse_ef_test_file(full_path, opts)?;
+            tests.extend(tests_from_files);
+        }
+    } else {
+        for test_dir in std::fs::read_dir(ef_general_state_tests_path.clone())
+            .map_err(|err| {
+                EFTestParseError::FailedToReadDirectory(format!(
+                    "{:?}: {err}",
+                    ef_general_state_tests_path.file_name()
+                ))
+            })?
+            .flatten()
+        {
+            let directory_tests = parse_ef_test_dir(test_dir, opts)?;
+            tests.extend(directory_tests);
+        }
     }
 
     println!(
@@ -189,17 +201,18 @@ pub fn parse_ef_test_dir(
     Ok(directory_tests)
 }
 
+/// "Given the full path of a json test file, returns its path relative to the vectors directory.
+/// Panics if the file is not in the vectors directory."
 pub fn get_test_relative_path(full_path: PathBuf) -> String {
-    let start_dir_name = "vectors";
     let mut path_prefix = PathBuf::new();
 
     for dir in full_path.components() {
-        if dir.as_os_str().to_str().unwrap() == start_dir_name {
+        if dir.as_os_str().to_str().unwrap() == START_DIR_NAME {
             break;
         }
         path_prefix.push(dir);
     }
-    path_prefix.push(PathBuf::from(start_dir_name));
+    path_prefix.push(PathBuf::from(START_DIR_NAME));
 
     full_path
         .strip_prefix(path_prefix)
@@ -213,4 +226,36 @@ fn print_parsed_directories(parsed_directory_tests: Vec<String>) {
     for dir in parsed_directory_tests {
         println!("Parsed directory {}", dir);
     }
+}
+
+fn parse_ef_test_file(
+    full_path: PathBuf,
+    opts: &EFTestRunnerOptions,
+) -> Result<Vec<EFTest>, EFTestParseError> {
+    let test_file = std::fs::File::open(&full_path)
+        .map_err(|err| EFTestParseError::FailedToReadFile(format!("{:?}: {err}", full_path)))?;
+    let mut tests_in_file: EFTests = serde_json::from_reader(test_file).map_err(|err| {
+        EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", full_path))
+    })?;
+    for test in tests_in_file.0.iter_mut() {
+        test.dir = full_path.to_str().unwrap().to_string();
+    }
+
+    // We only want to include tests that have post states from the specified forks in EFTestsRunnerOptions.
+    if let Some(forks) = &opts.forks {
+        for test in tests_in_file.0.iter_mut() {
+            let test_forks_numbers: Vec<u8> = forks.iter().map(|fork| *fork as u8).collect();
+
+            test.post.forks = test
+                .post
+                .forks
+                .iter()
+                .filter(|a| test_forks_numbers.contains(&(*a.0 as u8)))
+                .map(|(k, v)| (*k, v.clone()))
+                .collect();
+        }
+
+        tests_in_file.0.retain(|test| !test.post.forks.is_empty());
+    }
+    Ok(tests_in_file.0)
 }

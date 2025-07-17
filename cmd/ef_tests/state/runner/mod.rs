@@ -80,6 +80,9 @@ pub struct EFTestRunnerOptions {
     /// For running tests ONLY with revm
     #[arg(long, value_name = "REVM", default_value = "false")]
     pub revm: bool,
+    /// For running particular tests that are specified with their precise path
+    #[arg(long, value_name = "PATHS", default_value = "false")]
+    pub paths: bool,
 }
 
 pub async fn run_ef_tests(
@@ -105,8 +108,13 @@ pub async fn run_ef_tests(
         }
         return Ok(());
     }
-    re_run_with_revm(&mut reports, &ef_tests, opts).await?;
-    write_report(&reports)
+    if reports.iter().any(|r| !r.passed()) {
+        re_run_with_revm(&mut reports, &ef_tests, opts).await?;
+        return write_report(&reports);
+    }
+    let mut report_spinner = Spinner::new(Dots, "Loading report...".to_owned(), Color::Cyan);
+    report_spinner.success(&format!("All tests passed!").bold());
+    Ok(())
 }
 
 async fn run_with_levm(
