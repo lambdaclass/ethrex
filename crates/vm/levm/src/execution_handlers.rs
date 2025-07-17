@@ -40,6 +40,8 @@ impl<'a> VM<'a> {
     }
 
     pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
+        // The match order matters because it's evaluated top down. So the most frequent opcodes should be near the top.
+        // A future improvement could be to use a function pointer table.
         match opcode {
             Opcode::PUSH32 => self.op_push::<32>(),
             Opcode::MLOAD => self.op_mload(),
