@@ -251,6 +251,8 @@ impl Store {
     }
 
     /// Stores the sequencer signature for a given block hash.
+    /// When the lead sequencer sends a block by P2P, it signs the message and it is validated
+    /// If we want to gossip or broadcast the message, we need to store the signature for later use
     pub async fn store_signature_by_block(
         &self,
         block_hash: H256,
@@ -262,6 +264,8 @@ impl Store {
     }
 
     /// Returns the sequencer signature for a given block hash.
+    /// We want to retrieve the validated signature to broadcast or gossip the block to the peers
+    /// So they can also validate the message
     pub async fn get_signature_by_block(
         &self,
         block_hash: H256,
