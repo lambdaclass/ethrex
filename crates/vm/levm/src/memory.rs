@@ -6,7 +6,10 @@ use crate::{
 };
 use ExceptionalHalt::OutOfBounds;
 use ExceptionalHalt::OutOfGas;
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use ethrex_common::{
+    U256,
+    utils::{u256_from_big_endian_const, u256_to_big_endian},
+};
 
 /// A cheaply clonable callframe-shared memory buffer.
 ///
@@ -207,7 +210,7 @@ impl Memory {
             .ok_or(OutOfBounds)?;
 
         self.resize(new_size)?;
-        self.store(&word.to_big_endian(), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        self.store(&u256_to_big_endian(word), offset, WORD_SIZE_IN_BYTES_USIZE)?;
         Ok(())
     }
 
