@@ -50,7 +50,7 @@ ethrex ethrex/v0.1.0-HEAD-d3aa87a/aarch64-apple-darwin/rustc-v1.87.0
 
 After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
 
-## Building from source
+## Installing through `cargo install`
 
 To install the client, [first install Rust](https://www.rust-lang.org/tools/install) and then run:
 
@@ -62,5 +62,38 @@ cargo install --locked ethrex \
 
 This installs the `ethrex` binary.
 For more information on how it is built and installed, see [the cargo-install documentation](https://doc.rust-lang.org/cargo/commands/cargo-install.html).
+
+After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
+
+## Building from source
+
+This section assumes you already have [Rust's `cargo`](https://www.rust-lang.org/tools/install) and [`git`](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) installed.
+
+You can download the source code of a release from the [GitHub releases page](https://github.com/lambdaclass/ethrex/releases), or by cloning the repository at that version:
+
+```sh
+git clone --branch v0.0.1-rc.1 --depth 1 https://github.com/lambdaclass/ethrex.git
+```
+
+After that, you can run the following command inside the cloned repo to build the client:
+
+```sh
+cargo build --bin ethrex --release --features dev
+```
+
+You can find the built binary inside `target/release` directory:
+
+```sh
+./target/release/ethrex --version
+```
+
+This should output something like:
+
+```text
+ethrex ethrex/v0.1.0-HEAD-d3aa87a/aarch64-apple-darwin/rustc-v1.87.0
+```
+
+> [!TIP]
+> For convenience, you can move the `ethrex` binary to a directory in your `PATH`, so you can run it from anywhere.
 
 After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
