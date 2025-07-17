@@ -305,7 +305,8 @@ impl Syncer {
         }
         info!("Finished downloading and storing block headers");
 
-        self.snap_enabled.store(false, Ordering::Relaxed);
+        // This turns on full sync from wherever you left
+        // self.snap_enabled.store(false, Ordering::Relaxed);
         match sync_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
