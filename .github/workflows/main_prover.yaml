@@ -199,7 +199,11 @@ jobs:
         run: |
           rex l2 balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62
           rex balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-          
+          rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
+          rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
+          rex l2 balance 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+          rex balance 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
