@@ -258,6 +258,7 @@ async fn revalidate(state: &DiscoverySideCarState) {
                 if state._geth_peers.contains(&node_id) {
                     METRICS.new_pinged_mainnet_peer(node_id).await;
                 }
+                METRICS.record_new_ping_sent().await;
             }
             Err(err) => {
                 error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);

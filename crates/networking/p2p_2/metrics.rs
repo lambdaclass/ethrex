@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     sync::{Arc, LazyLock},
     time::{Duration, SystemTime},
 };
@@ -46,6 +46,10 @@ pub struct Metrics {
 
     pub connected_peers_client_type: Arc<Mutex<BTreeMap<String, u64>>>,
 
+    pub pings_sent: IntCounter,
+    pub pings_sent_events: Arc<Mutex<VecDeque<SystemTime>>>,
+    pub pings_sent_rate: Gauge,
+
     start_time: SystemTime,
 }
 
@@ -63,6 +67,14 @@ impl Metrics {
         self.total_contacts.inc();
         self.increase_current_contacts().await;
         self.update_rate(&mut events, &self.new_contacts_rate).await;
+    }
+
+    pub async fn record_new_ping_sent(&self) {
+        let mut events = self.pings_sent_events.lock().await;
+        events.push_back(SystemTime::now());
+        self.pings_sent.inc();
+
+        self.update_rate(&mut events, &self.pings_sent_rate).await;
     }
 
     pub async fn record_discarded_contact(&self) {
@@ -414,6 +426,12 @@ impl Default for Metrics {
         )
         .expect("Failed to create failed_rlpx_conn counter");
 
+        let pings_sent = IntCounter::new("pings_sent", "Total number of pings sent")
+            .expect("Failed to create pings_sent counter");
+
+        let pings_sent_rate = Gauge::new("pings_sent_rate", "Rate of pings sent per second")
+            .expect("Failed to create pings_sent_rate gauge");
+
         registry
             .register(Box::new(attempted_rlpx_conn.clone()))
             .expect("Failed to register attempted_rlpx_conn counter");
@@ -464,6 +482,10 @@ impl Default for Metrics {
             )),
 
             connected_peers_client_type: Arc::new(Mutex::new(BTreeMap::new())),
+
+            pings_sent,
+            pings_sent_events: Arc::new(Mutex::new(VecDeque::new())),
+            pings_sent_rate,
 
             start_time: SystemTime::now(),
         }
