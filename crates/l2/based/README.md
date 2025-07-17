@@ -197,13 +197,15 @@ After running this command, the node will start syncing with the L1 and will be 
 
 > [!NOTE]
 >
-> If you want to run multiple nodes, ensure that the following values are different for each node:
+> If you want to run multiple nodes in the same machine, ensure that the following values are different for each node:
 >
 > - `--proof-coordinator-listen-port`
 > - `--http.port`
 > - `--datadir`
 > - `--committer-l1-private-key`
-> - `--proof-coordinator-l1-private-key`
+> - `--authrpc.port`
+> - `--p2p.port`
+> - `--discovery.port`
 
 ### 3. Becoming a Sequencer
 
@@ -225,6 +227,36 @@ Once registered, the node will be able to participate in the Sequencer election 
 > 1. Replace `<REGISTRANT_PRIVATE_KEY>` and `<SEQUENCER_ADDRESS>` with the appropriate values.
 > 2. The registrant is not necessarily related to the sequencer, one could pay the registration for some else.
 > 3. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
+
+### 4. Running a second node as follower
+
+To run a second node as a follower (using BlockFetcher) on the same computer, you need to adjust certain parameters to avoid conflicts with port numbers and datadir directory.
+
+```bash
+cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 init \
+  --watcher.block-delay 0 \
+  --eth.rpc-url http://localhost:8545 \
+  --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
+  --committer.l1-private-key <FOLLOWER_PRIVATE_KEY>  \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --network ../../fixtures/genesis/l2.json \
+  --datadir ethrex_l2_b \
+  --proof-coordinator.addr 127.0.0.1 \
+  --proof-coordinator.port 3901 \
+  --http.port 1730 \
+  --state-updater.sequencer-registry $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS \
+  --l1.on-chain-proposer-address $ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS \
+  --l1.bridge-address $ETHREX_WATCHER_BRIDGE_ADDRESS \
+  --authrpc.port=8552 \
+  --p2p.port=30305 \
+  --discovery.port=30306 \
+  --based
+```
+
+> [!NOTE]
+>
+> Replace `<FOLLOWER_PRIVATE_KEY>` with the appropriate value.
+
 
 ## Documentation
 
