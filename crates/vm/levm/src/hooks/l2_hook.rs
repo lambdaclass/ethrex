@@ -12,7 +12,7 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xff,
 ]);
 
-pub struct L2Hook {}
+pub struct L2Hook;
 
 impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {

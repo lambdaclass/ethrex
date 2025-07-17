@@ -29,7 +29,7 @@ pub fn l1_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
 
 pub fn l2_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     vec![
-        Rc::new(RefCell::new(L2Hook {})),
+        Rc::new(RefCell::new(L2Hook)),
         Rc::new(RefCell::new(BackupHook::default())),
     ]
 }
