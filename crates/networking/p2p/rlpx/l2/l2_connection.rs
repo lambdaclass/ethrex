@@ -234,7 +234,7 @@ async fn should_process_batch_sealed(
 ) -> Result<bool, RLPxError> {
     let l2_state = established.l2_state.connection_state_mut()?;
     if !established.blockchain.is_synced() {
-        debug!("Not processing new block, blockchain is not synced");
+        debug!("Not processing BatchSealedMessage, blockchain is not synced");
         return Ok(false);
     }
     if l2_state
