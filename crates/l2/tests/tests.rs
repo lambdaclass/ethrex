@@ -174,7 +174,7 @@ async fn test_upgrade(
 
     let contracts_path = Path::new("contracts");
     get_contract_dependencies(contracts_path);
-    let remappin = [(
+    let remappings = [(
         "@openzeppelin/contracts",
         contracts_path
             .join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts"),
