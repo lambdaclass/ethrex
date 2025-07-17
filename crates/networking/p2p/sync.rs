@@ -582,16 +582,16 @@ impl Syncer {
     // snap sync must be resumed on the next sync cycle
     async fn snap_sync(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
         // Begin the background trie rebuild process if it is not active yet or if it crashed
-        if !self
-            .trie_rebuilder
-            .as_ref()
-            .is_some_and(|rebuilder| rebuilder.alive())
-        {
-            self.trie_rebuilder = Some(TrieRebuilder::startup(
-                self.cancel_token.clone(),
-                store.clone(),
-            ));
-        };
+        // if !self
+        //     .trie_rebuilder
+        //     .as_ref()
+        //     .is_some_and(|rebuilder| rebuilder.alive())
+        // {
+        //     self.trie_rebuilder = Some(TrieRebuilder::startup(
+        //         self.cancel_token.clone(),
+        //         store.clone(),
+        //     ));
+        // };
         // Spawn storage healer earlier so we can start healing stale storages
         // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
         // let storage_healer_cancell_token = self.cancel_token.child_token();

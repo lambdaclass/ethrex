@@ -110,19 +110,19 @@ async fn state_sync_segment(
     }
     // Spawn storage & bytecode fetchers
     // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
+    // let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
     // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
     //     bytecode_receiver,
     //     peers.clone(),
     //     store.clone(),
     // ));
-    let storage_fetcher_handle = tokio::spawn(storage_fetcher(
-        storage_receiver,
-        peers.clone(),
-        store.clone(),
-        state_root,
-        storage_trie_rebuilder_sender.clone(),
-    ));
+    // let storage_fetcher_handle = tokio::spawn(storage_fetcher(
+    //     storage_receiver,
+    //     peers.clone(),
+    //     store.clone(),
+    //     state_root,
+    //     storage_trie_rebuilder_sender.clone(),
+    // ));
     info!(
         "Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}"
     );
@@ -181,11 +181,11 @@ async fn state_sync_segment(
             //     bytecode_sender.send(code_hashes).await?;
             // }
             // Send hash and root batch to the storage fetcher
-            if !account_hashes_and_storage_roots.is_empty() {
-                storage_sender
-                    .send(account_hashes_and_storage_roots)
-                    .await?;
-            }
+            // if !account_hashes_and_storage_roots.is_empty() {
+            //     storage_sender
+            //         .send(account_hashes_and_storage_roots)
+            //         .await?;
+            // }
             // Update Snapshot
             store
                 .write_snapshot_account_batch(account_hashes, accounts)
@@ -211,9 +211,9 @@ async fn state_sync_segment(
         start_account_hash,
     ));
     // Send empty batch to signal that no more batches are incoming
-    storage_sender.send(vec![]).await?;
+    // storage_sender.send(vec![]).await?;
     // bytecode_sender.send(vec![]).await?;
-    storage_fetcher_handle.await??;
+    // storage_fetcher_handle.await??;
     // bytecode_fetcher_handle.await??;
     if !stale {
         // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
