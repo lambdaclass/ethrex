@@ -93,6 +93,7 @@
         dest: "{{ item.remote }}"
         rsync_opts:
           - "-avz"
+          - "--ignore-existing" # Avoid overwriting existing grafana config from monitoring-stack
       loop:
         - name: dashboards
           local: "{{ dashboards.local }}"
