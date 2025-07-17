@@ -17,6 +17,7 @@ use crate::{
         eth::{
             blocks::{
                 BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                HashOrNumber,
             },
             receipts::GetReceipts,
         },
@@ -50,6 +51,7 @@ pub struct PeerHandler {
     peer_table: Arc<Mutex<KademliaTable>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum BlockRequestOrder {
     OldToNew,
     NewToOld,
@@ -108,6 +110,86 @@ impl PeerHandler {
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
         None
+    }
+
+    /// Returns a vector containing the channels for all the peers that support the given capability.
+    async fn get_all_peer_channels(&self, capabilities: &[Capability]) -> Vec<PeerChannels> {
+        let table = self.peer_table.lock().await;
+        table.get_all_peer_channels(capabilities)
+    }
+
+    pub async fn request_block_headers_2(
+        &self,
+        start: H256,
+        order: BlockRequestOrder,
+    ) -> Option<Vec<BlockHeader>> {
+        // 1) get the number of total headers in the chain (e.g. 800.000)
+        let k = U256::from(800_000_usize);
+
+        // 2) partition the amount of headers in `K` tasks
+
+        // 3) create tasks that will request a chunk of headers from a peer
+
+        // 4) assign the tasks to the peers
+        //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
+        //     4.2) mark the peer as busy
+        //     4.3) wait for the response and handle it
+
+        // 5) loop until all the chunks are received
+
+        todo!("Implement request_block_headers_2");
+    }
+
+    /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
+    ///
+    /// If it fails, returns an error message.
+    async fn download_chunk_from_peer(
+        &self,
+        peer_id: H256,
+        peer_channel: &mut PeerChannels,
+        startblock: u64,
+        chunk_limit: u64,
+    ) -> Result<Vec<BlockHeader>, String> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(startblock),
+            limit: chunk_limit,
+            skip: 0,
+            reverse: false,
+        });
+        let mut receiver = peer_channel.receiver.lock().await;
+
+        peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(request))
+            .await
+            .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
+
+        let block_headers = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            loop {
+                match receiver.recv().await {
+                    Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+                        if id == request_id =>
+                    {
+                        return Some(block_headers);
+                    }
+                    // Ignore replies that don't match the expected id (such as late responses)
+                    Some(_) => continue,
+                    None => return None, // EOF
+                }
+            }
+        })
+        .await
+        .map_err(|_| "Failed to receive block headers")?
+        .ok_or("Block no received".to_owned())?;
+
+        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+            Ok(block_headers)
+        } else {
+            warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
+            Err("Invalid block headers".into())
+        }
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
