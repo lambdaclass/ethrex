@@ -35,7 +35,8 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
     }
     let mut vm = init_vm(&mut db, 0, calldata.clone());
     let tx_report = black_box(vm.stateless_execute().unwrap());
-    assert!(tx_report.is_success());
+
+    assert!(tx_report.is_success(), "{:?}", tx_report.result);
 
     match tx_report.result {
         TxResult::Success => {
