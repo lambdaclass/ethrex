@@ -3,7 +3,7 @@ use crate::{
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     opcodes::Opcode,
     vm::VM,
 };
@@ -11,6 +11,8 @@ use ethrex_common::{H256, U256, types::Fork};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
+
+pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
 
 impl<'a> VM<'a> {
     // POP operation
@@ -73,6 +75,10 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         let [offset] = *current_call_frame.stack.pop()?;
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
+
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::mload(
@@ -82,7 +88,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[memory::load_word(&mut current_call_frame.memory, offset)?])?;
+            .push(&[current_call_frame.memory.load_word(offset)?])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -96,6 +102,10 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+
         let current_call_frame = self.current_call_frame_mut()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -105,11 +115,7 @@ impl<'a> VM<'a> {
             current_call_frame.memory.len(),
         )?)?;
 
-        memory::try_store_data(
-            &mut current_call_frame.memory,
-            offset,
-            &value.to_big_endian(),
-        )?;
+        current_call_frame.memory.store_word(offset, value)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -120,6 +126,10 @@ impl<'a> VM<'a> {
 
         let [offset] = *current_call_frame.stack.pop()?;
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::mstore8(
@@ -129,11 +139,9 @@ impl<'a> VM<'a> {
 
         let [value] = current_call_frame.stack.pop()?;
 
-        memory::try_store_data(
-            &mut current_call_frame.memory,
-            offset,
-            &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
-        )?;
+        current_call_frame
+            .memory
+            .store_data(offset, &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -270,9 +278,22 @@ impl<'a> VM<'a> {
         }
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
+
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+
+        let src_offset: usize = match src_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
 
@@ -284,12 +305,9 @@ impl<'a> VM<'a> {
             size,
         )?)?;
 
-        memory::try_copy_within(
-            &mut current_call_frame.memory,
-            src_offset,
-            dest_offset,
-            size,
-        )?;
+        current_call_frame
+            .memory
+            .copy_within(src_offset, dest_offset, size)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

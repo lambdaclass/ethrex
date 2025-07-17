@@ -2,9 +2,17 @@
 
 ## Perf
 
+### 2025-07-16
+
+- Improve levm memory model [#3564](https://github.com/lambdaclass/ethrex/pull/3564)
+- 
 ### 2025-07-15
 
 - Add sstore bench [#3552](https://github.com/lambdaclass/ethrex/pull/3552)
+
+### 2025-07-10
+
+- Add AVX256 implementation of BLAKE2 [#3590](https://github.com/lambdaclass/ethrex/pull/3590)
 
 ### 2025-07-08
 
