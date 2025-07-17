@@ -1,7 +1,7 @@
 # Installing ethrex
 
 We have multiple ways to install the client, depending on your needs.
-[Pre-compiled binaries are available for each release](./installing_prebuilt.md), but you can also [build the client from source](./installing_source.md).
+[Pre-compiled binaries are available for each release](#installing-from-pre-built-binaries), but you can also [build the client from source](#building-from-source).
 
 ## Installing from pre-built binaries
 
