@@ -138,17 +138,17 @@ impl LEVM {
                     let pushed = Instant::now();
                     let duration = start.elapsed();
 
-                    println!("Time elapsed per section: 
-                        config: {:.3} micros,
-                        fork: {:.3} micros,
-                        access_list: {:.3} micros,
-                        tx_type: {:.3} micros,
-                        account code get: {:.3} micros,
-                        condition: {:.3} micros,
-                        account_recovered: {:.3} micros,
-                        reduced_balance: {:.3} micros,
-                        created_account: {:.3} micros,
-                        augmented_balance: {:.3} micros,
+                    println!("Time elapsed per section: \
+                        config: {:.3} micros, \
+                        fork: {:.3} micros, \
+                        access_list: {:.3} micros, \
+                        tx_type: {:.3} micros, \
+                        account code get: {:.3} micros, \
+                        condition: {:.3} micros, \
+                        account_recovered: {:.3} micros, \
+                        reduced_balance: {:.3} micros, \
+                        created_account: {:.3} micros, \
+                        augmented_balance: {:.3} micros, \
                         pushed_receipt: {:.3} micros",
                         (config_t - start).as_secs_f64() * 1000000.0,
                         (fork_t - config_t).as_secs_f64() * 1000000.0,
