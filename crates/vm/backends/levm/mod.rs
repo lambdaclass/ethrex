@@ -31,6 +31,7 @@ use ethrex_levm::{
 };
 use std::cmp::min;
 use std::collections::HashMap;
+use std::time::Instant;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -57,6 +58,8 @@ impl LEVM {
         for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
             EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
         })? {
+            let start = Instant::now();
+
             // Shortcut for transfer transactions.
             // NOTE:
             // Validaciones de una transacción (prepare_execution) (ej: suficiente funds)
@@ -121,6 +124,8 @@ impl LEVM {
                         cumulative_gas_used,
                         logs: vec![],
                     });
+                    let duration = start.elapsed();
+                    println!("Time elapsed executing transfer tx: {:.3} micros", duration.as_secs_f64() * 1000000.0);
 
                     continue;
                 }
@@ -137,6 +142,8 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+            let duration = start.elapsed();
+            println!("Time elapsed executing other tx: {:.3} micros", duration.as_secs_f64() * 1000000.0);
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
