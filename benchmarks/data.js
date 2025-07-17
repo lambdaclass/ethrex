@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752769231681,
+  "lastUpdate": 1752769411156,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9093,6 +9093,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006237065420560748,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f21fe24bf2e2c2fc62aa9be3db6e0da0f491bcc9",
+          "message": "fix(l1): fix double tracer initialization in block execution benchmark (#3671)\n\n**Motivation**\n\nCurrently the block execution benchmark is\n[broken](https://github.com/lambdaclass/ethrex/actions/runs/16344656297/job/46175367153?pr=3590)\nas a result of calling `init_tracing` twice.\n\n**Description**\n\nThis happens because, when the `--removedb` flag is used, RemoveDB is\ncalled as a command, which initializes the logger again.\n\nThis PR calls removedb directly instead.",
+          "timestamp": "2025-07-17T13:11:53Z",
+          "tree_id": "ebdc1d6f14e1bfb5b07a3a65e9449bb2dc729dd3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f21fe24bf2e2c2fc62aa9be3db6e0da0f491bcc9"
+        },
+        "date": 1752769396868,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006355866666666667,
             "unit": "Mgas/s"
           }
         ]
