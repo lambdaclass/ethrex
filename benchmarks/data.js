@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752765287525,
+  "lastUpdate": 1752766221616,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4345,6 +4345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209933147441,
             "range": "± 321652934",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "165b94c9a2069d2a4bb9c320f26554b0190c4e30",
+          "message": "perf(levm): add AVX256 implementation of BLAKE2 (#3590)\n\n**Motivation**\n\nTo improve BLAKE2 performance.\n\n**Description**\n\nWhy AVX256 instead of AVX512? Mainly that\n[AVX512](https://github.com/rust-lang/rust/issues/111137) intrinsics are\nstill experimental.\n\nCreates a common/crypto module to house blake2. We should consider\nmoving here other cryptographic operations currently inside\nprecompiles.rs.\n\nIf avx2 is available, a permute-with-gather implementation is used.\n\nUsage of unsafe is required for SIMD loads and stores. It should be\nreviewed that alignment requirements are satisfied and that no\nout-of-bounds operations are possible.\n\nNote that aside from the obvious ones with \"load\" or \"store\" in the\nname, gather also represents a series of memory loads.\n\nUnsafe is also required to call the first avx2-enabled function, since\nwe must first ensure avx2 is actually available on the target CPU.\n\n** Benchmarks **\n\n### PR\n\n|Title|Max (MGas/s)|p50 (MGas/s)|p95 (MGas/s)|p99 (MGas/s)|Min (MGas/s)|\n\n|----|--------------|--------------|-------------|--------------|--------------|\nBlake1MRounds|120.19|93.97|93.38|99.85|91.54\nBlake1Round|226.42|175.09|170.08|166.83|166.82\nBlake1KRounds|122.36|97.28|96.09|100.90|95.87\nBlake10MRounds|174.36|110.78|104.15|124.33|103.89\n\n### Main\n\n|Title|Max (MGas/s)|p50 (MGas/s)|p95 (MGas/s)|p99 (MGas/s)|Min (MGas/s)|\n\n|----|--------------|--------------|-------------|--------------|--------------|\nBlake1MRounds|80.79|63.04|62.57|67.80|62.50\nBlake1Round|223.59|174.93|168.21|159.38|159.33\nBlake1KRounds|83.75|66.59|65.88|68.37|64.76\nBlake10MRounds|117.79|77.21|69.63|83.19|69.05",
+          "timestamp": "2025-07-17T14:34:10Z",
+          "tree_id": "065dfa16f0769f1776aae5132e7f7e58e22fde93",
+          "url": "https://github.com/lambdaclass/ethrex/commit/165b94c9a2069d2a4bb9c320f26554b0190c4e30"
+        },
+        "date": 1752766209105,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208306400295,
+            "range": "± 349221026",
             "unit": "ns/iter"
           }
         ]
