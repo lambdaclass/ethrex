@@ -1,37 +1,35 @@
 use std::future::Future;
 
+use ethrex_common::H256;
 use ethrex_storage::Store;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::peer_handler::PeerHandler;
+use crate::{
+    peer_handler::PeerHandler,
+    sync::storage_fetcher::{LargeStorageRequest, fetch_storage_batch},
+};
 
 use super::{MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, SyncError};
 
-pub(crate) async fn run_queue_snap_sync<T, F, Fut>(
-    queue: &mut Vec<T>,
-    fetch_batch: &F,
+pub(crate) async fn run_queue_snap_sync(
+    state_root: H256,
+    account_ranges: Vec<(H256, H256)>,
+    queue: &mut Vec<(H256, H256)>,
+    large_storage_sender: Sender<Vec<LargeStorageRequest>>,
+    storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
     peers: PeerHandler,
     store: Store,
     batch_size: usize,
-    account_ranges: Vec<(H256, H256)>,
-) -> Result<(), SyncError>
-where
-    T: Send + 'static,
-    F: Fn(Vec<T>, PeerHandler, Store) -> Fut + Sync + Send,
-    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static,
-{
+) -> Result<(), SyncError> {
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose incoming messages
     let mut incoming = true;
     let mut stale = false;
     while incoming {
         // Read incoming messages and add them to the queue
-        incoming = if !receiver.is_empty() || queue.is_empty() {
-            let mut msg_buffer = vec![];
-            receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await;
-            let incoming =
-                !(msg_buffer.is_empty() || msg_buffer.iter().any(|reqs| reqs.is_empty()));
-            queue.extend(msg_buffer.into_iter().flatten());
+        incoming = if !account_ranges.is_empty() || queue.is_empty() {
+            let incoming = !account_ranges.is_empty();
+            queue.extend(account_ranges.clone());
             incoming
         } else {
             true
@@ -47,7 +45,14 @@ where
                     let next_batch = queue
                         .drain(..batch_size.min(queue.len()))
                         .collect::<Vec<_>>();
-                    tasks.spawn(fetch_batch(next_batch, peers.clone(), store.clone()));
+                    tasks.spawn(fetch_storage_batch(
+                        next_batch,
+                        state_root,
+                        peers.clone(),
+                        store.clone(),
+                        large_storage_sender.clone(),
+                        storage_trie_rebuilder_sender.clone(),
+                    ));
                     // End loop if we don't have enough elements to fill up a batch
                     if queue.is_empty() || (incoming && queue.len() < batch_size) {
                         break;
