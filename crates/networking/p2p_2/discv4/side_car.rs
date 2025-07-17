@@ -1,4 +1,10 @@
-use std::{fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    fs::read_to_string,
+    net::SocketAddr,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use ethrex_common::{H256, H512, types::ForkId};
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
@@ -36,7 +42,10 @@ pub struct DiscoverySideCarState {
     signer: SigningKey,
     udp_socket: Arc<UdpSocket>,
 
-    revalidation_period: Duration,
+    /// Interval between revalidation checks.
+    revalidation_check_interval: Duration,
+    /// Interval between revalidations.
+    revalidation_interval: Duration,
     lookup_period: Duration,
     prune_period: Duration,
 
@@ -71,13 +80,15 @@ impl DiscoverySideCarState {
             udp_socket,
             kademlia,
 
-            revalidation_period: Duration::from_secs(5),
+            revalidation_check_interval: Duration::from_secs(5),
+            revalidation_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
+
             lookup_period: Duration::from_secs(5),
             prune_period: Duration::from_secs(5),
         }
     }
 
-    async fn ping(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
+    async fn ping(&self, node: &Node) -> Result<H256, DiscoverySideCarError> {
         let mut buf = Vec::new();
 
         // TODO: Parametrize this expiration.
@@ -101,6 +112,10 @@ impl DiscoverySideCarState {
 
         ping.encode_with_header(&mut buf, &self.signer);
 
+        let ping_hash: [u8; 32] = buf[0..32]
+            .try_into()
+            .expect("first 32 bytes are the message hash");
+
         let bytes_sent = self
             .udp_socket
             .send_to(&buf, node.udp_addr())
@@ -113,7 +128,7 @@ impl DiscoverySideCarState {
 
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
-        Ok(())
+        Ok(H256::from(ping_hash))
     }
 
     pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
@@ -216,7 +231,7 @@ impl GenServer for DiscoverySideCar {
                 revalidate(&state).await;
 
                 send_after(
-                    state.revalidation_period,
+                    state.revalidation_check_interval,
                     handle.clone(),
                     Self::CastMsg::Revalidate,
                 );
@@ -247,18 +262,20 @@ impl GenServer for DiscoverySideCar {
 
 async fn revalidate(state: &DiscoverySideCarState) {
     for contact in state.kademlia.table.lock().await.values_mut() {
-        if contact.disposable {
+        if contact.disposable || contact.was_validated() || contact.has_pending_ping() {
             continue;
         }
 
         let node_id = contact.node.node_id();
 
         match state.ping(&contact.node).await {
-            Ok(_) => {
+            Ok(ping_hash) => {
                 if state._geth_peers.contains(&node_id) {
                     METRICS.new_pinged_mainnet_peer(node_id).await;
                 }
                 METRICS.record_new_ping_sent().await;
+                contact.validation_timestamp = Some(Instant::now());
+                contact.ping_hash = Some(ping_hash);
             }
             Err(err) => {
                 error!(sent = "Ping", to = %format!("{:#x}", contact.node.public_key), err = ?err);
