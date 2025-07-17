@@ -295,15 +295,7 @@ impl Subcommand {
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    Box::pin(async {
-                        Self::RemoveDB {
-                            datadir: opts.datadir.clone(),
-                            force: opts.force,
-                        }
-                        .run(opts)
-                        .await
-                    })
-                    .await?;
+                    remove_db(&opts.datadir.clone(), opts.force);
                 }
 
                 let network = get_network(opts);
