@@ -205,8 +205,6 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
             .rollup_store
             .set_latest_sent_batch_proof(batch_to_send)
             .await?;
-        // TODO: we should anyways handle the "OnChainProposer: batch already verified" error and
-        // modify the latest sent proof accordingly, otherwise we risk the proof sender getting stuck.
     } else {
         let missing_proof_types: Vec<String> = missing_proof_types
             .iter()
