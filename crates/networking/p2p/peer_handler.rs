@@ -11,6 +11,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use rand::seq::SliceRandom;
 
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
@@ -108,11 +109,11 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
-        self.peer_table
-            .get_peer_channels(capabilities)
-            .await
-            .first()
-            .cloned()
+        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
+
+        peer_channels.shuffle(&mut rand::rngs::OsRng);
+
+        peer_channels.first().cloned()
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
