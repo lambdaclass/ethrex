@@ -257,10 +257,14 @@ impl GenServer for RLPxConnection {
                 match e {
                     RLPxError::Disconnected() | RLPxError::DisconnectReceived(_) => {
                         log_peer_debug(&established_state.node, "Peer disconnected");
-                    },
+                        return CastResponse::Stop;
+                    }
                     RLPxError::IoError(e) => {
                         if e.kind() == std::io::ErrorKind::BrokenPipe {
-                            log_peer_warn(&established_state.node, "Broken pipe with peer, disconnected");
+                            log_peer_warn(
+                                &established_state.node,
+                                "Broken pipe with peer, disconnected",
+                            );
                             return CastResponse::Stop;
                         }
                     }
@@ -269,6 +273,7 @@ impl GenServer for RLPxConnection {
                             &established_state.node,
                             &format!("Error handling cast message: {e}"),
                         );
+                        return CastResponse::Stop;
                     }
                 }
             }
