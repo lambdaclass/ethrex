@@ -202,7 +202,7 @@ After running this command, the node will start syncing with the L1 and will be 
 > - `--proof-coordinator-listen-port`
 > - `--http.port`
 > - `--datadir`
-> - `--committer-l1-private-key`
+> - `--committer.l1-private-key`
 > - `--authrpc.port`
 > - `--p2p.port`
 > - `--discovery.port`
