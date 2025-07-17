@@ -135,7 +135,7 @@ impl PeerHandler {
         let mut ret = Vec::<BlockHeader>::new();
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
-        let block_count = 800_000_64;
+        let block_count = 800_000_u64;
         let chunk_count = 8_usize; // e.g. 8 tasks
 
         // 2) partition the amount of headers in `K` tasks
@@ -154,7 +154,12 @@ impl PeerHandler {
             .await;
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+            Result<Vec<BlockHeader>, String>,
+            H256,
+            PeerChannels,
+            u64,
+        )>(1000);
 
         // 3) create tasks that will request a chunk of headers from a peer
         loop {
@@ -169,6 +174,39 @@ impl PeerHandler {
 
                     // sleep and retry
                     //tokio::time::sleep(Duration::from_secs(1)).await;
+                    let ret_task = task_receiver.try_recv();
+
+                    match ret_task {
+                        Ok(headers_result) => {
+                            match headers_result {
+                                (Ok(headers), peer_id, peer_channel, startblock) => {
+                                    downloaded_count += headers.len() as u64;
+                                    info!(
+                                        "Downloaded {} headers from peer {}",
+                                        headers.len(),
+                                        peer_id
+                                    );
+                                    // store headers!!!!
+                                    ret.extend_from_slice(&headers);
+                                    peer_channels.push((peer_id, peer_channel));
+                                }
+                                (Err(err), peer_id, peer_channel, startblock) => {
+                                    warn!("Failed to download chunk from peer {peer_id}: {err}");
+                                    // Optionally, you can re-add the peer to the queue or handle it differently
+                                    peer_channels.push((peer_id, peer_channel));
+
+                                    // reinsert the task to the queue
+                                    tasks_queue_not_started.push_back(startblock);
+
+                                    continue; // Retry with the next peer
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            continue;
+                        }
+                    }
+
                     continue;
                 }
             };
@@ -192,7 +230,9 @@ impl PeerHandler {
                     chunk_limit,
                 )
                 .await;
-                tx.send((ret, peer_id, peer_channel)).await.unwrap();
+                tx.send((ret, peer_id, peer_channel, startblock))
+                    .await
+                    .unwrap();
             });
 
             let ret_task = task_receiver.try_recv();
@@ -200,17 +240,21 @@ impl PeerHandler {
             match ret_task {
                 Ok(headers_result) => {
                     match headers_result {
-                        (Ok(headers), peer_id, peer_channel) => {
+                        (Ok(headers), peer_id, peer_channel, startblock) => {
                             downloaded_count += headers.len() as u64;
                             info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
                             // store headers!!!!
                             ret.extend_from_slice(&headers);
                             peer_channels.push((peer_id, peer_channel));
                         }
-                        (Err(err), peer_id, peer_channel) => {
+                        (Err(err), peer_id, peer_channel, startblock) => {
                             warn!("Failed to download chunk from peer {peer_id}: {err}");
                             // Optionally, you can re-add the peer to the queue or handle it differently
                             peer_channels.push((peer_id, peer_channel));
+
+                            // reinsert the task to the queue
+                            tasks_queue_not_started.push_back(startblock);
+
                             continue; // Retry with the next peer
                         }
                     }
