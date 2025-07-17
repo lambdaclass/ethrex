@@ -15,8 +15,9 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
-use spawned_concurrency::tasks::{
-    CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener,
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
 };
 use std::io;
 use std::sync::Arc;
@@ -75,15 +76,9 @@ pub enum CastInMessage {
     Event(Event),
 }
 
-#[derive(Clone, Debug)]
-pub enum CallInMessage {
-    Finished,
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub enum OutMessage {
     Done,
-    ShouldQuit(bool),
 }
 
 #[derive(Default)]
@@ -118,7 +113,7 @@ impl EthrexMonitor {
 }
 
 impl GenServer for EthrexMonitor {
-    type CallMsg = CallInMessage;
+    type CallMsg = Unused;
     type CastMsg = CastInMessage;
     type OutMsg = OutMessage;
     type State = EthrexMonitorState;
