@@ -120,12 +120,15 @@ impl Metrics {
             .and_modify(|e| *e += 1)
             .or_insert(1);
 
-        self.connected_mainnet_peers
+        let was_mainnet = self
+            .connected_mainnet_peers
             .lock()
             .await
             .remove(maybe_mainnet_known_node_id);
 
-        self.disconnected_mainnet_peers.inc();
+        if was_mainnet {
+            self.disconnected_mainnet_peers.inc();
+        }
     }
 
     pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
