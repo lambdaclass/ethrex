@@ -18,7 +18,8 @@
             "balance": "0",
             "code": "0x010101",
             "storage": {
-                "0x0": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+                "0x0": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                "0x3": "0xabc123"
             }
         }
     },
@@ -26,7 +27,7 @@
         "0x01",
         "0x02",
         "0x03",
-        "0x04"
+        "0xf"
     ],
     "initial_memory": "0xdeadbeef"
 }

@@ -1,4 +1,3 @@
-use crate::deserialize::{deserialize_u256_valued_hashmap, deserialize_u256_vec};
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_common::serde_utils::bytes::deserialize;
@@ -18,7 +17,7 @@ pub struct RunnerInput {
     pub pre: HashMap<Address, InputAccount>,
     #[serde(deserialize_with = "deserialize")]
     pub initial_memory: Bytes,
-    #[serde(deserialize_with = "deserialize_u256_vec")]
+    #[serde(deserialize_with = "u256::vec::deserialize")]
     pub initial_stack: Vec<U256>,
 }
 
@@ -29,7 +28,7 @@ pub struct InputAccount {
     pub balance: U256,
     #[serde(deserialize_with = "deserialize")]
     pub code: Bytes,
-    #[serde(deserialize_with = "deserialize_u256_valued_hashmap")]
+    #[serde(deserialize_with = "u256::hashmap::deserialize")]
     pub storage: HashMap<U256, U256>,
 }
 
