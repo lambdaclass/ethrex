@@ -28,18 +28,39 @@ where
     let mut stale = false;
     while incoming {
         // Read incoming messages and add them to the queue
-        incoming = read_incoming_requests(receiver, queue).await;
+        incoming = if !receiver.is_empty() || queue.is_empty() {
+            let mut msg_buffer = vec![];
+            receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await;
+            let incoming = !(msg_buffer.is_empty() || msg_buffer.iter().any(|reqs| reqs.is_empty()));
+            queue.extend(msg_buffer.into_iter().flatten());
+            incoming
+        } else {
+            true
+        };
+
         // If the pivot isn't stale, spawn fetch tasks for the queued elements
         if !stale {
-            stale = spawn_fetch_tasks(
-                queue,
-                incoming,
-                fetch_batch,
-                peers.clone(),
-                store.clone(),
-                batch_size,
-            )
-            .await?;
+            // Spawn fetcher tasks:
+            if queue.len() >= batch_size || (!incoming && !queue.is_empty()) {
+                // Spawn fetch tasks
+                let mut tasks = tokio::task::JoinSet::new();
+                for _ in 0..MAX_PARALLEL_FETCHES {
+                    let next_batch = queue
+                        .drain(..batch_size.min(queue.len()))
+                        .collect::<Vec<_>>();
+                    tasks.spawn(fetch_batch(next_batch, peers.clone(), store.clone()));
+                    // End loop if we don't have enough elements to fill up a batch
+                    if queue.is_empty() || (incoming && queue.len() < batch_size) {
+                        break;
+                    }
+                }
+                // Collect Results
+                for res in tasks.join_all().await {
+                    let (remaining, is_stale) = res?;
+                    queue.extend(remaining);
+                    stale |= is_stale;
+                }
+            }
         }
     }
     Ok(())

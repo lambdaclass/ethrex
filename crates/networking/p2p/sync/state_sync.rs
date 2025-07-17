@@ -207,7 +207,7 @@ async fn state_sync_segment(
                 bytecode_sender.send(code_hashes).await?;
             }
             // Send hash and root batch to the storage fetcher
-            // TODO(SNAP): Check this 
+            // // TODO(SNAP): Check this 
             // if !account_hashes_and_storage_roots.is_empty() {
             //     storage_sender
             //         .send(account_hashes_and_storage_roots)

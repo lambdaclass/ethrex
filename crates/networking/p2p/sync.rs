@@ -6,7 +6,10 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
-use crate::{peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST}, sync::state_sync::FetchTask};
+use crate::{
+    peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    sync::state_sync::FetchTask,
+};
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -27,7 +30,9 @@ use std::{
 };
 use storage_healing::storage_healer;
 use tokio::{
-    sync::mpsc::{channel, error::SendError, Receiver, Sender}, task::JoinHandle, time::{Duration, Instant}
+    sync::mpsc::{Receiver, Sender, channel, error::SendError},
+    task::JoinHandle,
+    time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -71,11 +76,27 @@ struct OrchestratorHandle {
     sender: Sender<FetchTask>,
 }
 
-async fn orchestrate(mut rx: Receiver<FetchTask>) {
+async fn fetcher(state_root: H256, start_account_hash: H256, end_account_hash: H256) {
+   
+}
+
+async fn orchestrate(mut rx: Receiver<FetchTask>, peers: PeerHandler) {
+    let mut handles = vec![];
     while let Some(task) = rx.recv().await {
         match task {
-            FetchTask::Storage { state_root, start_account_hash, end_account_hash } => {
-                info!("Received new task, state_root: {state_root:?}, start_account_hash: {start_account_hash:?}, end_account_hash: {end_account_hash:?}");
+            FetchTask::Storage {
+                state_root,
+                start_account_hash,
+                end_account_hash,
+            } => {
+                info!(
+                    "Received new task, state_root: {state_root:?}, start_account_hash: {start_account_hash:?}, end_account_hash: {end_account_hash:?}"
+                );
+                let peer = peers..await;
+                handles.push(tokio::spawn(async move {
+                    storage_fetcher(state_root, start_account_hash, end_account_hash).await;
+                    fetcher(state_root, start_account_hash, end_account_hash).await;
+                }));
             }
         }
     }
@@ -88,13 +109,12 @@ impl OrchestratorHandle {
             orchestrate(rx).await;
         });
         OrchestratorHandle { handle, sender: tx }
-    } 
+    }
 
     pub fn new_sender(&self) -> Sender<FetchTask> {
         self.sender.clone()
     }
-        
-}   
+}
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
