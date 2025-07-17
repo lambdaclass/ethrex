@@ -8,8 +8,17 @@ use std::{
 };
 
 fn main() {
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=COMPILE_CONTRACTS");
+
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let output_contracts_path = Path::new(&out_dir).join("contracts");
+
+    // If COMPILE_CONTRACTS is not set, skip and write empty files
+    if env::var_os("COMPILE_CONTRACTS").is_none() {
+        write_empty_bytecode_files(&output_contracts_path);
+        return;
+    }
 
     download_contract_deps(&output_contracts_path);
 
@@ -93,8 +102,29 @@ fn main() {
         bytecode,
     )
     .expect("Failed to write renamed bytecode");
+}
 
-    println!("cargo::rerun-if-changed=build.rs");
+fn write_empty_bytecode_files(output_contracts_path: &Path) {
+    let bytecode_dir = output_contracts_path.join("solc_out");
+    fs::create_dir_all(&bytecode_dir).expect("Failed to create solc_out directory");
+
+    let contract_names = [
+        "ERC1967Proxy",
+        "SP1Verifier",
+        "OnChainProposer",
+        "CommonBridge",
+        "CommonBridgeL2",
+        "L2ToL1Messenger",
+        "UpgradeableSystemContract",
+        "SequencerRegistry",
+        "OnChainProposerBased",
+    ];
+
+    for name in &contract_names {
+        let filename = format!("{name}.bytecode");
+        let path = bytecode_dir.join(filename);
+        fs::write(&path, []).expect("Failed to write empty bytecode.");
+    }
 }
 
 /// Clones OpenZeppelin and SP1 contracts into the specified path.

@@ -9,4 +9,8 @@ pub enum SystemContractsUpdaterError {
     FailedToWriteModifiedGenesisFile(#[from] std::io::Error),
     #[error("Failed to read path: {0}")]
     InvalidPath(String),
+    #[error(
+        "Contract bytecode not found. Make sure to compile the updater with `COMPILE_CONTRACTS` set."
+    )]
+    BytecodeNotFound,
 }

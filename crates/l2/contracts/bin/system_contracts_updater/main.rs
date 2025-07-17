@@ -61,6 +61,11 @@ fn add_with_proxy(
     code: Vec<u8>,
 ) -> Result<(), SystemContractsUpdaterError> {
     let impl_address = address ^ IMPL_MASK;
+
+    if code.is_empty() {
+        return Err(SystemContractsUpdaterError::BytecodeNotFound);
+    }
+
     genesis.alloc.insert(
         impl_address,
         GenesisAccount {

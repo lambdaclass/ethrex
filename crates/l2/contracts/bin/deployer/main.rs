@@ -151,6 +151,11 @@ async fn deploy_contracts(
     } else {
         ON_CHAIN_PROPOSER_BYTECODE.to_vec()
     };
+
+    if bytecode.is_empty() {
+        return Err(DeployerError::BytecodeNotFound);
+    }
+
     let on_chain_proposer_deployment =
         deploy_with_proxy_from_bytecode(deployer, eth_client, &bytecode, &salt).await?;
     info!(
