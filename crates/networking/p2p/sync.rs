@@ -186,7 +186,7 @@ impl Syncer {
         let mut search_head = current_head;
 
         loop {
-            debug!("Requesting Block Headers from {search_head}");
+            info!("Requesting Block Headers from {search_head}");
 
             let Some(mut block_headers) = self
                 .peers
@@ -277,6 +277,7 @@ impl Syncer {
             match sync_mode {
                 SyncMode::Snap => {
                     // Store headers and save hashes for full block retrieval
+                    info!("Adding block headers");
                     all_block_hashes.extend_from_slice(&block_hashes[..]);
                     store
                         .add_block_headers(block_hashes.clone(), block_headers.clone())
@@ -316,6 +317,7 @@ impl Syncer {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
+                info!("Spawning store block bodies");
                 let store_bodies_handle = tokio::spawn(store_block_bodies(
                     all_block_hashes[pivot_idx..].to_vec(),
                     self.peers.clone(),
@@ -581,6 +583,7 @@ impl Syncer {
     // new blocks can be executed on top of it, if false then the state is still inconsistent and
     // snap sync must be resumed on the next sync cycle
     async fn snap_sync(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
+        info!("Starting snap sync proper");
         // Begin the background trie rebuild process if it is not active yet or if it crashed
         // if !self
         //     .trie_rebuilder

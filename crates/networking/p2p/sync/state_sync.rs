@@ -194,14 +194,16 @@ async fn state_sync_segment(
             // are more accounts to be fetched but these accounts may belong to the next segment
             if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number] {
                 // All accounts fetched!
+                info!("All accounts were fetched");
                 break;
             }
         } else {
             stale = true;
+            info!("Block became stale while fetching account ranges");
             break;
         }
     }
-    debug!(
+    info!(
         "[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process"
     );
     // Update sync progress (this task is not vital so we can detach it)
