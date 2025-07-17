@@ -1,10 +1,10 @@
 use crate::deserialize::{
-    deserialize_u64_str, deserialize_u256_str, deserialize_u256_valued_hashmap,
-    deserialize_u256_vec,
+    deserialize_u256_str, deserialize_u256_valued_hashmap, deserialize_u256_vec,
 };
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_common::serde_utils::bytes::deserialize;
+use ethrex_common::serde_utils::u64::deser_hex_or_dec_str;
 use ethrex_common::types::{Account, AccountInfo, code_hash};
 use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
@@ -68,7 +68,7 @@ impl Default for InputAccount {
 pub struct InputTransaction {
     pub to: Option<Address>,
     pub sender: Address,
-    #[serde(deserialize_with = "deserialize_u64_str")]
+    #[serde(deserialize_with = "deser_hex_or_dec_str")]
     pub gas_limit: u64,
     #[serde(deserialize_with = "deserialize_u256_str")]
     pub gas_price: U256,
