@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752766221616,
+  "lastUpdate": 1752769231681,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4375,6 +4375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208306400295,
             "range": "± 349221026",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "14ef9bfde463af72598fe43a515c334fea6aedfb",
+          "message": "fix(l2): `get_batch` failing if in validium mode (#3680)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nRollup store's`get_batch` fails when in validium mode as it's not\nfinding any blob (currently in validium mode we don't generate blobs).\nThis makes features like `ethrex_getBatchByNumber` unusable in validium\nmode.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAccept empty blobs bundle when retrieving batches from rollup store.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-07-17T15:25:15Z",
+          "tree_id": "585d1a479356a69e449df5a5763ea36b8a040686",
+          "url": "https://github.com/lambdaclass/ethrex/commit/14ef9bfde463af72598fe43a515c334fea6aedfb"
+        },
+        "date": 1752769218907,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207747748494,
+            "range": "± 475475744",
             "unit": "ns/iter"
           }
         ]
