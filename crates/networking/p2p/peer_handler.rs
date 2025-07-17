@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -8,6 +12,8 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use k256::elliptic_curve::rand_core::le;
+use rand::seq::SliceRandom;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -113,7 +119,10 @@ impl PeerHandler {
     }
 
     /// Returns a vector containing the channels for all the peers that support the given capability.
-    async fn get_all_peer_channels(&self, capabilities: &[Capability]) -> Vec<PeerChannels> {
+    async fn get_all_peer_channels(
+        &self,
+        capabilities: &[Capability],
+    ) -> Vec<(H256, PeerChannels)> {
         let table = self.peer_table.lock().await;
         table.get_all_peer_channels(capabilities)
     }
@@ -123,19 +132,106 @@ impl PeerHandler {
         start: H256,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
+        let mut ret = Vec::<BlockHeader>::new();
+
         // 1) get the number of total headers in the chain (e.g. 800.000)
-        let k = U256::from(800_000_usize);
+        let block_count = 800_000_64;
+        let chunk_count = 8_usize; // e.g. 8 tasks
 
         // 2) partition the amount of headers in `K` tasks
+        let chunk_limit = block_count / chunk_count as u64;
+
+        // list of tasks to be executed
+        let mut tasks_queue_not_started = VecDeque::<u64>::with_capacity(chunk_count);
+        for i in 0..(chunk_count as u64) {
+            tasks_queue_not_started.push_back(i * chunk_limit);
+        }
+
+        let mut downloaded_count = 0_u64;
+
+        let mut peer_channels = self
+            .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .await;
+
+        // channel to send the tasks to the peers
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel(1000);
 
         // 3) create tasks that will request a chunk of headers from a peer
+        loop {
+            let Some(startblock) = tasks_queue_not_started.pop_front() else {
+                if downloaded_count >= block_count {
+                    info!("All headers downloaded successfully");
+                    break;
+                } else {
+                    warn!(
+                        "Not all headers were downloaded, only {downloaded_count} out of {block_count}"
+                    );
+
+                    // sleep and retry
+                    //tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            peer_channels.shuffle(&mut rand::thread_rng());
+
+            let (peer_id, mut peer_channel) = match peer_channels.pop() {
+                Some((id, channel)) => (id, channel),
+                None => {
+                    warn!("No peers available to request block headers");
+                    return None; // No peers available
+                }
+            };
+
+            let tx = task_sender.clone();
+            // run download_chunk_from_peer in a different Tokio task
+            let download_result = tokio::spawn(async move {
+                let ret = Self::download_chunk_from_peer(
+                    peer_id,
+                    &mut peer_channel,
+                    startblock,
+                    chunk_limit,
+                )
+                .await;
+                tx.send((ret, peer_id, peer_channel)).await.unwrap();
+            });
+
+            let ret_task = task_receiver.try_recv();
+
+            match ret_task {
+                Ok(headers_result) => {
+                    match headers_result {
+                        (Ok(headers), peer_id, peer_channel) => {
+                            downloaded_count += headers.len() as u64;
+                            info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
+                            // store headers!!!!
+                            ret.extend_from_slice(&headers);
+                            peer_channels.push((peer_id, peer_channel));
+                        }
+                        (Err(err), peer_id, peer_channel) => {
+                            warn!("Failed to download chunk from peer {peer_id}: {err}");
+                            // Optionally, you can re-add the peer to the queue or handle it differently
+                            peer_channels.push((peer_id, peer_channel));
+                            continue; // Retry with the next peer
+                        }
+                    }
+                }
+                Err(err) => {
+                    continue;
+                }
+            }
+
+            // 4) assign the tasks to the peers
+            //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
+
+            // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
+        }
 
         // 4) assign the tasks to the peers
         //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
         //     4.2) mark the peer as busy
         //     4.3) wait for the response and handle it
 
-        // 5) loop until all the chunks are received
+        // 5) loop until all the chunks are received (retry to get the chunks that failed)
 
         todo!("Implement request_block_headers_2");
     }
@@ -144,7 +240,6 @@ impl PeerHandler {
     ///
     /// If it fails, returns an error message.
     async fn download_chunk_from_peer(
-        &self,
         peer_id: H256,
         peer_channel: &mut PeerChannels,
         startblock: u64,
@@ -160,6 +255,7 @@ impl PeerHandler {
         });
         let mut receiver = peer_channel.receiver.lock().await;
 
+        // FIXME! modify the cast and wait for a `call` version
         peer_channel
             .connection
             .cast(CastMessage::BackendMessage(request))
