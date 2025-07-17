@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>load-tests - Ethrex</title>
+        <title>Replay - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../../favicon.svg">
-        <link rel="shortcut icon" href="../../favicon.png">
-        <link rel="stylesheet" href="../../css/variables.css">
-        <link rel="stylesheet" href="../../css/general.css">
-        <link rel="stylesheet" href="../../css/chrome.css">
-        <link rel="stylesheet" href="../../css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../../fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../../";
+            const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -237,56 +237,103 @@
 }
 
 </style>
-<h1 id="l2-load-tests"><a class="header" href="#l2-load-tests">L2 load-tests</a></h1>
-<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
-<p>Load tests are available via L2 CLI and Makefile targets.</p>
-<h3 id="makefile"><a class="header" href="#makefile">Makefile</a></h3>
-<p>There are currently three different load tests you can run:</p>
-<pre><code class="language-sh">make load-test
-make load-test-erc20
-make load-test-fibonacci
-make load-test-io
+<h1 id="ethrex-replay"><a class="header" href="#ethrex-replay">ethrex-replay</a></h1>
+<p>A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by <a href="https://github.com/lambdaclass/starknet-replay">starknet-replay</a>.</p>
+<h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
+<blockquote>
+<p><strong>Note:</strong> All commands must be run from the <code>ethrex/cmd/ethrex_replay</code> directory.</p>
+</blockquote>
+<h3 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h3>
+<h4 id="risc0"><a class="header" href="#risc0"><a href="https://dev.risczero.com/api/zkvm/install">RISC0</a></a></h4>
+<pre><code class="language-sh">curl -L https://risczero.com/install | bash
+rzup install cargo-risczero 2.1.0
+rzup install rust
 </code></pre>
-<p>The first one sends regular transfers between accounts, the second runs an EVM-heavy contract that computes fibonacci numbers, the third a heavy IO contract that writes to 100 storage slots per transaction.</p>
-<h2 id="load-test-comparison-against-reth"><a class="header" href="#load-test-comparison-against-reth">Load test comparison against Reth</a></h2>
-<p>To run a load test on Reth, clone the repo, then run</p>
-<pre><code class="language-sh">cargo run --release -- node --chain &lt;path_to_genesis-load-test.json&gt; --dev --dev.block-time 5000ms --http.port 1729
+<h4 id="sp1"><a class="header" href="#sp1"><a href="https://docs.succinct.xyz/docs/sp1/introduction">SP1</a></a></h4>
+<pre><code class="language-sh">curl -L https://sp1up.succinct.xyz | bash
+sp1up --version 5.0.0
 </code></pre>
-<p>to spin up a reth node in <code>dev</code> mode that will produce a block every 5 seconds.</p>
-<p>Reth has a default mempool size of 10k transactions. If the load test goes too fast it will reach the limit; if you want to increase mempool limits pass the following flags:</p>
-<pre><code class="language-sh">--txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000
+<h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
+<p>Before running any command, set the following environment variables depending on the operation:</p>
+<pre><code class="language-sh">export RPC_URL=&lt;RPC_URL&gt;
+export BLOCK_NUMBER=&lt;BLOCK_NUMBER&gt;
+export BATCH_NUMBER=&lt;BATCH_NUMBER&gt;
+export TX_HASH=&lt;TRANSACTION_HASH&gt;
+export START_BLOCK=&lt;START_BLOCK&gt;
+export END_BLOCK=&lt;END_BLOCK&gt;
+export NETWORK=&lt;mainnet|cancun|holesky|hoodi|sepolia|chainId&gt;
+export L2=true
 </code></pre>
-<h3 id="changing-block-gas-limit"><a class="header" href="#changing-block-gas-limit">Changing block gas limit</a></h3>
-<p>By default the block gas limit is the one Ethereum mainnet uses, i.e. 30 million gas. If you wish to change it, just edit the <code>gasLimit</code> field in the genesis file (in the case of <code>ethrex</code> it's <code>genesis-l2.json</code>, in the case of <code>reth</code> it's <code>genesis-load-test.json</code>). Note that the number has to be passed as a hextstring.</p>
-<h2 id="flamegraphs"><a class="header" href="#flamegraphs">Flamegraphs</a></h2>
-<p>To analyze performance during load tests (both <code>ethrex</code> and <code>reth</code>) you can use <code>cargo flamegraph</code> to generate a flamegraph of the node.</p>
-<p>For <code>ethrex</code>, you can run the server with:</p>
-<pre><code class="language-sh">sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network fixtures/genesis/l2.json --http.port 1729 --dev
+<h4 id="variable-descriptions"><a class="header" href="#variable-descriptions">Variable Descriptions</a></h4>
+<ul>
+<li><code>RPC_URL</code>: Ethereum JSON-RPC endpoint used to fetch on-chain data.</li>
+<li><code>BLOCK_NUMBER</code>: Block number to replay. If unset, the latest block will be used.</li>
+<li><code>BATCH_NUMBER</code>: L2 batch number to execute or prove.</li>
+<li><code>TX_HASH</code>: Hash of the transaction to replay.</li>
+<li><code>START_BLOCK</code> / <code>END_BLOCK</code>: Defines the block range to analyze and plot.</li>
+<li><code>NETWORK</code>: Logical network name or chain ID. Defaults to <code>mainnet</code>.</li>
+<li><code>L2</code>: Set to <code>true</code> to run transactions in L2 mode.</li>
+</ul>
+<blockquote>
+<p>You only need to set the variables required by the command you're running.</p>
+</blockquote>
+<hr />
+<h2 id="running-examples"><a class="header" href="#running-examples">Running Examples</a></h2>
+<h3 id="execute-a-single-block-no-proving"><a class="header" href="#execute-a-single-block-no-proving">Execute a single block (no proving)</a></h3>
+<p>Required: <code>RPC_URL</code>.
+Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code></p>
+<pre><code class="language-sh">make sp1           # SP1 (CPU)
+make sp1-gpu       # SP1 (GPU)
+make risc0         # RISC0 (CPU)
+make risc0-gpu     # RISC0 (GPU)
 </code></pre>
-<p>For <code>reth</code>:</p>
-<pre><code class="language-sh">sudo cargo flamegraph --profile profiling -- node --chain &lt;path_to_genesis-load-test.json&gt; --dev --dev.block-time 5000ms --http.port 1729
+<h3 id="prove-a-single-block"><a class="header" href="#prove-a-single-block">Prove a single block</a></h3>
+<p>Required: <code>RPC_URL</code>.
+Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code>.</p>
+<pre><code class="language-sh">make prove-sp1
+make prove-sp1-gpu
+make prove-risc0
+make prove-risc0-gpu
 </code></pre>
-<h3 id="with-make-targets"><a class="header" href="#with-make-targets">With Make Targets</a></h3>
-<p>There are some make targets inside the root's Makefile.</p>
-<p>You will need two terminals:</p>
-<ol>
-<li><code>make start-node-with-flamegraph</code> → This starts the ethrex client.</li>
-<li><code>make flamegraph</code> → This starts a script that sends a bunch of transactions, the script will stop ethrex when the account reaches a certain balance.</li>
-</ol>
-<h3 id="samply"><a class="header" href="#samply">Samply</a></h3>
-<p>To run with samply, run</p>
-<pre><code class="language-sh">samply record ./target/profiling/reth node --chain ../ethrex/fixtures/genesis/load-test.json --dev --dev.block-time 5000ms --http.port 1729
+<h3 id="execute-an-l2-batch-no-proving"><a class="header" href="#execute-an-l2-batch-no-proving">Execute an L2 batch (no proving)</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
+<pre><code class="language-sh">make batch-sp1
+make batch-sp1-gpu
+make batch-risc0
+make batch-risc0-gpu
+</code></pre>
+<h3 id="prove-an-l2-batch"><a class="header" href="#prove-an-l2-batch">Prove an L2 batch</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
+<pre><code class="language-sh">make prove-batch-sp1
+make prove-batch-sp1-gpu
+make prove-batch-risc0
+make prove-batch-risc0-gpu
+</code></pre>
+<h3 id="execute-a-transaction"><a class="header" href="#execute-a-transaction">Execute a transaction</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>TX_HASH</code>, <code>NETWORK</code>.
+Optionally: <code>L2=true</code> (if the transaction is L2-specific)</p>
+<pre><code class="language-sh">make transaction
+</code></pre>
+<h3 id="plot-block-composition"><a class="header" href="#plot-block-composition">Plot block composition</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>START_BLOCK</code>, <code>END_BLOCK</code>.
+Optionally: <code>NETWORK</code></p>
+<pre><code class="language-sh">make plot
+</code></pre>
+<hr />
+<h2 id="check-all-available-commands"><a class="header" href="#check-all-available-commands">Check All Available Commands</a></h2>
+<p>Run:</p>
+<pre><code class="language-sh">make help
 </code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../developers/l2/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../developers/l2/load_tests.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../../ethrex_replay/ethrex_replay.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../CONTRIBUTING_DOCS.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -296,11 +343,11 @@ make load-test-io
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../developers/l2/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../developers/l2/load_tests.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../../ethrex_replay/ethrex_replay.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../CONTRIBUTING_DOCS.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -315,17 +362,17 @@ make load-test-io
         </script>
 
 
-        <script src="../../elasticlunr.min.js"></script>
-        <script src="../../mark.min.js"></script>
-        <script src="../../searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="../../clipboard.min.js"></script>
-        <script src="../../highlight.js"></script>
-        <script src="../../book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../../mermaid.min.js"></script>
-        <script src="../../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
 
 
     </div>

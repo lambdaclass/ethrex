@@ -4470,6 +4470,161 @@ make load-test-io
 }
 
 </style>
+<h1 id="ethrex-replay"><a class="header" href="#ethrex-replay">ethrex-replay</a></h1>
+<p>A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by <a href="https://github.com/lambdaclass/starknet-replay">starknet-replay</a>.</p>
+<h2 id="getting-started-1"><a class="header" href="#getting-started-1">Getting Started</a></h2>
+<blockquote>
+<p><strong>Note:</strong> All commands must be run from the <code>ethrex/cmd/ethrex_replay</code> directory.</p>
+</blockquote>
+<h3 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h3>
+<h4 id="risc0"><a class="header" href="#risc0"><a href="https://dev.risczero.com/api/zkvm/install">RISC0</a></a></h4>
+<pre><code class="language-sh">curl -L https://risczero.com/install | bash
+rzup install cargo-risczero 2.1.0
+rzup install rust
+</code></pre>
+<h4 id="sp1"><a class="header" href="#sp1"><a href="https://docs.succinct.xyz/docs/sp1/introduction">SP1</a></a></h4>
+<pre><code class="language-sh">curl -L https://sp1up.succinct.xyz | bash
+sp1up --version 5.0.0
+</code></pre>
+<h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
+<p>Before running any command, set the following environment variables depending on the operation:</p>
+<pre><code class="language-sh">export RPC_URL=&lt;RPC_URL&gt;
+export BLOCK_NUMBER=&lt;BLOCK_NUMBER&gt;
+export BATCH_NUMBER=&lt;BATCH_NUMBER&gt;
+export TX_HASH=&lt;TRANSACTION_HASH&gt;
+export START_BLOCK=&lt;START_BLOCK&gt;
+export END_BLOCK=&lt;END_BLOCK&gt;
+export NETWORK=&lt;mainnet|cancun|holesky|hoodi|sepolia|chainId&gt;
+export L2=true
+</code></pre>
+<h4 id="variable-descriptions"><a class="header" href="#variable-descriptions">Variable Descriptions</a></h4>
+<ul>
+<li><code>RPC_URL</code>: Ethereum JSON-RPC endpoint used to fetch on-chain data.</li>
+<li><code>BLOCK_NUMBER</code>: Block number to replay. If unset, the latest block will be used.</li>
+<li><code>BATCH_NUMBER</code>: L2 batch number to execute or prove.</li>
+<li><code>TX_HASH</code>: Hash of the transaction to replay.</li>
+<li><code>START_BLOCK</code> / <code>END_BLOCK</code>: Defines the block range to analyze and plot.</li>
+<li><code>NETWORK</code>: Logical network name or chain ID. Defaults to <code>mainnet</code>.</li>
+<li><code>L2</code>: Set to <code>true</code> to run transactions in L2 mode.</li>
+</ul>
+<blockquote>
+<p>You only need to set the variables required by the command you're running.</p>
+</blockquote>
+<hr />
+<h2 id="running-examples"><a class="header" href="#running-examples">Running Examples</a></h2>
+<h3 id="execute-a-single-block-no-proving"><a class="header" href="#execute-a-single-block-no-proving">Execute a single block (no proving)</a></h3>
+<p>Required: <code>RPC_URL</code>.
+Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code></p>
+<pre><code class="language-sh">make sp1           # SP1 (CPU)
+make sp1-gpu       # SP1 (GPU)
+make risc0         # RISC0 (CPU)
+make risc0-gpu     # RISC0 (GPU)
+</code></pre>
+<h3 id="prove-a-single-block"><a class="header" href="#prove-a-single-block">Prove a single block</a></h3>
+<p>Required: <code>RPC_URL</code>.
+Optionally: <code>BLOCK_NUMBER</code>, <code>NETWORK</code>.</p>
+<pre><code class="language-sh">make prove-sp1
+make prove-sp1-gpu
+make prove-risc0
+make prove-risc0-gpu
+</code></pre>
+<h3 id="execute-an-l2-batch-no-proving"><a class="header" href="#execute-an-l2-batch-no-proving">Execute an L2 batch (no proving)</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
+<pre><code class="language-sh">make batch-sp1
+make batch-sp1-gpu
+make batch-risc0
+make batch-risc0-gpu
+</code></pre>
+<h3 id="prove-an-l2-batch"><a class="header" href="#prove-an-l2-batch">Prove an L2 batch</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>BATCH_NUMBER</code>, <code>NETWORK</code>.</p>
+<pre><code class="language-sh">make prove-batch-sp1
+make prove-batch-sp1-gpu
+make prove-batch-risc0
+make prove-batch-risc0-gpu
+</code></pre>
+<h3 id="execute-a-transaction"><a class="header" href="#execute-a-transaction">Execute a transaction</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>TX_HASH</code>, <code>NETWORK</code>.
+Optionally: <code>L2=true</code> (if the transaction is L2-specific)</p>
+<pre><code class="language-sh">make transaction
+</code></pre>
+<h3 id="plot-block-composition"><a class="header" href="#plot-block-composition">Plot block composition</a></h3>
+<p>Required: <code>RPC_URL</code>, <code>START_BLOCK</code>, <code>END_BLOCK</code>.
+Optionally: <code>NETWORK</code></p>
+<pre><code class="language-sh">make plot
+</code></pre>
+<hr />
+<h2 id="check-all-available-commands"><a class="header" href="#check-all-available-commands">Check All Available Commands</a></h2>
+<p>Run:</p>
+<pre><code class="language-sh">make help
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
 <h1 id="contributing-to-the-documentation"><a class="header" href="#contributing-to-the-documentation">Contributing to the Documentation</a></h1>
 <p>We welcome contributions to the documentation! If you want to help improve or expand the docs, please follow these guidelines:</p>
 <h2 id="how-to-edit-the-docs"><a class="header" href="#how-to-edit-the-docs">How to Edit the Docs</a></h2>
