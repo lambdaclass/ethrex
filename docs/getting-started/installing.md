@@ -1,7 +1,11 @@
 # Installing ethrex
 
 We have multiple ways to install the client, depending on your needs.
-[Pre-compiled binaries are available for each release](#installing-from-pre-built-binaries), but you can also [build the client from source](#building-from-source).
+
+Pre-built binaries for Linux and macOS are available for each release.
+See [Installing from pre-built binaries](#installing-from-pre-built-binaries) for installation instructions.
+
+You can also [build the client from source](#building-from-source).
 
 ## Installing from pre-built binaries
 
@@ -10,7 +14,7 @@ For now, the only way to install ethrex is by [building it from source](#buildin
 
 ## Building from source
 
-To install the client, [first install Rust](https://www.rust-lang.org/tools/install) and run:
+To install the client, [first install Rust](https://www.rust-lang.org/tools/install) and then run:
 
 ```sh
 cargo install --locked ethrex \
