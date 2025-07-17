@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::info;
+use ::tracing::{debug, info};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -508,7 +508,7 @@ impl Blockchain {
                         }),
                     )
                 })?;
-
+            debug!("Executed block with hash {}", block.hash());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
@@ -936,11 +936,10 @@ pub fn validate_gas_used(
     block_header: &BlockHeader,
 ) -> Result<(), ChainError> {
     if let Some(last) = receipts.last() {
-        // Note: This is commented because it is still being used in development.
-        // dbg!(last.cumulative_gas_used);
-        // dbg!(block_header.gas_used);
         if last.cumulative_gas_used != block_header.gas_used {
-            return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch));
+            return Err(ChainError::InvalidBlock(
+                InvalidBlockError::GasUsedMismatch(last.cumulative_gas_used, block_header.gas_used),
+            ));
         }
     }
     Ok(())

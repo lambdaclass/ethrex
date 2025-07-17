@@ -16,7 +16,7 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{get_network, init_blockchain, init_store, open_store},
+    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2,
     networks::Network,
     utils::{self, get_client_version, set_datadir},
@@ -284,6 +284,11 @@ pub enum Subcommand {
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
+        // L2 has its own init_tracing because of the ethrex monitor
+        match self {
+            Self::L2(_) => {}
+            _ => init_tracing(opts),
+        }
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
@@ -389,6 +394,10 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
+        let numbers_and_hashes = blocks
+            .iter()
+            .map(|b| (b.header.number, b.hash()))
+            .collect::<Vec<_>>();
         // Execute block by block
         for block in &blocks {
             let hash = block.hash();
@@ -413,7 +422,7 @@ pub async fn import_blocks(
         }
 
         _ = store
-            .mark_chain_as_canonical(&blocks)
+            .mark_chain_as_canonical(&numbers_and_hashes)
             .await
             .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 
