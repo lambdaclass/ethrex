@@ -226,8 +226,9 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s.
-        if code_offset.wrapping_add(size) <= current_call_frame.bytecode.len() {
+        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
+        let code_offset_end = code_offset.checked_add(size);
+        if code_offset_end.is_some() && code_offset_end < Some(current_call_frame.bytecode.len()) {
             let end = code_offset.wrapping_add(size);
 
             #[expect(unsafe_code, reason = "bounds checked beforehand")]
