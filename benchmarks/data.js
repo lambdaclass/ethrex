@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752707010146,
+  "lastUpdate": 1752713228767,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8709,6 +8709,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.005985345291479821,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c7c89a4fb4109c85f04babfd1fad805c7c40fb09",
+          "message": "feat(l2): make contract compilation in the SDK optional (#3665)\n\n**Motivation**\n\n#3443, caused `solc` to be a compile-time dependency of the client.\nSince the proxy bytecode is only needed in `deploy_with_proxy`, which is\nonly used by the `deployer`, this PR makes contract compilation\noptional, via an env var.\n\n**Description**\n\n- Modifies `sdk/build.rs` to check whether `COMPILE_CONTRACTS` env var\nis set before trying to compile the proxy.\n- Creates a new error `ProxyBytecodeNotFound`, which is returned if\n`deploy_with_proxy` is called without compiling the contract.\n- Removes the installation of `solc` from workflows and Dockerfiles\nwhere it is no longer needed\n\nCloses #3654",
+          "timestamp": "2025-07-16T22:08:17Z",
+          "tree_id": "b795bcc727701a80c595d0e5f08cab0c95f414fc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c7c89a4fb4109c85f04babfd1fad805c7c40fb09"
+        },
+        "date": 1752713214554,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012144968152866243,
             "unit": "Mgas/s"
           }
         ]
