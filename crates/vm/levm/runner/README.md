@@ -8,7 +8,7 @@ The program expects 2 inputs:
 - One JSON with fields like the Transaction, Fork, etc. These are all specified in `input_example.json`, you can copy that for you input and make changes.
 - Bytecode in mnemonic, separated by spaces or newlines. Example in `code_example.txt`
 
-You can provide input, bytecode or both. If input is not provided default values will be used. If bytecode file is send as argument and the transaction is a `CALL` then it will be the bytecode of the contract being called; but if transaction is `CREATE` then it will be the initcode.
+You can provide input, bytecode or both. If input is not provided default values will be used. If bytecode file is sent as argument and the transaction is a `CALL` then it will be the bytecode of the contract being called; but if the transaction is `CREATE` then it will be the initcode.
 `CREATE` transactions can be sent if the `to` field of the json is `null`, remember that the initcode has to contain a return instruction with the bytecode at the end. Example of this in `initcode_example.txt`.
 
 Additional Notes:
