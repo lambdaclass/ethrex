@@ -135,18 +135,16 @@ impl RLPxConnectionState {
     }
 
     pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
-        let _geth_peers = serde_json::from_str::<Vec<String>>(
-            &read_to_string("/home/admin/ethrex_3/geth_peers.json")
-                .expect("Failed to read geth_peers.json"),
-        )
-        .expect("Failed to parse geth_peers.json")
-        .iter()
-        .map(|e| {
-            Node::from_str(e)
-                .expect("Failed to parse bootnode enode")
-                .node_id()
-        })
-        .collect::<Vec<_>>();
+        let _geth_peers =
+            serde_json::from_str::<Vec<String>>(include_str!("../../../../../geth_peers.json"))
+                .expect("Failed to parse geth_peers.json")
+                .iter()
+                .map(|e| {
+                    Node::from_str(e)
+                        .expect("Failed to parse bootnode enode")
+                        .node_id()
+                })
+                .collect::<Vec<_>>();
         Self(InnerState::Initiator(Initiator {
             _geth_peers,
             context,
