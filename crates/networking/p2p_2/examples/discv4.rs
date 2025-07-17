@@ -193,6 +193,7 @@ elapsed: {}
 {} total contacts
 {} peers ({} new peers/s)
 {} connection attempts ({} new connection attempts/s)
+{} pings sent ({} new pings sent/s)
 {} failed connections
 Known peers from mainnet: {}
 RLPx connection failures: {:#?}
@@ -206,6 +207,8 @@ Client Diversity: {:?}"#,
                 METRICS.rlpx_conn_establishments_rate.get().floor(),
                 METRICS.rlpx_conn_attempts.get(),
                 METRICS.rlpx_conn_attempts_rate.get().floor(),
+                METRICS.pings_sent.get(),
+                METRICS.pings_sent_rate.get().floor(),
                 METRICS.rlpx_conn_failures.get(),
                 {
                     let discovered = METRICS.discovered_mainnet_peers.lock().await.len();
