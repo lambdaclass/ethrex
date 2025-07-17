@@ -94,6 +94,7 @@ pub async fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
     Ok(serde_json::to_value(peers)?)
 }
 
+// TODO: Adapt the test to the new P2P architecture.
 // #[cfg(test)]
 // mod tests {
 //     use ethrex_p2p::types::{Node, NodeRecord};
@@ -109,7 +110,6 @@ pub async fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
 //         let record = NodeRecord::from_node(&node, 17, &SigningKey::random(&mut OsRng)).unwrap();
 //         let mut peer = PeerData::new(node, record, true);
 //         // Set node capabilities and other relevant data
-//         peer.is_connected = true;
 //         peer.is_connection_inbound = false;
 //         peer.supported_capabilities = vec![Capability::eth(68), Capability::snap(1)];
 //         peer.node.version = Some("ethrex/test".to_string());

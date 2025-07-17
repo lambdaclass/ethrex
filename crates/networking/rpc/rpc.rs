@@ -429,174 +429,174 @@ where
     }?)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::utils::test_utils::default_context_with_storage;
-//     use ethrex_common::{
-//         H160,
-//         types::{ChainConfig, Genesis},
-//     };
-//     use ethrex_storage::{EngineType, Store};
-//     use sha3::{Digest, Keccak256};
-//     use std::fs::File;
-//     use std::io::BufReader;
-//     use std::str::FromStr;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::test_utils::default_context_with_storage;
+    use ethrex_common::{
+        H160,
+        types::{ChainConfig, Genesis},
+    };
+    use ethrex_storage::{EngineType, Store};
+    use sha3::{Digest, Keccak256};
+    use std::fs::File;
+    use std::io::BufReader;
+    use std::str::FromStr;
 
-//     // Maps string rpc response to RpcSuccessResponse as serde Value
-//     // This is used to avoid failures due to field order and allow easier string comparisons for responses
-//     fn to_rpc_response_success_value(str: &str) -> serde_json::Value {
-//         serde_json::to_value(serde_json::from_str::<RpcSuccessResponse>(str).unwrap()).unwrap()
-//     }
+    // Maps string rpc response to RpcSuccessResponse as serde Value
+    // This is used to avoid failures due to field order and allow easier string comparisons for responses
+    fn to_rpc_response_success_value(str: &str) -> serde_json::Value {
+        serde_json::to_value(serde_json::from_str::<RpcSuccessResponse>(str).unwrap()).unwrap()
+    }
 
-//     #[tokio::test]
-//     async fn admin_nodeinfo_request() {
-//         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
-//         let request: RpcRequest = serde_json::from_str(body).unwrap();
-//         let storage =
-//             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-//         storage
-//             .set_chain_config(&example_chain_config())
-//             .await
-//             .unwrap();
-//         let context = default_context_with_storage(storage).await;
-//         let local_p2p_node = context.node_data.local_p2p_node.clone();
+    #[tokio::test]
+    async fn admin_nodeinfo_request() {
+        let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let context = default_context_with_storage(storage).await;
+        let local_p2p_node = context.node_data.local_p2p_node.clone();
 
-//         let enr_url = context.node_data.local_node_record.enr_url().unwrap();
-//         let result = map_http_requests(&request, context).await;
-//         let rpc_response = rpc_response(request.id, result).unwrap();
-//         let blob_schedule = serde_json::json!({
-//             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
-//             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
-//         });
-//         let json = serde_json::json!({
-//             "jsonrpc": "2.0",
-//             "id": 1,
-//             "result": {
-//                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
-//                 "enr": enr_url,
-//                 "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
-//                 "ip": "127.0.0.1",
-//                 "name": "ethrex/test",
-//                 "ports": {
-//                     "discovery": 30303,
-//                     "listener": 30303
-//                 },
-//                 "protocols": {
-//                     "eth": {
-//                         "chainId": 3151908,
-//                         "homesteadBlock": 0,
-//                         "daoForkBlock": null,
-//                         "daoForkSupport": false,
-//                         "eip150Block": 0,
-//                         "eip155Block": 0,
-//                         "eip158Block": 0,
-//                         "byzantiumBlock": 0,
-//                         "constantinopleBlock": 0,
-//                         "petersburgBlock": 0,
-//                         "istanbulBlock": 0,
-//                         "muirGlacierBlock": null,
-//                         "berlinBlock": 0,
-//                         "londonBlock": 0,
-//                         "arrowGlacierBlock": null,
-//                         "grayGlacierBlock": null,
-//                         "mergeNetsplitBlock": 0,
-//                         "shanghaiTime": 0,
-//                         "cancunTime": 0,
-//                         "pragueTime": 1718232101,
-//                         "verkleTime": null,
-//                         "terminalTotalDifficulty": 0,
-//                         "terminalTotalDifficultyPassed": true,
-//                         "blobSchedule": blob_schedule,
-//                         "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
-//                     }
-//                 },
-//             }
-//         });
-//         let expected_response = to_rpc_response_success_value(&json.to_string());
-//         assert_eq!(rpc_response.to_string(), expected_response.to_string())
-//     }
+        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
+        let result = map_http_requests(&request, context).await;
+        let rpc_response = rpc_response(request.id, result).unwrap();
+        let blob_schedule = serde_json::json!({
+            "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
+            "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
+        });
+        let json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
+                "enr": enr_url,
+                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
+                "ip": "127.0.0.1",
+                "name": "ethrex/test",
+                "ports": {
+                    "discovery": 30303,
+                    "listener": 30303
+                },
+                "protocols": {
+                    "eth": {
+                        "chainId": 3151908,
+                        "homesteadBlock": 0,
+                        "daoForkBlock": null,
+                        "daoForkSupport": false,
+                        "eip150Block": 0,
+                        "eip155Block": 0,
+                        "eip158Block": 0,
+                        "byzantiumBlock": 0,
+                        "constantinopleBlock": 0,
+                        "petersburgBlock": 0,
+                        "istanbulBlock": 0,
+                        "muirGlacierBlock": null,
+                        "berlinBlock": 0,
+                        "londonBlock": 0,
+                        "arrowGlacierBlock": null,
+                        "grayGlacierBlock": null,
+                        "mergeNetsplitBlock": 0,
+                        "shanghaiTime": 0,
+                        "cancunTime": 0,
+                        "pragueTime": 1718232101,
+                        "verkleTime": null,
+                        "terminalTotalDifficulty": 0,
+                        "terminalTotalDifficultyPassed": true,
+                        "blobSchedule": blob_schedule,
+                        "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
+                    }
+                },
+            }
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
+        assert_eq!(rpc_response.to_string(), expected_response.to_string())
+    }
 
-//     // Reads genesis file taken from https://github.com/ethereum/execution-apis/blob/main/tests/genesis.json
-//     fn read_execution_api_genesis_file() -> Genesis {
-//         let file = File::open("../../../fixtures/genesis/execution-api.json")
-//             .expect("Failed to open genesis file");
-//         let reader = BufReader::new(file);
-//         serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
-//     }
+    // Reads genesis file taken from https://github.com/ethereum/execution-apis/blob/main/tests/genesis.json
+    fn read_execution_api_genesis_file() -> Genesis {
+        let file = File::open("../../../fixtures/genesis/execution-api.json")
+            .expect("Failed to open genesis file");
+        let reader = BufReader::new(file);
+        serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
+    }
 
-//     #[tokio::test]
-//     async fn create_access_list_simple_transfer() {
-//         // Create Request
-//         // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-value-transfer.io
-//         let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
-//         let request: RpcRequest = serde_json::from_str(body).unwrap();
-//         // Setup initial storage
-//         let storage =
-//             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-//         let genesis = read_execution_api_genesis_file();
-//         storage
-//             .add_initial_state(genesis)
-//             .await
-//             .expect("Failed to add genesis block to DB");
-//         // Process request
-//         let context = default_context_with_storage(storage).await;
-//         let result = map_http_requests(&request, context).await;
-//         let response = rpc_response(request.id, result).unwrap();
-//         let expected_response = to_rpc_response_success_value(
-//             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
-//         );
-//         assert_eq!(response.to_string(), expected_response.to_string());
-//     }
+    #[tokio::test]
+    async fn create_access_list_simple_transfer() {
+        // Create Request
+        // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-value-transfer.io
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        // Setup initial storage
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let genesis = read_execution_api_genesis_file();
+        storage
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis block to DB");
+        // Process request
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let response = rpc_response(request.id, result).unwrap();
+        let expected_response = to_rpc_response_success_value(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
+        );
+        assert_eq!(response.to_string(), expected_response.to_string());
+    }
 
-//     fn example_chain_config() -> ChainConfig {
-//         ChainConfig {
-//             chain_id: 3151908_u64,
-//             homestead_block: Some(0),
-//             eip150_block: Some(0),
-//             eip155_block: Some(0),
-//             eip158_block: Some(0),
-//             byzantium_block: Some(0),
-//             constantinople_block: Some(0),
-//             petersburg_block: Some(0),
-//             istanbul_block: Some(0),
-//             berlin_block: Some(0),
-//             london_block: Some(0),
-//             merge_netsplit_block: Some(0),
-//             shanghai_time: Some(0),
-//             cancun_time: Some(0),
-//             prague_time: Some(1718232101),
-//             terminal_total_difficulty: Some(0),
-//             terminal_total_difficulty_passed: true,
-//             deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
-//                 .unwrap(),
-//             ..Default::default()
-//         }
-//     }
+    fn example_chain_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 3151908_u64,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            merge_netsplit_block: Some(0),
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(1718232101),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
+                .unwrap(),
+            ..Default::default()
+        }
+    }
 
-//     #[tokio::test]
-//     async fn net_version_test() {
-//         let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
-//         let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
-//         // Setup initial storage
-//         let storage =
-//             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-//         storage
-//             .set_chain_config(&example_chain_config())
-//             .await
-//             .unwrap();
-//         let chain_id = storage
-//             .get_chain_config()
-//             .expect("failed to get chain_id")
-//             .chain_id
-//             .to_string();
-//         let context = default_context_with_storage(storage).await;
-//         // Process request
-//         let result = map_http_requests(&request, context).await;
-//         let response = rpc_response(request.id, result).unwrap();
-//         let expected_response_string =
-//             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
-//         let expected_response = to_rpc_response_success_value(&expected_response_string);
-//         assert_eq!(response.to_string(), expected_response.to_string());
-//     }
-// }
+    #[tokio::test]
+    async fn net_version_test() {
+        let body = r#"{"jsonrpc":"2.0","method":"net_version","params":[],"id":67}"#;
+        let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
+        // Setup initial storage
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let chain_id = storage
+            .get_chain_config()
+            .expect("failed to get chain_id")
+            .chain_id
+            .to_string();
+        let context = default_context_with_storage(storage).await;
+        // Process request
+        let result = map_http_requests(&request, context).await;
+        let response = rpc_response(request.id, result).unwrap();
+        let expected_response_string =
+            format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
+        let expected_response = to_rpc_response_success_value(&expected_response_string);
+        assert_eq!(response.to_string(), expected_response.to_string());
+    }
+}
