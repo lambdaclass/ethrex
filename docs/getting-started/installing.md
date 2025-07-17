@@ -39,6 +39,12 @@ After that, you can verify the program is working by running:
 ./ethrex --version
 ```
 
+This should output something like:
+
+```text
+ethrex ethrex/v0.1.0-HEAD-d3aa87a/aarch64-apple-darwin/rustc-v1.87.0
+```
+
 > [!TIP]
 > For convenience, you can move the `ethrex` binary to a directory in your `PATH`, so you can run it from anywhere.
 
