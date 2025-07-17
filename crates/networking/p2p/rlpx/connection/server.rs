@@ -225,6 +225,7 @@ impl GenServer for RLPxConnection {
         mut state: Self::State,
     ) -> CastResponse<Self> {
         if let InnerState::Established(mut established_state) = state.0.clone() {
+            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             match message {
                 // TODO: handle all these "let _"
                 // See https://github.com/lambdaclass/ethrex/issues/3375
@@ -260,7 +261,7 @@ impl GenServer for RLPxConnection {
                     log_peer_debug(&established_state.node, "Block Range Update");
                     let _ = handle_block_range_update(&mut established_state).await;
                 }
-                Self::CastMsg::L2(msg) => {
+                Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
@@ -270,6 +271,13 @@ impl GenServer for RLPxConnection {
                             let _ = l2::l2_connection::send_new_block(&mut established_state).await;
                         }
                     }
+                }
+                _ => {
+                    log_peer_warn(
+                        &established_state.node,
+                        "No handler for cast message or no capabilities matched",
+                    );
+                    // TODO: return error when handled issue
                 }
             }
             // Update the state
@@ -338,6 +346,7 @@ where
         CastMessage::BlockRangeUpdate,
     );
 
+    // Periodic L2 messages events.
     if state.l2_state.connection_state().is_ok() {
         send_interval(
             PERIODIC_BLOCK_BROADCAST_INTERVAL,
@@ -688,6 +697,7 @@ fn spawn_broadcast_listener(mut handle: RLPxConnectionHandle, state: &mut Establ
 
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
+    let peer_supports_l2 = state.l2_state.connection_state().is_ok();
     match message {
         Message::Disconnect(msg_data) => {
             log_peer_debug(
@@ -808,7 +818,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let response = process_trie_nodes_request(req, state.storage.clone())?;
             send(state, Message::TrieNodes(response)).await?
         }
-        Message::L2(req) => {
+        Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
         }
         // Send response messages to the backend
