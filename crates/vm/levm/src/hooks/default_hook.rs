@@ -239,7 +239,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
-    let calldata = vm.current_call_frame()?.calldata.clone();
+    let calldata = &vm.current_call_frame()?.calldata;
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
     // calldata_cost = tokens_in_calldata * 4
