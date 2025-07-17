@@ -93,7 +93,7 @@ impl PeerHandler {
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
+    pub async fn get_peer_channel_with_retry(
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {

@@ -8,6 +8,7 @@ mod trie_rebuild;
 
 use crate::{
     peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     sync::state_sync::FetchTask,
 };
 use bytecode_fetcher::bytecode_fetcher;
@@ -76,9 +77,7 @@ struct OrchestratorHandle {
     sender: Sender<FetchTask>,
 }
 
-async fn fetcher(state_root: H256, start_account_hash: H256, end_account_hash: H256) {
-   
-}
+async fn fetcher(state_root: H256, start_account_hash: H256, end_account_hash: H256) {}
 
 async fn orchestrate(mut rx: Receiver<FetchTask>, peers: PeerHandler) {
     let mut handles = vec![];
@@ -88,13 +87,31 @@ async fn orchestrate(mut rx: Receiver<FetchTask>, peers: PeerHandler) {
                 state_root,
                 start_account_hash,
                 end_account_hash,
+                account_ranges,
             } => {
                 info!(
                     "Received new task, state_root: {state_root:?}, start_account_hash: {start_account_hash:?}, end_account_hash: {end_account_hash:?}"
                 );
-                let peer = peers..await;
+                let (peer_id, peer_channels) = peers
+                    .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                    .await
+                    .unwrap();
                 handles.push(tokio::spawn(async move {
-                    storage_fetcher(state_root, start_account_hash, end_account_hash).await;
+                    /*
+                    storage_fetcher(
+                        mut receiver: Receiver<Vec<(H256, H256)>>,
+                        peers: PeerHandler,
+                        store: Store,
+                        state_root: H256,
+                        storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+                    )
+                    */
+                    storage_fetcher::storage_fetcher(
+                        state_root,
+                        start_account_hash,
+                        end_account_hash,
+                    )
+                    .await;
                     fetcher(state_root, start_account_hash, end_account_hash).await;
                 }));
             }

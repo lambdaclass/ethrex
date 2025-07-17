@@ -16,7 +16,7 @@ use tracing::{debug, error};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        MAX_CHANNEL_MESSAGES, STORAGE_BATCH_SIZE, fetcher_queue::run_queue,
+        MAX_CHANNEL_MESSAGES, STORAGE_BATCH_SIZE, fetcher_queue::run_queue_snap_sync,
         trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT,
     },
 };
@@ -36,7 +36,6 @@ struct LargeStorageRequest {
 /// the pivot becomes stale.
 /// Upon finish, remaining storages will be sent to the storage healer.
 pub(crate) async fn storage_fetcher(
-    mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: PeerHandler,
     store: Store,
     state_root: H256,
@@ -60,8 +59,7 @@ pub(crate) async fn storage_fetcher(
         let s_sender = storage_trie_rebuilder_sender.clone();
         async move { fetch_storage_batch(batch, state_root, peers, store, l_sender, s_sender).await }
     };
-    run_queue(
-        &mut receiver,
+    run_queue_snap_sync(
         &mut pending_storage,
         &fetch_batch,
         peers,

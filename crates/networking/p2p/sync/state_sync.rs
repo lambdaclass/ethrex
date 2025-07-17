@@ -41,6 +41,8 @@ pub enum FetchTask {
         state_root: H256,
         start_account_hash: H256,
         end_account_hash: H256,
+        // ranges of accounts to fetch
+        account_ranges: Vec<(H256, H256)>,
     },
 }
 
@@ -143,12 +145,6 @@ async fn state_sync_segment(
     //     storage_trie_rebuilder_sender.clone(),
     // ));
 
-    let task = FetchTask::Storage {
-        state_root,
-        start_account_hash,
-        end_account_hash: STATE_TRIE_SEGMENTS_END[segment_number],
-    };
-    orchestrator.send(task).await?;
     info!(
         "Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}"
     );
@@ -206,6 +202,14 @@ async fn state_sync_segment(
             if !code_hashes.is_empty() {
                 bytecode_sender.send(code_hashes).await?;
             }
+
+            let task = FetchTask::Storage {
+                state_root,
+                start_account_hash,
+                end_account_hash: STATE_TRIE_SEGMENTS_END[segment_number],
+                account_ranges: account_hashes_and_storage_roots,
+            };
+            orchestrator.send(task).await?;
             // Send hash and root batch to the storage fetcher
             // // TODO(SNAP): Check this
             // if !account_hashes_and_storage_roots.is_empty() {

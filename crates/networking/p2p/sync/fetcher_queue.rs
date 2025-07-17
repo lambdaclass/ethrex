@@ -7,6 +7,64 @@ use crate::peer_handler::PeerHandler;
 
 use super::{MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, SyncError};
 
+pub(crate) async fn run_queue_snap_sync<T, F, Fut>(
+    queue: &mut Vec<T>,
+    fetch_batch: &F,
+    peers: PeerHandler,
+    store: Store,
+    batch_size: usize,
+    account_ranges: Vec<(H256, H256)>,
+) -> Result<(), SyncError>
+where
+    T: Send + 'static,
+    F: Fn(Vec<T>, PeerHandler, Store) -> Fut + Sync + Send,
+    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static,
+{
+    // The pivot may become stale while the fetcher is active, we will still keep the process
+    // alive until the end signal so we don't lose incoming messages
+    let mut incoming = true;
+    let mut stale = false;
+    while incoming {
+        // Read incoming messages and add them to the queue
+        incoming = if !receiver.is_empty() || queue.is_empty() {
+            let mut msg_buffer = vec![];
+            receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await;
+            let incoming =
+                !(msg_buffer.is_empty() || msg_buffer.iter().any(|reqs| reqs.is_empty()));
+            queue.extend(msg_buffer.into_iter().flatten());
+            incoming
+        } else {
+            true
+        };
+
+        // If the pivot isn't stale, spawn fetch tasks for the queued elements
+        if !stale {
+            // Spawn fetcher tasks:
+            if queue.len() >= batch_size || (!incoming && !queue.is_empty()) {
+                // Spawn fetch tasks
+                let mut tasks = tokio::task::JoinSet::new();
+                for _ in 0..MAX_PARALLEL_FETCHES {
+                    let next_batch = queue
+                        .drain(..batch_size.min(queue.len()))
+                        .collect::<Vec<_>>();
+                    tasks.spawn(fetch_batch(next_batch, peers.clone(), store.clone()));
+                    // End loop if we don't have enough elements to fill up a batch
+                    if queue.is_empty() || (incoming && queue.len() < batch_size) {
+                        break;
+                    }
+                }
+                // Collect Results
+                for res in tasks.join_all().await {
+                    let (remaining, is_stale) = res?;
+                    queue.extend(remaining);
+                    stale |= is_stale;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Runs the queue process by reading incoming messages from the receiver, adding the requests to the queue, and then spawning parallel fetch tasks for all queued items
 /// This process will only end when an end signal in the form of an empty vector is read from the receiver
 pub(crate) async fn run_queue<T, F, Fut>(
@@ -31,7 +89,8 @@ where
         incoming = if !receiver.is_empty() || queue.is_empty() {
             let mut msg_buffer = vec![];
             receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await;
-            let incoming = !(msg_buffer.is_empty() || msg_buffer.iter().any(|reqs| reqs.is_empty()));
+            let incoming =
+                !(msg_buffer.is_empty() || msg_buffer.iter().any(|reqs| reqs.is_empty()));
             queue.extend(msg_buffer.into_iter().flatten());
             incoming
         } else {
