@@ -1,5 +1,9 @@
 use std::{
-    collections::{HashMap, HashSet}, fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc
+    collections::{HashMap, HashSet},
+    fs::read_to_string,
+    net::SocketAddr,
+    str::FromStr,
+    sync::Arc,
 };
 
 use crate::{
@@ -114,10 +118,9 @@ pub(crate) async fn perform(
     let (sink, stream) = framed.split();
     Ok((
         Established {
-            _geth_peers: serde_json::from_str::<Vec<String>>(
-                &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
-                    .expect("Failed to read geth_peers.json"),
-            )
+            _geth_peers: serde_json::from_str::<Vec<String>>(include_str!(
+                "../../../../../geth_peers.json"
+            ))
             .expect("Failed to parse geth_peers.json")
             .iter()
             .map(|e| {
