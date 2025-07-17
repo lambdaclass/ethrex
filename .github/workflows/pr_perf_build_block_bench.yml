@@ -1,6 +1,6 @@
 name: Benchmark Block building
 
-# Thid benchmark is put on manual mode until it's fixed.
+# This benchmark is put on manual mode until it's fixed.
 
 on:
   workflow_dispatch:
