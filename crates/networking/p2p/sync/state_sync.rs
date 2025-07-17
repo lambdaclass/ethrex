@@ -22,12 +22,13 @@ use tracing::{debug, info};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        bytecode_fetcher, seconds_to_readable, storage_fetcher::storage_fetcher, OrchestratorHandle, MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START
+        MAX_CHANNEL_MESSAGES, OrchestratorHandle, STATE_TRIE_SEGMENTS_END,
+        STATE_TRIE_SEGMENTS_START, bytecode_fetcher, seconds_to_readable,
+        storage_fetcher::storage_fetcher,
     },
 };
 
 use super::{SHOW_PROGRESS_INTERVAL_DURATION, SyncError};
-
 
 #[derive(Debug, Clone)]
 /// Describes the task to be executed by a peer later.
@@ -42,7 +43,6 @@ pub enum FetchTask {
         end_account_hash: H256,
     },
 }
-
 
 /// Downloads the leaf values of a Block's state trie by requesting snap state from peers
 /// Also downloads the storage tries & bytecodes for each downloaded account
@@ -142,7 +142,7 @@ async fn state_sync_segment(
     //     state_root,
     //     storage_trie_rebuilder_sender.clone(),
     // ));
-    
+
     let task = FetchTask::Storage {
         state_root,
         start_account_hash,
@@ -207,7 +207,7 @@ async fn state_sync_segment(
                 bytecode_sender.send(code_hashes).await?;
             }
             // Send hash and root batch to the storage fetcher
-            // // TODO(SNAP): Check this 
+            // // TODO(SNAP): Check this
             // if !account_hashes_and_storage_roots.is_empty() {
             //     storage_sender
             //         .send(account_hashes_and_storage_roots)
