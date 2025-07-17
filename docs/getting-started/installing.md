@@ -57,11 +57,24 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 ```sh
 cargo install --locked ethrex \
     --git https://github.com/lambdaclass/ethrex.git \
+    --tag v0.0.1-rc.1 \
     --features dev
 ```
 
 This installs the `ethrex` binary.
 For more information on how it is built and installed, see [the cargo-install documentation](https://doc.rust-lang.org/cargo/commands/cargo-install.html).
+
+After that, you can verify the program is working by running:
+
+```sh
+ethrex --version
+```
+
+This should output something like:
+
+```text
+ethrex ethrex/v0.1.0-main-d3aa87a/aarch64-apple-darwin/rustc-v1.87.0
+```
 
 After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
 
