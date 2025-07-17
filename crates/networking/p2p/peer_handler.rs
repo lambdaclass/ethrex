@@ -142,9 +142,9 @@ impl PeerHandler {
         let chunk_limit = block_count / chunk_count as u64;
 
         // list of tasks to be executed
-        let mut tasks_queue_not_started = VecDeque::<u64>::with_capacity(chunk_count);
+        let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::with_capacity(chunk_count);
         for i in 0..(chunk_count as u64) {
-            tasks_queue_not_started.push_back(i * chunk_limit);
+            tasks_queue_not_started.push_back((i * chunk_limit, chunk_limit));
         }
 
         let mut downloaded_count = 0_u64;
@@ -159,20 +159,22 @@ impl PeerHandler {
 
         // 3) create tasks that will request a chunk of headers from a peer
         loop {
-            
             let mut peer_channels = self
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
-            info!("Found {} peers to request block headers", peer_channels.len());
+            info!(
+                "Found {} peers to request block headers",
+                peer_channels.len()
+            );
 
             if peer_channels.is_empty() {
                 warn!("No peers available to request block headers");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 continue;
             }
-        
-            let Some(startblock) = tasks_queue_not_started.pop_front() else {
+
+            let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
@@ -197,6 +199,16 @@ impl PeerHandler {
                                     // store headers!!!!
                                     ret.extend_from_slice(&headers);
                                     peer_channels.push((peer_id, peer_channel));
+
+                                    // reinsert the task to the queue if it was not completed
+                                    if (headers.len() as u64) < chunk_limit {
+                                        let new_chunk_limit = chunk_limit - (headers.len() as u64);
+                                        warn!(
+                                            "Task for startblock {startblock} was not completed, re-adding to the queue {new_chunk_limit} remaining headers"
+                                        );
+                                        tasks_queue_not_started
+                                            .push_back((startblock, new_chunk_limit));
+                                    }
                                 }
                                 (Err(err), peer_id, peer_channel, startblock) => {
                                     warn!("Failed to download chunk from peer {peer_id}: {err}");
@@ -204,7 +216,7 @@ impl PeerHandler {
                                     peer_channels.push((peer_id, peer_channel));
 
                                     // reinsert the task to the queue
-                                    tasks_queue_not_started.push_back(startblock);
+                                    tasks_queue_not_started.push_back((startblock, chunk_limit));
 
                                     continue; // Retry with the next peer
                                 }
@@ -255,6 +267,15 @@ impl PeerHandler {
                             // store headers!!!!
                             ret.extend_from_slice(&headers);
                             peer_channels.push((peer_id, peer_channel));
+
+                            // reinsert the task to the queue if it was not completed
+                            if (headers.len() as u64) < chunk_limit {
+                                let new_chunk_limit = chunk_limit - (headers.len() as u64);
+                                warn!(
+                                    "Task for startblock {startblock} was not completed, re-adding to the queue {new_chunk_limit} remaining headers"
+                                );
+                                tasks_queue_not_started.push_back((startblock, new_chunk_limit));
+                            }
                         }
                         (Err(err), peer_id, peer_channel, startblock) => {
                             warn!("Failed to download chunk from peer {peer_id}: {err}");
@@ -262,7 +283,7 @@ impl PeerHandler {
                             peer_channels.push((peer_id, peer_channel));
 
                             // reinsert the task to the queue
-                            tasks_queue_not_started.push_back(startblock);
+                            tasks_queue_not_started.push_back((startblock, chunk_limit));
 
                             continue; // Retry with the next peer
                         }
