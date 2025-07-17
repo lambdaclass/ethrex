@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
-    str::FromStr,
     sync::Arc,
 };
 
@@ -117,17 +116,6 @@ pub(crate) async fn perform(
     let (sink, stream) = framed.split();
     Ok((
         Established {
-            _geth_peers: serde_json::from_str::<Vec<String>>(include_str!(
-                "../../../../../geth_peers.json"
-            ))
-            .expect("Failed to parse geth_peers.json")
-            .iter()
-            .map(|e| {
-                Node::from_str(e)
-                    .expect("Failed to parse bootnode enode")
-                    .node_id()
-            })
-            .collect::<Vec<_>>(),
             signer: context.signer.clone(),
             sink: Arc::new(Mutex::new(sink)),
             node: node.clone(),

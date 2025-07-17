@@ -1,6 +1,5 @@
-use std::{str::FromStr, time::Duration};
+use std::time::Duration;
 
-use ethrex_common::H256;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
@@ -8,7 +7,7 @@ use spawned_concurrency::{
 
 use tracing::{debug, info};
 
-use crate::{metrics::METRICS, network::P2PContext, types::Node};
+use crate::{metrics::METRICS, network::P2PContext};
 
 use crate::rlpx::connection::server::RLPxConnection;
 
@@ -24,25 +23,13 @@ pub enum RLPxInitiatorError {
 
 #[derive(Debug, Clone)]
 pub struct RLPxInitiatorState {
-    _geth_peers: Vec<H256>,
     context: P2PContext,
     lookup_period: Duration,
 }
 
 impl RLPxInitiatorState {
     pub fn new(context: P2PContext) -> Self {
-        let _geth_peers =
-            serde_json::from_str::<Vec<String>>(include_str!("../../../../geth_peers.json"))
-                .expect("Failed to parse geth_peers.json")
-                .iter()
-                .map(|e| {
-                    Node::from_str(e)
-                        .expect("Failed to parse bootnode enode")
-                        .node_id()
-                })
-                .collect::<Vec<_>>();
         Self {
-            _geth_peers,
             context,
             lookup_period: Duration::from_secs(3),
         }
@@ -123,11 +110,6 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
             RLPxConnection::spawn_as_initiator(state.context.clone(), &contact.node).await;
 
             METRICS.record_new_rlpx_conn_attempt().await;
-            if state._geth_peers.contains(&node_id) {
-                METRICS
-                    .new_connection_attempt_to_mainnet_peer(node_id)
-                    .await;
-            }
         }
     }
 }

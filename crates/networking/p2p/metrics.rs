@@ -1,10 +1,9 @@
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, LazyLock},
     time::{Duration, SystemTime},
 };
 
-use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
@@ -42,16 +41,6 @@ pub struct Metrics {
     pub disconnections: Arc<Mutex<BTreeMap<String, u64>>>,
     /// RLPx connection attempt failures grouped and counted by reason
     pub connection_attempt_failures: Arc<Mutex<BTreeMap<String, u64>>>,
-
-    pub discovered_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
-    pub pinged_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
-    pub failed_to_ping_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
-    pub answered_our_ping_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
-    pub connected_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
-    pub disconnected_mainnet_peers: IntCounter,
-    pub connection_attempts_to_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
-    pub connection_failures_to_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
-    pub connection_failures_to_mainnet_peers_reasons_counts: Arc<Mutex<BTreeMap<String, u64>>>,
 
     start_time: SystemTime,
 }
@@ -99,11 +88,7 @@ impl Metrics {
             .await;
     }
 
-    pub async fn record_new_rlpx_conn_disconnection(
-        &self,
-        maybe_mainnet_known_node_id: &H256,
-        reason: DisconnectReason,
-    ) {
+    pub async fn record_new_rlpx_conn_disconnection(&self, reason: DisconnectReason) {
         *self.peers.lock().await -= 1;
 
         self.disconnections
@@ -112,16 +97,6 @@ impl Metrics {
             .entry(reason.to_string())
             .and_modify(|e| *e += 1)
             .or_insert(1);
-
-        let was_mainnet = self
-            .connected_mainnet_peers
-            .lock()
-            .await
-            .remove(maybe_mainnet_known_node_id);
-
-        if was_mainnet {
-            self.disconnected_mainnet_peers.inc();
-        }
     }
 
     pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
@@ -166,58 +141,6 @@ impl Metrics {
                 break;
             }
         }
-    }
-
-    pub async fn new_discovered_mainnet_peer(&self, node_id: H256) -> bool {
-        self.discovered_mainnet_peers.lock().await.insert(node_id)
-    }
-
-    pub async fn new_failure_pinging_mainnet_peer(&self, node_id: H256) -> bool {
-        self.failed_to_ping_mainnet_peers
-            .lock()
-            .await
-            .insert(node_id)
-    }
-
-    pub async fn new_pinged_mainnet_peer(&self, node_id: H256) -> bool {
-        self.pinged_mainnet_peers.lock().await.insert(node_id)
-    }
-
-    pub async fn new_contacted_mainnet_peer(&self, node_id: H256) -> bool {
-        self.answered_our_ping_mainnet_peers
-            .lock()
-            .await
-            .insert(node_id)
-    }
-
-    pub async fn new_connected_mainnet_peer(&self, node_id: H256) -> bool {
-        self.connected_mainnet_peers.lock().await.insert(node_id)
-    }
-
-    pub async fn new_connection_attempt_to_mainnet_peer(&self, node_id: H256) -> bool {
-        self.connection_attempts_to_mainnet_peers
-            .lock()
-            .await
-            .insert(node_id)
-    }
-
-    pub async fn new_connection_failure_to_mainnet_peer(
-        &self,
-        node_id: H256,
-        failure_reason: &RLPxError,
-    ) {
-        self.connection_failures_to_mainnet_peers
-            .lock()
-            .await
-            .insert(node_id);
-
-        let mut failures_grouped_by_reason = self
-            .connection_failures_to_mainnet_peers_reasons_counts
-            .lock()
-            .await;
-
-        self.update_failures_grouped_by_reason(&mut failures_grouped_by_reason, failure_reason)
-            .await;
     }
 
     pub async fn update_failures_grouped_by_reason(
@@ -446,16 +369,6 @@ impl Default for Metrics {
             .register(Box::new(established_rlpx_conn_rate.clone()))
             .expect("Failed to register established_rlpx_conn_rate gauge");
 
-        let disconnected_mainnet_peers = IntCounter::new(
-            "disconnected_mainnet_peers",
-            "Total number of mainnet nodes that have disconnected us",
-        )
-        .expect("Failed to create disconnected_mainnet_peers counter");
-
-        registry
-            .register(Box::new(disconnected_mainnet_peers.clone()))
-            .expect("Failed to register disconnected_mainnet_peers counter");
-
         Metrics {
             _registry: registry,
             new_contacts_events: Arc::new(Mutex::new(VecDeque::new())),
@@ -479,18 +392,6 @@ impl Default for Metrics {
             disconnections: Arc::new(Mutex::new(BTreeMap::new())),
 
             connection_attempt_failures: Arc::new(Mutex::new(BTreeMap::new())),
-
-            discovered_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
-            failed_to_ping_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
-            pinged_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
-            answered_our_ping_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
-            connected_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
-            disconnected_mainnet_peers,
-            connection_attempts_to_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
-            connection_failures_to_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
-            connection_failures_to_mainnet_peers_reasons_counts: Arc::new(Mutex::new(
-                BTreeMap::new(),
-            )),
 
             start_time: SystemTime::now(),
         }

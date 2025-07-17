@@ -178,7 +178,6 @@ elapsed: {elapsed}
 {rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
 {rlpx_failed_connection_attempts} failed connection attempts
 RLPx disconnections: {rlpx_disconnections:#?}
-Known peers from mainnet: {known_mainnet_nodes_info}
 RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reason:#?}"#,
             elapsed = format_duration(start.elapsed()),
             current_contacts = METRICS.contacts.lock().await,
@@ -193,8 +192,6 @@ RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reaso
             new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
             rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
             rlpx_disconnections = rlpx_disconnections,
-            known_mainnet_nodes_info =
-                format_rlpx_connection_failures_to_known_mainnet_nodes().await,
             rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
         );
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -208,44 +205,4 @@ fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
 
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
-}
-
-async fn format_rlpx_connection_failures_to_known_mainnet_nodes() -> String {
-    let discovered = METRICS.discovered_mainnet_peers.lock().await.len();
-
-    let we_failed_to_ping = METRICS.failed_to_ping_mainnet_peers.lock().await.len();
-
-    let pinged = METRICS.pinged_mainnet_peers.lock().await.len();
-
-    let answered_our_ping = METRICS.answered_our_ping_mainnet_peers.lock().await.len();
-
-    let didnt_answer_our_ping = pinged - we_failed_to_ping - answered_our_ping;
-
-    let connected = METRICS.connected_mainnet_peers.lock().await.len();
-
-    let connection_attempts = METRICS
-        .connection_attempts_to_mainnet_peers
-        .lock()
-        .await
-        .len();
-
-    let connection_failures = METRICS
-        .connection_failures_to_mainnet_peers
-        .lock()
-        .await
-        .len();
-
-    serde_json::to_string_pretty(&serde_json::json!({
-        "discovered": discovered,
-        "we failed to ping": we_failed_to_ping,
-        "didn't answer our ping": didnt_answer_our_ping,
-        "pinged": pinged,
-        "answered our ping": answered_our_ping,
-        "connection attempts": connection_attempts,
-        "connection failures": connection_failures,
-        "connection failure reasons": *METRICS.connection_failures_to_mainnet_peers_reasons_counts.lock().await,
-        "connected": connected,
-        "disconnected": METRICS.disconnected_mainnet_peers.get()
-    }))
-    .expect("Failed to pritty print known mainnet peers counters")
 }
