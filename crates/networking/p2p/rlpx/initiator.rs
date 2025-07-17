@@ -143,9 +143,7 @@ async fn get_lookup_interval(state: &RLPxInitiatorState) -> Duration {
     if num_peers < state.target_peers {
         state.initial_lookup_interval
     } else {
-        info!(
-            "Reached target number of peers or limit on tried peers. Using longer lookup interval."
-        );
+        info!("Reached target number of peers. Using longer lookup interval.");
         state.lookup_period
     }
 }
