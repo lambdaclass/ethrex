@@ -41,9 +41,9 @@ pub struct RLPxInitiatorState {
     // lookup_period: Duration,
     kademlia: Kademlia,
     /// The target number of RLPx connections to reach.
-    target_peers: usize,
+    target_peers: u64,
     /// The limit on the number of tried connections.
-    limit_tried_peers: usize,
+    limit_tried_peers: u64,
 }
 
 impl RLPxInitiatorState {
@@ -157,8 +157,8 @@ impl GenServer for RLPxInitiator {
 }
 
 async fn get_lookup_interval(state: &RLPxInitiatorState) -> Duration {
-    let num_peers = state.kademlia.table.lock().await.len();
-    let num_tried_peers = state.kademlia.already_tried_peers.lock().await.len();
+    let num_peers = state.kademlia.number_of_peers().await;
+    let num_tried_peers = state.kademlia.number_of_tried_peers().await;
 
     if num_peers < state.target_peers && num_tried_peers < state.limit_tried_peers {
         state.initial_lookup_period
