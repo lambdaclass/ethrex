@@ -187,21 +187,23 @@ impl Store {
                 "Failed while trying to retrieve the state root of a known batch. This is a bug."
                     .to_owned(),
             ))?;
+
         let blobs_bundle = BlobsBundle::create_from_blobs(
+            // Currently validium mode doesn't generate blobs, so no one will be stored
+            // TODO: If/When that behaviour change, this should throw error on None
             &self
                 .get_blobs_by_batch(batch_number)
                 .await?
-                .ok_or(RollupStoreError::Custom(
-                    "Failed while trying to retrieve the blobs of a known batch. This is a bug."
-                        .to_owned(),
-                ))?,
+                .unwrap_or_default()
         ).map_err(|e| {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
+
         let message_hashes = self
             .get_message_hashes_by_batch(batch_number)
             .await?
             .unwrap_or_default();
+
         let privileged_transactions_hash = self
             .get_privileged_transactions_hash_by_batch(batch_number)
             .await?.ok_or(RollupStoreError::Custom(
