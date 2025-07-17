@@ -74,8 +74,8 @@ impl RLPxInitiatorState {
             signer,
             // udp_socket,
             kademlia,
-            initial_lookup_period: Duration::from_secs(60), // 1 minute
-            lookup_period: Duration::from_secs(3),
+            initial_lookup_period: Duration::from_secs(3),
+            lookup_period: Duration::from_secs(60),
             target_peers: 50,
             limit_tried_peers: 50_000,
         }
