@@ -201,8 +201,8 @@ pub fn parse_ef_test_dir(
     Ok(directory_tests)
 }
 
-/// "Given the full path of a json test file, returns its path relative to the vectors directory.
-/// Panics if the file is not in the vectors directory."
+/// Given the full path of a json test file, returns its path relative to the vectors directory.
+/// Panics if the file is not in the vectors directory.
 pub fn get_test_relative_path(full_path: PathBuf) -> String {
     let mut path_prefix = PathBuf::new();
 
