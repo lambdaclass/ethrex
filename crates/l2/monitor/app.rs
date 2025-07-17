@@ -34,7 +34,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, info};
 
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
 #[derive(Clone)]
@@ -131,6 +131,15 @@ impl EthrexMonitor {
 
         Ok(())
     }
+
+    pub async fn terminate(&self, state: &EthrexMonitorState) {
+        let mut terminal = state.terminal.lock().await;
+        let _ = restore_terminal(&mut terminal).inspect_err(|err| {
+            error!("Error restoring terminal: {err}");
+        });
+        info!("Monitor has been cancelled");
+        state.cancelation_token.cancel();
+    }
 }
 
 impl GenServer for EthrexMonitor {
@@ -162,11 +171,7 @@ impl GenServer for EthrexMonitor {
             );
             CastResponse::NoReply(state)
         } else {
-            let mut terminal = state.terminal.lock().await;
-            let _ = restore_terminal(&mut terminal).inspect_err(|err| {
-                error!("Error restoring terminal: {err}");
-            });
-            state.cancelation_token.cancel();
+            self.terminate(&state).await;
             CastResponse::Stop
         }
     }

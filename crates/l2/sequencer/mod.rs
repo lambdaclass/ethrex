@@ -174,12 +174,8 @@ pub async fn start_l2(
         .await?;
 
         task_set.spawn(async move {
-            tokio::select! {
-                _ = cancelation_token.cancelled() => {
-                    info!("Monitor has been cancelled");
-                    Ok(())
-                }
-            }
+            cancelation_token.cancelled().await;
+            Ok(())
         });
     }
 
