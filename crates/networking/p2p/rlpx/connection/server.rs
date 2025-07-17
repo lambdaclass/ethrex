@@ -364,7 +364,12 @@ where
     //     );
     // }
     init_capabilities(state, &mut stream).await?;
-    state.table.set_connected_peer(state.node.clone()).await;
+
+    state
+        .table
+        .set_connected_peer(state.node.clone(), peer_channels)
+        .await;
+
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start

@@ -63,13 +63,13 @@ pub struct PeerData {
 }
 
 impl PeerData {
-    pub fn new(node: Node, record: Option<NodeRecord>) -> Self {
+    pub fn new(node: Node, record: Option<NodeRecord>, channels: PeerChannels) -> Self {
         Self {
             node,
             record,
             supported_capabilities: Vec::new(),
             is_connection_inbound: false,
-            channels: None,
+            channels: Some(channels),
         }
     }
 }
@@ -112,12 +112,12 @@ impl Kademlia {
         Self::default()
     }
 
-    pub async fn set_connected_peer(&mut self, node: Node) {
+    pub async fn set_connected_peer(&mut self, node: Node, channels: PeerChannels) {
         info!("New peer connected");
 
         let new_peer_id = node.node_id();
 
-        let new_peer = PeerData::new(node, None);
+        let new_peer = PeerData::new(node, None, channels);
 
         self.peers.lock().await.insert(new_peer_id, new_peer);
     }
@@ -130,19 +130,26 @@ impl Kademlia {
             .lock()
             .await
             .iter()
-            .filter_map(|(node_id, peer_data)| {
-                if peer_data
-                    .supported_capabilities
-                    .iter()
-                    .any(|cap| capabilities.contains(cap))
-                {
-                    let channels = peer_data.channels.clone()?;
-                    Some((*node_id, channels))
-                } else {
-                    None
-                }
+            .filter_map(|(peer_id, peer_data)| {
+                peer_data
+                    .channels
+                    .clone()
+                    .map(|peer_channels| (*peer_id, peer_channels))
             })
             .collect()
+        // .filter_map(|(node_id, peer_data)| {
+        //     if peer_data
+        //         .supported_capabilities
+        //         .iter()
+        //         .any(|cap| capabilities.contains(cap))
+        //     {
+        //         let channels = peer_data.channels.clone()?;
+        //         Some((*node_id, channels))
+        //     } else {
+        //         None
+        //     }
+        // })
+        // .collect();
     }
 }
 
