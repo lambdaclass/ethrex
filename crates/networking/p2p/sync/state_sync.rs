@@ -290,11 +290,7 @@ impl StateSyncProgress {
 }
 
 /// Continously shows the progress of state sync at set intervals
-<<<<<<< HEAD
 /// This task is endless, caller will need to abort it once it is no longer needed
-=======
-/// This task is endless, called will need to abort it once it is no longer needed
->>>>>>> speed-up-healing
 async fn show_state_sync_progress(progress: StateSyncProgress) {
     // Rest for one interval so we don't start computing on empty progress
     sleep(SHOW_PROGRESS_INTERVAL_DURATION).await;
