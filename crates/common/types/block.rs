@@ -19,6 +19,8 @@ use ethrex_rlp::{
 };
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
@@ -233,7 +235,7 @@ impl BlockBody {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
-            .iter()
+            .par_iter()
             .map(|tx| {
                 let t = (tx, tx.sender()?);
                 Ok(t)
