@@ -29,6 +29,7 @@ use ethrex_levm::{
 };
 use std::cmp::min;
 use std::collections::HashMap;
+use std::time::Instant;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -136,7 +137,13 @@ impl LEVM {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
 
-        vm.execute().map_err(VMError::into)
+        let start = Instant::now();
+        let res = vm.execute().map_err(VMError::into);
+        let duration = start.elapsed();
+
+        println!("Time elapsed executing tx: {:?}", duration.as_micros());
+
+        res
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
