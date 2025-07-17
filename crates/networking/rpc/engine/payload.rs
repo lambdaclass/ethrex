@@ -643,7 +643,7 @@ async fn try_execute_payload(
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
-            // context.syncer.sync_to_head(block_hash);
+            context.syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state
