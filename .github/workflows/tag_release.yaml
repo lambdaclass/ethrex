@@ -150,6 +150,7 @@ jobs:
           path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload sp1 vk
+        if: ${{ matrix.arch == 'x86_64' }}
         uses: actions/upload-artifact@v4
         with:
           name: ethrex-riscv32im-succinct-zkvm-vk
