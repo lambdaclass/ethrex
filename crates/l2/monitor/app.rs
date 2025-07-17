@@ -22,6 +22,7 @@ use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, Tui
 
 use crate::based::sequencer_state::SequencerState;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
+use crate::sequencer::configs::MonitorConfig;
 use crate::{
     SequencerConfig,
     monitor::widget::{
@@ -37,7 +38,7 @@ pub struct EthrexMonitor {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
-    pub tick_rate: u64,
+    pub cfg: MonitorConfig,
 
     pub logger: TuiWidgetState,
     pub node_status: NodeStatusTable,
@@ -76,7 +77,7 @@ impl EthrexMonitor {
             },
             should_quit: false,
             tabs: TabsState::default(),
-            tick_rate: cfg.monitor.tick_rate,
+            cfg: cfg.monitor.clone(),
             global_chain_status: GlobalChainStatusTable::new(cfg),
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
             node_status: NodeStatusTable::new(sequencer_state.clone()),
@@ -130,7 +131,8 @@ impl EthrexMonitor {
         loop {
             self.draw(terminal)?;
 
-            let timeout = Duration::from_millis(self.tick_rate).saturating_sub(last_tick.elapsed());
+            let timeout =
+                Duration::from_millis(self.cfg.tick_rate).saturating_sub(last_tick.elapsed());
             if !event::poll(timeout)? {
                 self.on_tick().await?;
                 last_tick = Instant::now();
@@ -243,7 +245,11 @@ impl EthrexMonitor {
             TabsState::Overview => {
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
-                    Constraint::Fill(1),
+                    if let Some(height) = self.cfg.batch_widget_height {
+                        Constraint::Length(height)
+                    } else {
+                        Constraint::Fill(1)
+                    },
                     Constraint::Fill(1),
                     Constraint::Fill(1),
                     Constraint::Fill(1),
