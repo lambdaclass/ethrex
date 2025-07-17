@@ -203,7 +203,7 @@ impl ProofCoordinatorState {
             elasticity_multiplier: config.block_producer.elasticity_multiplier,
             rollup_store,
             rpc_url,
-            tdx_private_key: config.tdx_private_key,
+            tdx_private_key: config.proof_coordinator.tdx_private_key,
             blockchain,
             validium: config.proof_coordinator.validium,
             needed_proof_types,

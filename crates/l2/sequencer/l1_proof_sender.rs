@@ -266,7 +266,7 @@ async fn send_proof_to_aligned(
         let verification_data = VerificationData {
             proving_system,
             proof,
-            proof_generator_addr: state.l1_address.0.into(),
+            proof_generator_addr: state.signer.address().0.into(),
             vm_program_code: Some(vm_program_code),
             verification_key: None,
             pub_input,
