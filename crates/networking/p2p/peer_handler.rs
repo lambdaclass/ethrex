@@ -136,7 +136,7 @@ impl PeerHandler {
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
         let block_count = 800_000_u64;
-        let chunk_count = 8_usize; // e.g. 8 tasks
+        let chunk_count = 800_usize; // e.g. 8 tasks
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count as u64;
@@ -149,10 +149,6 @@ impl PeerHandler {
 
         let mut downloaded_count = 0_u64;
 
-        let mut peer_channels = self
-            .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-            .await;
-
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
             Result<Vec<BlockHeader>, String>,
@@ -163,6 +159,19 @@ impl PeerHandler {
 
         // 3) create tasks that will request a chunk of headers from a peer
         loop {
+            
+            let mut peer_channels = self
+                .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+                .await;
+
+            info!("Found {} peers to request block headers", peer_channels.len());
+
+            if peer_channels.is_empty() {
+                warn!("No peers available to request block headers");
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                continue;
+            }
+        
             let Some(startblock) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
@@ -173,7 +182,6 @@ impl PeerHandler {
                     );
 
                     // sleep and retry
-                    //tokio::time::sleep(Duration::from_secs(1)).await;
                     let ret_task = task_receiver.try_recv();
 
                     match ret_task {
@@ -223,6 +231,7 @@ impl PeerHandler {
             let tx = task_sender.clone();
             // run download_chunk_from_peer in a different Tokio task
             let download_result = tokio::spawn(async move {
+                info!("Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}");
                 let ret = Self::download_chunk_from_peer(
                     peer_id,
                     &mut peer_channel,
@@ -289,6 +298,7 @@ impl PeerHandler {
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, String> {
+        info!("Requesting block headers from peer {peer_id}");
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,

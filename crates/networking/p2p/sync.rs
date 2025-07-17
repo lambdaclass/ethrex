@@ -174,7 +174,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(search_head, BlockRequestOrder::OldToNew)
+                .request_block_headers_2(search_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
