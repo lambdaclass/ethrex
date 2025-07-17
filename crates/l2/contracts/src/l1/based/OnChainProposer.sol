@@ -88,6 +88,9 @@ contract OnChainProposer is
 
     bytes32 public RISC0_VERIFICATION_KEY;
 
+    /// @notice Chain ID of the network
+    uint256 public CHAIN_ID;
+
     modifier onlyLeaderSequencer() {
         require(
             msg.sender ==
@@ -115,7 +118,8 @@ contract OnChainProposer is
         bytes32 sp1Vk,
         bytes32 risc0Vk,
         bytes32 genesisStateRoot,
-        address sequencer_registry
+        address sequencer_registry,
+        uint256 chainId
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -169,6 +173,8 @@ contract OnChainProposer is
         // for (uint256 i = 0; i < sequencerAddresses.length; i++) {
         //             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         //         }
+
+        CHAIN_ID = chainId;
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -401,10 +407,10 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view {
-        // require(
-        //     publicData.length == 192,
-        //     "OnChainProposer: invalid public data length"
-        // );
+        require(
+            publicData.length == 192,
+            "OnChainProposer: invalid public data length"
+        );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
             batchCommitments[lastVerifiedBatch].newStateRoot ==
@@ -439,6 +445,11 @@ contract OnChainProposer is
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
+        );
+        uint256 chainId = uint256(bytes32(publicData[160:192]));
+        require(
+            chainId == CHAIN_ID,
+            "OnChainProposer: given chain id does not correspond to this network"
         );
     }
 
