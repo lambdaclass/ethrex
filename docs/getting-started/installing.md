@@ -42,6 +42,8 @@ After that, you can verify the program is working by running:
 > [!TIP]
 > For convenience, you can move the `ethrex` binary to a directory in your `PATH`, so you can run it from anywhere.
 
+After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
+
 ## Building from source
 
 To install the client, [first install Rust](https://www.rust-lang.org/tools/install) and then run:
@@ -53,3 +55,6 @@ cargo install --locked ethrex \
 ```
 
 This installs the `ethrex` binary.
+For more information on how it is built and installed, see [the cargo-install documentation](https://doc.rust-lang.org/cargo/commands/cargo-install.html).
+
+After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
