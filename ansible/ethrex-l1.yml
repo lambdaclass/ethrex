@@ -5,7 +5,8 @@
     rust_version: "1.88.0"
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     ethereum_metrics_exporter_version: "0.27.4"
-    lighthouse_version: "7.0.1"  
+    lighthouse_version: "7.0.1"
+    ethrex_version: "v0.0.1-rc.1"
 
   tasks:
     - name: Install Clang and related tools
@@ -24,40 +25,19 @@
       vars:
         ansible_ssh_user: admin
 
-    - name: Check if rustup is installed
-      stat:
-        path: /home/{{ ansible_user }}/.cargo/bin/rustc
-      register: rustup_check
-
-    - name: Install rustup
-      shell: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        rustup install {{ rust_version }}
-        rustup default {{ rust_version }}
-      when: not rustup_check.stat.exists
-      environment:
-        PATH: "{{ ansible_env.PATH }}:/home/{{ ansible_user }}/.cargo/bin"
-
-    - name: Add Rust to PATH
-      lineinfile:
-        path: /home/{{ ansible_user }}/.bashrc
-        line: source $HOME/.cargo/env
-        create: yes
-      when: not rustup_check.stat.exists
-
-    - name: Clone Ethrex repository
-      git:
-        repo: "https://github.com/lambdaclass/ethrex.git"
-        dest: "{{ ethrex_dir }}"
-        version: main
-
-    - name: Ensure user systemd directory exists
+    - name: Make directories
       file:
-        path: "/home/{{ ansible_user }}/.config/systemd/user"
+        path: "{{ ethrex_dir }}/bin"
         state: directory
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
-        mode: '0700'
+        mode: "0700"
+
+    - name: Download ethrex
+      get_url:
+        url: https://github.com/lambdaclass/ethrex/releases/download/{{ ethrex_version }}/ethrex-linux_{{ ansible_architecture }}
+        dest: "{{ ethrex_dir }}/bin/ethrex"
+        mode: "0744"
 
     - name: Download Lighthouse
       get_url:
@@ -80,6 +60,14 @@
         mode: u=rwx,g=rx,o=rx
       vars:
         ansible_ssh_user: admin
+
+    - name: Ensure user systemd directory exists
+      file:
+        path: "/home/{{ ansible_user }}/.config/systemd/user"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
 
     - name: Create Lighthouse service
       template:
@@ -163,13 +151,6 @@
         enabled: true
         daemon_reload: true
         scope: user
-
-    - name: Compile Ethrex
-      shell: cargo build --release --features metrics,libmdbx
-      args:
-        chdir: "{{ ethrex_dir }}"
-      environment:
-        PATH: "{{ ansible_env.PATH }}:/home/{{ ansible_user }}/.cargo/bin"
 
     - name: Install Ethrex L1
       template:

@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Environment="RUST_LOG=3"
 WorkingDirectory={{ ethrex_dir }}
-ExecStart={{ ethrex_dir }}/target/release/ethrex \
+ExecStart={{ ethrex_dir }}/bin/ethrex \
           --http.addr 0.0.0.0 --http.port 8545 \
           --authrpc.addr 0.0.0.0 --authrpc.port 8551 \
           --p2p.addr 0.0.0.0 --p2p.port 30303 \
