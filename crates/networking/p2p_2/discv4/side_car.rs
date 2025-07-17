@@ -261,8 +261,17 @@ impl GenServer for DiscoverySideCar {
 }
 
 async fn revalidate(state: &DiscoverySideCarState) {
+    let sent_ping_ttl = Duration::from_secs(30);
     for contact in state.kademlia.table.lock().await.values_mut() {
-        if contact.disposable || contact.was_validated() || contact.has_pending_ping() {
+        if contact.disposable || contact.was_validated() {
+            continue;
+        }
+
+        if contact
+            .validation_timestamp
+            .map(|ts| Instant::now().saturating_duration_since(ts) <= sent_ping_ttl)
+            .unwrap_or(false)
+        {
             continue;
         }
 
