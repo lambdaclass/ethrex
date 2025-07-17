@@ -28,29 +28,34 @@ pub struct Stack {
 }
 
 impl Stack {
+    #[inline]
     pub fn pop<const N: usize>(&mut self) -> Result<&[U256; N], ExceptionalHalt> {
         // Compile-time check for stack underflow.
-        if N > STACK_LIMIT {
-            return Err(ExceptionalHalt::StackUnderflow);
+        const {
+            assert!(N <= STACK_LIMIT);
         }
 
         // The following operation can never overflow as both `self.offset` and N are within
         // STACK_LIMIT (1024).
-        #[expect(clippy::arithmetic_side_effects)]
-        let next_offset = self.offset + N;
+        let next_offset = self.offset.wrapping_add(N);
 
         // The index cannot fail because `self.offset` is known to be valid. The `first_chunk()`
         // method will ensure that `next_offset` is within `STACK_LIMIT`, so there's no need to
         // check it again.
-        #[expect(clippy::indexing_slicing)]
-        let values = self.values[self.offset..]
-            .first_chunk::<N>()
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        #[expect(unsafe_code)]
+        let values = unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .first_chunk::<N>()
+                .ok_or(ExceptionalHalt::StackUnderflow)?
+        };
+        // Due to previous error check in first_chunk, next_offset is guaranteed to be < STACK_LIMIT
         self.offset = next_offset;
 
         Ok(values)
     }
 
+    #[inline]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
@@ -61,8 +66,19 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[next_offset..self.offset].copy_from_slice(values);
+        #[expect(
+            unsafe_code,
+            reason = "self.offset < STACK_LIMIT and next_offset == self.offset - N >= 0"
+        )]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                values.as_ptr(),
+                self.values
+                    .get_unchecked_mut(next_offset..self.offset)
+                    .as_mut_ptr(),
+                N,
+            );
+        }
         self.offset = next_offset;
 
         Ok(())
@@ -84,12 +100,16 @@ impl Stack {
     pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
         // The following index cannot fail because `self.offset` is known to be within
         // `STACK_LIMIT`.
-        #[expect(clippy::indexing_slicing)]
-        self.values[self.offset..]
-            .get(index)
-            .ok_or(ExceptionalHalt::StackUnderflow)
+        #[expect(unsafe_code)]
+        unsafe {
+            self.values
+                .get_unchecked(self.offset..)
+                .get(index)
+                .ok_or(ExceptionalHalt::StackUnderflow)
+        }
     }
 
+    #[inline(always)]
     pub fn swap(&mut self, index: usize) -> Result<(), ExceptionalHalt> {
         let index = self
             .offset
@@ -134,7 +154,7 @@ impl fmt::Debug for Stack {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
 /// One context can trigger another with opcodes like CALL or CREATE.
@@ -176,7 +196,7 @@ pub struct CallFrame {
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
     /// Return data offset
-    pub ret_offset: U256,
+    pub ret_offset: usize,
     /// Return data size
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
@@ -221,6 +241,9 @@ impl CallFrameBackup {
 
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
+    // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
+    // because passing so much data is costly. Verified with samply.
+    #[inline(always)]
     pub fn new(
         msg_sender: Address,
         to: Address,
@@ -233,12 +256,14 @@ impl CallFrame {
         depth: usize,
         should_transfer_value: bool,
         is_create: bool,
-        ret_offset: U256,
+        ret_offset: usize,
         ret_size: usize,
         stack: Stack,
+        memory: Memory,
     ) -> Self {
         let invalid_jump_destinations =
             get_invalid_jump_destinations(&bytecode).unwrap_or_default();
+        // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
             gas_limit,
             gas_remaining: gas_limit,
@@ -256,7 +281,11 @@ impl CallFrame {
             ret_offset,
             ret_size,
             stack,
-            ..Default::default()
+            memory,
+            call_frame_backup: CallFrameBackup::default(),
+            output: Bytes::default(),
+            pc: 0,
+            sub_return_data: Bytes::default(),
         }
     }
 

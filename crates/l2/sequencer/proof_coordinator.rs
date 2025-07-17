@@ -158,7 +158,7 @@ pub struct ProofCoordinatorState {
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     rpc_url: String,
-    l1_private_key: SecretKey,
+    tdx_private_key: SecretKey,
     blockchain: Arc<Blockchain>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
@@ -205,7 +205,7 @@ impl ProofCoordinatorState {
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
             rpc_url,
-            l1_private_key: config.l1_private_key,
+            tdx_private_key: config.tdx_private_key,
             blockchain,
             validium: config.validium,
             needed_proof_types,
@@ -444,14 +444,28 @@ async fn handle_request(
     .await
     .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
 
-    let response = if !state.rollup_store.contains_batch(&batch_to_verify).await? {
-        debug!("Sending empty BatchResponse");
-        ProofData::empty_batch_response()
-    } else {
-        let input = create_prover_input(state, batch_to_verify).await?;
-        debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-        ProofData::batch_response(batch_to_verify, input)
-    };
+    let mut all_proofs_exist = true;
+    for proof_type in &state.needed_proof_types {
+        if state
+            .rollup_store
+            .get_proof_by_batch_and_type(batch_to_verify, *proof_type)
+            .await?
+            .is_none()
+        {
+            all_proofs_exist = false;
+            break;
+        }
+    }
+
+    let response =
+        if all_proofs_exist || !state.rollup_store.contains_batch(&batch_to_verify).await? {
+            debug!("Sending empty BatchResponse");
+            ProofData::empty_batch_response()
+        } else {
+            let input = create_prover_input(state, batch_to_verify).await?;
+            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+            ProofData::batch_response(batch_to_verify, input)
+        };
 
     send_response(stream, &response).await?;
     info!("BatchResponse sent for batch number: {batch_to_verify}");
@@ -506,14 +520,14 @@ async fn handle_setup(
             prepare_quote_prerequisites(
                 &state.eth_client,
                 &state.rpc_url,
-                &hex::encode(state.l1_private_key.as_ref()),
+                &hex::encode(state.tdx_private_key.as_ref()),
                 &hex::encode(&payload),
             )
             .await
             .map_err(|e| ProofCoordinatorError::Custom(format!("Could not setup TDX key {e}")))?;
             register_tdx_key(
                 &state.eth_client,
-                &state.l1_private_key,
+                &state.tdx_private_key,
                 state.on_chain_proposer_address,
                 payload,
             )
