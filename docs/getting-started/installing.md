@@ -6,7 +6,7 @@ We have multiple ways to install, depending on your needs.
 Pre-built binaries for Linux and macOS are available for each release.
 See [Installing from pre-built binaries](#installing-from-pre-built-binaries) for installation instructions.
 
-You can also [build the client from source](#building-from-source).
+You can also [install through cargo install](#installing-through-cargo-install), or [build the client from source](#building-from-source).
 
 ## Installing from pre-built binaries
 
