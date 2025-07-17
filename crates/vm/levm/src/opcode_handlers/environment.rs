@@ -1,7 +1,7 @@
 use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self},
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     utils::word_to_address,
     vm::VM,
 };
@@ -138,6 +138,17 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+
+        let calldata_offset: usize = match calldata_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
+
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::calldatacopy(
@@ -151,27 +162,22 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if calldata_offset > current_call_frame.calldata.len().into() {
-            memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
 
-        let calldata_offset: usize = calldata_offset
-            .try_into()
-            .map_err(|_err| InternalError::TypeConversion)?;
-
-        for (i, byte) in current_call_frame
-            .calldata
-            .iter()
-            .skip(calldata_offset)
-            .take(size)
-            .enumerate()
-        {
-            if let Some(data_byte) = data.get_mut(i) {
-                *data_byte = *byte;
+        if calldata_offset <= current_call_frame.calldata.len() {
+            for (i, byte) in current_call_frame
+                .calldata
+                .iter()
+                .skip(calldata_offset)
+                .take(size)
+                .enumerate()
+            {
+                if let Some(data_byte) = data.get_mut(i) {
+                    *data_byte = *byte;
+                }
             }
         }
-        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
+
+        current_call_frame.memory.store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -198,6 +204,16 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
+        let destination_offset: usize = match destination_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+        let code_offset: usize = match code_offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
+
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::codecopy(
@@ -211,11 +227,7 @@ impl<'a> VM<'a> {
         }
 
         let mut data = vec![0u8; size];
-        if code_offset < current_call_frame.bytecode.len().into() {
-            let code_offset: usize = code_offset
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
-
+        if code_offset < current_call_frame.bytecode.len() {
             for (i, byte) in current_call_frame
                 .bytecode
                 .iter()
@@ -229,7 +241,9 @@ impl<'a> VM<'a> {
             }
         }
 
-        memory::try_store_data(&mut current_call_frame.memory, destination_offset, &data)?;
+        current_call_frame
+            .memory
+            .store_data(destination_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -272,6 +286,12 @@ impl<'a> VM<'a> {
 
         let address_was_cold = self.substate.accessed_addresses.insert(address);
 
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
         self.current_call_frame_mut()?
@@ -302,11 +322,9 @@ impl<'a> VM<'a> {
             }
         }
 
-        memory::try_store_data(
-            &mut self.current_call_frame_mut()?.memory,
-            dest_offset,
-            &data,
-        )?;
+        self.current_call_frame_mut()?
+            .memory
+            .store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -333,6 +351,12 @@ impl<'a> VM<'a> {
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -371,7 +395,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        memory::try_store_data(&mut current_call_frame.memory, dest_offset, &data)?;
+        current_call_frame.memory.store_data(dest_offset, &data)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
