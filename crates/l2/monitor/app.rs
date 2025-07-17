@@ -131,15 +131,6 @@ impl EthrexMonitor {
 
         Ok(())
     }
-
-    pub async fn terminate(&self, state: &EthrexMonitorState) {
-        let mut terminal = state.terminal.lock().await;
-        let _ = restore_terminal(&mut terminal).inspect_err(|err| {
-            error!("Error restoring terminal: {err}");
-        });
-        info!("Monitor has been cancelled");
-        state.cancelation_token.cancel();
-    }
 }
 
 impl GenServer for EthrexMonitor {
@@ -171,9 +162,22 @@ impl GenServer for EthrexMonitor {
             );
             CastResponse::NoReply(state)
         } else {
-            self.terminate(&state).await;
             CastResponse::Stop
         }
+    }
+
+    async fn teardown(
+        &mut self,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> Result<(), Self::Error> {
+        let mut terminal = state.terminal.lock().await;
+        let _ = restore_terminal(&mut terminal).inspect_err(|err| {
+            error!("Error restoring terminal: {err}");
+        });
+        info!("Monitor has been cancelled");
+        state.cancelation_token.cancel();
+        Ok(())
     }
 }
 
