@@ -195,6 +195,11 @@ jobs:
           ETHREX_COMMITTER_COMMIT_TIME=180000 \
           docker compose -f docker-compose-l2.yaml up --build ethrex_l2  --detach
 
+      - name: Debug balance
+        run: |
+          rex l2 balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62
+          rex balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62
+          
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
