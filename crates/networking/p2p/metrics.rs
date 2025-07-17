@@ -111,11 +111,7 @@ impl Metrics {
         maybe_mainnet_known_node_id: &H256,
         reason: DisconnectReason,
     ) {
-        dbg!("[METRICS] NEW PEER DISCONNECTED");
-
         *self.peers.lock().await -= 1;
-
-        dbg!("[METRICS] PEER COUNT DECREMENTED");
 
         self.disconnections
             .lock()
@@ -123,18 +119,13 @@ impl Metrics {
             .entry(reason.to_string())
             .and_modify(|e| *e += 1)
             .or_insert(1);
-        dbg!("[METRICS] DISCONNECTION RECORDED");
 
         self.connected_mainnet_peers
             .lock()
             .await
             .remove(maybe_mainnet_known_node_id);
 
-        dbg!("[METRICS] MAYBE MAINNET PEER REMOVED");
-
         self.disconnected_mainnet_peers.inc();
-
-        dbg!("[METRICS] DISCONNECTED MAINNET NODES COUNT DECREMENTED");
     }
 
     pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
