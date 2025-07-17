@@ -80,7 +80,7 @@ impl DiscoverySideCarState {
             udp_socket,
             kademlia,
 
-            revalidation_period: Duration::from_secs(12 * 60 * 60), // 12 hours
+            revalidation_period: Duration::from_secs(5),
             initial_lookup_period: Duration::from_secs(5),
             lookup_period: Duration::from_secs(5 * 60), // 5 minutes
             prune_period: Duration::from_secs(5),
