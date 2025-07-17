@@ -7,7 +7,11 @@ use crate::{
     opcodes::Opcode,
     vm::VM,
 };
-use ethrex_common::{H256, U256, types::Fork};
+use ethrex_common::{
+    U256,
+    types::Fork,
+    utils::{u256_to_big_endian, u256_to_h256},
+};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
@@ -139,9 +143,10 @@ impl<'a> VM<'a> {
 
         let [value] = current_call_frame.stack.pop()?;
 
-        current_call_frame
-            .memory
-            .store_data(offset, &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE])?;
+        current_call_frame.memory.store_data(
+            offset,
+            &u256_to_big_endian(*value)[WORD_SIZE - 1..WORD_SIZE],
+        )?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -155,7 +160,7 @@ impl<'a> VM<'a> {
             (storage_slot_key, address)
         };
 
-        let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
+        let storage_slot_key = u256_to_h256(storage_slot_key);
 
         let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
 
@@ -187,7 +192,7 @@ impl<'a> VM<'a> {
         }
 
         // Get current and original (pre-tx) values.
-        let key = H256::from(storage_slot_key.to_big_endian());
+        let key = u256_to_h256(storage_slot_key);
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
         let original_value = self.get_original_storage(to, key)?;
 
@@ -242,7 +247,7 @@ impl<'a> VM<'a> {
             )?)?;
 
         if new_storage_slot_value != current_value {
-            self.update_account_storage(to, key, new_storage_slot_value)?;
+            self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })

@@ -21,6 +21,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{Fork, tx_fields::*},
+    utils::u256_to_big_endian,
 };
 use ethrex_common::{
     types::{Account, TxKind},
@@ -34,7 +35,7 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -212,7 +213,7 @@ pub fn get_blob_gas_price(
 
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
-    Address::from_slice(&word.to_big_endian()[12..])
+    Address::from_slice(&u256_to_big_endian(word)[12..])
 }
 
 // ================== EIP-7702 related functions =====================
@@ -568,7 +569,7 @@ impl<'a> VM<'a> {
     pub fn initialize_substate(&mut self) -> Result<(), VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = HashSet::new();
-        let mut initial_accessed_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
+        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(self.env.origin);

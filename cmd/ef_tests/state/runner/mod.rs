@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::report::EFTestsReport;
 use crate::{
@@ -26,7 +26,7 @@ pub enum EFTestRunnerError {
     #[error("Failed to ensure pre-state: {0}")]
     FailedToEnsurePreState(String),
     #[error("Failed to ensure post-state: {1}")]
-    FailedToEnsurePostState(Box<ExecutionReport>, String, HashMap<Address, Account>),
+    FailedToEnsurePostState(Box<ExecutionReport>, String, BTreeMap<Address, Account>),
     #[error("VM run mismatch: {0}")]
     VMExecutionMismatch(String),
     #[error("Exception does not match the expected: {0}")]
