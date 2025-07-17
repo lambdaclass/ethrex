@@ -21,7 +21,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L2ToL1MessageStatus {
     WithdrawalInitiated,
     WithdrawalClaimed,
@@ -86,7 +86,7 @@ impl Display for L2ToL1MessageStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L2ToL1MessageKind {
     ETHWithdraw,
     ERC20Withdraw,
@@ -103,15 +103,16 @@ impl Display for L2ToL1MessageKind {
     }
 }
 
-pub type L2ToL1MessageRow = (
-    L2ToL1MessageKind,
-    L2ToL1MessageStatus,
-    Address, // receiver in L1
-    U256,    // value
-    Address, // token (L2)
-    Address, // token (L1)
-    H256,    // L2 tx hash
-);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct L2ToL1MessageRow {
+    pub kind: L2ToL1MessageKind,
+    pub status: L2ToL1MessageStatus,
+    pub receiver: Address,
+    pub value: U256,
+    pub token_l1: Address,
+    pub token_l2: Address,
+    pub l2_tx_hash: H256,
+}
 
 #[derive(Default)]
 pub struct L2ToL1MessagesTable {
@@ -157,9 +158,9 @@ impl L2ToL1MessagesTable {
         l1_client: &EthClient,
         l2_client: &EthClient,
     ) -> Result<(), MonitorError> {
-        for (_kind, status, .., l2_tx_hash) in self.items.iter_mut() {
-            *status = L2ToL1MessageStatus::for_tx(
-                *l2_tx_hash,
+        for row in self.items.iter_mut() {
+            row.status = L2ToL1MessageStatus::for_tx(
+                row.l2_tx_hash,
                 self.common_bridge_address,
                 l1_client,
                 l2_client,
@@ -198,7 +199,6 @@ impl L2ToL1MessagesTable {
             keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
 
         for log in logs {
-            let start = log.log.data.len().saturating_sub(32);
             match *log.log.topics.first().ok_or(MonitorError::LogsTopics(0))? {
                 topic if topic == eth_withdrawal_topic => {
                     let withdrawal_status = L2ToL1MessageStatus::for_tx(
@@ -208,27 +208,27 @@ impl L2ToL1MessagesTable {
                         l2_client,
                     )
                     .await?;
-                    processed_logs.push((
-                        L2ToL1MessageKind::ETHWithdraw,
-                        withdrawal_status,
-                        Address::from_slice(
+                    processed_logs.push(L2ToL1MessageRow {
+                        kind: L2ToL1MessageKind::ETHWithdraw,
+                        status: withdrawal_status,
+                        receiver: Address::from_slice(
                             &log.log
-                                .topics
-                                .get(1)
-                                .ok_or(MonitorError::LogsTopics(1))?
-                                .as_fixed_bytes()[12..],
-                        ),
-                        U256::from_big_endian(
-                            log.log
                                 .topics
                                 .get(2)
                                 .ok_or(MonitorError::LogsTopics(2))?
+                                .as_fixed_bytes()[12..],
+                        ),
+                        value: U256::from_big_endian(
+                            log.log
+                                .topics
+                                .get(3)
+                                .ok_or(MonitorError::LogsTopics(3))?
                                 .as_fixed_bytes(),
                         ),
-                        Address::default(),
-                        Address::default(),
-                        log.transaction_hash,
-                    ));
+                        token_l1: Address::default(),
+                        token_l2: Address::default(),
+                        l2_tx_hash: log.transaction_hash,
+                    });
                 }
                 topic if topic == erc20_withdrawal_topic => {
                     let withdrawal_status = L2ToL1MessageStatus::for_tx(
@@ -238,38 +238,35 @@ impl L2ToL1MessagesTable {
                         l2_client,
                     )
                     .await?;
-                    processed_logs.push((
-                        L2ToL1MessageKind::ERC20Withdraw,
-                        withdrawal_status,
-                        Address::from_slice(
+                    processed_logs.push(L2ToL1MessageRow {
+                        kind: L2ToL1MessageKind::ERC20Withdraw,
+                        status: withdrawal_status,
+                        receiver: Address::from_slice(
                             &log.log
                                 .topics
                                 .get(3)
                                 .ok_or(MonitorError::LogsTopics(3))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        U256::from_big_endian(
-                            log.log
-                                .data
-                                .get(start..)
-                                .ok_or(MonitorError::LogsData(start))?,
+                        value: U256::from_big_endian(
+                            log.log.data.get(0..32).ok_or(MonitorError::LogsData(32))?,
                         ),
-                        Address::from_slice(
+                        token_l1: Address::from_slice(
                             &log.log
                                 .topics
                                 .get(1)
                                 .ok_or(MonitorError::LogsTopics(1))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        Address::from_slice(
+                        token_l2: Address::from_slice(
                             &log.log
                                 .topics
                                 .get(2)
                                 .ok_or(MonitorError::LogsTopics(2))?
                                 .as_fixed_bytes()[12..],
                         ),
-                        log.transaction_hash,
-                    ));
+                        l2_tx_hash: log.transaction_hash,
+                    });
                 }
                 _ => {
                     continue;
@@ -298,19 +295,17 @@ impl StatefulWidget for &mut L2ToL1MessagesTable {
             Constraint::Length(HASH_LENGTH_IN_DIGITS),
         ];
 
-        let rows = self.items.iter().map(
-            |(kind, status, receiver_on_l1, value, token_l1, token_l2, l2_tx_hash)| {
-                Row::new(vec![
-                    Span::styled(format!("{kind}"), Style::default()),
-                    Span::styled(format!("{status}"), Style::default()),
-                    Span::styled(format!("{receiver_on_l1:#x}"), Style::default()),
-                    Span::styled(value.to_string(), Style::default()),
-                    Span::styled(format!("{token_l1:#x}"), Style::default()),
-                    Span::styled(format!("{token_l2:#x}"), Style::default()),
-                    Span::styled(format!("{l2_tx_hash:#x}"), Style::default()),
-                ])
-            },
-        );
+        let rows = self.items.iter().map(|row| {
+            Row::new(vec![
+                Span::styled(format!("{}", row.kind), Style::default()),
+                Span::styled(format!("{}", row.status), Style::default()),
+                Span::styled(format!("{:#x}", row.receiver), Style::default()),
+                Span::styled(row.value.to_string(), Style::default()),
+                Span::styled(format!("{:#x}", row.token_l1), Style::default()),
+                Span::styled(format!("{:#x}", row.token_l2), Style::default()),
+                Span::styled(format!("{:#x}", row.l2_tx_hash), Style::default()),
+            ])
+        });
 
         let l1_to_l2_messages_table = Table::new(rows, constraints)
             .header(
