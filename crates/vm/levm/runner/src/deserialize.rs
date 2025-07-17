@@ -4,20 +4,6 @@ use bytes::Bytes;
 use ethrex_common::U256;
 use serde::{Deserialize, Deserializer, de};
 
-pub fn deserialize_hex_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    Ok(Bytes::from(
-        hex::decode(s.trim_start_matches("0x")).map_err(|err| {
-            serde::de::Error::custom(format!(
-                "error decoding hex data when deserializing bytes: {err}"
-            ))
-        })?,
-    ))
-}
-
 pub fn deserialize_u64_str<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,

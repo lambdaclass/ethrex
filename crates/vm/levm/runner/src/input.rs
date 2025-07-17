@@ -1,9 +1,10 @@
 use crate::deserialize::{
-    deserialize_hex_bytes, deserialize_u64_str, deserialize_u256_str,
-    deserialize_u256_valued_hashmap, deserialize_u256_vec,
+    deserialize_u64_str, deserialize_u256_str, deserialize_u256_valued_hashmap,
+    deserialize_u256_vec,
 };
 use bytes::Bytes;
 use ethrex_common::H256;
+use ethrex_common::serde_utils::bytes::deserialize;
 use ethrex_common::types::{Account, AccountInfo, code_hash};
 use ethrex_common::{Address, U256, types::Fork};
 use serde::Deserialize;
@@ -16,7 +17,7 @@ pub struct RunnerInput {
     pub fork: Fork,
     pub transaction: InputTransaction,
     pub pre: HashMap<Address, InputAccount>,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "deserialize")]
     pub initial_memory: Bytes,
     #[serde(deserialize_with = "deserialize_u256_vec")]
     pub initial_stack: Vec<U256>,
@@ -27,7 +28,7 @@ pub struct RunnerInput {
 pub struct InputAccount {
     #[serde(deserialize_with = "deserialize_u256_str")]
     pub balance: U256,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "deserialize")]
     pub code: Bytes,
     #[serde(deserialize_with = "deserialize_u256_valued_hashmap")]
     pub storage: HashMap<U256, U256>,
@@ -73,7 +74,7 @@ pub struct InputTransaction {
     pub gas_price: U256,
     #[serde(deserialize_with = "deserialize_u256_str")]
     pub value: U256,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "deserialize")]
     pub data: Bytes,
 }
 
