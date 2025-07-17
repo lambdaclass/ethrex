@@ -240,6 +240,17 @@ keccak256(
 )
 ```
 
+## Address Aliasing
+
+To prevent attacks where a L1 impersonates an L2 contract, we implement Address Aliasing [like Optimism](https://docs.optimism.io/stack/differences#address-aliasing) (albeit with we a different constant, to prevent confusion).
+
+The attack prevented would've looked like this:
+- An L2 contract gets deployed at address A
+- Someone malicious deploys a contract at the same address (through deterministic deployments, etc)
+- The malicious contract sends a privileged transaction, which can steal A's resourced on the L2
+
+By modifying the address of L1 contracts by adding a constant, we prevent this attack since both won't have the same address.
+
 ## Forced Inclusion
 
 Each transaction is given a deadline for processing. If the sequencer is unwilling to include a privileged transaction before this timer expires, batches stop being processed and the network halts until the sequencer processes every expired transaction.
