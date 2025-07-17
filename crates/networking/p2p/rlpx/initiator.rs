@@ -138,7 +138,7 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
 }
 
 async fn get_lookup_interval(state: &RLPxInitiatorState) -> Duration {
-    let num_peers = state.context.table.table.lock().await.len() as u64;
+    let num_peers = state.context.table.peers.lock().await.len() as u64;
 
     if num_peers < state.target_peers {
         state.initial_lookup_interval
