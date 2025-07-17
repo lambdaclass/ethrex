@@ -303,36 +303,37 @@ impl Syncer {
                 break;
             };
         }
+        info!("Finished downloading and storing block headers");
         match sync_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
-                let pivot_idx = all_block_hashes.len().saturating_sub(MIN_FULL_BLOCKS);
-                let pivot_header = store
-                    .get_block_header_by_hash(all_block_hashes[pivot_idx])?
-                    .ok_or(SyncError::CorruptDB)?;
-                debug!(
-                    "Selected block {} as pivot for snap sync",
-                    pivot_header.number
-                );
-                info!("Spawning store block bodies");
-                let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes[pivot_idx..].to_vec(),
-                    self.peers.clone(),
-                    store.clone(),
-                ));
-                // Perform snap sync
-                if !self
-                    .snap_sync(pivot_header.state_root, store.clone())
-                    .await?
-                {
-                    // Snap sync was not completed, abort and resume it on the next cycle
-                    return Ok(());
-                }
+                // let pivot_idx = all_block_hashes.len().saturating_sub(MIN_FULL_BLOCKS);
+                // let pivot_header = store
+                //     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
+                //     .ok_or(SyncError::CorruptDB)?;
+                // debug!(
+                //     "Selected block {} as pivot for snap sync",
+                //     pivot_header.number
+                // );
+                // info!("Spawning store block bodies");
+                // let store_bodies_handle = tokio::spawn(store_block_bodies(
+                //     all_block_hashes[pivot_idx..].to_vec(),
+                //     self.peers.clone(),
+                //     store.clone(),
+                // ));
+                // // Perform snap sync
+                // if !self
+                //     .snap_sync(pivot_header.state_root, store.clone())
+                //     .await?
+                // {
+                //     // Snap sync was not completed, abort and resume it on the next cycle
+                //     return Ok(());
+                // }
                 // Wait for all bodies to be downloaded
-                store_bodies_handle.await??;
+                // store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
                 // for hash in &all_block_hashes[pivot_idx + 1..] {
@@ -345,11 +346,11 @@ impl Syncer {
                 //     store.set_canonical_block(block_number, *hash).await?;
                 //     store.update_latest_block_number(block_number).await?;
                 // }
-                self.last_snap_pivot = pivot_header.number;
-                // Finished a sync cycle without aborting halfway, clear current checkpoint
-                store.clear_snap_state().await?;
-                // Next sync will be full-sync
-                self.snap_enabled.store(false, Ordering::Relaxed);
+                // self.last_snap_pivot = pivot_header.number;
+                // // Finished a sync cycle without aborting halfway, clear current checkpoint
+                // store.clear_snap_state().await?;
+                // // Next sync will be full-sync
+                // self.snap_enabled.store(false, Ordering::Relaxed);
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
