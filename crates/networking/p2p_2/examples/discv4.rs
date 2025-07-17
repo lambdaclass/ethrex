@@ -195,7 +195,8 @@ elapsed: {}
 {} connection attempts ({} new connection attempts/s)
 {} failed connections
 Known peers from mainnet: {}
-RLPx connection failures: {:#?}"#,
+RLPx connection failures: {:#?}
+Client Diversity: {:?}"#,
                 format_duration(start.elapsed()),
                 METRICS.current_contacts.lock().await,
                 METRICS.new_contacts_rate.get().floor(),
@@ -238,6 +239,7 @@ RLPx connection failures: {:#?}"#,
                     .expect("Failed to pritty print known mainnet peers counters")
                 },
                 METRICS.rlpx_conn_failures_reasons_counts.lock().await,
+                METRICS.connected_peers_client_type.lock().await,
             );
             // info!(
             //     contacts = kademlia_clone.table.lock().await.len(),

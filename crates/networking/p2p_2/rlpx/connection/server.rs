@@ -260,7 +260,11 @@ impl GenServer for RLPxConnection {
             // New state
             state.0 = InnerState::Established(established_state.clone());
 
-            METRICS.record_new_rlpx_conn_established().await;
+            METRICS
+                .record_new_rlpx_conn_established(
+                    &established_state.node.version.clone().unwrap_or_default(),
+                )
+                .await;
 
             let Established {
                 _geth_peers, node, ..
