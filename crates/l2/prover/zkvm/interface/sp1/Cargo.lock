@@ -682,7 +682,7 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/sp1-patches/bls12_381?tag=patch-0.8.0-sp1-5.0.0#8774878d42311b956022007e9960043baad24a7f"
+source = "git+https://github.com/lambdaclass/bls12_381-patch/?branch=expose-fp-struct#f2242f78b2b5fc10d9168a810c04ab8728ac6804"
 dependencies = [
  "cfg-if",
  "digest 0.10.7",
