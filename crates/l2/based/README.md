@@ -187,7 +187,6 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 init \
   --l1.bridge-address $ETHREX_WATCHER_BRIDGE_ADDRESS \
   --based \
   --p2p.enabled \
-  --p2p.port \
   --p2p.port 30303 \
   --discovery.port 30303
 ```
