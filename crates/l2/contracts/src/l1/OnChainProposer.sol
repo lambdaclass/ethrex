@@ -134,7 +134,6 @@ contract OnChainProposer is
         REQUIRE_SP1_PROOF = requireSp1Proof;
         SP1_VERIFIER_ADDRESS = sp1verifier;
         SP1_VERIFICATION_KEY = sp1Vk;
-        RISC0_VERIFICATION_KEY = risc0Vk;
 
         // TDX constants
         REQUIRE_TDX_PROOF = requireTdxProof;
