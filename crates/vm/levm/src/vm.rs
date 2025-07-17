@@ -9,7 +9,9 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    l2_precompiles, precompiles,
+    l2_precompiles,
+    memory::Memory,
+    precompiles,
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -112,9 +114,10 @@ impl<'a> VM<'a> {
             0,
             true,
             is_create,
-            U256::zero(),
+            0,
             0,
             Stack::default(),
+            Memory::default(),
         );
 
         self.call_frames.push(initial_call_frame);
@@ -188,6 +191,7 @@ impl<'a> VM<'a> {
                     self.increment_pc_by(pc_increment)?;
                     continue;
                 }
+
                 Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
                 Err(error) => self.handle_opcode_error(error)?,
             };

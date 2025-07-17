@@ -1,7 +1,7 @@
 use crate::{
     errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     vm::VM,
 };
 use bytes::Bytes;
@@ -22,6 +22,10 @@ impl<'a> VM<'a> {
         let size = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+        let offset = match offset.try_into() {
+            Ok(x) => x,
+            Err(_) => usize::MAX,
+        };
         let topics = current_call_frame
             .stack
             .pop::<N_TOPICS>()?
@@ -39,9 +43,7 @@ impl<'a> VM<'a> {
         let log = Log {
             address: current_call_frame.to,
             topics: topics.to_vec(),
-            data: Bytes::from(
-                memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),
-            ),
+            data: Bytes::from(current_call_frame.memory.load_range(offset, size)?),
         };
 
         self.tracer.log(&log)?;

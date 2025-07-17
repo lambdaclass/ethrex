@@ -40,8 +40,22 @@ impl<'a> VM<'a> {
     }
 
     pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
+        // The match order matters because it's evaluated top down. So the most frequent opcodes should be near the top.
+        // A future improvement could be to use a function pointer table.
         match opcode {
-            Opcode::STOP => Ok(OpcodeResult::Halt),
+            Opcode::PUSH32 => self.op_push::<32>(),
+            Opcode::MLOAD => self.op_mload(),
+            Opcode::MSTORE => self.op_mstore(),
+            Opcode::MSTORE8 => self.op_mstore8(),
+            Opcode::JUMP => self.op_jump(),
+            Opcode::SLOAD => self.op_sload(),
+            Opcode::SSTORE => self.op_sstore(),
+            Opcode::MSIZE => self.op_msize(),
+            Opcode::GAS => self.op_gas(),
+            Opcode::MCOPY => self.op_mcopy(),
+            Opcode::PUSH0 => self.op_push0(),
+            Opcode::PUSH1 => self.op_push::<1>(),
+            Opcode::POP => self.op_pop(),
             Opcode::ADD => self.op_add(),
             Opcode::MUL => self.op_mul(),
             Opcode::SUB => self.op_sub(),
@@ -52,6 +66,22 @@ impl<'a> VM<'a> {
             Opcode::ADDMOD => self.op_addmod(),
             Opcode::MULMOD => self.op_mulmod(),
             Opcode::EXP => self.op_exp(),
+            Opcode::CALL => self.op_call(),
+            Opcode::CALLCODE => self.op_callcode(),
+            Opcode::RETURN => self.op_return(),
+            Opcode::DELEGATECALL => self.op_delegatecall(),
+            Opcode::STATICCALL => self.op_staticcall(),
+            Opcode::CREATE => self.op_create(),
+            Opcode::CREATE2 => self.op_create2(),
+            Opcode::JUMPI => self.op_jumpi(),
+            Opcode::JUMPDEST => self.op_jumpdest(),
+            Opcode::ADDRESS => self.op_address(),
+            Opcode::ORIGIN => self.op_origin(),
+            Opcode::BALANCE => self.op_balance(),
+            Opcode::CALLER => self.op_caller(),
+            Opcode::CALLVALUE => self.op_callvalue(),
+            Opcode::CODECOPY => self.op_codecopy(),
+            Opcode::STOP => Ok(OpcodeResult::Halt),
             Opcode::SIGNEXTEND => self.op_signextend(),
             Opcode::LT => self.op_lt(),
             Opcode::GT => self.op_gt(),
@@ -65,9 +95,6 @@ impl<'a> VM<'a> {
             Opcode::CALLDATACOPY => self.op_calldatacopy(),
             Opcode::RETURNDATASIZE => self.op_returndatasize(),
             Opcode::RETURNDATACOPY => self.op_returndatacopy(),
-            Opcode::JUMP => self.op_jump(),
-            Opcode::JUMPI => self.op_jumpi(),
-            Opcode::JUMPDEST => self.op_jumpdest(),
             Opcode::PC => self.op_pc(),
             Opcode::BLOCKHASH => self.op_blockhash(),
             Opcode::COINBASE => self.op_coinbase(),
@@ -79,8 +106,6 @@ impl<'a> VM<'a> {
             Opcode::BASEFEE => self.op_basefee(),
             Opcode::BLOBHASH => self.op_blobhash(),
             Opcode::BLOBBASEFEE => self.op_blobbasefee(),
-            Opcode::PUSH0 => self.op_push0(),
-            Opcode::PUSH1 => self.op_push::<1>(),
             Opcode::PUSH2 => self.op_push::<2>(),
             Opcode::PUSH3 => self.op_push::<3>(),
             Opcode::PUSH4 => self.op_push::<4>(),
@@ -111,7 +136,6 @@ impl<'a> VM<'a> {
             Opcode::PUSH29 => self.op_push::<29>(),
             Opcode::PUSH30 => self.op_push::<30>(),
             Opcode::PUSH31 => self.op_push::<31>(),
-            Opcode::PUSH32 => self.op_push::<32>(),
             Opcode::AND => self.op_and(),
             Opcode::OR => self.op_or(),
             Opcode::XOR => self.op_xor(),
@@ -132,36 +156,16 @@ impl<'a> VM<'a> {
                 #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
                 self.op_swap(op as usize - Opcode::SWAP1 as usize + 1)
             }
-            Opcode::POP => self.op_pop(),
+
             Opcode::LOG0 => self.op_log::<0>(),
             Opcode::LOG1 => self.op_log::<1>(),
             Opcode::LOG2 => self.op_log::<2>(),
             Opcode::LOG3 => self.op_log::<3>(),
             Opcode::LOG4 => self.op_log::<4>(),
-            Opcode::MLOAD => self.op_mload(),
-            Opcode::MSTORE => self.op_mstore(),
-            Opcode::MSTORE8 => self.op_mstore8(),
-            Opcode::SLOAD => self.op_sload(),
-            Opcode::SSTORE => self.op_sstore(),
-            Opcode::MSIZE => self.op_msize(),
-            Opcode::GAS => self.op_gas(),
-            Opcode::MCOPY => self.op_mcopy(),
-            Opcode::CALL => self.op_call(),
-            Opcode::CALLCODE => self.op_callcode(),
-            Opcode::RETURN => self.op_return(),
-            Opcode::DELEGATECALL => self.op_delegatecall(),
-            Opcode::STATICCALL => self.op_staticcall(),
-            Opcode::CREATE => self.op_create(),
-            Opcode::CREATE2 => self.op_create2(),
             Opcode::TLOAD => self.op_tload(),
             Opcode::TSTORE => self.op_tstore(),
             Opcode::SELFBALANCE => self.op_selfbalance(),
-            Opcode::ADDRESS => self.op_address(),
-            Opcode::ORIGIN => self.op_origin(),
-            Opcode::BALANCE => self.op_balance(),
-            Opcode::CALLER => self.op_caller(),
-            Opcode::CALLVALUE => self.op_callvalue(),
-            Opcode::CODECOPY => self.op_codecopy(),
+
             Opcode::CODESIZE => self.op_codesize(),
             Opcode::GASPRICE => self.op_gasprice(),
             Opcode::EXTCODESIZE => self.op_extcodesize(),
@@ -175,6 +179,7 @@ impl<'a> VM<'a> {
         }
     }
 
+    #[cold] // used in the hot path loop, called only really once.
     pub fn handle_opcode_result(&mut self) -> Result<ContextResult, VMError> {
         // On successful create check output validity
         if self.is_create()? {
@@ -218,6 +223,7 @@ impl<'a> VM<'a> {
         })
     }
 
+    #[cold] // used in the hot path loop, called only really once.
     pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ContextResult, VMError> {
         if error.should_propagate() {
             return Err(error);
