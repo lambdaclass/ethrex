@@ -108,10 +108,10 @@ impl Serialize for Capability {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct HelloMessage {
-    pub(crate) capabilities: Vec<Capability>,
-    pub(crate) node_id: PublicKey,
-    pub(crate) client_id: String,
+pub struct HelloMessage {
+    pub capabilities: Vec<Capability>,
+    pub node_id: PublicKey,
+    pub client_id: String,
 }
 
 impl HelloMessage {
@@ -241,8 +241,8 @@ impl From<DisconnectReason> for u8 {
     }
 }
 #[derive(Debug, Clone)]
-pub(crate) struct DisconnectMessage {
-    pub(crate) reason: Option<DisconnectReason>,
+pub struct DisconnectMessage {
+    pub reason: Option<DisconnectReason>,
 }
 
 impl DisconnectMessage {
@@ -299,7 +299,7 @@ impl RLPxMessage for DisconnectMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PingMessage {}
+pub struct PingMessage {}
 
 impl RLPxMessage for PingMessage {
     const CODE: u8 = 0x02;
@@ -325,7 +325,7 @@ impl RLPxMessage for PingMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PongMessage {}
+pub struct PongMessage {}
 
 impl RLPxMessage for PongMessage {
     const CODE: u8 = 0x03;

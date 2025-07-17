@@ -15,10 +15,6 @@ use super::eth::transactions::{
 };
 use super::eth::update::BlockRangeUpdate;
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
-// use super::snap::{
-//     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
-//     StorageRanges, TrieNodes,
-// };
 
 use ethrex_rlp::encode::RLPEncode;
 

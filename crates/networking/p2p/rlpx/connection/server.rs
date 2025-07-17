@@ -350,19 +350,6 @@ where
     // Updating the state to establish the backend channel
     state.backend_channel = Some(sender);
 
-    // NOTE: if the peer came from the discovery server it will already be inserted in the table
-    // but that might not always be the case, so we try to add it to the table
-    // Note: we don't ping the node we let the validation service do its job
-    // {
-    //     let mut table_lock = state.table.lock().await;
-    //     table_lock.insert_node_forced(state.node.clone());
-    //     table_lock.init_backend_communication(
-    //         state.node.node_id(),
-    //         peer_channels,
-    //         state.capabilities.clone(),
-    //         state.inbound,
-    //     );
-    // }
     init_capabilities(state, &mut stream).await?;
 
     state
@@ -497,17 +484,7 @@ where
     Ok(())
 }
 
-async fn post_handshake_checks(table: Kademlia) -> Result<(), RLPxError> {
-    // Check if connected peers exceed the limit
-    // let peer_count = {
-    //     let table_lock = table.lock().await;
-    //     table_lock.count_connected_peers()
-    // };
-
-    // if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
-    //     return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
-    // }
-
+async fn post_handshake_checks(_table: Kademlia) -> Result<(), RLPxError> {
     Ok(())
 }
 
@@ -544,7 +521,6 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &RL
                 &state.node,
                 &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
             );
-            // state.table.lock().await.replace_peer(state.node.node_id());
         }
     }
 
@@ -687,8 +663,9 @@ where
                     log_peer_debug(&node, &format!("Received RLPX Error in msg {e}"));
                     break;
                 }
-                // None means the stream was closed
-                None => break,
+                // `None` does not neccessary means EOF, so we will keep the loop running
+                // (See Framed::new)
+                None => {}
             }
         }
     });

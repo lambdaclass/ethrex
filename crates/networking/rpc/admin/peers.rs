@@ -83,15 +83,14 @@ impl From<PeerData> for RpcPeer {
     }
 }
 
-pub fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
-    let peers: Vec<RpcPeer> = vec![];
-    // let peers = context
-    //     .peer_handler
-    //     .read_connected_peers()
-    //     .ok_or(RpcErr::Internal(String::from("Failed to read peers")))?
-    //     .into_iter()
-    //     .map(RpcPeer::from)
-    //     .collect::<Vec<_>>();
+pub async fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
+    let peers = context
+        .peer_handler
+        .read_connected_peers()
+        .await
+        .into_iter()
+        .map(RpcPeer::from)
+        .collect::<Vec<_>>();
     Ok(serde_json::to_value(peers)?)
 }
 
