@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752754004425,
+  "lastUpdate": 1752754158580,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4225,6 +4225,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209493098609,
             "range": "± 354976637",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bc82ed12aee8e7d627a0ac52cbbd8287084b51b2",
+          "message": "ci(l1): disable block builcing bench until it's fixed (#3670)\n\n**Motivation**\n\nThe benchmark doesn't work and it's blocking all prs",
+          "timestamp": "2025-07-17T11:06:00Z",
+          "tree_id": "f6f3fbc8ccbaec48aef841363a5d8a271f0b2e0f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc82ed12aee8e7d627a0ac52cbbd8287084b51b2"
+        },
+        "date": 1752754147405,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210925825367,
+            "range": "± 817282704",
             "unit": "ns/iter"
           }
         ]
