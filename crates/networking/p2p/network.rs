@@ -163,6 +163,7 @@ pub async fn periodically_show_peer_stats() {
     let start = std::time::Instant::now();
     loop {
         let rlpx_connection_failures = METRICS.connection_attempt_failures.lock().await;
+        let rlpx_connection_client_types = METRICS.peers_by_client_type.lock().await;
 
         let rlpx_disconnections = METRICS.disconnections.lock().await;
 
@@ -173,6 +174,7 @@ elapsed: {elapsed}
 {discarded_nodes} discarded nodes
 {discovered_nodes} total discovered nodes over time
 {peers} peers ({new_peers_rate} new peers/m)
+Clients Diversity: {peers_by_client:#?}
 {lost_peers} lost peers
 {rlpx_connections} total peers made over time
 {rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
@@ -186,6 +188,7 @@ RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reaso
             discovered_nodes = METRICS.discovered_nodes.get(),
             peers = METRICS.peers.lock().await,
             new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
+            peers_by_client = rlpx_connection_client_types,
             lost_peers = rlpx_disconnections.values().sum::<u64>(),
             rlpx_connections = METRICS.connection_establishments.get(),
             rlpx_connection_attempts = METRICS.connection_attempts.get(),
