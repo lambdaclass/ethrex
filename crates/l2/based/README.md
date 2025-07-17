@@ -199,7 +199,7 @@ After running this command, the node will start syncing with the L1 and will be 
 >
 > If you want to run multiple nodes in the same machine, ensure that the following values are different for each node:
 >
-> - `--proof-coordinator-listen-port`
+> - `--proof-coordinator.port`
 > - `--http.port`
 > - `--datadir`
 > - `--committer.l1-private-key`
