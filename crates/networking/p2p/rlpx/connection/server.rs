@@ -255,25 +255,42 @@ impl GenServer for RLPxConnection {
 
             if let Err(e) = result {
                 match e {
-                    RLPxError::Disconnected() | RLPxError::DisconnectReceived(_) => {
+                    RLPxError::Disconnected()
+                    | RLPxError::DisconnectReceived(_)
+                    | RLPxError::DisconnectSent(_) => {
                         log_peer_debug(&established_state.node, "Peer disconnected");
                         return CastResponse::Stop;
                     }
-                    RLPxError::IoError(e) => {
-                        if e.kind() == std::io::ErrorKind::BrokenPipe {
-                            log_peer_warn(
-                                &established_state.node,
-                                "Broken pipe with peer, disconnected",
-                            );
-                            return CastResponse::Stop;
-                        }
+                    RLPxError::HandshakeError(_)
+                    | RLPxError::NoMatchingCapabilities()
+                    | RLPxError::InvalidPeerId()
+                    | RLPxError::InvalidMessageLength()
+                    | RLPxError::InvalidRecoveryId() => {
+                        log_peer_debug(
+                            &established_state.node,
+                            "Connected peer does not support needed capabilities, disconnected",
+                        );
+                        return CastResponse::Stop;
+                    }
+                    RLPxError::IoError(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                        log_peer_error(
+                            &established_state.node,
+                            "Broken pipe with peer, disconnected",
+                        );
+                        return CastResponse::Stop;
+                    }
+                    RLPxError::StateError(_) => {
+                        log_peer_error(
+                            &established_state.node,
+                            "Peer is in an invalid state, disconnected",
+                        );
+                        return CastResponse::Stop;
                     }
                     _ => {
-                        log_peer_error(
+                        log_peer_warn(
                             &established_state.node,
                             &format!("Error handling cast message: {e}"),
                         );
-                        return CastResponse::Stop;
                     }
                 }
             }
@@ -621,7 +638,9 @@ where
         Message::Disconnect(disconnect) => Err(RLPxError::DisconnectReceived(disconnect.reason())),
         _ => {
             // Fail if it is not a hello message
-            Err(RLPxError::BadRequest("Expected Hello message".to_string()))
+            Err(RLPxError::HandshakeError(
+                "Expected Hello message".to_string(),
+            ))
         }
     }
 }

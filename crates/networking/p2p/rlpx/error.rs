@@ -2,7 +2,6 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
 use thiserror::Error;
-use tokio::sync::broadcast::error::RecvError;
 
 use super::{message::Message, p2p::DisconnectReason};
 
@@ -53,8 +52,6 @@ pub enum RLPxError {
     CryptographyError(String),
     #[error("Failed to broadcast msg: {0}")]
     BroadcastError(String),
-    #[error(transparent)]
-    RecvError(#[from] RecvError),
     #[error("Failed to send msg: {0}")]
     SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
