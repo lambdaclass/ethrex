@@ -8,9 +8,10 @@ use ethrex_l2_common::{
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
-use secp256k1::SecretKey;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 use tracing::{debug, error, info};
 
 use super::{
@@ -25,20 +26,17 @@ use crate::{
 };
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
-    verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
+    verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
-// TODO: Remove this import once it's no longer required by the SDK.
 use ethers::signers::{Signer, Wallet};
 
-const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
     eth_client: EthClient,
-    l1_address: Address,
-    l1_private_key: SecretKey,
+    signer: ethrex_l2_rpc::signer::Signer,
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
@@ -70,8 +68,7 @@ impl L1ProofSenderState {
         if cfg.dev_mode {
             return Ok(Self {
                 eth_client,
-                l1_address: cfg.l1_address,
-                l1_private_key: cfg.l1_private_key,
+                signer: cfg.signer.clone(),
                 on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
@@ -86,8 +83,7 @@ impl L1ProofSenderState {
 
         Ok(Self {
             eth_client,
-            l1_address: cfg.l1_address,
-            l1_private_key: cfg.l1_private_key,
+            signer: cfg.signer.clone(),
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
@@ -139,7 +135,8 @@ impl L1ProofSender {
 }
 
 impl GenServer for L1ProofSender {
-    type InMsg = InMessage;
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = L1ProofSenderState;
 
@@ -149,30 +146,21 @@ impl GenServer for L1ProofSender {
         Self {}
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
-    }
-
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
-            let _ = verify_and_send_proof(state)
+            let _ = verify_and_send_proof(&state)
                 .await
                 .inspect_err(|err| error!("L1 Proof Sender: {err}"));
         }
         let check_interval = random_duration(state.proof_send_interval_ms);
-        send_after(check_interval, tx.clone(), Self::InMsg::Send);
-        CastResponse::NoReply
+        send_after(check_interval, handle.clone(), Self::CastMsg::Send);
+        CastResponse::NoReply(state)
     }
 }
 
@@ -228,7 +216,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
     } else {
         let missing_proof_types: Vec<String> = missing_proof_types
             .iter()
-            .map(|proof_type| format!("{:?}", proof_type))
+            .map(|proof_type| format!("{proof_type:?}"))
             .collect();
         info!(
             "Missing {} batch proof(s), will not send",
@@ -250,32 +238,21 @@ async fn send_proof_to_aligned(
     let verification_data = VerificationData {
         proving_system: ProvingSystemId::SP1,
         proof: aligned_proof.proof(),
-        proof_generator_addr: state.l1_address.0.into(),
+        proof_generator_addr: state.signer.address().0.into(),
         vm_program_code: Some(elf),
         verification_key: None,
         pub_input: None,
     };
 
-    let rpc_url = state
-        .eth_client
-        .urls
-        .first()
-        .ok_or_else(|| {
-            ProofSenderError::InternalError("No Ethereum RPC URL configured".to_owned())
-        })?
-        .as_str();
+    let fee_estimation = estimate_fee(state).await?;
 
-    let fee_estimation = estimate_fee(rpc_url, state.fee_estimate.clone())
-        .await
-        .map_err(|err| ProofSenderError::AlignedFeeEstimateError(err.to_string()))?;
-
-    let nonce = get_nonce_from_batcher(state.network.clone(), state.l1_address.0.into())
+    let nonce = get_nonce_from_batcher(state.network.clone(), state.signer.address().0.into())
         .await
         .map_err(|err| {
             ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
         })?;
 
-    let wallet = Wallet::from_bytes(state.l1_private_key.as_ref())
+    let wallet = Wallet::from_bytes(&state.signer.address().0)
         .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
 
     let wallet = wallet.with_chain_id(state.l1_chain_id);
@@ -297,6 +274,20 @@ async fn send_proof_to_aligned(
     info!("Proof for batch {batch_number} sent to Aligned");
 
     Ok(())
+}
+
+/// Performs a call to aligned SDK estimate_fee function with retries over all RPC URLs.
+async fn estimate_fee(state: &L1ProofSenderState) -> Result<ethers::types::U256, ProofSenderError> {
+    for rpc_url in &state.eth_client.urls {
+        if let Ok(estimation) =
+            aligned_estimate_fee(rpc_url.as_str(), state.fee_estimate.clone()).await
+        {
+            return Ok(estimation);
+        }
+    }
+    Err(ProofSenderError::AlignedFeeEstimateError(
+        "All Ethereum RPC URLs failed".to_string(),
+    ))
 }
 
 pub async fn send_proof_to_contract(
@@ -335,10 +326,14 @@ pub async fn send_proof_to_contract(
         calldata,
         &state.eth_client,
         state.on_chain_proposer_address,
-        state.l1_address,
-        &state.l1_private_key,
+        &state.signer,
     )
     .await?;
+
+    state
+        .rollup_store
+        .store_verify_tx_by_batch(batch_number, verify_tx_hash)
+        .await?;
 
     info!(
         ?batch_number,

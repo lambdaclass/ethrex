@@ -3,18 +3,14 @@ use crate::{
         EthClient, RpcResponse,
         errors::{CallError, EthClientError},
     },
+    types::block_identifier::BlockIdentifier,
     utils::{RpcRequest, RpcRequestId},
 };
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_common::types::{GenericTransaction, TxKind};
 use ethrex_common::{Address, U256};
-use ethrex_rlp::encode::RLPEncode;
-use keccak_hash::keccak;
-use secp256k1::SecretKey;
 use serde_json::json;
-
-use super::BlockByNumber;
 
 #[derive(Default, Clone, Debug)]
 pub struct Overrides {
@@ -28,7 +24,7 @@ pub struct Overrides {
     pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
     pub gas_price_per_blob: Option<U256>,
-    pub block: Option<BlockByNumber>,
+    pub block: Option<BlockIdentifier>,
 }
 
 impl EthClient {
@@ -82,37 +78,5 @@ impl EthClient {
             }
             Err(error) => Err(error),
         }
-    }
-
-    pub async fn deploy(
-        &self,
-        deployer: Address,
-        deployer_private_key: SecretKey,
-        init_code: Bytes,
-        overrides: Overrides,
-    ) -> Result<(H256, Address), EthClientError> {
-        let mut deploy_overrides = overrides;
-        deploy_overrides.to = Some(TxKind::Create);
-        let deploy_tx = self
-            .build_eip1559_transaction(Address::zero(), deployer, init_code, deploy_overrides)
-            .await?;
-        let deploy_tx_hash = self
-            .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
-            .await?;
-
-        let nonce = self.get_nonce(deployer, BlockByNumber::Latest).await?;
-        let mut encode = vec![];
-        (deployer, nonce).encode(&mut encode);
-
-        //Taking the last 20bytes so it matches an H160 == Address length
-        let deployed_address =
-            Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
-                EthClientError::Custom("Failed to get deployed_address".to_owned()),
-            )?);
-
-        self.wait_for_transaction_receipt(deploy_tx_hash, 1000)
-            .await?;
-
-        Ok((deploy_tx_hash, deployed_address))
     }
 }

@@ -13,7 +13,7 @@ The commands use a number of environment variables, which can be easily passed a
 
 - `SYNC_BLOCK_NUM`: block number on which to start the sync. Required by both the `sync` and `flamegraph` commands. All the commands which use this variable require it to be set by the user.
 
-- `BLOCK_HEADER_LIMIT`: the amount of blocks to sync in batch. Optional.
+- `EXECUTE_BATCH_SIZE`: the amount of blocks to execute in batch during full sync. Optional.
 
 - `BRANCH`: required by the `flamegraph-branch` command. Branch on which to run.
 
@@ -31,13 +31,17 @@ The databases are stored in the `~/.local/share/` folder in Linux, and `~/Librar
 
 Lighthouse must be running for the sync to work. Aditionally, a jwt has to be provided too. The SYNC_BLOCK_NUM also has to be one a batch ended on for that network and evm. *The sync will not work if not started from a block number like such*, so it's important to check the numebr carefully.
 
+## Running flamegraphs
+
+It's advisable to only run flamegraphs on blocks that have already been synced, so that the overhead of retrieving the headers and bodies from the network doesn't distort the measurements. The generated flamegraphs are stored by default in the ethrex root folder. You can run the flamegraph using the provided commands. The run has to be stopped manually interrupting it with `ctrl + c`. Afterwards, a script starts that creates a flamegraph from the gathered data. Once this script finishes, the flamegraph should be ready.
+
 ## Commands
 
 - `make gen_jwt` generates the jwt to use to connect to the network. `NETWORK` must be provided. 
 
 - `make sync` can be used to start a sync. `NETWORK` and `SYNC_BLOCK_NUM` must be provided, `EVM` can be optionally provided too.
 
-- `make flamegraph-main` and `make flamegraph-branch` can be used to run benchmarks on the main branch of the repo or a custom branch, respectively; generating both a flamegraph and logs of the run. `NETWORK` and `SYNC_BLOCK_NUM` must be provided, `EVM` can be optionally provided too. `BRANCH` must be provided for `flamegraph-branch` as well.
+- `make flamegraph-main` and `make flamegraph-branch` can be used to run benchmarks on the main branch of the repo or a custom branch, respectively; generating both a flamegraph and logs of the run. `NETWORK` and `SYNC_BLOCK_NUM` must be provided, `EVM` can be optionally provided too. `BRANCH` must be provided for `flamegraph-branch` as well. `make flamegraph` can also be used as a branch agnostic option.
 
 - `make start-lighthouse` can be used to start lighthouse. `NETWORK` must be provided.
 

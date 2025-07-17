@@ -90,7 +90,7 @@ impl From<RevmExecutionResult> for ExecutionResult {
                 output: output.0,
             },
             RevmExecutionResult::Halt { reason, gas_used } => ExecutionResult::Halt {
-                reason: format!("{:?}", reason),
+                reason: format!("{reason:?}"),
                 gas_used,
             },
         }

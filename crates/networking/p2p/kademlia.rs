@@ -1,10 +1,11 @@
 use crate::{
     discv4::messages::FindNodeRequest,
-    rlpx::{message::Message as RLPxMessage, p2p::Capability},
+    rlpx::{connection::server::RLPxConnection, message::Message as RLPxMessage, p2p::Capability},
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
 use rand::random;
+use spawned_concurrency::tasks::GenServerHandle;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};
@@ -13,6 +14,11 @@ use tracing::debug;
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
 const MAX_NUMBER_OF_REPLACEMENTS: usize = 10;
+
+/// Maximum Peer Score to avoid overflows upon weigh calculations
+const PEER_SCORE_UPPER_BOUND: i32 = 500;
+/// Mininum Peer Score, this is a soft bound that can be temporarily exceeded by a critical failure
+const PEER_SCORE_LOWER_BOUND: i32 = -500;
 
 #[derive(Clone, Debug, Default)]
 pub struct Bucket {
@@ -457,7 +463,9 @@ impl PeerData {
 
     /// Simple scoring: +1 for success
     pub fn reward_peer(&mut self) {
-        self.score += 1;
+        if self.score < PEER_SCORE_UPPER_BOUND {
+            self.score += 1;
+        }
 
         debug!(
             "[PEERS] Rewarding peer with node_id {:?}, new score: {}",
@@ -468,11 +476,13 @@ impl PeerData {
 
     /// Simple scoring: -5 for critical failure, -1 for non-critical
     pub fn penalize_peer(&mut self, critical: bool) {
-        if critical {
-            self.score -= 5;
-        } else {
-            self.score -= 1;
-        };
+        if self.score > PEER_SCORE_LOWER_BOUND {
+            if critical {
+                self.score -= 5;
+            } else {
+                self.score -= 1;
+            };
+        }
 
         debug!(
             "[PEERS] Penalizing peer with node_id {:?}, new score: {}",
@@ -487,25 +497,24 @@ pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
 #[derive(Debug, Clone)]
 /// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
 pub struct PeerChannels {
-    pub(crate) sender: mpsc::Sender<RLPxMessage>,
+    pub(crate) connection: GenServerHandle<RLPxConnection>,
     pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
 }
 
 impl PeerChannels {
     /// Sets up the communication channels for the peer
     /// Returns the channel endpoints to send to the active connection's listen loop
-    pub(crate) fn create() -> (Self, mpsc::Sender<RLPxMessage>, mpsc::Receiver<RLPxMessage>) {
-        let (sender, connection_receiver) =
-            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+    pub(crate) fn create(
+        connection: GenServerHandle<RLPxConnection>,
+    ) -> (Self, mpsc::Sender<RLPxMessage>) {
         let (connection_sender, receiver) =
             mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
         (
             Self {
-                sender,
+                connection,
                 receiver: Arc::new(Mutex::new(receiver)),
             },
             connection_sender,
-            connection_receiver,
         )
     }
 }

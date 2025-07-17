@@ -74,9 +74,11 @@ impl Trie {
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
-            root: (root != *EMPTY_TRIE_HASH)
-                .then_some(NodeHash::from(root).into())
-                .unwrap_or_default(),
+            root: if root != *EMPTY_TRIE_HASH {
+                NodeHash::from(root).into()
+            } else {
+                Default::default()
+            },
         }
     }
 
