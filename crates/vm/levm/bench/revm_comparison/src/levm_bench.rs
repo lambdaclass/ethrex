@@ -14,8 +14,9 @@ use ethrex_levm::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
+use std::collections::BTreeMap;
 use std::hint::black_box;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 // Use a constant byte array to define the Address at compile time.
 const SENDER_ADDRESS: u64 = 0x100;
@@ -53,14 +54,14 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
 
-    let cache = HashMap::from([
+    let cache = BTreeMap::from([
         (
             Address::from_low_u64_be(CONTRACT_ADDRESS),
-            Account::new(U256::MAX, bytecode.clone(), 0, HashMap::new()),
+            Account::new(U256::MAX, bytecode.clone(), 0, BTreeMap::new()),
         ),
         (
             Address::from_low_u64_be(SENDER_ADDRESS),
-            Account::new(U256::MAX, Bytes::new(), 0, HashMap::new()),
+            Account::new(U256::MAX, Bytes::new(), 0, BTreeMap::new()),
         ),
     ]);
 

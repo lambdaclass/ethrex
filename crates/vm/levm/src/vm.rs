@@ -11,6 +11,7 @@ use crate::{
     },
     l2_precompiles,
     memory::Memory,
+    opcodes::OpCodeFn,
     precompiles,
     tracing::LevmCallTracer,
 };
@@ -22,7 +23,7 @@ use ethrex_common::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     rc::Rc,
 };
 
@@ -40,7 +41,7 @@ pub enum VMType {
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub accessed_addresses: HashSet<Address>,
-    pub accessed_storage_slots: HashMap<Address, BTreeSet<H256>>,
+    pub accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,
@@ -56,7 +57,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
-    pub storage_original_values: HashMap<(Address, H256), U256>,
+    pub storage_original_values: BTreeMap<(Address, H256), U256>,
     /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
@@ -64,6 +65,7 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
+    pub(crate) opcode_table: Option<[OpCodeFn<'a>; 256]>,
 }
 
 impl<'a> VM<'a> {
@@ -76,7 +78,7 @@ impl<'a> VM<'a> {
     ) -> Self {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        Self {
+        let mut vm = Self {
             call_frames: vec![],
             env,
             substate: Substate::default(),
@@ -84,12 +86,17 @@ impl<'a> VM<'a> {
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
             substate_backups: vec![],
-            storage_original_values: HashMap::new(),
+            storage_original_values: BTreeMap::new(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
-        }
+            opcode_table: None,
+        };
+
+        vm.setup_opcode_table();
+
+        vm
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
@@ -181,10 +188,17 @@ impl<'a> VM<'a> {
             return self.execute_precompile();
         }
 
+        let Some(opcode_table) = self.opcode_table else {
+            return Err(VMError::Internal(InternalError::MissingOpcodeTable));
+        };
+
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
 
-            let op_result = self.execute_opcode(opcode);
+            // Call the opcode, using the opcode function lookup table.
+            // Indexing will not panic as all the opcode values fit within the table.
+            #[allow(clippy::indexing_slicing, clippy::as_conversions)]
+            let op_result = opcode_table[opcode as usize].call(self);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
