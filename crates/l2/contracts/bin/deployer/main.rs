@@ -666,11 +666,11 @@ fn write_contract_addresses_to_env(
         "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={:#x}",
         contract_addresses.risc0_verifier_address
     )?;
-    writeln!(
-        writer,
-        "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={:#x}",
-        contract_addresses.aligned_aggregator_address
-    )?;
+    //writeln!(
+    //    writer,
+    //    "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={:#x}",
+    //    contract_addresses.aligned_aggregator_address
+    //)?;
     writeln!(
         writer,
         "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={:#x}",
