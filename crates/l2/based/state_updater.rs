@@ -219,7 +219,7 @@ fn determine_new_status(
     match (node_is_up_to_date, is_lead_sequencer) {
         // A node can be the lead sequencer only if it is up to date.
         (true, true) => {
-            if *current_state == SequencerStatus::Syncing {
+            if current_state == SequencerStatus::Syncing {
                 SequencerStatus::Following
             } else {
                 SequencerStatus::Sequencing
@@ -232,7 +232,7 @@ fn determine_new_status(
         }
         // If the node is not up to date, it should sync.
         (false, _) => {
-            if is_lead_sequencer && *current_state == SequencerStatus::Syncing {
+            if is_lead_sequencer && current_state == SequencerStatus::Syncing {
                 warn!("Node is not up to date but is the lead sequencer, continue syncing.");
             }
             SequencerStatus::Syncing
