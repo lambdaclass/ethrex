@@ -322,7 +322,7 @@ impl TestCase {
 pub struct Post {
     pub hash: H256,
     pub logs: H256,
-    pub state: HashMap<Address, AccountState>,
+    pub state: Option<HashMap<Address, AccountState>>,
     pub expected_exception: Option<Vec<TransactionExpectedException>>,
 }
 
@@ -433,7 +433,7 @@ pub struct RawPostValue {
     // we add the default because some tests don't have this field
     #[serde(default, deserialize_with = "deserialize_hex_bytes")]
     pub txbytes: Bytes,
-    pub state: HashMap<Address, AccountState>,
+    pub state: Option<HashMap<Address, AccountState>>,
 }
 
 #[derive(Debug, Deserialize)]
