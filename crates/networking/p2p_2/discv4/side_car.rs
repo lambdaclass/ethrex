@@ -265,6 +265,7 @@ async fn get_lookup_period(state: &DiscoverySideCarState) -> Duration {
     if number_of_peers < state.target_peers && number_of_contacts < state.target_contacts {
         state.initial_lookup_period
     } else {
+        info!("Reached target number of peers or contacts. Using longer lookup period.");
         state.lookup_period
     }
 }
