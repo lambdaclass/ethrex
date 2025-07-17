@@ -381,7 +381,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::MLOAD as usize] = OpCodeFn(VM::op_mload);
         opcode_table[Opcode::MSTORE as usize] = OpCodeFn(VM::op_mstore);
         opcode_table[Opcode::MSTORE8 as usize] = OpCodeFn(VM::op_mstore8);
-        opcode_table[Opcode::JUMP as usize] = OpCodeFn(VM::op_mstore8);
+        opcode_table[Opcode::JUMP as usize] = OpCodeFn(VM::op_jump);
         opcode_table[Opcode::SLOAD as usize] = OpCodeFn(VM::op_sload);
         opcode_table[Opcode::SSTORE as usize] = OpCodeFn(VM::op_sstore);
         opcode_table[Opcode::MSIZE as usize] = OpCodeFn(VM::op_msize);
@@ -395,6 +395,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::PUSH5 as usize] = OpCodeFn(VM::op_push::<5>);
         opcode_table[Opcode::PUSH6 as usize] = OpCodeFn(VM::op_push::<6>);
         opcode_table[Opcode::PUSH7 as usize] = OpCodeFn(VM::op_push::<7>);
+        opcode_table[Opcode::PUSH8 as usize] = OpCodeFn(VM::op_push::<8>);
         opcode_table[Opcode::PUSH8 as usize] = OpCodeFn(VM::op_push::<8>);
         opcode_table[Opcode::PUSH9 as usize] = OpCodeFn(VM::op_push::<9>);
         opcode_table[Opcode::PUSH10 as usize] = OpCodeFn(VM::op_push::<10>);
