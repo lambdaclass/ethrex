@@ -480,7 +480,7 @@ impl GenServer for ConnectionHandler {
 
                         if !discarded_contacts.contains(&node_id) {
                             vacant_entry.insert(Contact::from(node));
-                            METRICS.record_new_contact().await;
+                            METRICS.record_new_discovery().await;
                         }
                     };
                 }

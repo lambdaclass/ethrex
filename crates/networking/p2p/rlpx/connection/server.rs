@@ -136,7 +136,7 @@ impl RLPxConnectionState {
 
     pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
         let _geth_peers = serde_json::from_str::<Vec<String>>(
-            &read_to_string("/home/admin/ethrex_2/crates/networking/p2p_2/geth_peers.json")
+            &read_to_string("/home/admin/ethrex_3/geth_peers.json")
                 .expect("Failed to read geth_peers.json"),
         )
         .expect("Failed to parse geth_peers.json")
@@ -723,8 +723,16 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 &state.node,
                 &format!("Received Disconnect: {}", msg_data.reason()),
             );
+
+            let reason = msg_data.reason();
+
+            METRICS
+                .record_new_rlpx_conn_disconnection(&state.node.node_id(), reason)
+                .await;
+
             // TODO handle the disconnection request
-            return Err(RLPxError::DisconnectReceived(msg_data.reason()));
+
+            return Err(RLPxError::DisconnectReceived(reason));
         }
         Message::Ping(_) => {
             log_peer_debug(&state.node, "Sending pong message");

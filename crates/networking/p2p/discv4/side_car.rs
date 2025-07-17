@@ -1,7 +1,7 @@
 use std::{fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
 use ethrex_common::{H256, types::ForkId};
-use k256::{ecdsa::SigningKey,};
+use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use spawned_concurrency::{
     messages::Unused,
@@ -259,7 +259,7 @@ async fn revalidate(state: &DiscoverySideCarState) {
 
                 contact.disposable = true;
 
-                METRICS.record_discarded_contact().await;
+                METRICS.record_new_discarded_node().await;
 
                 if state._geth_peers.contains(&node_id) {
                     METRICS.new_failure_pinging_mainnet_peer(node_id).await;
@@ -278,7 +278,7 @@ async fn lookup(state: &DiscoverySideCarState) {
         if let Err(err) = state.send_find_node(&contact.node).await {
             error!(sent = "FindNode", to = %format!("{:#x}", contact.node.public_key), err = ?err);
             contact.disposable = true;
-            METRICS.record_discarded_contact().await;
+            METRICS.record_new_discarded_node().await;
         }
 
         contact.n_find_node_sent += 1;
