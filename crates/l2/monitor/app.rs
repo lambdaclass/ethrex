@@ -2,8 +2,9 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crossterm::event::{Event, EventStream};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, KeyCode, MouseEventKind},
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, MouseEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -19,7 +20,9 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
+use spawned_concurrency::tasks::{
+    CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener,
+};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
@@ -68,11 +71,10 @@ pub struct EthrexMonitorState {
     cancelation_token: CancellationToken,
 }
 
-pub struct EthrexMonitor {}
-
 #[derive(Clone, Debug)]
 pub enum CastInMessage {
-    Monitor,
+    Render,
+    Event(Event),
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +88,9 @@ pub enum OutMessage {
     ShouldQuit(bool),
 }
 
+#[derive(Default)]
+pub struct EthrexMonitor {}
+
 impl EthrexMonitor {
     pub async fn spawn(
         sequencer_state: SequencerState,
@@ -93,35 +98,32 @@ impl EthrexMonitor {
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
         cancelation_token: CancellationToken,
-    ) -> Result<(), MonitorError> {
+    ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
         let state = EthrexMonitorState {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
             cancelation_token,
         };
-        let mut ethrex_monitor = EthrexMonitor::start_blocking(state);
-        ethrex_monitor
-            .cast(CastInMessage::Monitor)
-            .await
-            .map_err(MonitorError::GenServerError)?;
-        Ok(())
+        Ok(EthrexMonitor::start(state))
     }
 
-    pub async fn monitor(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
+    pub async fn render(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
         let mut terminal = state.terminal.lock().await;
         let widget = &mut state.widget;
 
         widget.draw(&mut terminal)?;
 
-        let timeout =
-            Duration::from_millis(widget.tick_rate).saturating_sub(widget.last_tick.elapsed());
-        if !event::poll(timeout)? {
-            widget.on_tick().await?;
-            widget.last_tick = Instant::now();
-            return Ok(());
-        }
-        let event = event::read()?;
+        widget.on_tick().await?;
+        Ok(())
+    }
+
+    pub async fn handle_event(
+        &self,
+        state: &mut EthrexMonitorState,
+        event: Event,
+    ) -> Result<(), MonitorError> {
+        let widget = &mut state.widget;
         if let Some(key) = event.as_key_press_event() {
             widget.on_key_event(key.code);
         }
@@ -144,22 +146,46 @@ impl GenServer for EthrexMonitor {
         Self {}
     }
 
+    async fn init(
+        &mut self,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> Result<Self::State, Self::Error> {
+        send_interval(
+            Duration::from_millis(state.widget.tick_rate),
+            handle.clone(),
+            Self::CastMsg::Render,
+        );
+        spawn_listener(
+            handle.clone(),
+            |event: Event| Self::CastMsg::Event(event),
+            EventStream::new(),
+        );
+        Ok(state)
+    }
+
     async fn handle_cast(
         &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
-        let _ = self
-            .monitor(&mut state)
-            .await
-            .inspect_err(|err| error!("Monitor Error: {err}"));
+        match message {
+            CastInMessage::Render => {
+                let _ = self
+                    .render(&mut state)
+                    .await
+                    .inspect_err(|err| error!("Monitor Error: {err}"));
+            }
+            CastInMessage::Event(event) => {
+                let _ = self
+                    .handle_event(&mut state, event)
+                    .await
+                    .inspect_err(|err| error!("Monitor Error: {err}"));
+            }
+        }
+
         if !state.widget.should_quit {
-            send_after(
-                Duration::from_millis(1),
-                handle.clone(),
-                Self::CastMsg::Monitor,
-            );
             CastResponse::NoReply(state)
         } else {
             CastResponse::Stop
