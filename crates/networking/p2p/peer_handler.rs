@@ -157,31 +157,31 @@ impl PeerHandler {
             u64,
         )>(1000);
 
+        let mut current_show = 0;
         // 3) create tasks that will request a chunk of headers from a peer
         loop {
             let mut peer_channels = self
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
-            info!(
-                "Found {} peers to request block headers",
-                peer_channels.len()
-            );
+ 
 
             if peer_channels.is_empty() {
                 warn!("No peers available to request block headers");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 continue;
             }
-
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
                     break;
                 } else {
-                    warn!(
-                        "Not all headers were downloaded, only {downloaded_count} out of {block_count}"
-                    );
+
+                    let batch_show = downloaded_count / 10_000;
+                    if current_show < batch_show {
+                        warn!("Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}");
+                        current_show += 1;
+                    }
 
                     // sleep and retry
                     let ret_task = task_receiver.try_recv();
@@ -191,11 +191,16 @@ impl PeerHandler {
                             match headers_result {
                                 (Ok(headers), peer_id, peer_channel, startblock) => {
                                     downloaded_count += headers.len() as u64;
-                                    info!(
-                                        "Downloaded {} headers from peer {}",
-                                        headers.len(),
-                                        peer_id
-                                    );
+
+                                    let batch_show = downloaded_count / 10_000;
+                                    if current_show < batch_show {
+                                        info!(
+                                            "Downloaded {} headers from peer {} - current count: {downloaded_count}",
+                                            headers.len(),
+                                            peer_id
+                                        );
+                                        current_show += 1;
+                                    }
                                     // store headers!!!!
                                     ret.extend_from_slice(&headers);
                                     peer_channels.push((peer_id, peer_channel));
@@ -263,7 +268,16 @@ impl PeerHandler {
                     match headers_result {
                         (Ok(headers), peer_id, peer_channel, startblock) => {
                             downloaded_count += headers.len() as u64;
-                            info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
+                            //#####info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
+                            let batch_show = downloaded_count / 10_000;
+                            if current_show < batch_show {
+                                info!(
+                                    "Downloaded {} headers from peer {} (current count: {downloaded_count})",
+                                    headers.len(),
+                                    peer_id
+                                );
+                                current_show += 1;
+                            }
                             // store headers!!!!
                             ret.extend_from_slice(&headers);
                             peer_channels.push((peer_id, peer_channel));
@@ -307,7 +321,12 @@ impl PeerHandler {
 
         // 5) loop until all the chunks are received (retry to get the chunks that failed)
 
-        todo!("Implement request_block_headers_2");
+        info!("All headers downloaded successfully");
+
+        ret.sort_by(|x, y| x.number.cmp(&y.number));
+        info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
+        Some(ret);
+        panic!()
     }
 
     /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
