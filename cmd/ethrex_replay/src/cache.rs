@@ -1,12 +1,13 @@
 use ethrex_common::types::blobs_bundle;
-use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
-use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
     fs::File,
     io::{BufReader, BufWriter},
 };
 
+use ethrex_common::types::{Block, ChainConfig, block_execution_witness::ExecutionWitnessResult};
+
+use serde::{Deserialize, Serialize};
 #[serde_as]
 #[derive(Serialize, Deserialize)]
 pub struct L2Fields {
@@ -20,16 +21,22 @@ pub struct L2Fields {
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: ExecutionWitnessResult,
+    pub chain_config: ChainConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(flatten)]
     pub l2_fields: Option<L2Fields>,
 }
 
 impl Cache {
-    pub fn new(blocks: Vec<Block>, witness: ExecutionWitnessResult) -> Self {
+    pub fn new(
+        blocks: Vec<Block>,
+        witness: ExecutionWitnessResult,
+        chain_config: ChainConfig,
+    ) -> Self {
         Self {
             blocks,
             witness,
+            chain_config,
             l2_fields: None,
         }
     }
