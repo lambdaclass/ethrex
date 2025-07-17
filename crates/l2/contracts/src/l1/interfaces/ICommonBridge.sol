@@ -143,6 +143,6 @@ interface ICommonBridge {
         bytes32[] calldata withdrawalProof
     ) external;
 
-    /// @notice Checks that the sequencer hasn't exceeded it's processing deadlines
-    function withinProcessingDeadline() external view returns (bool);
+    /// @notice Checks if the sequencer has exceeded it's processing deadlines
+    function hasExpiredPrivilegedTransactions() external view returns (bool);
 }

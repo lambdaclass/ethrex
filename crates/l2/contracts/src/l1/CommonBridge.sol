@@ -282,11 +282,11 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function withinProcessingDeadline() public view returns (bool) {
+    function hasExpiredPrivilegedTransactions() public view returns (bool) {
         if (pendingTxHashes.length == 0) {
-            return true;
+            return false;
         }
-        return privilegedTxDeadline[pendingTxHashes[0]] > block.timestamp;
+        return block.timestamp > privilegedTxDeadline[pendingTxHashes[0]];
     }
 
     /// @inheritdoc ICommonBridge

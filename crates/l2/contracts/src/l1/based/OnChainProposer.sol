@@ -490,7 +490,7 @@ contract OnChainProposer is
             bytes32(publicData[192:224])
         );
         require(
-            ICommonBridge(BRIDGE).withinProcessingDeadline() ||
+            !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
                 nonPrivilegedTransactions == 0,
             "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
         );
