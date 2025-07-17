@@ -1,6 +1,6 @@
 use crate::rlpx::connection::server::{broadcast_message, send};
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
-use crate::rlpx::utils::{get_pub_key, log_peer_error};
+use crate::rlpx::utils::{log_peer_error, recover_address};
 use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
 use ethereum_types::Address;
 use ethrex_blockchain::error::ChainError;
@@ -202,7 +202,7 @@ async fn should_process_new_block(
 
     let block_hash = msg.block.hash();
 
-    let recovered_lead_sequencer = get_pub_key(
+    let recovered_lead_sequencer = recover_address(
         msg.recovery_id,
         &msg.signature,
         *block_hash.as_fixed_bytes(),
@@ -259,8 +259,8 @@ async fn should_process_batch_sealed(
 
     let hash = batch_hash(&msg.batch);
 
-    let recovered_lead_sequencer =
-        get_pub_key(msg.recovery_id, &msg.signature, hash.0).map_err(|e| {
+    let recovered_lead_sequencer = recover_address(msg.recovery_id, &msg.signature, hash.0)
+        .map_err(|e| {
             log_peer_error(
                 &established.node,
                 &format!("Failed to recover lead sequencer: {e}"),

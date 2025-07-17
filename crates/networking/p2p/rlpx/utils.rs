@@ -97,7 +97,7 @@ pub(crate) fn log_peer_warn(node: &Node, text: &str) {
     warn!("[{0}]: {1}", node, text)
 }
 
-pub fn get_pub_key(
+pub fn recover_address(
     recovery_id: [u8; 4],
     signature: &[u8; 64],
     payload: [u8; 32],
