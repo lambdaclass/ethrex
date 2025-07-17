@@ -15,16 +15,16 @@ You can also download it from the command line using `curl` or `wget`:
 
 ```sh
 # For Linux x86_64
-curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_x86_64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_x86_64 -O ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_x86_64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_x86_64 -O ethrex
 
 # For Linux ARM
-curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_aarch64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-linux_aarch64 -O ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_aarch64 -O ethrex
 
 # For MacOS
-curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-macos_aarch64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.1-rc.1/ethrex-macos_aarch64 -O ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-macos_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-macos_aarch64 -O ethrex
 ```
 
 And set the execution bit:
@@ -42,7 +42,7 @@ After that, you can verify the program is working by running:
 This should output something like:
 
 ```text
-ethrex ethrex/v0.1.0-HEAD-d3aa87a/aarch64-apple-darwin/rustc-v1.87.0
+ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 ```
 
 > [!TIP]
@@ -57,7 +57,7 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 ```sh
 cargo install --locked ethrex \
     --git https://github.com/lambdaclass/ethrex.git \
-    --tag v0.0.1-rc.1 \
+    --tag v0.0.2-rc.1 \
     --features dev
 ```
 
@@ -73,7 +73,7 @@ ethrex --version
 This should output something like:
 
 ```text
-ethrex ethrex/v0.1.0-main-d3aa87a/aarch64-apple-darwin/rustc-v1.87.0
+ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 ```
 
 After installing the client, see ["Running the client"](./running.md) for instructions on how to use it to run L1 and/or L2 networks.
@@ -85,7 +85,7 @@ This section assumes you already have [Rust's `cargo`](https://www.rust-lang.org
 You can download the source code of a release from the [GitHub releases page](https://github.com/lambdaclass/ethrex/releases), or by cloning the repository at that version:
 
 ```sh
-git clone --branch v0.0.1-rc.1 --depth 1 https://github.com/lambdaclass/ethrex.git
+git clone --branch v0.0.2-rc.1 --depth 1 https://github.com/lambdaclass/ethrex.git
 ```
 
 After that, you can run the following command inside the cloned repo to build the client:
@@ -103,7 +103,7 @@ You can find the built binary inside `target/release` directory:
 This should output something like:
 
 ```text
-ethrex ethrex/v0.1.0-HEAD-d3aa87a/aarch64-apple-darwin/rustc-v1.87.0
+ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
 ```
 
 > [!TIP]
