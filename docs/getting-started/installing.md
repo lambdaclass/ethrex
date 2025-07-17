@@ -9,8 +9,28 @@ You can also [build the client from source](#building-from-source).
 
 ## Installing from pre-built binaries
 
-This part is a work-in-progress and will be updated soon.
-For now, the only way to install ethrex is by [building it from source](#building-from-source).
+To install ethrex from pre-built binaries, first download the binaries for your platform from the [release page](https://github.com/lambdaclass/ethrex/releases).
+
+After that, extract the downloaded archive:
+
+```sh
+tar -xvf ethrex*.tar.gz
+```
+
+And set the execution bit:
+
+```sh
+chmod +x ethrex
+```
+
+After that, you can run the client as follows:
+
+```sh
+./ethrex
+```
+
+> [!TIP]
+> For convenience, you can move the `ethrex` binary to a directory in your `PATH`, so you can run it from anywhere.
 
 ## Building from source
 
