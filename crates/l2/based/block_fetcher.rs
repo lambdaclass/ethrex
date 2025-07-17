@@ -89,29 +89,27 @@ impl BlockFetcherState {
     ) -> Result<Self, BlockFetcherError> {
         let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
 
-        let (_latest_safe_batch, last_l1_block_fetched) =
-            match rollup_store.get_latest_safe_batch().await? {
-                Some(latest_safe_batch) => {
-                    let last_l1_block_fetched = latest_safe_batch.last_block;
+        let last_l1_block_fetched = match rollup_store.get_latest_safe_batch().await? {
+            Some(latest_safe_batch) => {
+                let last_l1_block_fetched = latest_safe_batch.last_block;
 
-                    let latest_store_block = store.get_latest_block_number().await?;
+                let latest_store_block = store.get_latest_block_number().await?;
 
-                    for block_number in last_l1_block_fetched + 1..=latest_store_block {
-                        info!("removing block {block_number}");
-                        store.remove_block(block_number).await?;
-                    }
-                    store
-                        .update_latest_block_number(last_l1_block_fetched)
-                        .await?;
-                    (latest_safe_batch.number, last_l1_block_fetched)
+                for block_number in last_l1_block_fetched + 1..=latest_store_block {
+                    info!("removing block {block_number}");
+                    store.remove_block(block_number).await?;
                 }
-                None => (
-                    0,
-                    eth_client
-                        .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
-                        .await?,
-                ),
-            };
+                store
+                    .update_latest_block_number(last_l1_block_fetched)
+                    .await?;
+                last_l1_block_fetched
+            }
+            None => {
+                eth_client
+                    .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
+                    .await?
+            }
+        };
 
         Ok(Self {
             eth_client,
