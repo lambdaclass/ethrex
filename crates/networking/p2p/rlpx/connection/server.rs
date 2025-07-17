@@ -287,6 +287,31 @@ impl GenServer for RLPxConnection {
             CastResponse::NoReply(state)
         }
     }
+
+    async fn teardown(
+        &mut self,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> Result<(), Self::Error> {
+        match state.0 {
+            InnerState::Established(established_state) => {
+                log_peer_debug(
+                    &established_state.node,
+                    "Closing connection with established peer",
+                );
+                established_state
+                    .table
+                    .lock()
+                    .await
+                    .replace_peer(established_state.node.node_id());
+                established_state.sink.lock().await.close().await?;
+            }
+            InnerState::Initiator(_) | InnerState::Receiver(_) => {
+                // Nothing to do if the connection was not established
+            }
+        };
+        Ok(())
+    }
 }
 
 async fn initialize_connection<S>(
