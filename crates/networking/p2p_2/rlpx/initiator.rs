@@ -155,10 +155,6 @@ async fn look_for_peers(state: &RLPxInitiatorState) {
     let mut already_known_peers_table = state.kademlia.already_tried_peers.lock().await;
 
     for contact in state.kademlia.table.lock().await.values() {
-        // Skip contacts that didn't pass discv4 validation
-        if !contact.was_validated() {
-            continue;
-        }
         let node_id = contact.node.node_id();
         if !already_known_peers_table.contains(&node_id) && contact.knows_us {
             already_known_peers_table.insert(node_id);
