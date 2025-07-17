@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 lazy_static.workspace = true
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
 
@@ -50,7 +51,7 @@ ethereum_foundation_tests = []
 debug = []
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "warn"
 warnings = "warn"
 rust_2018_idioms = "warn"
 

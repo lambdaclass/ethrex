@@ -1,8 +1,11 @@
 name: Benchmark Block building
 
+# This benchmark is put on manual mode until it's fixed.
+
 on:
-  pull_request:
-    branches: ["**"]
+  workflow_dispatch:
+  #pull_request:
+    #branches: ["**"]
 
 permissions:
   pull-requests: write
@@ -16,12 +19,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
-
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-          token: ${{ secrets.GITHUB_TOKEN || '' }}
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3

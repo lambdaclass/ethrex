@@ -49,16 +49,13 @@ jobs:
           name: ethrex-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex-${{ matrix.os }}_${{ matrix.arch }}
 
-  build-prover-and-replay-exec:
+  build-prover-exec:
     strategy:
       matrix:
         platform:
           - ubuntu-22.04
           - ubuntu-22.04-arm
           - macos-latest
-        binary:
-          - ethrex_prover
-          - ethrex_replay
         include:
           - platform: ubuntu-22.04
             os: linux
@@ -82,7 +79,6 @@ jobs:
           toolchain: ${{ vars.RUST_VERSION }}
 
       - name: Build prover binary
-        if: ${{ matrix.binary == 'ethrex_prover' }}
         run: |
           export RUSTFLAGS="${{ matrix.rustflags }}"
           cd crates/l2
@@ -90,32 +86,20 @@ jobs:
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
           cd ../../
-          mv target/release/ethrex_prover ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Build replay binary
-        if: ${{ matrix.binary == 'ethrex_replay' }}
-        run: |
-          export RUSTFLAGS="${{ matrix.rustflags }}"
-          cd cmd/ethrex_replay
-          cargo build --release
-          cd ../../
-          mv target/release/ethrex-replay ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          mv target/release/ethrex_prover ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
-          path: ${{ matrix.binary }}_exec-${{ matrix.os }}_${{ matrix.arch }}
+          name: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex_prover_exec-${{ matrix.os }}_${{ matrix.arch }}
 
-  build-prover-and-replay-sp1:
+  build-prover-sp1:
     strategy:
       matrix:
         platform:
           - ubuntu-22.04
           - ubuntu-22.04-arm
-        binary:
-          - ethrex_prover
-          - ethrex_replay
         include:
           - platform: ubuntu-22.04
             arch: x86_64
@@ -147,7 +131,6 @@ jobs:
           platforms: amd64
 
       - name: Build prover binary
-        if: ${{ matrix.binary == 'ethrex_prover' }}
         run: |
           export RUSTFLAGS='-C target-cpu=native'
           cd crates/l2
@@ -155,42 +138,24 @@ jobs:
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
           cd ../../
-          mv target/release/ethrex_prover ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          mv target/release/ethrex_prover ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
           mv crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk ethrex-riscv32im-succinct-zkvm-vk
-
-      - name: Build replay binary
-        if: ${{ matrix.binary == 'ethrex_replay' }}
-        run: |
-          export RUSTFLAGS='-C target-cpu=native'
-          cd cmd/ethrex_replay
-          cargo build --release --features "sp1,gpu"
-          cd ../../
-          mv target/release/ethrex-replay ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
-          path: ${{ matrix.binary }}_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          name: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
+          path: ethrex_prover_sp1-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload sp1 vk
-        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86_64') }}
+        if: ${{ matrix.arch == 'x86_64' }}
         uses: actions/upload-artifact@v4
         with:
           name: ethrex-riscv32im-succinct-zkvm-vk
           path: ethrex-riscv32im-succinct-zkvm-vk
 
-  build-prover-and-replay-risc0:
-    strategy:
-      matrix:
-        binary:
-          - ethrex_prover
-          - ethrex_replay
-        include:
-          - platform: ubuntu-22.04
-            os: linux
-            arch: x86_64
-    runs-on: ${{ matrix.platform }}
+  build-prover-risc0:
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -216,7 +181,6 @@ jobs:
           sub-packages: '["nvcc"]'
 
       - name: Build prover binary
-        if: ${{ matrix.binary == 'ethrex_prover' }}
         run: |
           export RUSTFLAGS='-C target-cpu=native'
           export NVCC_PREPEND_FLAGS='-arch=sm_70'
@@ -225,27 +189,16 @@ jobs:
             --manifest-path ./prover/Cargo.toml \
             --bin ethrex_prover
           cd ../../
-          mv target/release/ethrex_prover ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          mv target/release/ethrex_prover ethrex_prover_risc0-linux_x86_64
           mv crates/l2/prover/zkvm/interface/risc0/out/riscv32im-risc0-vk ethrex-riscv32im-risc0-vk
-
-      - name: Build replay binary
-        if: ${{ matrix.binary == 'ethrex_replay' }}
-        run: |
-          export RUSTFLAGS='-C target-cpu=native'
-          export NVCC_PREPEND_FLAGS='-arch=sm_70'
-          cd cmd/ethrex_replay
-          cargo build --release --features "risc0,gpu"
-          cd ../../
-          mv target/release/ethrex-replay ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
-          path: ${{ matrix.binary }}_risc0-${{ matrix.os }}_${{ matrix.arch }}
+          name: ethrex_prover_risc0-linux_x86_64
+          path: ethrex_prover_risc0-linux_x86_64
 
       - name: Upload risc0 vk
-        if: ${{ (matrix.binary == 'ethrex_prover') && (matrix.arch == 'x86_64') }}
         uses: actions/upload-artifact@v4
         with:
           name: ethrex-riscv32im-risc0-vk
@@ -282,9 +235,9 @@ jobs:
   finalize-release:
     needs:
       - build-ethrex
-      - build-prover-and-replay-exec
-      - build-prover-and-replay-sp1
-      - build-prover-and-replay-risc0
+      - build-prover-exec
+      - build-prover-sp1
+      - build-prover-risc0
       - package-contracts
     runs-on: ubuntu-latest
     steps:
