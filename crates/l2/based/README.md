@@ -218,7 +218,7 @@ rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 <REGIST
 ```
 
 > [!IMPORTANT]
-> The `ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS` must be the address of the node's committer since it is the one that will be posting the batches to the L1.
+> The `SEQUENCER_ADDRESS` must be the address of the node's committer since it is the one that will be posting the batches to the L1.
 
 Once registered, the node will be able to participate in the Sequencer election process and become the lead Sequencer when its turn comes.
 
