@@ -21,6 +21,7 @@ let
     sha256 = "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs";
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
+
 in
 let
   quoteGen = rustPlatform.buildRustPackage rec {
@@ -45,6 +46,7 @@ let
       pkgs.pkg-config
       rustPlatform.cargoSetupHook
     ];
+
     env.OPENSSL_NO_VENDOR = 1;
   };
 in
