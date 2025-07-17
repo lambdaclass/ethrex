@@ -252,7 +252,7 @@ impl StoreEngineRollup for Store {
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: [u8; 68],
+        signature: [u8; 65],
     ) -> Result<(), RollupStoreError> {
         let key = block_hash.as_fixed_bytes();
         self.write::<SignatureByBlockHash>(*key, signature).await
@@ -261,7 +261,7 @@ impl StoreEngineRollup for Store {
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<[u8; 65]>, RollupStoreError> {
         let key = block_hash.as_fixed_bytes();
         self.read::<SignatureByBlockHash>(*key).await
     }
@@ -269,7 +269,7 @@ impl StoreEngineRollup for Store {
     async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: [u8; 68],
+        signature: [u8; 65],
     ) -> Result<(), RollupStoreError> {
         self.write::<SignatureByBatch>(batch_number, signature)
             .await
@@ -278,7 +278,7 @@ impl StoreEngineRollup for Store {
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<[u8; 65]>, RollupStoreError> {
         self.read::<SignatureByBatch>(batch_number).await
     }
 
@@ -454,12 +454,12 @@ table!(
 
 table!(
     /// Signature by block hash
-    ( SignatureByBlockHash ) [u8; 32] => [u8; 68]
+    ( SignatureByBlockHash ) [u8; 32] => [u8; 65]
 );
 
 table!(
     /// Signature by batch number
-    ( SignatureByBatch ) u64 => [u8; 68]
+    ( SignatureByBatch ) u64 => [u8; 65]
 );
 
 table!(
