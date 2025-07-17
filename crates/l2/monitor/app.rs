@@ -19,9 +19,7 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
-};
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
@@ -35,6 +33,7 @@ use crate::{
     },
     sequencer::errors::MonitorError,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
@@ -66,6 +65,7 @@ pub struct EthrexMonitorWidget {
 pub struct EthrexMonitorState {
     widget: EthrexMonitorWidget,
     terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
+    cancelation_token: CancellationToken,
 }
 
 pub struct EthrexMonitor {}
@@ -92,18 +92,20 @@ impl EthrexMonitor {
         store: Store,
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
-    ) -> Result<GenServerHandle<Self>, MonitorError> {
+        cancelation_token: CancellationToken,
+    ) -> Result<(), MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
         let state = EthrexMonitorState {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
+            cancelation_token,
         };
         let mut ethrex_monitor = EthrexMonitor::start_blocking(state);
         ethrex_monitor
             .cast(CastInMessage::Monitor)
             .await
             .map_err(MonitorError::GenServerError)?;
-        Ok(ethrex_monitor)
+        Ok(())
     }
 
     pub async fn monitor(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
@@ -164,18 +166,9 @@ impl GenServer for EthrexMonitor {
             let _ = restore_terminal(&mut terminal).inspect_err(|err| {
                 error!("Error restoring terminal: {err}");
             });
+            state.cancelation_token.cancel();
             CastResponse::Stop
         }
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> CallResponse<Self> {
-        let should_quit = state.widget.should_quit;
-        CallResponse::Reply(state, OutMessage::ShouldQuit(should_quit))
     }
 }
 

@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
 use crate::monitor::EthrexMonitor;
-use crate::sequencer::errors::MonitorError;
-use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
+use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_l2_common::prover::ProverType;
@@ -17,6 +16,7 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
 
@@ -163,29 +163,23 @@ pub async fn start_l2(
     }
 
     if cfg.monitor.enabled {
-        let mut ethrex_monitor = EthrexMonitor::spawn(
+        let cancelation_token = CancellationToken::new();
+        EthrexMonitor::spawn(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
             &cfg,
+            cancelation_token.clone(),
         )
         .await?;
 
         task_set.spawn(async move {
-            let mut finished = false;
-            while !finished {
-                let message = ethrex_monitor
-                    .call(monitor::app::CallInMessage::Finished)
-                    .await
-                    .map_err(MonitorError::GenServerError)?;
-                if let monitor::app::OutMessage::ShouldQuit(should_quit) = message {
-                    finished = should_quit;
+            tokio::select! {
+                _ = cancelation_token.cancelled() => {
+                    info!("Monitor has been cancelled");
+                    Ok(())
                 }
-
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
-
-            Ok(())
         });
     }
 
