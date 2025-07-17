@@ -178,7 +178,7 @@ jobs:
             echo "Failed to get SEQUENCER_REGISTRY from .env file"
             exit 1
           fi
-          rex send "$SEQUENCER_REGISTRY" 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+          rex send "$SEQUENCER_REGISTRY" 1000000000000000000 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
           rex call "$SEQUENCER_REGISTRY" -- "leaderSequencer()"
 
       - name: Start Sequencer
