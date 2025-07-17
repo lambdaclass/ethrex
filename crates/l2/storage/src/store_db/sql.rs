@@ -705,15 +705,11 @@ impl StoreEngineRollup for SQLStore {
                 vec![Vec::from(block_hash.to_fixed_bytes())],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
+        Ok(rows.next().await?.map(|row| {
             let vec = read_from_row_blob(&row, 0)?;
-            let signature: [u8; 68] = vec
-                .try_into()
-                .map_err(|_| RollupStoreError::Custom("Invalid signature length".to_string()))?;
-            Ok(Some(signature))
-        } else {
-            Ok(None)
-        }
+            vec.try_into()
+                .map_err(|_| RollupStoreError::Custom("Invalid signature length".to_string()))?
+        }))
     }
 
     async fn store_signature_by_batch(
@@ -747,15 +743,11 @@ impl StoreEngineRollup for SQLStore {
                 vec![batch_number],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
+        Ok(rows.next().await?.map(|row| {
             let vec = read_from_row_blob(&row, 0)?;
-            let signature: [u8; 68] = vec
-                .try_into()
-                .map_err(|_| RollupStoreError::Custom("Invalid signature length".to_string()))?;
-            Ok(Some(signature))
-        } else {
-            Ok(None)
-        }
+            vec.try_into()
+                .map_err(|_| RollupStoreError::Custom("Invalid signature length".to_string()))?
+        }))
     }
 }
 
