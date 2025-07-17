@@ -261,7 +261,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
-        Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
         Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
@@ -391,10 +391,10 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
     }
 }
 
-pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
-        "net_peerCount" => net::peer_count(req, contex),
+        "net_peerCount" => net::peer_count(req, contex).await,
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
 }
@@ -519,7 +519,7 @@ mod tests {
 
     // Reads genesis file taken from https://github.com/ethereum/execution-apis/blob/main/tests/genesis.json
     fn read_execution_api_genesis_file() -> Genesis {
-        let file = File::open("../../../test_data/genesis-execution-api.json")
+        let file = File::open("../../../fixtures/genesis/execution-api.json")
             .expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
@@ -595,7 +595,7 @@ mod tests {
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result).unwrap();
         let expected_response_string =
-            format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
+            format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
         assert_eq!(response.to_string(), expected_response.to_string());
     }

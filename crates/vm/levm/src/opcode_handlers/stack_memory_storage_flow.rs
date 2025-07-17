@@ -92,7 +92,7 @@ impl<'a> VM<'a> {
         let [offset, value] = *self.current_call_frame_mut()?.stack.pop()?;
 
         // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
-        if self.debug_mode.handle_debug(offset, value)? {
+        if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -233,7 +233,10 @@ impl<'a> VM<'a> {
                 storage_slot_was_cold,
             )?)?;
 
-        self.update_account_storage(to, key, new_storage_slot_value)?;
+        if new_storage_slot_value != current_value {
+            self.update_account_storage(to, key, new_storage_slot_value)?;
+        }
+
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 

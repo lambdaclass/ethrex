@@ -1,31 +1,33 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 use ethrex::{
-    DEFAULT_DATADIR,
     cli::{import_blocks, remove_db},
     networks::Network,
-    utils::set_datadir,
+    utils::init_datadir,
 };
+use ethrex_blockchain::BlockchainType;
 use ethrex_vm::EvmEngine;
 use std::path::Path;
 
 #[inline]
 fn block_import() {
-    let temp_datadir_path = Path::new(DEFAULT_DATADIR);
-    let data_dir_actual = set_datadir(Some(temp_datadir_path), None);
-    remove_db(&data_dir_actual, true);
+    let data_dir = init_datadir(None, None);
+    remove_db(&data_dir, true);
 
     let evm_engine = EvmEngine::default();
 
-    let network = Network::from("../../test_data/genesis-perf-ci.json");
+    let blockchain_type = BlockchainType::default(); // TODO: Should we support L2?
+
+    let network = Network::from("../../fixtures/genesis/perf-ci.json");
     let genesis = network
         .get_genesis()
         .expect("Failed to generate genesis from file");
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
-        Path::new("../../test_data/l2-1k-erc20.rlp"), // Assuming import_blocks also takes Path
-        &data_dir_actual,
+        Path::new("../../fixtures/blockchain/l2-1k-erc20.rlp"), // Assuming import_blocks also takes Path
+        &data_dir,
         genesis,
         evm_engine,
+        blockchain_type,
     ))
     .expect("Failed to import blocks on the Tokio runtime");
 }

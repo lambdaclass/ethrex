@@ -1,4 +1,4 @@
-use crate::{decode, networks::Network};
+use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::Block;
@@ -10,8 +10,7 @@ use ethrex_p2p::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
-#[cfg(feature = "l2")]
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -106,45 +105,45 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn set_datadir(datadir_path_opt: Option<&Path>, network_opt: Option<&Network>) -> PathBuf {
+pub fn init_datadir(datadir_path_opt: Option<PathBuf>, chain_opt: Option<String>) -> PathBuf {
     let data_dir_path = if let Some(datadir_path) = datadir_path_opt {
-        datadir_path.to_path_buf()
+        datadir_path
     } else {
         let root_dir = ProjectDirs::from("", "", "ethrex").expect("Couldn't find home directory");
-        let mut path = root_dir.data_local_dir().to_path_buf();
-        if let Some(network) = network_opt {
-            // Assuming Network has a `to_string()` or `Display` impl
-            path.push(network.to_string());
-        }
-        path
+        root_dir.data_local_dir().to_path_buf()
     };
 
-    if !data_dir_path.exists() {
-        info!("Creating data directory: {:?}", data_dir_path);
-        if let Err(e) = std::fs::create_dir_all(&data_dir_path) {
-            panic!("Failed to create data directory {:?}: {}", data_dir_path, e);
+    let mut path_with_chain = data_dir_path;
+    if let Some(chain) = chain_opt {
+        path_with_chain.push(chain);
+    }
+
+    if !path_with_chain.exists() {
+        info!("Creating data directory: {:?}", path_with_chain);
+        if let Err(e) = std::fs::create_dir_all(&path_with_chain) {
+            panic!("Failed to create data directory {:?}: {}", path_with_chain, e);
         }
-    } else if !data_dir_path.is_dir() {
+    } else if !path_with_chain.is_dir() {
         panic!(
             "Data directory {:?} is a file, not a directory!",
-            data_dir_path
+            path_with_chain
         );
     }
 
-    data_dir_path
+    path_with_chain
 }
 
 pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {
-            error!("Could not store config in file: {:?}", e);
+            error!("Could not store config in file: {e:?}");
             return;
         }
     };
 
     if let Err(e) = std::fs::write(file_path, json) {
-        error!("Could not store config in file: {:?}", e);
+        error!("Could not store config in file: {e:?}");
     };
 }
 
@@ -152,15 +151,18 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
 pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
     match std::fs::File::open(file_path) {
         Ok(file) => {
-            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {}", e))
+            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {e}"))
         }
-        Err(e) => Err(format!("No config file found: {}", e)),
+        Err(e) => Err(format!("No config file found: {e}")),
     }
 }
 
-#[cfg(feature = "l2")]
 pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
+    Ok(PublicKey::from_slice(&parse_hex(s)?)?)
 }
 
 pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
@@ -172,10 +174,11 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
 
 pub fn get_client_version() -> String {
     format!(
-        "{}/v{}-develop-{}/{}/rustc-v{}",
+        "{}/v{}-{}-{}/{}/rustc-v{}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
-        &env!("VERGEN_RUSTC_COMMIT_HASH")[0..6],
+        env!("VERGEN_GIT_BRANCH"),
+        env!("VERGEN_GIT_SHA"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )

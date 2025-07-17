@@ -3,7 +3,7 @@ use crate::{
     networks::{self, Network, PublicNetwork},
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -17,12 +17,13 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     path::Path,
+    str::FromStr,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -31,8 +32,14 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
-        .with_default_directive(Directive::from(opts.log_level))
-        .from_env_lossy();
+        .with_default_directive(
+            // Filters all spawned logs
+            // TODO: revert #3467 when error logs are no longer emitted
+            Directive::from_str("spawned_concurrency::tasks::gen_server=off")
+                .expect("this can't fail"),
+        )
+        .from_env_lossy()
+        .add_directive(Directive::from(opts.log_level));
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
         .finish();
@@ -72,10 +79,10 @@ pub fn open_store(data_dir: &Path) -> Store {
         .expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
-            if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
-            } else if #[cfg(feature = "libmdbx")] {
+            if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
+            } else if #[cfg(feature = "redb")] {
+                let engine_type = EngineType::RedB;
             } else {
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
@@ -89,9 +96,13 @@ pub fn open_store(data_dir: &Path) -> Store {
     }
 }
 
-pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+pub fn init_blockchain(
+    evm_engine: EvmEngine,
+    store: Store,
+    blockchain_type: BlockchainType,
+) -> Arc<Blockchain> {
     info!("Initiating blockchain with EVM: {}", evm_engine);
-    Blockchain::new(evm_engine, store).into()
+    Blockchain::new(evm_engine, store, blockchain_type).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -210,7 +221,12 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
 }
 
 pub fn get_network(opts: &Options) -> Network {
-    opts.network.clone()
+    let default = if opts.dev {
+        Network::LocalDevnet
+    } else {
+        Network::mainnet()
+    };
+    opts.network.clone().unwrap_or(default)
 }
 
 #[allow(dead_code)]

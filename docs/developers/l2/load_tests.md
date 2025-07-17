@@ -44,7 +44,7 @@ To analyze performance during load tests (both `ethrex` and `reth`) you can use 
 For `ethrex`, you can run the server with:
 
 ```sh
-sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network test_data/genesis-l2.json --http.port 1729 --dev
+sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network fixtures/genesis/l2.json --http.port 1729 --dev
 ```
 
 For `reth`:
@@ -67,5 +67,5 @@ You will need two terminals:
 To run with samply, run
 
 ```sh
-samply record ./target/profiling/reth node --chain ../ethrex/test_data/genesis-load-test.json --dev --dev.block-time 5000ms --http.port 1729
+samply record ./target/profiling/reth node --chain ../ethrex/fixtures/genesis/load-test.json --dev --dev.block-time 5000ms --http.port 1729
 ```

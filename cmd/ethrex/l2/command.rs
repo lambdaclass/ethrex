@@ -1,28 +1,27 @@
 use crate::{
-    DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_store,
+        init_network, init_store,
     },
     l2::{self, options::Options},
     networks::Network,
-    utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
+    utils::{init_datadir, NodeConfigFile, parse_private_key, store_node_config_file},
 };
 use clap::Subcommand;
+use ethrex_blockchain::BlockchainType;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
+use ethrex_l2_common::calldata::Value;
 use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
-use ethrex_l2_sdk::calldata::Value;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
-    EthClient,
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
+    EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -35,13 +34,13 @@ use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
     future::IntoFuture,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{error, info};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
@@ -53,8 +52,10 @@ pub enum Command {
     },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
-        datadir: String,
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", required = false)]
+        datadir: Option<PathBuf>,
+        #[arg(long = "chain", value_name = "CHAIN_NAME", required = false)]
+        chain: Option<String>,
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -103,7 +104,7 @@ pub enum Command {
             long = "network",
             default_value_t = Network::default(),
             value_name = "GENESIS_FILE_PATH",
-            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis*`.",
             env = "ETHREX_NETWORK",
             value_parser = clap::value_parser!(Network),
         )]
@@ -111,32 +112,46 @@ pub enum Command {
         #[arg(
             long = "datadir",
             value_name = "DATABASE_DIRECTORY",
-            default_value = DEFAULT_L2_DATADIR,
             help = "Receives the name of the directory where the Database is located.",
             env = "ETHREX_DATADIR"
         )]
-        datadir: String,
+        datadir: Option<PathBuf>,
+        #[arg(
+            long = "chain",
+            value_name = "CHAIN_NAME",
+            help = "Receives the name of the chain where the Database is located.",
+            env = "ETHREX_CHAIN"
+        )]
+        chain: Option<String>,
     },
 }
 
 impl Command {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self, _node_opts: &NodeOptions) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
                 if opts.node_opts.evm == EvmEngine::REVM {
                     panic!("L2 Doesn't support REVM, use LEVM instead.");
                 }
 
-                let data_dir = set_datadir(Some(Path::new(&opts.node_opts.datadir)), None);
+                l2::initializers::init_tracing(&opts);
+
+                let data_dir = init_datadir(opts.node_opts.datadir.clone(), opts.node_opts.chain.clone());
                 let rollup_store_dir = data_dir.join("rollup_store");
 
                 let network = get_network(&opts.node_opts);
 
                 let genesis = network.get_genesis()?;
                 let store = init_store(&data_dir, genesis).await;
-                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(
+                    rollup_store_dir
+                        .to_str()
+                        .expect("Failed to convert path to string"),
+                )
+                .await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain =
+                    init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
 
                 let signer = get_signer(&data_dir);
 
@@ -152,6 +167,7 @@ impl Command {
 
                 // TODO: Check every module starts properly.
                 let tracker = TaskTracker::new();
+                let mut join_set = JoinSet::new();
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -171,10 +187,14 @@ impl Command {
 
                 // Initialize metrics if enabled
                 if opts.node_opts.metrics_enabled {
-                    init_metrics(&opts.node_opts, tracker.clone());
+                    l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
-                if opts.node_opts.p2p_enabled {
+                // TODO: This should be handled differently, the current problem
+                // with using opts.node_opts.p2p_enabled is that with the removal
+                // of the l2 feature flag, p2p_enabled is set to true by default
+                // prioritizing the L1 UX.
+                if opts.sequencer_opts.based {
                     init_network(
                         &opts.node_opts,
                         &network,
@@ -184,7 +204,7 @@ impl Command {
                         signer,
                         peer_table.clone(),
                         store.clone(),
-                        tracker.clone(),
+                        tracker,
                         blockchain.clone(),
                     )
                     .await;
@@ -192,7 +212,10 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+                let l2_sequencer_cfg =
+                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
+                        error!("{err}");
+                    })?;
 
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
@@ -207,25 +230,34 @@ impl Command {
                 )
                 .into_future();
 
-                tracker.spawn(l2_sequencer);
+                join_set.spawn(l2_sequencer);
 
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
-                        info!("Server shut down started...");
-                        let node_config_path = PathBuf::from(data_dir).join("node_config.json");
-                        info!("Storing config at {:?}...", node_config_path);
-                        cancel_token.cancel();
-                        let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
-                        store_node_config_file(node_config, node_config_path).await;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        info!("Server shutting down!");
+                        join_set.abort_all();
+                    }
+                    _ = join_set.join_next() => {
                     }
                 }
+                info!("Server shut down started...");
+                let node_config_path = data_dir.join("node_config.json");
+                info!("Storing config at {:?}...", node_config_path);
+                cancel_token.cancel();
+                let node_config =
+                    NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+                store_node_config_file(node_config, node_config_path).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                info!("Server shutting down!");
             }
-            Self::RemoveDB { datadir, force } => {
+            Self::RemoveDB {
+                datadir,
+                chain,
+                force,
+            } => {
                 Box::pin(async {
                     let mut opts = NodeOptions::default();
                     opts.datadir = datadir;
+                    opts.chain = chain;
                     opts.force = force;
                     ethrex_cli::Subcommand::RemoveDB.run(&opts).await
                 })
@@ -263,14 +295,14 @@ impl Command {
                             current_block,
                             current_block,
                             contract_address,
-                            event_signature,
+                            vec![event_signature],
                         )
                         .await?;
 
                     if !logs.is_empty() {
                         // Get parent beacon block root hash from block
                         let block = eth_client
-                            .get_block_by_number(BlockByNumber::Number(current_block.as_u64()))
+                            .get_block_by_number(BlockIdentifier::Number(current_block.as_u64()))
                             .await?;
                         let parent_beacon_hash = block
                             .header
@@ -306,11 +338,11 @@ impl Command {
                             .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
                         {
                             let blob_path =
-                                data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
+                                data_dir.join(format!("{target_slot}-{}.blob", blob.index));
                             std::fs::write(blob_path, blob.blob)?;
                         }
 
-                        println!("Saved blobs for slot {}", target_slot);
+                        println!("Saved blobs for slot {target_slot}");
                     }
 
                     current_block += U256::one();
@@ -440,9 +472,11 @@ impl Command {
                                 first_block: first_block_number,
                                 last_block: new_block.number,
                                 state_root: new_block.state_root,
-                                deposit_logs_hash: H256::zero(),
+                                privileged_transactions_hash: H256::zero(),
                                 message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
+                                commit_tx: None,
+                                verify_tx: None,
                             };
 
                             // Store batch info in L2 storage
@@ -466,8 +500,9 @@ impl Command {
                 private_key,
                 datadir,
                 network,
+                chain,
             } => {
-                let data_dir = set_datadir(Some(&Path::new(&datadir)), None);
+                let data_dir = init_datadir(datadir, chain);
                 let rollup_store_dir = data_dir.join("rollup_store");
 
                 let client = EthClient::new(rpc_url.as_str())?;
@@ -488,7 +523,12 @@ impl Command {
                     info!("Private key not given, not updating contract.");
                 }
                 info!("Updating store...");
-                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(
+                    rollup_store_dir
+                        .to_str()
+                        .expect("Failed to convert path to string"),
+                )
+                .await;
                 let last_kept_block = rollup_store
                     .get_block_numbers_by_batch(batch)
                     .await?

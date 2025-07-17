@@ -1,11 +1,15 @@
 use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::MetricsGathererError};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
-use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType, MetricsL2OperationType};
-use ethrex_metrics::metrics_transactions::METRICS_TX;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::{
+    l2::metrics::{METRICS, MetricsBlockType, MetricsOperationType},
+    metrics_transactions::METRICS_TX,
+};
 use ethrex_rpc::clients::eth::EthClient;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+};
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -37,6 +41,7 @@ impl MetricsGathererState {
     }
 }
 
+#[derive(Clone)]
 pub enum InMessage {
     Gather,
 }
@@ -66,7 +71,8 @@ impl MetricsGatherer {
 }
 
 impl GenServer for MetricsGatherer {
-    type InMsg = InMessage;
+    type CallMsg = ();
+    type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = MetricsGathererState;
 
@@ -78,25 +84,25 @@ impl GenServer for MetricsGatherer {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, OutMessage::Done)
     }
 
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
         // Right now we only have the Gather message, so we ignore the message
-        let _ = gather_metrics(state)
+        let _ = gather_metrics(&mut state)
             .await
             .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
-        send_after(state.check_interval, tx.clone(), Self::InMsg::Gather);
-        CastResponse::NoReply
+        send_after(state.check_interval, handle.clone(), Self::CastMsg::Gather);
+        CastResponse::NoReply(state)
     }
 }
 
@@ -120,38 +126,41 @@ async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsG
         .await
     {
         if let Some(last_block) = last_verified_batch_blocks.last() {
-            METRICS_L2.set_block_type_and_block_number(
-                MetricsL2BlockType::LastVerifiedBlock,
+            METRICS.set_block_type_and_block_number(
+                MetricsBlockType::LastVerifiedBlock,
                 *last_block,
             )?;
         }
     }
 
     if let Ok(operations_metrics) = state.rollup_store.get_operations_count().await {
-        let (transactions, deposits, messages) = (
+        let (transactions, privileged_transactions, messages) = (
             operations_metrics[0],
             operations_metrics[1],
             operations_metrics[2],
         );
-        METRICS_L2.set_operation_by_type(MetricsL2OperationType::Deposits, deposits)?;
-        METRICS_L2.set_operation_by_type(MetricsL2OperationType::L1Messages, messages)?;
+        METRICS.set_operation_by_type(
+            MetricsOperationType::PrivilegedTransactions,
+            privileged_transactions,
+        )?;
+        METRICS.set_operation_by_type(MetricsOperationType::L1Messages, messages)?;
         METRICS_TX.set_tx_count(transactions)?;
     }
 
-    METRICS_L2.set_block_type_and_block_number(
-        MetricsL2BlockType::LastCommittedBatch,
+    METRICS.set_block_type_and_block_number(
+        MetricsBlockType::LastCommittedBatch,
         last_committed_batch,
     )?;
-    METRICS_L2.set_block_type_and_block_number(
-        MetricsL2BlockType::LastVerifiedBatch,
+    METRICS.set_block_type_and_block_number(
+        MetricsBlockType::LastVerifiedBatch,
         last_verified_batch,
     )?;
-    METRICS_L2.set_l1_gas_price(
+    METRICS.set_l1_gas_price(
         l1_gas_price
             .try_into()
             .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
     );
-    METRICS_L2.set_l2_gas_price(
+    METRICS.set_l2_gas_price(
         l2_gas_price
             .try_into()
             .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,

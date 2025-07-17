@@ -5,8 +5,9 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{NodeConfigFile, set_datadir, store_node_config_file},
+    utils::{init_datadir, NodeConfigFile, store_node_config_file},
 };
+use ethrex_blockchain::BlockchainType;
 use ethrex_p2p::{kademlia::KademliaTable, network::peer_table, types::NodeRecord};
 #[cfg(feature = "sync-test")]
 use ethrex_storage::Store;
@@ -43,13 +44,13 @@ async fn set_sync_block(store: &Store) {
 }
 
 async fn server_shutdown(
-    data_dir: String,
+    data_dir: PathBuf,
     cancel_token: &CancellationToken,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
-    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    let node_config_path = data_dir.join("node_config.json");
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
@@ -62,14 +63,14 @@ async fn server_shutdown(
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
-    init_tracing(&opts);
-
     if let Some(subcommand) = command {
         return subcommand.run(&opts).await;
     }
 
+    init_tracing(&opts);
+
     let network = get_network(&opts);
-    let data_dir = set_datadir(Some(std::path::Path::new(&opts.datadir)), Some(&opts.network));
+    let data_dir = init_datadir(opts.datadir.clone(), opts.chain.clone());
 
     let genesis = match network.get_genesis() {
         Ok(genesis) => genesis,
@@ -83,7 +84,7 @@ async fn main() -> eyre::Result<()> {
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone());
+    let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
 
     let signer = get_signer(&data_dir);
 
@@ -150,10 +151,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(data_dir.to_str().unwrap().to_string(), &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(data_dir.to_str().unwrap().to_string(), &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
         }
     }
 

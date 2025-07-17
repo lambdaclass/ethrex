@@ -22,7 +22,7 @@ COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --features "l2,rollup_storage_libmdbx"
+RUN cargo build --release --features "rollup_storage_libmdbx"
 
 FROM ubuntu:24.04
 ENV CI_ETHREX_WORKDIR=$CI_ETHREX_WORKDIR
