@@ -1,6 +1,7 @@
 # Installing ethrex
 
-We have multiple ways to install the client, depending on your needs.
+Before [running the ethrex client](./running.md), you need to install it.
+We have multiple ways to install, depending on your needs.
 
 Pre-built binaries for Linux and macOS are available for each release.
 See [Installing from pre-built binaries](#installing-from-pre-built-binaries) for installation instructions.
