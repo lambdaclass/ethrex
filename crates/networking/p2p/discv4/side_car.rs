@@ -1,4 +1,4 @@
-use std::{fs::read_to_string, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
 use ethrex_common::{H256, types::ForkId};
 use k256::ecdsa::SigningKey;

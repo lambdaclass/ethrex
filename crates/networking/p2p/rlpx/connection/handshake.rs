@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::read_to_string,
     net::SocketAddr,
     str::FromStr,
     sync::Arc,
@@ -66,7 +65,7 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: InnerState,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
-    let (context, node, framed, inbound) = match state {
+    let (context, node, framed, _inbound) = match state {
         InnerState::Initiator(Initiator { context, node, .. }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
@@ -144,7 +143,6 @@ pub(crate) async fn perform(
             connection_broadcast_send: context.broadcast.clone(),
             table: context.table.clone(),
             backend_channel: None,
-            inbound,
         },
         stream,
     ))

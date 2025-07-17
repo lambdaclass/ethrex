@@ -171,7 +171,7 @@ impl Node {
             (None, None) => return Err("Ip not found in record, can't construct node".to_string()),
             (None, Some(ipv6)) => IpAddr::from(Ipv6Addr::from_bits(ipv6)),
             (Some(ipv4), None) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
-            (Some(ipv4), Some(ipv6)) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
+            (Some(ipv4), Some(_ipv6)) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
         };
 
         // both udp and tcp can be defined in the pairs or only one

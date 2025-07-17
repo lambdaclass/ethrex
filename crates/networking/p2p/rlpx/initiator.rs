@@ -1,4 +1,4 @@
-use std::{fs::read_to_string, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use ethrex_common::H256;
 use spawned_concurrency::{

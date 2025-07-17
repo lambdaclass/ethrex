@@ -14,7 +14,7 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(Metrics::default);
 
 #[derive(Debug, Clone)]
 pub struct Metrics {
-    pub registry: Registry,
+    _registry: Registry,
     pub window_size: Duration,
 
     /// Nodes we've contacted over time.
@@ -57,13 +57,6 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn new(window_size_in_secs: u64) -> Self {
-        Metrics {
-            window_size: Duration::from_secs(window_size_in_secs),
-            ..Default::default()
-        }
-    }
-
     pub async fn record_new_discovery(&self) {
         let mut events = self.new_contacts_events.lock().await;
 
@@ -464,7 +457,7 @@ impl Default for Metrics {
             .expect("Failed to register disconnected_mainnet_peers counter");
 
         Metrics {
-            registry,
+            _registry: registry,
             new_contacts_events: Arc::new(Mutex::new(VecDeque::new())),
             window_size: Duration::from_secs(60),
 

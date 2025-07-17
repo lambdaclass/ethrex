@@ -86,21 +86,18 @@ impl PeerHandler {
         }
     }
 
+    // TODO: Implement the logic for recording peer successes
     /// Helper method to record successful peer response
-    async fn record_peer_success(&self, peer_id: H256) {
-        // self.peer_table.reward_peer(peer_id);
-    }
+    async fn record_peer_success(&self, _peer_id: H256) {}
 
+    // TODO: Implement the logic for recording peer failures
     /// Helper method to record failed peer response
-    async fn record_peer_failure(&self, peer_id: H256) {
-        // self.peer_table.penalize_peer(peer_id);
-    }
+    async fn record_peer_failure(&self, _peer_id: H256) {}
 
+    // TODO: Implement the logic for recording critical peer failures
     /// Helper method to record critical peer failure
     /// This is used when the peer returns invalid data or is otherwise unreliable
-    async fn record_peer_critical_failure(&self, peer_id: H256) {
-        // self.peer_table.critically_penalize_peer(peer_id);
-    }
+    async fn record_peer_critical_failure(&self, _peer_id: H256) {}
 
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
@@ -848,10 +845,8 @@ impl PeerHandler {
         self.peer_table.peers.lock().await.len()
     }
 
-    pub async fn remove_peer(&self, peer_id: H256) {
-        // debug!("Removing peer with id {:?}", peer_id);
-        // self.peer_table.replace_peer(peer_id);
-    }
+    // TODO: Implement the logic to remove a peer from the peer table
+    pub async fn remove_peer(&self, _peer_id: H256) {}
 }
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header

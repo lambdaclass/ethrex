@@ -1,6 +1,5 @@
 use std::{
     collections::{HashSet, btree_map::Entry},
-    fs::read_to_string,
     net::SocketAddr,
     str::FromStr,
     sync::Arc,

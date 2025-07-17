@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::read_to_string,
     net::SocketAddr,
     str::FromStr,
     sync::Arc,
@@ -115,7 +114,6 @@ pub struct Established {
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
     pub(crate) table: Kademlia,
     pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
-    pub(crate) inbound: bool,
 }
 
 #[derive(Clone)]
