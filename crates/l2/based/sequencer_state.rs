@@ -8,7 +8,7 @@ pub struct SequencerState(Arc<Mutex<SequencerStatus>>);
 
 impl SequencerState {
     pub async fn status(&self) -> SequencerStatus {
-        (*self.0.clone().lock().await).clone()
+        *self.0.clone().lock().await
     }
 
     pub async fn new_status(&self, status: SequencerStatus) {
