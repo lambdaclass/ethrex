@@ -28,6 +28,7 @@ This will generate the SP1 ELF program and verification key under:
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
+COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url <L1_RPC_URL> \
 	--private-key <L1_PRIVATE_KEY> \
@@ -44,6 +45,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 ```
 
 > [!NOTE]
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
@@ -170,12 +172,16 @@ let ws_stream_future =
 1. In another terminal let's deploy the L1 contracts, specifying the `AlignedProofAggregatorService` contract address, and adding the required prover types (Risc0 or SP1):
 ```
 cd ethrex/crates/l2
+COMPILE_CONTRACTS=true \
 ETHREX_L2_ALIGNED=true \
 ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0xFD471836031dc5108809D173A067e8486B9047A3 \
 ETHREX_L2_SP1=true \ # optional
 ETHREX_L2_RISC0=true \ # optional
 make deploy-l1
 ```
+
+> [!NOTE]
+> This command requires the COMPILE_CONTRACTS env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
 
 You will see that some deposits fail with the following error:
 ```
