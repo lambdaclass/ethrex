@@ -19,7 +19,7 @@ use log::{debug, error, info};
 use num_bigint::BigUint;
 use num_traits::Num;
 use runner::input::{InputAccount, InputTransaction, RunnerInput};
-use std::io::Write;
+use std::{collections::BTreeMap, io::Write};
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -220,13 +220,13 @@ fn compare_initial_and_current_accounts(
 fn setup_initial_state(
     runner_input: &mut RunnerInput,
     bytecode: Bytes,
-) -> HashMap<Address, Account> {
+) -> BTreeMap<Address, Account> {
     // Default state has sender with some balance to send Tx, it can be overwritten though.
-    let mut initial_state = HashMap::from([(
+    let mut initial_state = BTreeMap::from([(
         runner_input.transaction.sender,
         Account::from(InputAccount::default()),
     )]);
-    let input_pre_state: HashMap<Address, Account> = runner_input
+    let input_pre_state: BTreeMap<Address, Account> = runner_input
         .pre
         .iter()
         .map(|(addr, acc)| (*addr, Account::from(acc.clone())))
