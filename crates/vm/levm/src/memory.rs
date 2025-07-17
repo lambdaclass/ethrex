@@ -20,11 +20,11 @@ pub struct Memory {
 
 impl Memory {
     #[inline]
-    pub fn new(current_base: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             buffer: Rc::new(RefCell::new(Vec::new())),
             len: 0,
-            current_base,
+            current_base: 0,
         }
     }
 
@@ -89,9 +89,8 @@ impl Memory {
         let real_new_memory_size = new_memory_size + self.current_base;
 
         if real_new_memory_size > buffer.len() {
-            #[expect(clippy::arithmetic_side_effects)]
             // when resizing, resize by allocating entire pages instead of small memory sizes.
-            let new_size = (real_new_memory_size) + (4096 - ((real_new_memory_size) % 4096));
+            let new_size = real_new_memory_size.next_multiple_of(4096);
             buffer.resize(new_size, 0);
         }
 
@@ -255,7 +254,7 @@ impl Memory {
 
 impl Default for Memory {
     fn default() -> Self {
-        Self::new(0)
+        Self::new()
     }
 }
 
@@ -314,7 +313,7 @@ mod test {
 
     #[test]
     fn test_basic_store_data() {
-        let mut mem = Memory::new(0);
+        let mut mem = Memory::new();
 
         mem.store_data(0, &[1, 2, 3, 4, 0, 0, 0, 0, 0, 0]).unwrap();
 
@@ -324,7 +323,7 @@ mod test {
 
     #[test]
     fn test_words() {
-        let mut mem = Memory::new(0);
+        let mut mem = Memory::new();
 
         mem.store_word(0, U256::from(4)).unwrap();
 
@@ -335,7 +334,7 @@ mod test {
     #[test]
     fn test_copy_word_within() {
         {
-            let mut mem = Memory::new(0);
+            let mut mem = Memory::new();
 
             mem.store_word(0, U256::from(4)).unwrap();
             mem.copy_within(0, 32, 32).unwrap();
@@ -345,7 +344,7 @@ mod test {
         }
 
         {
-            let mut mem = Memory::new(0);
+            let mut mem = Memory::new();
 
             mem.store_word(32, U256::from(4)).unwrap();
             mem.copy_within(32, 0, 32).unwrap();
@@ -355,7 +354,7 @@ mod test {
         }
 
         {
-            let mut mem = Memory::new(0);
+            let mut mem = Memory::new();
 
             mem.store_word(0, U256::from(4)).unwrap();
             mem.copy_within(0, 0, 32).unwrap();
@@ -365,7 +364,7 @@ mod test {
         }
 
         {
-            let mut mem = Memory::new(0);
+            let mut mem = Memory::new();
 
             mem.store_word(0, U256::from(4)).unwrap();
             mem.copy_within(32, 0, 32).unwrap();

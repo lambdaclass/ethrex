@@ -33,6 +33,7 @@ impl<'a> VM<'a> {
             .get(pc_offset..pc_offset.wrapping_add(N))
         {
             u256_from_big_endian_const(
+                // SAFETY: If the get succeeded, we got N elements so the cast is safe.
                 #[expect(unsafe_code)]
                 unsafe {
                     *slice.as_ptr().cast::<[u8; N]>()

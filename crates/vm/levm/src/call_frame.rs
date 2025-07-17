@@ -49,6 +49,7 @@ impl Stack {
                 .first_chunk::<N>()
                 .ok_or(ExceptionalHalt::StackUnderflow)?
         };
+        // Due to previous error check in first_chunk, next_offset is guaranteed to be < STACK_LIMIT
         self.offset = next_offset;
 
         Ok(values)
@@ -65,7 +66,10 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
-        #[expect(unsafe_code)]
+        #[expect(
+            unsafe_code,
+            reason = "self.offset < STACK_LIMIT and next_offset == self.offset - N >= 0"
+        )]
         unsafe {
             std::ptr::copy_nonoverlapping(
                 values.as_ptr(),
