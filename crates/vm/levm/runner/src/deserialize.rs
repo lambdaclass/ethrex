@@ -2,24 +2,6 @@ use ethrex_common::U256;
 use serde::{Deserialize, Deserializer, de};
 use std::collections::HashMap;
 
-pub fn deserialize_u256_str<'de, D>(deserializer: D) -> Result<U256, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: Option<String> = Option::deserialize(deserializer)?;
-
-    match s {
-        Some(s) => {
-            if let Some(hex) = s.strip_prefix("0x") {
-                U256::from_str_radix(hex, 16).map_err(de::Error::custom)
-            } else {
-                U256::from_dec_str(&s).map_err(de::Error::custom)
-            }
-        }
-        None => Ok(U256::default()), // <- returns zero here!
-    }
-}
-
 fn parse_u256_str(s: &str) -> Result<U256, String> {
     if let Some(hex) = s.strip_prefix("0x") {
         U256::from_str_radix(hex, 16).map_err(|e| e.to_string())
