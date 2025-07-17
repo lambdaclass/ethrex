@@ -1,10 +1,5 @@
-use std::io;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use crossterm::event::{Event, EventStream};
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, MouseEventKind},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, MouseEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -23,6 +18,9 @@ use ratatui::{
 use spawned_concurrency::tasks::{
     CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener,
 };
+use std::io;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
@@ -107,32 +105,6 @@ impl EthrexMonitor {
         };
         Ok(EthrexMonitor::start(state))
     }
-
-    pub async fn render(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
-        let mut terminal = state.terminal.lock().await;
-        let widget = &mut state.widget;
-
-        widget.draw(&mut terminal)?;
-
-        widget.on_tick().await?;
-        Ok(())
-    }
-
-    pub async fn handle_event(
-        &self,
-        state: &mut EthrexMonitorState,
-        event: Event,
-    ) -> Result<(), MonitorError> {
-        let widget = &mut state.widget;
-        if let Some(key) = event.as_key_press_event() {
-            widget.on_key_event(key.code);
-        }
-        if let Some(mouse) = event.as_mouse_event() {
-            widget.on_mouse_event(mouse.kind);
-        }
-
-        Ok(())
-    }
 }
 
 impl GenServer for EthrexMonitor {
@@ -167,21 +139,25 @@ impl GenServer for EthrexMonitor {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             CastInMessage::Render => {
-                let _ = self
-                    .render(&mut state)
-                    .await
-                    .inspect_err(|err| error!("Monitor Error: {err}"));
+                let mut terminal = state.terminal.lock().await;
+                let widget = &mut state.widget;
+                let _ = widget.draw(&mut terminal);
+                let _ = widget.on_tick().await;
             }
             CastInMessage::Event(event) => {
-                let _ = self
-                    .handle_event(&mut state, event)
-                    .await
-                    .inspect_err(|err| error!("Monitor Error: {err}"));
+                let widget = &mut state.widget;
+                if let Some(key) = event.as_key_press_event() {
+                    widget.on_key_event(key.code);
+                }
+                if let Some(mouse) = event.as_mouse_event() {
+                    widget.on_mouse_event(mouse.kind);
+                }
+                let _ = handle.clone().cast(Self::CastMsg::Render).await;
             }
         }
 
