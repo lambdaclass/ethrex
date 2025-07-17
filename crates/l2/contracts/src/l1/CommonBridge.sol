@@ -122,6 +122,34 @@ contract CommonBridge is
         while (startingGas - gasleft() < amount) {}
     }
 
+
+    /// EIP-7702 delegated accounts have code beginning with this.
+    bytes3 internal constant EIP7702_PREFIX = 0xef0100;
+    /// Code size in bytes of an EIP-7702 delegated account
+    /// = len(EIP7702_PREFIX) + len(account)
+    uint256 internal constant EIP7702_CODE_LENGTH = 23;
+
+    /// This is intentionally different from the constant Optimism uses, but arbitrary.
+    uint256 internal constant ADDRESS_ALIASING = uint256(uint160(0xEe110000000000000000000000000000000011Ff));
+
+    /// @notice This implements address aliasing, inspired by [Optimism](https://docs.optimism.io/stack/differences#address-aliasing)
+    /// @dev The purpose of this is to prevent L2 contracts from being impersonated by malicious L1 contracts at the same address
+    /// @dev We don't want this to affect users, so we need to detect if the caller is an EOA
+    /// @dev We still want L2 contracts to be able to know who called in on L1
+    /// @dev So we modify the calling address by with a constant
+    function _getSenderAlias() private view returns (address) {
+        // If sender is origin, the account is an EOA
+        if (msg.sender == tx.origin) return msg.sender;
+        // Check for an EIP7702 delegate it account
+        if (msg.sender.code.length == EIP7702_CODE_LENGTH) {
+            if (bytes3(msg.sender.code) == EIP7702_PREFIX) {
+                // And treat it as an EOA
+                return msg.sender;
+            }
+        }
+        return address(uint160(uint256(uint160(msg.sender)) + ADDRESS_ALIASING));
+    }
+
     function _sendToL2(address from, SendValues memory sendValues) private {
         _burnGas(sendValues.gasLimit);
 
@@ -152,7 +180,7 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function sendToL2(SendValues calldata sendValues) public {
-        _sendToL2(msg.sender, sendValues);
+        _sendToL2(_getSenderAlias(), sendValues);
     }
 
     /// @inheritdoc ICommonBridge

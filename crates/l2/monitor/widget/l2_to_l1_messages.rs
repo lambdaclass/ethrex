@@ -198,7 +198,8 @@ impl L2ToL1MessagesTable {
             keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
 
         for log in logs {
-            match log.log.topics[0] {
+            let start = log.log.data.len().saturating_sub(32);
+            match *log.log.topics.first().ok_or(MonitorError::LogsTopics(0))? {
                 topic if topic == eth_withdrawal_topic => {
                     let withdrawal_status = L2ToL1MessageStatus::for_tx(
                         log.transaction_hash,
@@ -210,8 +211,20 @@ impl L2ToL1MessagesTable {
                     processed_logs.push((
                         L2ToL1MessageKind::ETHWithdraw,
                         withdrawal_status,
-                        Address::from_slice(&log.log.topics[1].as_fixed_bytes()[12..]),
-                        U256::from_big_endian(log.log.topics[2].as_fixed_bytes()),
+                        Address::from_slice(
+                            &log.log
+                                .topics
+                                .get(1)
+                                .ok_or(MonitorError::LogsTopics(1))?
+                                .as_fixed_bytes()[12..],
+                        ),
+                        U256::from_big_endian(
+                            log.log
+                                .topics
+                                .get(2)
+                                .ok_or(MonitorError::LogsTopics(2))?
+                                .as_fixed_bytes(),
+                        ),
                         Address::default(),
                         Address::default(),
                         log.transaction_hash,
@@ -228,10 +241,33 @@ impl L2ToL1MessagesTable {
                     processed_logs.push((
                         L2ToL1MessageKind::ERC20Withdraw,
                         withdrawal_status,
-                        Address::from_slice(&log.log.topics[3].as_fixed_bytes()[12..]),
-                        U256::from_big_endian(&log.log.data[log.log.data.len() - 32..]),
-                        Address::from_slice(&log.log.topics[1].as_fixed_bytes()[12..]),
-                        Address::from_slice(&log.log.topics[2].as_fixed_bytes()[12..]),
+                        Address::from_slice(
+                            &log.log
+                                .topics
+                                .get(3)
+                                .ok_or(MonitorError::LogsTopics(3))?
+                                .as_fixed_bytes()[12..],
+                        ),
+                        U256::from_big_endian(
+                            log.log
+                                .data
+                                .get(start..)
+                                .ok_or(MonitorError::LogsData(start))?,
+                        ),
+                        Address::from_slice(
+                            &log.log
+                                .topics
+                                .get(1)
+                                .ok_or(MonitorError::LogsTopics(1))?
+                                .as_fixed_bytes()[12..],
+                        ),
+                        Address::from_slice(
+                            &log.log
+                                .topics
+                                .get(2)
+                                .ok_or(MonitorError::LogsTopics(2))?
+                                .as_fixed_bytes()[12..],
+                        ),
                         log.transaction_hash,
                     ));
                 }
