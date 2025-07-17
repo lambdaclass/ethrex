@@ -16,7 +16,8 @@ use tracing::{debug, error};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        MAX_CHANNEL_MESSAGES, STORAGE_BATCH_SIZE, fetcher_queue::run_queue_snap_sync,
+        MAX_CHANNEL_MESSAGES, STORAGE_BATCH_SIZE,
+        fetcher_queue::{run_queue, run_queue_snap_sync},
         trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT,
     },
 };
@@ -24,7 +25,7 @@ use crate::{
 use super::SyncError;
 
 /// An in-progress large storage trie fetch request
-struct LargeStorageRequest {
+pub struct LargeStorageRequest {
     account_hash: H256,
     storage_root: H256,
     last_key: H256,
@@ -36,6 +37,7 @@ struct LargeStorageRequest {
 /// the pivot becomes stale.
 /// Upon finish, remaining storages will be sent to the storage healer.
 pub(crate) async fn storage_fetcher(
+    account_ranges: Vec<(H256, H256)>,
     peers: PeerHandler,
     store: Store,
     state_root: H256,
@@ -53,15 +55,13 @@ pub(crate) async fn storage_fetcher(
     ));
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
-    // Create an async closure to pass to the generic task spawner
-    let fetch_batch = |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
-        let l_sender = large_storage_sender.clone();
-        let s_sender = storage_trie_rebuilder_sender.clone();
-        async move { fetch_storage_batch(batch, state_root, peers, store, l_sender, s_sender).await }
-    };
+
     run_queue_snap_sync(
+        state_root,
+        account_ranges,
         &mut pending_storage,
-        &fetch_batch,
+        large_storage_sender.clone(),
+        storage_trie_rebuilder_sender,
         peers,
         store.clone(),
         STORAGE_BATCH_SIZE,
@@ -88,7 +88,7 @@ pub(crate) async fn storage_fetcher(
 
 /// Receives a batch of account hashes with their storage roots, fetches their respective storage ranges via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
 /// Also returns a boolean indicating if the pivot became stale during the request
-async fn fetch_storage_batch(
+pub async fn fetch_storage_batch(
     mut batch: Vec<(H256, H256)>,
     state_root: H256,
     peers: PeerHandler,
