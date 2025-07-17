@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752779790620,
+  "lastUpdate": 1752781241324,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4555,6 +4555,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 218209245887,
             "range": "± 1568813520",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ce87d548d3a30d75bfe4e5a1ae2cf242a316f3f3",
+          "message": "feat(l2): add chainid to public inputs (#3605)\n\n**Motivation**\n\nCurrently we don't verify blocks are executed with the correct chain id.\nThis allows malicious sequencers to replay transactions from other\nnetworks.\n\n**Description**\n\nAdds chainid to the public inputs.\n\nCloses #3586\n\n---------\n\nCo-authored-by: fedacking <francisco.gauna@lambdaclass.com>",
+          "timestamp": "2025-07-17T18:44:59Z",
+          "tree_id": "4823927b668a80a7016f28f6d1d9813bcc57df30",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ce87d548d3a30d75bfe4e5a1ae2cf242a316f3f3"
+        },
+        "date": 1752781229193,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209704740925,
+            "range": "± 443477274",
             "unit": "ns/iter"
           }
         ]
