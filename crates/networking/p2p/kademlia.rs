@@ -24,7 +24,7 @@ pub struct Bucket {
 #[derive(Debug)]
 pub struct KademliaTable {
     local_node_id: H256,
-    buckets: Vec<Bucket>,
+    pub buckets: Vec<Bucket>,
 }
 
 impl KademliaTable {
