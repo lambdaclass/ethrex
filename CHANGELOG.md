@@ -4,6 +4,8 @@
 
 ### 2025-07-17
 
+- Use a lookup table for opcode execution [#3669](https://github.com/lambdaclass/ethrex/pull/3669)
+
 - Improve CodeCopy perfomance [#3675](https://github.com/lambdaclass/ethrex/pull/3675)
 
 - Improve sstore perfomance further [#3657](https://github.com/lambdaclass/ethrex/pull/3657)

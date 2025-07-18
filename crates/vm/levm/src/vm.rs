@@ -184,7 +184,10 @@ impl<'a> VM<'a> {
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
 
-            let op_result = self.execute_opcode(opcode);
+            // Call the opcode, using the opcode function lookup table.
+            // Indexing will not panic as all the opcode values fit within the table.
+            #[allow(clippy::indexing_slicing, clippy::as_conversions)]
+            let op_result = VM::OPCODE_TABLE[opcode as usize].call(self);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
