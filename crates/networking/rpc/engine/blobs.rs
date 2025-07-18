@@ -1,0 +1,89 @@
+use ethrex_common::{
+    H256,
+    serde_utils::{self},
+    types::{Blob, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tracing::info;
+
+use crate::{
+    rpc::{RpcApiContext, RpcHandler},
+    utils::RpcErr,
+};
+
+// -> https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#specification-3
+const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize = 128;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobsV1Request {
+    blob_versioned_hashes: Vec<H256>,
+}
+
+impl std::fmt::Display for BlobsV1Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Requested Blobs")
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobsV1ResponseItem {
+    #[serde(with = "serde_utils::blob::opt")]
+    pub blob: Option<Blob>,
+    #[serde(with = "serde_utils::bytes48::opt")]
+    pub proof: Option<Proof>,
+}
+
+impl RpcHandler for BlobsV1Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        Ok(BlobsV1Request {
+            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        info!("Received new engine request: {self}");
+        if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+        //TODO: spec https://ethereum.github.io/execution-apis/docs/reference/engine_getblobsv1/ says error should be thrown for unsupported fork.
+        let mut res: Vec<BlobsV1ResponseItem> = vec![
+            BlobsV1ResponseItem {
+                blob: None,
+                proof: None
+            };
+            self.blob_versioned_hashes.len()
+        ];
+
+        for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
+            // Go over all blobs bundles from the blobs bundle pool.
+            let blobs_in_bundle = blobs_bundle.blobs;
+            let commitments_in_bundle = blobs_bundle.commitments;
+            let proofs_in_bundle = blobs_bundle.proofs;
+
+            // Go over all the commitments in each blobs bundle to get the blobs versioned hash.
+            for i in 0..commitments_in_bundle.len() {
+                let current_versioned_hash =
+                    kzg_commitment_to_versioned_hash(&commitments_in_bundle[i]);
+                if let Some(index) = self
+                    .blob_versioned_hashes
+                    .iter()
+                    .position(|&hash| hash == current_versioned_hash)
+                {
+                    // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vectors storing them in the same position as the versioned hash was received.
+                    res[index].blob = Some(blobs_in_bundle[i]);
+                    res[index].proof = Some(proofs_in_bundle[i]);
+                }
+            }
+        }
+
+        serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
