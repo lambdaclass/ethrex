@@ -377,7 +377,7 @@ impl<'a> VM<'a> {
         let mut opcode_table: [OpCodeFn<'a>; 256] =
             std::array::from_fn(|_| OpCodeFn(VM::on_invalid_opcode));
 
-        opcode_table[Opcode::STOP as usize] = OpCodeFn(VM::op_halt);
+        opcode_table[Opcode::STOP as usize] = OpCodeFn(VM::op_stop);
         opcode_table[Opcode::MLOAD as usize] = OpCodeFn(VM::op_mload);
         opcode_table[Opcode::MSTORE as usize] = OpCodeFn(VM::op_mstore);
         opcode_table[Opcode::MSTORE8 as usize] = OpCodeFn(VM::op_mstore8);
@@ -539,7 +539,7 @@ impl<'a> VM<'a> {
         Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
-    pub fn op_halt(&mut self) -> Result<OpcodeResult, VMError> {
+    pub fn op_stop(&mut self) -> Result<OpcodeResult, VMError> {
         Ok(OpcodeResult::Halt)
     }
 }

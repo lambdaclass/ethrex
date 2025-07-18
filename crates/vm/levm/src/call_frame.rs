@@ -293,6 +293,7 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
+        // 0 is the opcode stop.
         self.bytecode.get(self.pc).copied().unwrap_or(0)
     }
 
