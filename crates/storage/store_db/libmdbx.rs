@@ -17,6 +17,7 @@ use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
 };
+use ethrex_common::utils::u256_to_big_endian;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -1355,7 +1356,7 @@ impl From<H256> for AccountStorageKeyBytes {
 
 impl From<U256> for AccountStorageValueBytes {
     fn from(value: U256) -> Self {
-        AccountStorageValueBytes(value.to_big_endian())
+        AccountStorageValueBytes(u256_to_big_endian(value))
     }
 }
 
