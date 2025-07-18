@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752844241995,
+  "lastUpdate": 1752853184716,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4705,6 +4705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211027792111,
             "range": "± 351470998",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "584ff5c346a9baa29f075c818a12a2297bafeeb0",
+          "message": "fix(l1): remove \"p2p\" capability from supported capabilities list (#3571)\n\n**Motivation**\n\nEven if the spec calls it the \"p2p\" capability, it isn't included in the\n`capabilities` array by our peers, but implicitly in the message, with\nthe version specified in the `protocolVersion` field.\n\n**Description**\n\nThis PR removes the \"p2p\" capability from the capability list exchanged\nthrough Hello RLPx messages. It also removes the unused code related to\nit.",
+          "timestamp": "2025-07-18T14:43:19Z",
+          "tree_id": "3b9e011b3537031595480502820c5dc1e309d999",
+          "url": "https://github.com/lambdaclass/ethrex/commit/584ff5c346a9baa29f075c818a12a2297bafeeb0"
+        },
+        "date": 1752853169286,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212176728173,
+            "range": "± 1164775792",
             "unit": "ns/iter"
           }
         ]
