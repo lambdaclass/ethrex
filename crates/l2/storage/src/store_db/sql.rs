@@ -677,7 +677,7 @@ impl StoreEngineRollup for SQLStore {
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: [u8; 68],
+        signature: [u8; 65],
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(
             vec![
@@ -698,7 +698,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<[u8; 65]>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT signature FROM block_signatures WHERE block_hash = ?1",
@@ -720,7 +720,7 @@ impl StoreEngineRollup for SQLStore {
     async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: [u8; 68],
+        signature: [u8; 65],
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(
             vec![
@@ -741,7 +741,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<[u8; 65]>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT signature FROM batch_signatures WHERE batch = ?1",

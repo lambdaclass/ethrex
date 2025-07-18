@@ -87,27 +87,27 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: [u8; 68],
+        signature: [u8; 65],
     ) -> Result<(), RollupStoreError>;
 
     /// Retrieves the sequencer signature for a given block hash.
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError>;
+    ) -> Result<Option<[u8; 65]>, RollupStoreError>;
 
     /// Stores the sequencer signature for a given batch number.
     async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: [u8; 68],
+        signature: [u8; 65],
     ) -> Result<(), RollupStoreError>;
 
     /// Retrieves the sequencer signature for a given batch number.
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError>;
+    ) -> Result<Option<[u8; 65]>, RollupStoreError>;
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
 
