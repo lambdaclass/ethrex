@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752859374904,
+  "lastUpdate": 1752860388818,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4825,6 +4825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207570929690,
             "range": "± 392327228",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b9be27f28cc83c491787634fe4f6c25d608b8a92",
+          "message": "refactor(l2): use spawned for monitor (#3635)\n\n**Motivation**\nRefactor monitor so that it uses spawned crate\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nCurrently the monitor is a tokio task, refactor it to use spawned\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n**How to test**\n\n- Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n- Run a Sequencer (I suggest `make restart` in `crates/l2`).\n- Run the prover with `make init-prover` in `crates/l2`.\n- Run `make test` in `crates/l2`.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nDepends on https://github.com/lambdaclass/ethrex/pull/3622\n\nCloses\nhttps://github.com/orgs/lambdaclass/projects/37/views/10?pane=issue&itemId=118809943&issue=lambdaclass%7Cethrex%7C3515\n\n---------\n\nCo-authored-by: Esteban Dimitroff Hodi <esteban.dimitroff@lambdaclass.com>\nCo-authored-by: ElFantasma <estebandh@gmail.com>",
+          "timestamp": "2025-07-18T16:43:25Z",
+          "tree_id": "0c29b3a639142d5794559cc8118f6ffe745d88af",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b9be27f28cc83c491787634fe4f6c25d608b8a92"
+        },
+        "date": 1752860377062,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210887572622,
+            "range": "± 452025328",
             "unit": "ns/iter"
           }
         ]
