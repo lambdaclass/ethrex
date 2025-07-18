@@ -355,7 +355,7 @@ impl ConnectionHandlerInMessage {
                 sender_public_key: packet.get_public_key(),
             },
             Message::Pong(msg) => Self::Pong {
-                message: msg.clone(),
+                message: *msg,
                 sender_public_key: packet.get_public_key(),
             },
             Message::FindNode(..) => Self::FindNode(packet),
@@ -505,7 +505,11 @@ async fn handle_pong(state: &DiscoveryServerState, message: PongMessage, node_id
         return;
     };
     // Received a pong for an unknown ping
-    if !contact.ping_hash.is_some_and(|ph| ph == message.ping_hash) {
+    if !contact
+        .ping_hash
+        .map(|ph| ph == message.ping_hash)
+        .unwrap_or(false)
+    {
         return;
     }
     contact.ping_hash = None;
