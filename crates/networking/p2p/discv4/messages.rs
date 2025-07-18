@@ -61,7 +61,7 @@ impl Packet {
         let rid = RecoveryId::from_i32(signature_bytes[64].into())
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
 
-        let peer_pk = secp256k1::global::SECP256K1
+        let peer_pk = secp256k1::SECP256K1
             .recover_ecdsa(
                 &secp256k1::Message::from_digest(digest),
                 &RecoverableSignature::from_compact(&signature_bytes[0..64], rid)
@@ -140,7 +140,7 @@ impl Message {
 
         let digest: [u8; 32] = Keccak256::digest(&data[signature_size..]).into();
 
-        let signature = secp256k1::global::SECP256K1
+        let signature = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer);
 
         let (recovery_id, signature) = signature.serialize_compact();

@@ -138,7 +138,7 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
-    let public_key = PublicKey::from_secret_key(secp256k1::global::SECP256K1, signer);
+    let public_key = PublicKey::from_secret_key(secp256k1::SECP256K1, signer);
     let serialized = public_key.serialize_uncompressed();
     H512::from_slice(&serialized[1..])
 }

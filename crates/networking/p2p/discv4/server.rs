@@ -426,7 +426,7 @@ impl Discv4Server {
                                     DiscoveryError::InvalidMessage("digest must be 32 bytes".into())
                                 })?;
 
-                            secp256k1::global::SECP256K1
+                            secp256k1::SECP256K1
                                 .verify_ecdsa(&msg, &signature, &public_key)
                                 .is_ok()
                         }

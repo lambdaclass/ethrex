@@ -300,7 +300,7 @@ impl NodeRecord {
             .push(("ip".into(), node.ip.encode_to_vec().into()));
         record.pairs.push((
             "secp256k1".into(),
-            PublicKey::from_secret_key(secp256k1::global::SECP256K1, signer)
+            PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
                 .serialize()
                 .encode_to_vec()
                 .into(),
@@ -344,7 +344,7 @@ impl NodeRecord {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
             .map_err(|_| "Invalid message digest".to_string())?;
-        let sig = secp256k1::global::SECP256K1.sign_ecdsa_recoverable(&msg, signer);
+        let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(&msg, signer);
         let (_recovery_id, signature_bytes) = sig.serialize_compact();
 
         Ok(H512::from_slice(&signature_bytes))

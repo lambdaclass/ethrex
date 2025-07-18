@@ -508,7 +508,7 @@ where
     .concat();
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
-        PublicKey::from_secret_key(secp256k1::global::SECP256K1, &state.signer),
+        PublicKey::from_secret_key(secp256k1::SECP256K1, &state.signer),
         state.client_version.clone(),
     ));
 
