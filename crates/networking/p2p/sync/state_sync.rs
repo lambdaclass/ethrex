@@ -75,6 +75,78 @@ pub(crate) async fn state_sync(
     Ok(stale_pivot)
 }
 
+async fn state_sync_segment_2(
+    state_root: H256,
+    peers: PeerHandler,
+    store: Store,
+    segment_number: usize,
+    checkpoint: Option<H256>,
+    state_sync_progress: StateSyncProgress,
+    storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+) -> Result<(usize, bool, H256), SyncError> {
+    // Resume download from checkpoint if available or start from an empty trie
+    let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
+    // Write initial sync progress (this task is not vital so we can detach it)
+    tokio::task::spawn(StateSyncProgress::init_segment(
+        state_sync_progress.clone(),
+        segment_number,
+        start_account_hash,
+    ));
+    info!(
+        "Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}"
+    );
+
+    // 1) get the number of total headers in the chain (e.g. 800.000)
+    // 2) partition the amount of headers in `K` tasks
+    //    - list of tasks to be executed
+    //    - channel to send the tasks to the peers
+    // 3) create tasks that will request a chunk of headers from a peer
+    // 4) assign the tasks to the peers
+    //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
+
+    // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
+    //     4.2) mark the peer as busy
+    //     4.3) wait for the response and handle it
+
+    // 5) loop until all the chunks are received (retry to get the chunks that failed)
+
+    // TODO!!!!
+    let (task_sender, mut task_receiver) =
+        tokio::sync::mpsc::channel::<(Result<Vec<BlockHeader>, String>, H256, PeerChannels, u64)>(
+            1000,
+        );
+
+    for i in 0..STATE_TRIE_SEGMENTS {
+        loop {
+            // Update sync progress (this task is not vital so we can detach it)
+            //tokio::task::spawn(StateSyncProgress::update_key(
+            //    state_sync_progress.clone(),
+            //    segment_number,
+            //    start_account_hash,
+            //));
+
+            // Request Account Range
+
+            let Some((account_hashes, accounts, should_continue)) = peers
+                .request_account_range(
+                    state_root,
+                    start_account_hash,
+                    STATE_TRIE_SEGMENTS_END[segment_number],
+                )
+                .await
+            else {
+                panic!("Failed to request account range from peers");
+            };
+        }
+    }
+    //@@@loop {
+    //@@@    let mut peer_channels = self
+    //@@@        .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+    //@@@        .await;
+    //@@@}
+    todo!();
+}
+
 /// Downloads the leaf values of the given state trie segment by requesting snap state from peers
 /// Also downloads the storage tries & bytecodes for each downloaded account
 /// Receives an optional checkpoint from a previous state sync to resume it
@@ -98,6 +170,7 @@ async fn state_sync_segment(
         segment_number,
         start_account_hash,
     ));
+
     // Skip state sync if we are already on healing
     if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
         // Update sync progress (this task is not vital so we can detach it)

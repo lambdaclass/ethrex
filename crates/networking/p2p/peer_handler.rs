@@ -352,7 +352,6 @@ impl PeerHandler {
                     match headers_result {
                         (Ok(headers), peer_id, peer_channel, startblock) => {
                             downloaded_count += headers.len() as u64;
-                            //#####info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
                             let batch_show = downloaded_count / 10_000;
                             if current_show < batch_show {
                                 info!(
@@ -710,9 +709,12 @@ impl PeerHandler {
         None
     }
 
-    /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
-    /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
-    /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
+    /// Requests an account range from any suitable peer given the state trie's root
+    /// and the starting hash and the limit hash.
+    /// Will also return a boolean indicating if there is more state to be fetched
+    /// towards the right of the trie
+    /// (Note that the boolean will be true even if the remaining state is
+    /// outside the boundary set by the limit hash)
     /// Returns the account range or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
@@ -782,6 +784,79 @@ impl PeerHandler {
                 }
             }
         }
+        None
+    }
+
+    /// Only one attempt is made to request the account range
+    /// peer_channel is given in the function arguments
+    pub async fn request_account_range_2(
+        &self,
+        state_root: H256,
+        start: H256,
+        limit: H256,
+        _peer_id: H256,
+        peer_channel: &mut PeerChannels,
+    ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetAccountRange(GetAccountRange {
+            id: request_id,
+            root_hash: state_root,
+            starting_hash: start,
+            limit_hash: limit,
+            response_bytes: MAX_RESPONSE_BYTES,
+        });
+
+        let mut receiver = peer_channel.receiver.lock().await;
+
+        if let Err(err) = peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(request))
+            .await
+        {
+            debug!("Failed to send message to peer: {err:?}");
+            return None;
+        }
+
+        let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            loop {
+                match receiver.recv().await {
+                    Some(RLPxMessage::AccountRange(AccountRange {
+                        id,
+                        accounts,
+                        proof,
+                    })) if id == request_id => return Some((accounts, proof)),
+                    // Ignore replies that don't match the expected id (such as late responses)
+                    Some(_) => continue,
+                    None => return None,
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten() else {
+            return None;
+        };
+
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
+            .into_iter()
+            .map(|unit| (unit.hash, AccountState::from(unit.account)))
+            .unzip();
+        let encoded_accounts = accounts
+            .iter()
+            .map(|acc| acc.encode_to_vec())
+            .collect::<Vec<_>>();
+        if let Ok(should_continue) = verify_range(
+            state_root,
+            &start,
+            &account_hashes,
+            &encoded_accounts,
+            &proof,
+        ) {
+            return Some((account_hashes, accounts, should_continue));
+        }
+
         None
     }
 
