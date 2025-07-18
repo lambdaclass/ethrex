@@ -227,15 +227,16 @@ impl DiscoveryServerState {
     async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
         let _ = self.pong(hash, &node).await?;
 
-        let ping_hash = self.ping(&node).await?;
+        let mut table = self.kademlia.table.lock().await;
 
-        self.kademlia
-            .table
-            .lock()
-            .await
-            .entry(node.node_id())
-            .or_insert(Contact::from(node))
-            .record_sent_ping(ping_hash);
+        match table.entry(node.node_id()) {
+            Entry::Occupied(_) => (),
+            Entry::Vacant(entry) => {
+                let ping_hash = self.ping(&node).await?;
+                let contact = entry.insert(Contact::from(node));
+                contact.record_sent_ping(ping_hash);
+            }
+        }
 
         Ok(())
     }
