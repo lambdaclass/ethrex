@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752860599035,
+  "lastUpdate": 1752860812146,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4885,6 +4885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209821384176,
             "range": "± 503832231",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4fc03c98fd813c7cb18753f83a8d4702713c6b29",
+          "message": "perf(levm): improve most opcodes by using stack pop1 push1 (#3705)\n\n**Motivation**\n\nThe methods pop1 and push1 added in\nhttps://github.com/lambdaclass/ethrex/pull/3704 show that they increase\nperfomance in benchmarks, this pr addes them to all other opcodes",
+          "timestamp": "2025-07-18T16:48:43Z",
+          "tree_id": "e2b2b0431e9deb469134e6f933a7bec20028c3a4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4fc03c98fd813c7cb18753f83a8d4702713c6b29"
+        },
+        "date": 1752860799422,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211254886551,
+            "range": "± 597374231",
             "unit": "ns/iter"
           }
         ]
