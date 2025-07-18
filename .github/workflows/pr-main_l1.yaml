@@ -149,9 +149,9 @@ jobs:
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
           enclave_name: ${{ matrix.enclave_name }}
-          kurtosis_version: "1.6.0"
+          kurtosis_version: "1.10.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "ethrex-integration-pectra"
+          ethereum_package_branch: "7d0d6c6d91f1745a6b396b3965df69d580cf70a9"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
