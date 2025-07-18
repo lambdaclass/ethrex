@@ -464,11 +464,13 @@ impl GenServer for ConnectionHandler {
                     debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
                     return CastResponse::Stop;
                 }
+                let node = contact.node.clone();
+
                 // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
                 // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
                 // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
                 // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-                if from.ip() != contact.node.ip {
+                if from.ip() != node.ip {
                     debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
                     return CastResponse::Stop;
                 }
@@ -478,10 +480,12 @@ impl GenServer for ConnectionHandler {
                     .map(|(_, c)| c.node.clone())
                     .choose_multiple(&mut OsRng, 16);
 
+                drop(table);
+
                 // we are sending the neighbors in 2 different messages to avoid exceeding the
                 // maximum packet size
                 for chunk in neighbors.chunks(8) {
-                    let _ = state.send_neighbors(chunk.to_vec(), &contact.node).await.inspect_err(|e| {
+                    let _ = state.send_neighbors(chunk.to_vec(), &node).await.inspect_err(|e| {
                         error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
                     });
                 }
