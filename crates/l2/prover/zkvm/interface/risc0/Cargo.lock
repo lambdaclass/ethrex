@@ -1050,9 +1050,9 @@ checksum = "0da45bc31171d8d6960122e222a67740df867c1dd53b4d51caa297084c185cab"
 
 [[package]]
 name = "cc"
-version = "1.2.30"
+version = "1.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deec109607ca693028562ed836a5f1c4b8bd77755c4e132fc5ce11b0b6211ae7"
+checksum = "5c1599538de2394445747c8cf7935946e3cc27e9625f889d979bfb2aaf569362"
 dependencies = [
  "shlex",
 ]
@@ -1526,7 +1526,6 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
- "hkdf",
  "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
@@ -1638,7 +1637,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "k256",
  "secp256k1",
  "sha3",
  "thiserror",
@@ -1658,7 +1656,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "k256",
  "keccak-hash",
  "kzg-rs",
  "lazy_static",
@@ -1667,6 +1664,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "sha2",
  "sha3",
  "thiserror",
  "tinyvec",
@@ -1711,7 +1709,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256",
  "keccak-hash",
  "lambdaworks-math",
  "lazy_static",
@@ -2098,15 +2095,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
-name = "hkdf"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
-dependencies = [
- "hmac",
-]
-
-[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2407,7 +2395,6 @@ dependencies = [
  "elliptic-curve",
  "once_cell",
  "sha2",
- "signature",
 ]
 
 [[package]]
