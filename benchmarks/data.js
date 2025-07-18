@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752855636638,
+  "lastUpdate": 1752858626218,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4795,6 +4795,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207145155988,
             "range": "± 354516416",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "43ed0ffe6efa430b1517d61ab940604eb09f16dd",
+          "message": "perf(levm): improve precompiles by avoiding 0 value transfers (#3715)\n\nImprove precompiles by avoiding 0 value transfers\n\nThis idea was suggested by @JereSalo \n\n<img width=\"1690\" height=\"321\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/a2e70d40-9588-4ab6-9005-4e6c3a2a726d\"\n/>",
+          "timestamp": "2025-07-18T16:13:05Z",
+          "tree_id": "a59e9d10e2850c4714c8b080c9412a2281589687",
+          "url": "https://github.com/lambdaclass/ethrex/commit/43ed0ffe6efa430b1517d61ab940604eb09f16dd"
+        },
+        "date": 1752858613947,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207570929690,
+            "range": "± 392327228",
             "unit": "ns/iter"
           }
         ]
