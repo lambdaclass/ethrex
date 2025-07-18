@@ -3,6 +3,7 @@ use std::{collections::btree_map::Entry, net::SocketAddr, sync::Arc};
 use ethrex_common::{H512, types::ForkId};
 use k256::ecdsa::SigningKey;
 use keccak_hash::H256;
+use rand::{rngs::OsRng, seq::IteratorRandom};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle},
@@ -147,6 +148,31 @@ impl DiscoveryServerState {
         }
 
         debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
+
+        Ok(())
+    }
+
+    async fn send_neighbors(
+        &self,
+        neighbors: Vec<Node>,
+        node: &Node,
+    ) -> Result<(), DiscoveryServerError> {
+        let mut buf = Vec::new();
+
+        // TODO: Parametrize this expiration.
+        let expiration: u64 = get_msg_expiration_from_seconds(20);
+
+        let msg = Message::Neighbors(NeighborsMessage::new(neighbors, expiration));
+
+        msg.encode_with_header(&mut buf, &self.signer);
+
+        let bytes_sent = self.udp_socket.send_to(&buf, node.udp_addr()).await?;
+
+        if bytes_sent != buf.len() {
+            return Err(DiscoveryServerError::PartialMessageSent);
+        }
+
+        debug!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -342,7 +368,10 @@ pub enum ConnectionHandlerInMessage {
         message: PongMessage,
         sender_public_key: H512,
     },
-    FindNode(Packet),
+    FindNode {
+        message: FindNodeMessage,
+        sender_public_key: H512,
+    },
     Neighbors {
         message: NeighborsMessage,
         sender_public_key: H512,
@@ -371,7 +400,10 @@ impl ConnectionHandlerInMessage {
                 message: *msg,
                 sender_public_key: packet.get_public_key(),
             },
-            Message::FindNode(..) => Self::FindNode(packet),
+            Message::FindNode(msg) => Self::FindNode {
+                message: msg.clone(),
+                sender_public_key: packet.get_public_key(),
+            },
             Message::Neighbors(msg) => Self::Neighbors {
                 message: msg.clone(),
                 sender_public_key: packet.get_public_key(),
@@ -449,8 +481,29 @@ impl GenServer for ConnectionHandler {
 
                 handle_pong(&state, message, node_id).await;
             }
-            Self::CastMsg::FindNode(packet) => {
-                trace!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
+            Self::CastMsg::FindNode {
+                message,
+                sender_public_key,
+            } => {
+                trace!(received = "FindNode", from = %format!("{:#x}", sender_public_key));
+
+                let node_id = node_id(&sender_public_key);
+
+                let table = state.kademlia.table.lock().await;
+
+                let Some(contact) = table.get(&node_id) else {
+                    drop(table);
+                    return CastResponse::Stop;
+                };
+
+                let neighbors = table
+                    .iter()
+                    .map(|(_, c)| c.node.clone())
+                    .choose_multiple(&mut OsRng, 16);
+
+                let _ = state.send_neighbors(neighbors, &contact.node).await.inspect_err(|e| {
+                    error!(sent = "Neighbors", to = %format!("{sender_public_key:#x}"), err = ?e);
+                });
             }
             Self::CastMsg::Neighbors {
                 message: msg,
