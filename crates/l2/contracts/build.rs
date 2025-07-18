@@ -172,7 +172,7 @@ fn compile_contract_to_binary(
 ) {
     println!("Compiling {contract_name} contract");
     ethrex_l2_sdk::compile_contract(output_dir, contract_path, runtime_bin, remappings)
-        .expect("Failed to compile {contract_name}");
+        .expect("Failed to compile contract");
     println!("Successfully compiled {contract_name} contract");
     decode_to_bytecode(output_dir, contract_name, runtime_bin);
     println!("Successfully generated {contract_name} bytecode");
@@ -186,10 +186,9 @@ fn decode_to_bytecode(output_dir: &Path, contract: &str, runtime_bin: bool) {
     };
 
     let bytecode_hex = fs::read_to_string(output_dir.join("solc_out").join(&filename))
-        .expect("Failed to read {filename}");
+        .expect("Failed to read file");
 
-    let bytecode =
-        hex::decode(bytecode_hex.trim()).expect("Failed to decode bytecode for {contract}");
+    let bytecode = hex::decode(bytecode_hex.trim()).expect("Failed to decode bytecode");
 
     fs::write(
         output_dir
@@ -197,5 +196,5 @@ fn decode_to_bytecode(output_dir: &Path, contract: &str, runtime_bin: bool) {
             .join(format!("{contract}.bytecode")),
         bytecode,
     )
-    .expect("Failed to write bytecode for {contract}");
+    .expect("Failed to write bytecode");
 }
