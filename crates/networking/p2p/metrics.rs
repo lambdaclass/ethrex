@@ -117,16 +117,10 @@ impl Metrics {
         let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
         disconnection_by_client
             .entry(client_type.to_string())
-            .or_insert(BTreeMap::new());
-
-        disconnection_by_client
-            .entry(client_type.to_string())
-            .and_modify(|entry| {
-                entry
-                    .entry(reason.to_string())
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            });
+            .or_insert(BTreeMap::new())
+            .entry(reason.to_string())
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
     }
 
     pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
