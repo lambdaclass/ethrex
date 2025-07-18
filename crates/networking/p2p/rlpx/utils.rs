@@ -54,9 +54,9 @@ pub fn node_id(public_key: &H512) -> H256 {
 
 /// Decompresses the received public key
 pub fn decompress_pubkey(pk: &PublicKey) -> H512 {
-    let uncompressed = pk.serialize_uncompressed();
-    debug_assert_eq!(uncompressed[0], 0x04);
-    H512::from_slice(&uncompressed[1..])
+    let bytes = pk.serialize_uncompressed();
+    debug_assert_eq!(bytes[0], 4);
+    H512::from_slice(&bytes[1..])
 }
 
 /// Compresses the received public key
