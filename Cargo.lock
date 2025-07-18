@@ -3302,6 +3302,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "keccak-hash",
+ "rayon",
  "revm 19.7.0",
  "serde",
  "serde_json",
