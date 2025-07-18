@@ -227,17 +227,20 @@ impl<'a> VM<'a> {
         }
 
         // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        let code_offset_end = code_offset.checked_add(size);
-        if code_offset_end.is_some() && code_offset_end < Some(current_call_frame.bytecode.len()) {
-            let end = code_offset.wrapping_add(size);
+        if let Some(code_offset_end) = code_offset.checked_add(size) {
+            if code_offset_end < current_call_frame.bytecode.len() {
+                #[expect(unsafe_code, reason = "bounds checked beforehand")]
+                let slice = unsafe {
+                    current_call_frame
+                        .bytecode
+                        .get_unchecked(code_offset..code_offset_end)
+                };
+                current_call_frame
+                    .memory
+                    .store_data(destination_offset, slice)?;
 
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            let slice = unsafe { current_call_frame.bytecode.get_unchecked(code_offset..end) };
-            current_call_frame
-                .memory
-                .store_data(destination_offset, slice)?;
-
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            }
         }
 
         let mut data = vec![0u8; size];
