@@ -4,6 +4,8 @@
 
 ### 2025-07-18
 
+- Add specialized push1 and pop1 to stack [#3705](https://github.com/lambdaclass/ethrex/pull/3705)
+
 - Improve BlobHash [#3704](https://github.com/lambdaclass/ethrex/pull/3704)
 
 ### 2025-07-17
