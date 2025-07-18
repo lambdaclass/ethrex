@@ -30,7 +30,7 @@ make refresh-evm-ef-tests
 ### Flags
 - `forks`: Forks for which we want to run the tests for.
 - `tests`: Tests (.json files) we want to run
-- `specific_tests`: For running tests with a specific name. (Sometimes a .json file has multiple tests)
+- `specific-tests`: For running tests with a specific name. (Sometimes a .json file has multiple tests)
 - `summary`: For not doing a re-run with REVM of failed tests after LEVM's run.
 - `skip`: For skipping tests
 - `verbose`: For more info while running, like tests names being run.
