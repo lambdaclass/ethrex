@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752840878942,
+  "lastUpdate": 1752841144553,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4675,6 +4675,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210050718364,
             "range": "± 648313586",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "dcb9deef55336159f21694ab4ac824c0ee801a83",
+          "message": "perf(levm): improve block related opcodes and add stack push1 and pop1 (#3704)\n\n**Motivation**\n\nUsing ##3669 as base\n\nBlobhash:\nMgas goes from base p95 500 to 637\nAdding a dedicated push1 method to stack increases it to 711 mgas.\n\nAdding push1 and pop1 to other block opcodes improves mgas by about\n60-100 on their benchmarks.\n\nWill add another pr adding push1 to more opcodes",
+          "timestamp": "2025-07-18T11:23:08Z",
+          "tree_id": "8b31b05f699432ed712f201b0f023fab9bb4a783",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dcb9deef55336159f21694ab4ac824c0ee801a83"
+        },
+        "date": 1752841132193,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211027792111,
+            "range": "± 351470998",
             "unit": "ns/iter"
           }
         ]
