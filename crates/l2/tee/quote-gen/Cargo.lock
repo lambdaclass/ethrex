@@ -6183,21 +6183,25 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.2-alpha#c6f757c0cc07a34f9e56c8c7ea8fde483b50ea20"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01bd46fef02d70d06e3e169d89eaddf1a3c8db6cb689a541705463f7a12260d7"
 dependencies = [
  "futures",
  "spawned-rt",
+ "thiserror 2.0.12",
  "tracing",
 ]
 
 [[package]]
 name = "spawned-rt"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.2-alpha#c6f757c0cc07a34f9e56c8c7ea8fde483b50ea20"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7105ceb2a49ea3566f29c57bdc164397d81db934ff6241e1a555df76069b657"
 dependencies = [
  "crossbeam",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
@@ -6650,6 +6654,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
