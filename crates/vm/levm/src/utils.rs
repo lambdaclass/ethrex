@@ -131,10 +131,9 @@ pub fn get_jumpdest_mappings(code: &Bytes) -> Result<Box<[(usize, usize)]>, VMEr
             mappings.extend((0..count).map(|x| (offset + x, offset + count)));
             offset += count;
         } else {
-            offset += (value - Opcode::PUSH0 as u8) as usize;
+            offset += 1 + (value - Opcode::PUSH0 as u8) as usize;
         }
 
-        offset += 1;
         iter = match code.get(offset..) {
             Some(rest) => rest.iter(),
             None => break,
