@@ -14,6 +14,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+#[derive(Default)]
 pub struct BatchesTable {
     pub state: TableState,
     // batch number | # blocks | # messages | commit tx hash | verify tx hash
@@ -24,25 +25,11 @@ pub struct BatchesTable {
 }
 
 impl BatchesTable {
-    pub async fn new(
-        on_chain_proposer_address: Address,
-        eth_client: &EthClient,
-        rollup_store: &StoreRollup,
-    ) -> Result<Self, MonitorError> {
-        let mut last_l1_block_fetched = 0;
-        let items = Self::fetch_new_items(
-            &mut last_l1_block_fetched,
+    pub fn new(on_chain_proposer_address: Address) -> Self {
+        Self {
             on_chain_proposer_address,
-            eth_client,
-            rollup_store,
-        )
-        .await?;
-        Ok(Self {
-            state: TableState::default(),
-            items,
-            last_l1_block_fetched,
-            on_chain_proposer_address,
-        })
+            ..Default::default()
+        }
     }
 
     pub async fn on_tick(
@@ -73,11 +60,11 @@ impl BatchesTable {
             return Ok(());
         }
 
-        let mut from = self.items.last().expect("Expected items in the table").0 - 1;
+        let mut from = self.items.last().ok_or(MonitorError::NoItemsInTable)?.0 - 1;
 
         let refreshed_batches = Self::get_batches(
             &mut from,
-            self.items.first().expect("Expected items in the table").0,
+            self.items.first().ok_or(MonitorError::NoItemsInTable)?.0,
             rollup_store,
         )
         .await?;
@@ -98,7 +85,7 @@ impl BatchesTable {
         let last_l2_batch_number = eth_client
             .get_last_committed_batch(on_chain_proposer_address)
             .await
-            .expect("Failed to get latest L2 batch");
+            .map_err(|_| MonitorError::GetLatestBatch)?;
 
         let new_batches =
             Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
@@ -117,7 +104,7 @@ impl BatchesTable {
             let batch = rollup_store
                 .get_batch(batch_number)
                 .await
-                .map_err(|e| MonitorError::RollupStore(batch_number, e))?
+                .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
                 .ok_or(MonitorError::BatchNotFound(batch_number))?;
 
             *from = batch_number;

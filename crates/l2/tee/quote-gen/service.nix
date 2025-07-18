@@ -1,3 +1,7 @@
+{ gitRev }:
+assert (builtins.stringLength gitRev == 7)
+  || throw "gitRev must be exactly 7 characters use (git rev-parse --short=7 HEAD)";
+
 let
   pkgs = import <nixpkgs> { };
   fenix = pkgs.callPackage (pkgs.fetchFromGitHub {
@@ -21,6 +25,7 @@ let
     sha256 = "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs";
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
+
 in
 let
   quoteGen = rustPlatform.buildRustPackage rec {
@@ -45,7 +50,11 @@ let
       pkgs.pkg-config
       rustPlatform.cargoSetupHook
     ];
-    env.OPENSSL_NO_VENDOR = 1;
+
+    env = {
+      OPENSSL_NO_VENDOR = 1;
+      VERGEN_GIT_SHA = gitRev;
+    };
   };
 in
 {

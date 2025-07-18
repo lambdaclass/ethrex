@@ -187,7 +187,7 @@ start-ethrex-holesky: ## Start ethrex for holesky
 
 start-hoodi-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for hoodi
 	@echo "Starting L1 docker compose with metrics..."
-	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
 	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 &
 	@echo "Starting ethrex..."
@@ -195,7 +195,7 @@ start-hoodi-metrics-docker: ## Start L1 docker compose, lighthouse in background
 
 start-holesky-metrics-docker: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
 	@echo "Starting L1 docker compose with metrics..."
-	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting lighthouse in background..."
 	cd $(ETHREX_DIR)/tooling/sync && nohup make holesky-lighthouse > /dev/null 2>&1 &
 	@echo "Starting ethrex..."

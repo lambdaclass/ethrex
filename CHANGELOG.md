@@ -2,6 +2,34 @@
 
 ## Perf
 
+### 2025-07-18
+
+- Improve BlobHash [#3704](https://github.com/lambdaclass/ethrex/pull/3704)
+
+  Added push1 and pop1 to avoid using arrays for single variable operations.
+
+  Avoid checking for blob hashes length twice.
+
+### 2025-07-17
+
+- Use a lookup table for opcode execution [#3669](https://github.com/lambdaclass/ethrex/pull/3669)
+
+- Improve CodeCopy perfomance [#3675](https://github.com/lambdaclass/ethrex/pull/3675)
+
+- Improve sstore perfomance further [#3657](https://github.com/lambdaclass/ethrex/pull/3657)
+
+### 2025-07-16
+
+- Improve levm memory model [#3564](https://github.com/lambdaclass/ethrex/pull/3564)
+
+### 2025-07-15
+
+- Add sstore bench [#3552](https://github.com/lambdaclass/ethrex/pull/3552)
+
+### 2025-07-10
+
+- Add AVX256 implementation of BLAKE2 [#3590](https://github.com/lambdaclass/ethrex/pull/3590)
+
 ### 2025-07-08
 
 - Improve sstore opcodes [#3555](https://github.com/lambdaclass/ethrex/pull/3555)

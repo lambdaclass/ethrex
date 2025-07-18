@@ -4,11 +4,11 @@ use ethrex_common::{
     Address, H256, U256,
     types::{Account, ChainConfig},
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub mod gen_db;
 
-pub type CacheDB = HashMap<Address, Account>;
+pub type CacheDB = BTreeMap<Address, Account>;
 
 pub trait Database: Send + Sync {
     fn get_account(&self, address: Address) -> Result<Account, DatabaseError>;
