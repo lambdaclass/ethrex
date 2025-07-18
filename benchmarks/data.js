@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752866205518,
+  "lastUpdate": 1752869782078,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4945,6 +4945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210347514164,
             "range": "± 1722701120",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fa7a8b5083607a60e462305797be8ea06e306a20",
+          "message": "ci(l1): comment out flaky findnode test (#3699)\n\nI thought this test had already been commented out before but maybe it\nwas reintroduced, I don't know. It's flaky though.\n[Example\nrun](https://github.com/lambdaclass/ethrex/actions/runs/16356024570/job/46215135795?pr=3626)",
+          "timestamp": "2025-07-18T19:19:41Z",
+          "tree_id": "7bdf26b8bea2a56a896280c98800be6313628a0f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fa7a8b5083607a60e462305797be8ea06e306a20"
+        },
+        "date": 1752869769963,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209643134431,
+            "range": "± 638634859",
             "unit": "ns/iter"
           }
         ]
