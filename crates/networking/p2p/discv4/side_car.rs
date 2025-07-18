@@ -10,7 +10,7 @@ use keccak_hash::H256;
 use rand::rngs::OsRng;
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, send_after},
+    tasks::{CastResponse, GenServer, send_after, send_interval},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info};
@@ -192,7 +192,11 @@ impl DiscoverySideCar {
 
         let mut server = DiscoverySideCar::start(state.clone());
 
-        let _ = server.cast(InMessage::Revalidate).await;
+        send_interval(
+            state.revalidation_check_interval,
+            server.clone(),
+            InMessage::Revalidate,
+        );
 
         let _ = server.cast(InMessage::Lookup).await;
 
@@ -224,12 +228,6 @@ impl GenServer for DiscoverySideCar {
                 debug!(received = "Revalidate");
 
                 revalidate(&state).await;
-
-                send_after(
-                    state.revalidation_check_interval,
-                    handle.clone(),
-                    Self::CastMsg::Revalidate,
-                );
 
                 CastResponse::NoReply(state)
             }

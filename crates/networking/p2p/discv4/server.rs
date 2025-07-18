@@ -485,7 +485,7 @@ impl GenServer for ConnectionHandler {
                 message,
                 sender_public_key,
             } => {
-                trace!(received = "FindNode", from = %format!("{:#x}", sender_public_key));
+                trace!(received = "FindNode", msg = ?message, from = %format!("{:#x}", sender_public_key));
 
                 let node_id = node_id(&sender_public_key);
 
