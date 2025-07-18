@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752874190584,
+  "lastUpdate": 1752874570297,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5065,6 +5065,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208030310237,
             "range": "± 452013088",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62400508+juan518munoz@users.noreply.github.com",
+            "name": "juan518munoz",
+            "username": "juan518munoz"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a94a05cbefa95d78e1636ab6222182eeca237c0b",
+          "message": "refactor(l1): replace rlpx listener functions with `spawned` implementation (#3504)\n\nRemove `spawn_listener` and `spawn_broadcast_listener` functions in\nfavour of `spawned`'s helper functions for its GenServers.\n\nNote: this PR should not be merged until [related spawned\nchanges](https://github.com/lambdaclass/spawned/pull/20) are available\non a release.\n\nCloses #3387",
+          "timestamp": "2025-07-18T20:39:01Z",
+          "tree_id": "e9232714cba7726018f3130c7087cd13876b3e63",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a94a05cbefa95d78e1636ab6222182eeca237c0b"
+        },
+        "date": 1752874558139,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212693819346,
+            "range": "± 359091162",
             "unit": "ns/iter"
           }
         ]
