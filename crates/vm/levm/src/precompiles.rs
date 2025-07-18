@@ -33,6 +33,11 @@ use lambdaworks_math::{
     traits::ByteConversion,
     unsigned_integer::element,
 };
+
+use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
+use ark_ec::CurveGroup;
+use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
+
 use num_bigint::BigUint;
 use secp256k1::{
     Message,
@@ -529,36 +534,33 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
     let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
 
-    let scalar = element::U256::from_bytes_be(scalar).map_err(|_| InternalError::Slicing)?;
+    let x = ark_bn254::Fq::from_be_bytes_mod_order(point_x);
+    let y = ark_bn254::Fq::from_be_bytes_mod_order(point_y);
 
-    // If point is zero the precompile should not fail, but the conversion in
-    // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let point_is_zero =
-        u256_from_big_endian(point_x).is_zero() && u256_from_big_endian(point_y).is_zero();
-    if point_is_zero {
+    if x.is_zero() && y.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
 
-    let point_x = BN254FieldElement::from_bytes_be(point_x).map_err(|_| InternalError::Slicing)?;
-    let point_y = BN254FieldElement::from_bytes_be(point_y).map_err(|_| InternalError::Slicing)?;
-
-    let point = BN254Curve::create_point_from_affine(point_x, point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
-    let zero_u256 = element::U256::from(0_u16);
-    if scalar.eq(&zero_u256) {
-        Ok(Bytes::from([0u8; 64].to_vec()))
-    } else {
-        let mul = point.operate_with_self(scalar).to_affine();
-        if u256_from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
-            || u256_from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
-        {
-            Ok(Bytes::from([0u8; 64].to_vec()))
-        } else {
-            let res = [mul.x().to_bytes_be(), mul.y().to_bytes_be()].concat();
-            Ok(Bytes::from(res))
-        }
+    let point = G1AffineArk::new_unchecked(x, y);
+    if !point.is_on_curve() {
+        return Err(PrecompileError::InvalidPoint.into());
     }
+
+    let scalar = FrArk::from_be_bytes_mod_order(scalar);
+    if scalar.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    let result = point.mul(scalar).into_affine();
+
+    let x_bytes = result.x.into_bigint().to_bytes_be();
+    let y_bytes = result.y.into_bigint().to_bytes_be();
+
+    let mut out = vec![0u8; 64];
+    out[32 - x_bytes.len()..32].copy_from_slice(&x_bytes);
+    out[64 - y_bytes.len()..64].copy_from_slice(&y_bytes);
+
+    Ok(Bytes::from(out))
 }
 
 const ALT_BN128_PRIME: U256 = U256([
