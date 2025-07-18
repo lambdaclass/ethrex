@@ -204,33 +204,6 @@ impl DiscoveryServerState {
         Ok(())
     }
 
-    #[expect(dead_code)]
-    // TODO: this should be used to filter peers before connecting to them
-    async fn send_enr_request(&self, node: &Node) -> Result<(), DiscoveryServerError> {
-        let mut buf = Vec::new();
-
-        // TODO: Parametrize this expiration.
-        let expiration: u64 = get_msg_expiration_from_seconds(20);
-
-        let enr_req = Message::ENRRequest(ENRRequestMessage::new(expiration));
-
-        enr_req.encode_with_header(&mut buf, &self.signer);
-
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, node.udp_addr())
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoveryServerError::PartialMessageSent);
-        }
-
-        debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
-
-        Ok(())
-    }
-
     async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
         self.pong(hash, &node).await?;
 
