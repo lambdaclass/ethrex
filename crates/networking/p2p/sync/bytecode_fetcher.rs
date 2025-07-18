@@ -60,7 +60,7 @@ async fn bytecode_fetcher(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<(), SyncError> {
-    let mut pending_bytecodes: Vec<H256> = vec![];
+    let mut pending_bytecodes: Vec<H256> = store.get_bytecodes_pending().await?.unwrap_or_default();
     let fetch_batch = move |batch: Vec<H256>, peers: PeerHandler, store: Store| async {
         // Bytecode fetcher will never become stale
         fetch_bytecode_batch(batch, peers, store)
@@ -80,11 +80,7 @@ async fn bytecode_fetcher(
             );
         }
         if cancel_token.is_cancelled() {
-            // TODO: store them in DB
-            tracing::warn!(
-                "Bytecode fetcher cancelled with {} in queue",
-                pending_bytecodes.len()
-            );
+            break;
         }
         // Read incoming messages and add them to the queue
         incoming = read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
@@ -97,6 +93,13 @@ async fn bytecode_fetcher(
             BYTECODE_BATCH_SIZE,
         )
         .await?;
+    }
+    if !pending_bytecodes.is_empty() {
+        info!(
+            "Stopping BytecodeFetcher. Caching {} pending code hashes",
+            pending_bytecodes.len()
+        );
+        store.set_bytecodes_pending(pending_bytecodes).await?;
     }
     Ok(())
 }
