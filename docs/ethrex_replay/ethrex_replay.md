@@ -20,7 +20,7 @@ rzup install rust
 
 ```sh
 curl -L https://sp1up.succinct.xyz | bash
-sp1up --version 5.0.0
+sp1up --version 5.0.8
 ```
 
 ### Environment Variables
