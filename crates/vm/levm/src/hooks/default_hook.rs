@@ -127,9 +127,9 @@ impl Hook for DefaultHook {
         vm: &mut VM<'_>,
         ctx_result: &mut ContextResult,
     ) -> Result<(), VMError> {
-        if !ctx_result.is_success() {
-            undo_value_transfer(vm)?;
-        }
+        //if !ctx_result.is_success() {
+        //    undo_value_transfer(vm)?;
+        //}
 
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
         let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
@@ -141,20 +141,6 @@ impl Hook for DefaultHook {
 
         Ok(())
     }
-}
-
-pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // In a create if Tx was reverted the account won't even exist by this point.
-    if !vm.is_create()? {
-        vm.decrease_account_balance(
-            vm.current_call_frame()?.to,
-            vm.current_call_frame()?.msg_value,
-        )?;
-    }
-
-    vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)?;
-
-    Ok(())
 }
 
 pub fn refund_sender(
