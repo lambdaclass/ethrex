@@ -146,31 +146,40 @@ impl PeerHandler {
             reverse: false,
         });
 
-        let (peer_id, mut peer_channel) = self
-            .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-            .await
-            .unwrap();
-
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request.clone()))
-            .await
-            .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
-            .unwrap();
         let mut block_count = 0;
+        loop {
+            let (peer_id, mut peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .await
+                .unwrap();
 
-        match peer_channel.receiver.lock().await.recv().await.unwrap() {
-            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) if id == request_id => {
-                info!("Received {} block headers", block_headers.len());
-                let latest = block_headers.last().unwrap();
-                info!("Latest block number: {}", latest.number);
-                block_count = latest.number;
-                info!("Block count: {block_count}");
-            }
-            message => {
-                info!("Received unexpected message: {message:?}");
-            }
-        };
+            let mut receiver = peer_channel.receiver.lock().await;
+            peer_channel
+                .connection
+                .cast(CastMessage::BackendMessage(request.clone()))
+                .await
+                .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
+                .unwrap();
+
+            match receiver.recv().await.unwrap() {
+                RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })
+                    if id == request_id =>
+                {
+                    info!("Received {} block headers", block_headers.len());
+                    let Some(latest) = block_headers.last() else {
+                        warn!("Received zero block headers, retrying...");
+                        continue;
+                    };
+                    info!("Latest block number: {}", latest.number);
+                    block_count = latest.number;
+                    info!("Block count: {block_count}");
+                    break;
+                }
+                message => {
+                    info!("Received unexpected message: {message:?}");
+                }
+            };
+        }
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
         // let block_count = 800_000_u64;
