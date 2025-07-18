@@ -77,6 +77,13 @@ contract CommonBridge is
     /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
     mapping(uint256 => bool) public claimedWithdrawalIDs;
 
+    /// @notice Maximum time the sequencer is allowed to take without processing a privileged transaction
+    /// @notice Specified in seconds.
+    uint256 public PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
+
+    /// @notice Deadline for the sequencer to include the transaction.
+    mapping(bytes32 => uint256) public privilegedTxDeadline;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -92,7 +99,8 @@ contract CommonBridge is
     /// @param onChainProposer the address of the OnChainProposer contract.
     function initialize(
         address owner,
-        address onChainProposer
+        address onChainProposer,
+        uint256 inclusionMaxWait
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -102,6 +110,8 @@ contract CommonBridge is
 
         lastFetchedL1Block = block.number;
         transactionId = 0;
+
+        PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION = inclusionMaxWait;
 
         OwnableUpgradeable.__Ownable_init(owner);
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -115,7 +125,7 @@ contract CommonBridge is
     {
         return pendingTxHashes;
     }
-    
+
     /// Burns at least {amount} gas
     function _burnGas(uint256 amount) private view {
         uint256 startingGas = gasleft();
@@ -176,6 +186,9 @@ contract CommonBridge is
             sendValues.data
         );
         transactionId += 1;
+        privilegedTxDeadline[l2MintTxHash] =
+            block.timestamp +
+            PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION;
     }
 
     /// @inheritdoc ICommonBridge
@@ -266,6 +279,14 @@ contract CommonBridge is
         for (uint _i = 0; _i < number; _i++) {
             pendingTxHashes.pop();
         }
+    }
+
+    /// @inheritdoc ICommonBridge
+    function hasExpiredPrivilegedTransactions() public view returns (bool) {
+        if (pendingTxHashes.length == 0) {
+            return false;
+        }
+        return block.timestamp > privilegedTxDeadline[pendingTxHashes[0]];
     }
 
     /// @inheritdoc ICommonBridge

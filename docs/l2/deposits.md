@@ -250,3 +250,36 @@ The attack prevented would've looked like this:
 - The malicious contract sends a privileged transaction, which can steal A's resourced on the L2
 
 By modifying the address of L1 contracts by adding a constant, we prevent this attack since both won't have the same address.
+
+## Forced Inclusion
+
+Each transaction is given a deadline for processing. If the sequencer is unwilling to include a privileged transaction before this timer expires, batches stop being processed and the network halts until the sequencer processes every expired transaction.
+
+After an extended downtime, the sequencer can catch up by sending batches made solely out of privileged transactions.
+
+```mermaid
+---
+title: Sequencer goes offline
+---
+sequenceDiagram
+    box rgb(33,66,99) L1
+        actor L1Alice
+        actor Sequencer
+        participant CommonBridge
+        participant OnChainProposer
+    end
+
+    L1Alice ->> CommonBridge: Sends a privileged transaction
+
+    Note over Sequencer: Sequencer goes offline for a long time
+    Sequencer ->> OnChainProposer: Sends batch as usual
+    OnChainProposer ->> Sequencer: Error
+    Note over Sequencer: Operator configures the sequencer to catch up
+    Sequencer ->> OnChainProposer: Sends batch of only privileged transactions
+    OnChainProposer ->> Sequencer: OK
+    Sequencer ->> OnChainProposer: Sends batch with remaining expired privileged transactions, along with other transactions
+    OnChainProposer ->> Sequencer: OK
+    Note over Sequencer: Sequencer is now catched up
+    Sequencer ->> OnChainProposer: Sends batch as usual
+    OnChainProposer ->> Sequencer: OK
+```

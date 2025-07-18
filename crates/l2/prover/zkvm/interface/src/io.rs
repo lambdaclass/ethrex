@@ -92,6 +92,8 @@ pub struct ProgramOutput {
     pub last_block_hash: H256,
     /// chain_id of the network
     pub chain_id: U256,
+    /// amount of non-privileged transactions
+    pub non_privileged_count: U256,
 }
 
 impl ProgramOutput {
@@ -107,6 +109,7 @@ impl ProgramOutput {
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),
             self.chain_id.to_big_endian(),
+            self.non_privileged_count.to_big_endian(),
         ]
         .concat()
     }
