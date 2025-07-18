@@ -309,7 +309,7 @@ pub mod test_utils {
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
         let fork_id = storage.get_fork_id().await.unwrap();
 
-        NodeRecord::from_node(&node, 1, &signer, &fork_id).unwrap()
+        NodeRecord::from_node(&node, 1, &signer, fork_id).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,

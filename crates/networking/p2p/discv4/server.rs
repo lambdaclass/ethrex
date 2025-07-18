@@ -253,7 +253,7 @@ impl DiscoveryServer {
         info!("Starting Discovery Server");
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 1, &signer, fork_id)
+            NodeRecord::from_node(&local_node, 1, &signer, fork_id.clone())
                 .expect("Failed to create local node record"),
         ));
 

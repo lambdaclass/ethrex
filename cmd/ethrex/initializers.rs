@@ -323,16 +323,19 @@ pub fn get_local_node_record(
     let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
     match read_node_config_file(config_file) {
-        Ok(ref mut config) => {
-            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer, fork_id)
-                .expect("Node record could not be created from local node")
-        }
+        Ok(ref mut config) => NodeRecord::from_node(
+            local_p2p_node,
+            config.node_record.seq + 1,
+            signer,
+            fork_id.clone(),
+        )
+        .expect("Node record could not be created from local node"),
         Err(_) => {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            NodeRecord::from_node(local_p2p_node, timestamp, signer, fork_id)
+            NodeRecord::from_node(local_p2p_node, timestamp, signer, fork_id.clone())
                 .expect("Node record could not be created from local node")
         }
     }

@@ -234,6 +234,8 @@ pub struct NodeRecord {
 
 #[derive(Debug, Default, PartialEq)]
 pub struct NodeRecordPairs {
+    /// The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
+    /// This is always "v4".
     pub id: Option<String>,
     pub ip: Option<u32>,
     pub ip6: Option<u128>,
@@ -245,7 +247,7 @@ pub struct NodeRecordPairs {
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
     pub eth: Option<ForkId>,
-    // TODO implement ipv6 addresses
+    // TODO implement ipv6 specific ports
 }
 
 impl NodeRecord {
@@ -296,54 +298,38 @@ impl NodeRecord {
         node: &Node,
         seq: u64,
         signer: &SigningKey,
-        fork_id: &ForkId,
+        fork_id: ForkId,
     ) -> Result<Self, String> {
+        let (ipv4, ipv6) = match node.ip {
+            IpAddr::V4(ipv4_addr) => (Some(u32::from_ne_bytes(ipv4_addr.octets())), None),
+            IpAddr::V6(ipv6_addr) => (None, Some(u128::from_ne_bytes(ipv6_addr.octets()))),
+        };
+        let secp256k1 = Some(H264::from_slice(
+            signer.verifying_key().to_encoded_point(true).as_bytes(),
+        ));
+        let pairs = NodeRecordPairs {
+            id: Some("v4".to_string()),
+            ip: ipv4,
+            ip6: ipv6,
+            secp256k1,
+            tcp_port: Some(node.tcp_port),
+            udp_port: Some(node.udp_port),
+            eth: Some(fork_id),
+        };
+
         let mut record = NodeRecord {
             seq,
+            pairs: pairs.into(),
             ..Default::default()
         };
-        // The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
-        record
-            .pairs
-            .push(("id".into(), "v4".encode_to_vec().into()));
-        match node.ip {
-            IpAddr::V4(ipv4_addr) => {
-                record
-                    .pairs
-                    .push(("ip".into(), ipv4_addr.encode_to_vec().into()));
-            }
-            IpAddr::V6(ipv6_addr) => {
-                record
-                    .pairs
-                    .push(("ip6".into(), ipv6_addr.encode_to_vec().into()));
-            }
-        };
-        record.pairs.push((
-            "secp256k1".into(),
-            signer
-                .verifying_key()
-                .to_encoded_point(true)
-                .as_bytes()
-                .encode_to_vec()
-                .into(),
-        ));
-        record
-            .pairs
-            .push(("tcp".into(), node.tcp_port.encode_to_vec().into()));
-        record
-            .pairs
-            .push(("udp".into(), node.udp_port.encode_to_vec().into()));
-
-        record.signature = record.sign_record(signer)?;
-
-        record.set_fork_id(fork_id, signer)?;
+        record.sign_inplace(signer)?;
 
         Ok(record)
     }
 
     pub fn update_seq(&mut self, signer: &SigningKey) -> Result<(), String> {
         self.seq += 1;
-        self.signature = self.sign_record(signer)?;
+        self.sign_inplace(signer)?;
         Ok(())
     }
 
@@ -364,14 +350,14 @@ impl NodeRecord {
         Ok(())
     }
 
-    fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
+    fn sign_inplace(&mut self, signer: &SigningKey) -> Result<(), String> {
         let digest = &self.get_signature_digest();
         let (signature, _recovery_id) = signer
             .sign_prehash_recoverable(digest)
             .map_err(|err| format!("Could not sign record: {err}"))?;
         let signature_bytes = signature.to_bytes().to_vec();
-
-        Ok(H512::from_slice(&signature_bytes))
+        self.signature = H512::from_slice(&signature_bytes);
+        Ok(())
     }
 
     pub fn get_signature_digest(&self) -> Vec<u8> {
@@ -382,6 +368,34 @@ impl NodeRecord {
             .finish();
         let digest = Keccak256::digest(&rlp);
         digest.to_vec()
+    }
+}
+
+impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
+    fn from(value: NodeRecordPairs) -> Self {
+        let mut pairs = vec![];
+        if let Some(eth) = value.eth {
+            pairs.push(("eth".into(), eth.encode_to_vec().into()));
+        }
+        if let Some(id) = value.id {
+            pairs.push(("id".into(), id.encode_to_vec().into()));
+        }
+        if let Some(ip) = value.ip {
+            pairs.push(("ip".into(), ip.encode_to_vec().into()));
+        }
+        if let Some(ip6) = value.ip6 {
+            pairs.push(("ip6".into(), ip6.encode_to_vec().into()));
+        }
+        if let Some(secp256k1) = value.secp256k1 {
+            pairs.push(("secp256k1".into(), secp256k1.encode_to_vec().into()));
+        }
+        if let Some(tcp) = value.tcp_port {
+            pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
+        }
+        if let Some(udp) = value.udp_port {
+            pairs.push(("udp".into(), udp.encode_to_vec().into()));
+        }
+        pairs
     }
 }
 
@@ -542,7 +556,7 @@ mod tests {
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let record = NodeRecord::from_node(&node, 1, &signer, &fork_id).unwrap();
+        let record = NodeRecord::from_node(&node, 1, &signer, fork_id).unwrap();
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
