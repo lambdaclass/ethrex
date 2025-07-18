@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752855017141,
+  "lastUpdate": 1752855636638,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4765,6 +4765,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209024604121,
             "range": "± 280192752",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c833309c67f23d1833adc7d0592322a51f89ad5f",
+          "message": "fix(l2): tdx to L2 prover client communication (#3599)\n\n**Motivation**\n\nThe communication between the tdx prover client and the l2 prover server\nis currently broken because the nix build does not set the\n`VERGEN_GIT_SHA` variable.\n\n**Description**\n- Modify the ci to use run the image built with nix with QEMU, instead\nof building the quote-gen as a binary and running it as a regular\nbinary.\n- Add `gitRev` as a parameter to nix build\n   - Use this parameter to set the env var `VERGEN_GIT_SHA`\n- Add a check to make sure the length of the commit hash is the same one\nthat Vergen emits.\n- Modify build.rs to get the value from the env var and if the value is\nnot set then it uses Vergen\n- Remove build.rs files for zk provers and tdx quote-gen because the\nvalues are added when building l2 crate.\n- Successful run:\n[here](https://github.com/lambdaclass/ethrex/actions/runs/16275888354/job/45954574993?pr=3599)\n\nCloses #3587",
+          "timestamp": "2025-07-18T15:18:09Z",
+          "tree_id": "49606faca75b48602d58b35a2b5cc83c15bf805c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c833309c67f23d1833adc7d0592322a51f89ad5f"
+        },
+        "date": 1752855623894,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207145155988,
+            "range": "± 354516416",
             "unit": "ns/iter"
           }
         ]
