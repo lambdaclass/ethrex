@@ -62,11 +62,10 @@ pub fn decompress_pubkey(pk: &PublicKey) -> H512 {
 /// Compresses the received public key
 /// The received value is the uncompressed public key of a node, with the first byte omitted (0x04).
 pub fn compress_pubkey(pk: H512) -> Option<PublicKey> {
-    let mut full = [0u8; 65];
-    full[0] = 0x04;
-    full[1..].copy_from_slice(&pk.0);
-
-    PublicKey::from_slice(&full).ok()
+    let mut full_pk = [0u8; 65];
+    full_pk[0] = 0x04;
+    full_pk[1..].copy_from_slice(&pk.0);
+    PublicKey::from_slice(&full_pk).ok()
 }
 
 pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError> {
