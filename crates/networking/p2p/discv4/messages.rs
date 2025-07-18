@@ -142,10 +142,9 @@ impl Message {
 
         let digest: [u8; 32] = Keccak256::digest(&data[signature_size..]).into();
 
-        let signature = secp256k1::SECP256K1
-            .sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer);
-
-        let (recovery_id, signature) = signature.serialize_compact();
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer)
+            .serialize_compact();
 
         data[..signature_size - 1].copy_from_slice(&signature);
         data[signature_size - 1] = recovery_id.to_i32() as u8;
