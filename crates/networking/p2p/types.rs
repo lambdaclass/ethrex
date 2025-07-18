@@ -169,9 +169,9 @@ impl Node {
 
         let ip: IpAddr = match (pairs.ip, pairs.ip6) {
             (None, None) => return Err("Ip not found in record, can't construct node".to_string()),
-            (None, Some(ipv6)) => IpAddr::from(Ipv6Addr::from_bits(ipv6)),
-            (Some(ipv4), None) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
-            (Some(ipv4), Some(_ipv6)) => IpAddr::from(Ipv4Addr::from_bits(ipv4)),
+            (None, Some(ipv6)) => IpAddr::from(ipv6),
+            (Some(ipv4), None) => IpAddr::from(ipv4),
+            (Some(ipv4), Some(_ipv6)) => IpAddr::from(ipv4),
         };
 
         // both udp and tcp can be defined in the pairs or only one
@@ -237,8 +237,8 @@ pub struct NodeRecordPairs {
     /// The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
     /// This is always "v4".
     pub id: Option<String>,
-    pub ip: Option<u32>,
-    pub ip6: Option<u128>,
+    pub ip: Option<Ipv4Addr>,
+    pub ip6: Option<Ipv6Addr>,
     // the record structure reference says that tcp_port and udp_ports are big-endian integers
     // but they are actually encoded as 2 bytes, see geth for example: https://github.com/ethereum/go-ethereum/blob/f544fc3b4659aeca24a6de83f820dd61ea9b39db/p2p/enr/entries.go#L60-L78
     // I think the confusion comes from the fact that geth decodes the bytes and then builds an IPV4/6 big-integer structure.
@@ -260,8 +260,8 @@ impl NodeRecord {
             let value = value.to_vec();
             match key.as_str() {
                 "id" => decoded_pairs.id = String::decode(&value).ok(),
-                "ip" => decoded_pairs.ip = u32::decode(&value).ok(),
-                "ip6" => decoded_pairs.ip6 = u128::decode(&value).ok(),
+                "ip" => decoded_pairs.ip = Ipv4Addr::decode(&value).ok(),
+                "ip6" => decoded_pairs.ip6 = Ipv6Addr::decode(&value).ok(),
                 "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
                 "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
                 "secp256k1" => {
@@ -301,8 +301,8 @@ impl NodeRecord {
         fork_id: ForkId,
     ) -> Result<Self, String> {
         let (ipv4, ipv6) = match node.ip {
-            IpAddr::V4(ipv4_addr) => (Some(u32::from_ne_bytes(ipv4_addr.octets())), None),
-            IpAddr::V6(ipv6_addr) => (None, Some(u128::from_ne_bytes(ipv6_addr.octets()))),
+            IpAddr::V4(ipv4_addr) => (Some(ipv4_addr), None),
+            IpAddr::V6(ipv6_addr) => (None, Some(ipv6_addr)),
         };
         let secp256k1 = Some(H264::from_slice(
             signer.verifying_key().to_encoded_point(true).as_bytes(),
