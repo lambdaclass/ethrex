@@ -10,7 +10,10 @@ use ratatui::{
 };
 
 use crate::{
-    monitor::widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    monitor::{
+        utils::SelectableScroller,
+        widget::{HASH_LENGTH_IN_DIGITS, NUMBER_LENGTH_IN_DIGITS},
+    },
     sequencer::errors::MonitorError,
 };
 
@@ -22,6 +25,7 @@ pub struct BatchesTable {
     pub items: Vec<(u64, u64, usize, Option<H256>, Option<H256>)>,
     last_l1_block_fetched: u64,
     on_chain_proposer_address: Address,
+    selected: bool,
 }
 
 impl BatchesTable {
@@ -181,7 +185,11 @@ impl StatefulWidget for &mut BatchesTable {
             )
             .block(
                 Block::bordered()
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(if self.selected {
+                        Color::Magenta
+                    } else {
+                        Color::Cyan
+                    }))
                     .title(Span::styled(
                         "L2 Batches",
                         Style::default().add_modifier(Modifier::BOLD),
@@ -189,5 +197,17 @@ impl StatefulWidget for &mut BatchesTable {
             );
 
         committed_batches_table.render(area, buf, state);
+    }
+}
+
+impl SelectableScroller for BatchesTable {
+    fn selected(&mut self, is_selected: bool) {
+        self.selected = is_selected;
+    }
+    fn scroll_up(&mut self) {
+        self.state.scroll_up_by(1);
+    }
+    fn scroll_down(&mut self) {
+        self.state.scroll_down_by(1);
     }
 }
