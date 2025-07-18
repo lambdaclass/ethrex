@@ -174,11 +174,11 @@ elapsed: {elapsed}
 {discarded_nodes} discarded nodes
 {discovered_nodes} total discovered nodes over time
 {peers} peers ({new_peers_rate} new peers/m)
-Clients Diversity: {peers_by_client:#?}
 {lost_peers} lost peers
 {rlpx_connections} total peers made over time
 {rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
 {rlpx_failed_connection_attempts} failed connection attempts
+Clients Diversity: {peers_by_client:#?}
 RLPx disconnections: {rlpx_disconnections:#?}
 RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reason:#?}"#,
             elapsed = format_duration(start.elapsed()),

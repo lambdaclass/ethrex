@@ -110,10 +110,6 @@ impl Metrics {
         let split = client_version.split('/').collect::<Vec<&str>>();
         let client_type = split.first().expect("Split always returns 1 element");
 
-        clients
-            .entry(client_type.to_string())
-            .and_modify(|count| *count -= 1);
-
         let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
         disconnection_by_client
             .entry(client_type.to_string())
