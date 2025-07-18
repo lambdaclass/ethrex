@@ -163,6 +163,8 @@ pub(crate) fn broadcast_l2_message(state: &Established, l2_msg: Message) -> Resu
                 })?;
             Ok(())
         }
+        // Uncomment when new L2 messages are implemented
+        // Message::L2(_) => Ok(()),
         _ => Err(RLPxError::InternalError(
             "This is a bug. Broadcast L2 message called with a non-L2 message".to_string(),
         )),
