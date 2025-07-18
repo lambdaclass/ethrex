@@ -15,8 +15,7 @@ use crate::{
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
-use secp256k1::{PublicKey, Secp256k1, ecdsa::Signature};
-
+use secp256k1::{PublicKey, ecdsa::Signature};
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -426,7 +425,7 @@ impl Discv4Server {
                                     DiscoveryError::InvalidMessage("digest must be 32 bytes".into())
                                 })?;
 
-                            Secp256k1::verification_only()
+                            secp256k1::SECP256K1
                                 .verify_ecdsa(&msg, &signature, &public_key)
                                 .is_ok()
                         }
@@ -1074,27 +1073,23 @@ pub(super) mod tests {
         sleep(Duration::from_millis(2500)).await;
 
         assert!(
-            dbg!(
-                server_a
-                    .ctx
-                    .table
-                    .lock()
-                    .await
-                    .get_by_node_id(server_b.ctx.local_node.node_id())
-            )
-            .is_some()
+            server_a
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_by_node_id(server_b.ctx.local_node.node_id())
+                .is_some()
         );
 
         assert!(
-            dbg!(
-                server_a
-                    .ctx
-                    .table
-                    .lock()
-                    .await
-                    .get_by_node_id(server_c.ctx.local_node.node_id())
-            )
-            .is_none()
+            server_a
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_by_node_id(server_c.ctx.local_node.node_id())
+                .is_none()
         );
 
         Ok(())

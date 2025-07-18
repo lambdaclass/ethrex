@@ -7,7 +7,7 @@ use crate::types::{Node, NodeRecord};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, SecretKey};
 
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -138,10 +138,9 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 }
 
 pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
-    let secp = Secp256k1::new();
-    let public_key = PublicKey::from_secret_key(&secp, signer);
-    let serialized = public_key.serialize_uncompressed();
-    H512::from_slice(&serialized[1..])
+    let public_key = PublicKey::from_secret_key(secp256k1::SECP256K1, signer);
+    let encoded = public_key.serialize_uncompressed();
+    H512::from_slice(&encoded[1..])
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval

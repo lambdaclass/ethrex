@@ -7,7 +7,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
 use std::{
@@ -163,8 +163,8 @@ impl Node {
         let public_key = pairs.secp256k1.ok_or("public key not found in record")?;
         let verifying_key = PublicKey::from_slice(public_key.as_bytes())
             .map_err(|_| "public key could no be built from msg pub key bytes")?;
-        let uncompressed = verifying_key.serialize_uncompressed();
-        let public_key = H512::from_slice(&uncompressed[1..]);
+        let encoded = verifying_key.serialize_uncompressed();
+        let public_key = H512::from_slice(&encoded[1..]);
 
         let ip = pairs
             .ip
@@ -300,7 +300,7 @@ impl NodeRecord {
             .push(("ip".into(), node.ip.encode_to_vec().into()));
         record.pairs.push((
             "secp256k1".into(),
-            PublicKey::from_secret_key(&Secp256k1::new(), signer)
+            PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
                 .serialize()
                 .encode_to_vec()
                 .into(),
@@ -342,10 +342,9 @@ impl NodeRecord {
 
     fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, String> {
         let digest = &self.get_signature_digest();
-        let secp = Secp256k1::signing_only();
         let msg = secp256k1::Message::from_digest_slice(digest)
             .map_err(|_| "Invalid message digest".to_string())?;
-        let sig = secp.sign_ecdsa_recoverable(&msg, signer);
+        let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(&msg, signer);
         let (_recovery_id, signature_bytes) = sig.serialize_compact();
 
         Ok(H512::from_slice(&signature_bytes))
@@ -505,7 +504,7 @@ mod tests {
             addr.ip(),
             addr.port(),
             addr.port(),
-            dbg!(public_key_from_signing_key(&signer)),
+            public_key_from_signing_key(&signer),
         );
         let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";

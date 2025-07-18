@@ -24,11 +24,11 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use futures::{StreamExt, stream::SplitStream};
-
-use secp256k1::{PublicKey, SecretKey, ecdsa::RecoverableSignature};
-use secp256k1::{Secp256k1, ecdsa::RecoveryId};
-
 use rand::Rng;
+use secp256k1::{
+    PublicKey, SecretKey,
+    ecdsa::{RecoverableSignature, RecoveryId},
+};
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -145,13 +145,12 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, RLPxError> {
-    let secret_key: SecretKey = *signer;
     let peer_pk = compress_pubkey(remote_public_key).ok_or(RLPxError::InvalidPeerId())?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
 
-    let msg = encode_auth_message(&secret_key, local_nonce, &peer_pk, &local_ephemeral_key)?;
+    let msg = encode_auth_message(signer, local_nonce, &peer_pk, &local_ephemeral_key)?;
     stream.write_all(&msg).await?;
 
     Ok(LocalState {
@@ -184,8 +183,6 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     signer: &SecretKey,
     stream: S,
 ) -> Result<RemoteState, RLPxError> {
-    let secret_key: SecretKey = *signer;
-
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
@@ -193,7 +190,7 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     let msg = &msg_bytes
         .get(2..)
         .ok_or(RLPxError::InvalidMessageLength())?;
-    let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
+    let (auth, remote_ephemeral_key) = decode_auth_message(signer, msg, size_data)?;
 
     Ok(RemoteState {
         public_key: auth.public_key,
@@ -208,7 +205,6 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     remote_public_key: H512,
     stream: S,
 ) -> Result<RemoteState, RLPxError> {
-    let secret_key: SecretKey = *signer;
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
@@ -216,7 +212,7 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     let msg = &msg_bytes
         .get(2..)
         .ok_or(RLPxError::InvalidMessageLength())?;
-    let ack = decode_ack_message(&secret_key, msg, size_data)?;
+    let ack = decode_ack_message(signer, msg, size_data)?;
     let remote_ephemeral_key = ack
         .get_ephemeral_pubkey()
         .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
@@ -260,8 +256,7 @@ fn encode_auth_message(
     remote_static_pubkey: &PublicKey,
     local_ephemeral_key: &SecretKey,
 ) -> Result<Vec<u8>, RLPxError> {
-    let secp = Secp256k1::new();
-    let public_key = decompress_pubkey(&static_key.public_key(&secp));
+    let public_key = decompress_pubkey(&static_key.public_key(secp256k1::SECP256K1));
 
     // Derive a shared secret from the static keys.
     let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey).map_err(|error| {
@@ -311,10 +306,9 @@ fn encode_ack_message(
     local_nonce: H256,
     remote_static_pubkey: &PublicKey,
 ) -> Result<Vec<u8>, RLPxError> {
-    let secp = Secp256k1::new();
     // Compose the ack message.
     let ack_msg = AckMessage::new(
-        decompress_pubkey(&local_ephemeral_key.public_key(&secp)),
+        decompress_pubkey(&local_ephemeral_key.public_key(secp256k1::SECP256K1)),
         local_nonce,
     );
 
@@ -419,11 +413,9 @@ fn encrypt_message(
     aes_cipher.try_apply_keystream(&mut encoded_msg)?;
     let encrypted_auth_msg = encoded_msg;
 
-    let secp = Secp256k1::new();
-
     // Use the MAC secret to compute the MAC.
     let r_public_key = message_secret_key
-        .public_key(&secp)
+        .public_key(secp256k1::SECP256K1)
         .serialize_uncompressed();
     let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes)
         .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
@@ -444,20 +436,10 @@ fn retrieve_remote_ephemeral_key(
     signature: Signature,
 ) -> Result<PublicKey, RLPxError> {
     let signature_prehash = shared_secret ^ remote_nonce;
-    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())
-        .map_err(|_| RLPxError::CryptographyError("Failed to build message".into()))?;
-
-    let rid = RecoveryId::from_i32(signature[64].into())
-        .map_err(|_| RLPxError::CryptographyError("Failed to get revery id".into()))?;
-    let secp = Secp256k1::verification_only();
-
-    let sig = RecoverableSignature::from_compact(&signature[0..64], rid).map_err(|_| {
-        RLPxError::CryptographyError("Failed to build recoverable signatrue".into())
-    })?;
-    let pubkey = secp
-        .recover_ecdsa(&msg, &sig)
-        .map_err(|_| RLPxError::CryptographyError("Failed to recover pubkey".into()))?;
-    Ok(pubkey)
+    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
+    let rid = RecoveryId::from_i32(signature[64].into())?;
+    let sig = RecoverableSignature::from_compact(&signature[0..64], rid)?;
+    Ok(secp256k1::SECP256K1.recover_ecdsa(&msg, &sig)?)
 }
 
 fn sign_shared_secret(
@@ -466,19 +448,15 @@ fn sign_shared_secret(
     local_ephemeral_key: &SecretKey,
 ) -> Result<Signature, RLPxError> {
     let signature_prehash = shared_secret ^ local_nonce;
-    let secp = Secp256k1::signing_only();
-    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())
-        .map_err(|_| RLPxError::CryptographyError("Failed to build message".into()))?;
-    let sig = secp.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
-
+    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
+    let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
     let (rid, signature) = sig.serialize_compact();
     let mut signature_bytes = [0; 65];
-
     signature_bytes[..64].copy_from_slice(&signature);
     signature_bytes[64] = rid
         .to_i32()
         .try_into()
-        .map_err(|_| RLPxError::CryptographyError("Failed to serialize siganture byte".into()))?;
+        .map_err(|_| RLPxError::CryptographyError("Invalid recovery id".into()))?;
     Ok(signature_bytes.into())
 }
 
@@ -597,7 +575,7 @@ mod tests {
 
     use ethrex_common::H256;
     use hex_literal::hex;
-    use secp256k1::{Secp256k1, SecretKey};
+    use secp256k1::SecretKey;
 
     use crate::rlpx::{connection::handshake::decode_ack_message, utils::decompress_pubkey};
 
@@ -616,13 +594,12 @@ mod tests {
         let expected_nonce_b =
             H256::from_str("559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd")
                 .unwrap();
-        let secp = Secp256k1::new();
         let expected_ephemeral_key_b = decompress_pubkey(
             &SecretKey::from_slice(&hex!(
                 "e238eb8e04fee6511ab04c6dd3c89ce097b11f25d584863ac2b6d5b35b1847e4"
             ))
             .unwrap()
-            .public_key(&secp),
+            .public_key(secp256k1::SECP256K1),
         );
 
         let ack = decode_ack_message(&static_key_a, &msg[2..], &msg[..2]).unwrap();
