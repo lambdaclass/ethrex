@@ -13,7 +13,8 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use k256::elliptic_curve::rand_core::le;
-use rand::{random, seq::SliceRandom};
+use rand::{Rng, random, seq::SliceRandom};
+use spawned_rt::tasks::oneshot;
 use tokio::sync::Mutex;
 use tokio_stream::iter;
 
@@ -136,49 +137,64 @@ impl PeerHandler {
     ) -> Option<Vec<BlockHeader>> {
         let mut ret = Vec::<BlockHeader>::new();
 
-        // get latest block:
-        let request_id = rand::random();
-        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-            id: request_id,
-            startblock: HashOrNumber::Hash(sync_head),
-            limit: 1,
-            skip: 0,
-            reverse: false,
-        });
-
         let peers_table = self
             .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
             .await;
 
-        let (peer_id, mut peer_channel) = peers_table
-            .get(rand::random::<usize>() % peers_table.len())
-            .expect("No peers available")
-            .clone();
+        let sync_head_number = Arc::new(Mutex::new(0_u64));
 
-        peer_channel
-            .connection
-            .cast(CastMessage::BackendMessage(request.clone()))
-            .await
-            .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
-            .unwrap();
+        let mut retries = 1;
+        while *sync_head_number.lock().await == 0 {
+            for (peer_id, mut peer_channel) in peers_table.clone() {
+                let sync_head_number = sync_head_number.clone();
+                tokio::spawn(async move {
+                    let request_id = rand::random();
+                    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                        id: request_id,
+                        startblock: HashOrNumber::Hash(sync_head),
+                        limit: 1,
+                        skip: 0,
+                        reverse: false,
+                    });
 
-        let mut block_count = 10_000_000;
+                    peer_channel
+                        .connection
+                        .cast(CastMessage::BackendMessage(request.clone()))
+                        .await
+                        .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
+                        .unwrap();
 
-        // match peer_channel.receiver.lock().await.recv().await.unwrap() {
-        //     RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) if id == request_id => {
-        //         debug!("Received {} block headers", block_headers.len());
-        //         let latest = block_headers.last().unwrap();
-        //         debug!("Latest block number: {}", latest.number);
-        //         block_count = latest.number;
-        //     }
-        //     message => {
-        //         debug!("Received unexpected message: {message:?}");
-        //     }
-        // };
+                    info!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
+
+                    match tokio::time::timeout(Duration::from_secs(5), async move {
+                        peer_channel.receiver.lock().await.recv().await.unwrap()
+                    })
+                    .await
+                    {
+                        Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
+                            if id == request_id && !block_headers.is_empty() {
+                                *sync_head_number.lock().await =
+                                    block_headers.last().unwrap().number;
+                            }
+                        }
+                        Ok(_other_msgs) => {
+                            warn!("Received unexpected message from peer {peer_id}");
+                        }
+                        Err(_err) => {
+                            warn!("Timeout while waiting for sync head from {peer_id}");
+                        }
+                    }
+                });
+            }
+
+            retries += 1;
+        }
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
         // let block_count = 800_000_u64;
         let chunk_count = 800_usize; // e.g. 8 tasks
+
+        let block_count = *sync_head_number.lock().await;
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count as u64;
@@ -204,11 +220,6 @@ impl PeerHandler {
         // 3) create tasks that will request a chunk of headers from a peer
         info!("Starting to download block headers from peers");
         loop {
-            if downloaded_count >= 10_000_000 {
-                info!("10M headers downloaded, stopping");
-                break;
-            }
-
             if let Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
@@ -269,7 +280,14 @@ impl PeerHandler {
                 .await;
 
             for (peer_id, _peer_channels) in &peer_channels {
-                downloaders.entry(*peer_id).or_insert(true);
+                if downloaders.contains_key(peer_id) {
+                    // Peer is already in the downloaders list, skip it
+                    continue;
+                }
+
+                downloaders.insert(*peer_id, true);
+
+                info!("{peer_id} added as downloader");
             }
 
             let free_downloaders = downloaders
