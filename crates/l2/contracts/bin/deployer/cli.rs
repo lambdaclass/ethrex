@@ -142,65 +142,72 @@ pub struct DeployerOptions {
         help = "Path to the contracts directory. The default is the current directory."
     )]
     pub contracts_path: PathBuf,
-    // TODO: This should work side by side with a risc0_deploy_verifier flag.
+    #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_L2_RISC0",
+        help_heading = "Deployer options",
+        help = "If true, L2 will require Risc0 proofs to validate batch proofs and settle state."
+    )]
+    pub risc0: bool,
     #[arg(
         long = "risc0.verifier-address",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
-        required = true, // TODO: This should be required_unless_present = "risc0_deploy_verifier",
-        help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        env = "ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS",
+        help_heading = "Deployer options"
     )]
     pub risc0_verifier_address: Option<Address>,
     #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_L2_SP1",
+        help_heading = "Deployer options",
+        help = "If true, L2 will require SP1 proofs to validate batch proofs and settle state."
+    )]
+    pub sp1: bool,
+    #[arg(
         long = "sp1.verifier-address",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
-        required_if_eq("sp1_deploy_verifier", "false"),
-        help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        env = "ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS",
+        help_heading = "Deployer options"
     )]
     pub sp1_verifier_address: Option<Address>,
     #[arg(
-        long = "sp1.deploy-verifier",
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
-        action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
-        required_unless_present = "sp1_verifier_address",
+        env = "ETHREX_L2_TDX",
         help_heading = "Deployer options",
-        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+        requires = "tdx_verifier_address",
+        help = "If true, L2 will require TDX proofs to validate batch proofs and settle state."
     )]
-    pub sp1_deploy_verifier: bool,
+    pub tdx: bool,
     #[arg(
         long = "tdx.verifier-address",
         value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
-        required_if_eq("tdx_deploy_verifier", "false"),
-        help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        env = "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS",
+        help_heading = "Deployer options"
     )]
     pub tdx_verifier_address: Option<Address>,
     #[arg(
-        long = "tdx.deploy-verifier",
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
-        action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
-        required_unless_present = "tdx_verifier_address",
+        env = "ETHREX_L2_ALIGNED",
         help_heading = "Deployer options",
-        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+        requires = "aligned_aggregator_address",
+        help = "If true, L2 will verify proofs using Aligned Layer instead of smart contract verifiers."
     )]
-    pub tdx_deploy_verifier: bool,
+    pub aligned: bool,
     #[arg(
         long = "aligned.aggregator-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
-        required = true,
-        help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+        help_heading = "Deployer options"
     )]
-    pub aligned_aggregator_address: Address,
+    pub aligned_aggregator_address: Option<Address>,
     #[arg(
         long,
         default_value = "false",
@@ -247,22 +254,20 @@ pub struct DeployerOptions {
     pub on_chain_proposer_owner_pk: Option<SecretKey>,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
         help = "Path to the SP1 verification key. This is used for proof verification."
     )]
-    pub sp1_vk_path: String,
+    pub sp1_vk_path: Option<String>,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_RISC0_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
         help = "Path to the Risc0 image id / verification key. This is used for proof verification."
     )]
-    pub risc0_vk_path: String,
+    pub risc0_vk_path: Option<String>,
     #[arg(
         long,
         default_value = "false",
@@ -320,24 +325,14 @@ impl Default for DeployerOptions {
                 0xd9, 0x0e, 0x50, 0x03, 0x64, 0x25,
             ]),
             contracts_path: PathBuf::from("."),
-            risc0_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            sp1_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            sp1_deploy_verifier: false,
-            tdx_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            tdx_deploy_verifier: false,
-            aligned_aggregator_address: H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ]),
+            risc0: false,
+            risc0_verifier_address: None,
+            sp1: false,
+            sp1_verifier_address: None,
+            tdx: false,
+            tdx_verifier_address: None,
+            aligned: false,
+            aligned_aggregator_address: None,
             randomize_contract_deployment: false,
             validium: false,
             // 0x4417092b70a3e5f10dc504d0947dd256b965fc62
@@ -353,14 +348,8 @@ impl Default for DeployerOptions {
                 0xd2, 0x56, 0xb9, 0x65, 0xfc, 0x62,
             ]),
             on_chain_proposer_owner_pk: None,
-            sp1_vk_path: format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-            risc0_vk_path: format!(
-                "{}/../prover/zkvm/interface/risc0/out/riscv32im-risc0-vk",
-                env!("CARGO_MANIFEST_DIR")
-            ),
+            sp1_vk_path: None,
+            risc0_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
         }

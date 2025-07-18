@@ -4,7 +4,7 @@ use zkvm_interface::io::{ProgramInput, ProgramOutput};
 
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofCalldata, ProverType},
+    prover::{BatchProof, ProofCalldata, ProofFormat, ProverType},
 };
 
 pub struct ProveOutput(pub ProgramOutput);
@@ -16,7 +16,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn prove(
     input: ProgramInput,
-    _aligned_mode: bool,
+    _format: ProofFormat,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     warn!("\"exec\" prover backend generates no proof, only executes");
     let output = execution_program(input)?;
@@ -38,7 +38,7 @@ fn to_calldata(proof: ProveOutput) -> ProofCalldata {
 
 pub fn to_batch_proof(
     proof: ProveOutput,
-    _aligned_mode: bool,
+    _format: ProofFormat,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
