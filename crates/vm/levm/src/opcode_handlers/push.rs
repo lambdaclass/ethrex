@@ -43,7 +43,7 @@ impl<'a> VM<'a> {
             U256::zero()
         };
 
-        current_call_frame.stack.push(&[value])?;
+        current_call_frame.stack.push1(value)?;
 
         // The n_bytes that you push to the stack + 1 for the next instruction
         let increment_pc_by = N.wrapping_add(1);
@@ -63,7 +63,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
 
-        current_call_frame.stack.push(&[U256::zero()])?;
+        current_call_frame.stack.push1(U256::zero())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

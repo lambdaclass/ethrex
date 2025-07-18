@@ -34,7 +34,7 @@ impl<'a> VM<'a> {
         hasher.update(current_call_frame.memory.load_range(offset, size)?);
         current_call_frame
             .stack
-            .push(&[u256_from_big_endian(&hasher.finalize())])?;
+            .push1(u256_from_big_endian(&hasher.finalize()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
