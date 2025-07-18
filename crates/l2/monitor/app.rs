@@ -67,12 +67,12 @@ pub struct EthrexMonitorWidget {
 pub struct EthrexMonitorState {
     widget: EthrexMonitorWidget,
     terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
-    cancelation_token: CancellationToken,
+    cancellation_token: CancellationToken,
 }
 
 #[derive(Clone, Debug)]
 pub enum CastInMessage {
-    Render,
+    Tick,
     Event(Event),
 }
 
@@ -90,25 +90,15 @@ impl EthrexMonitor {
         store: Store,
         rollup_store: StoreRollup,
         cfg: &SequencerConfig,
-        cancelation_token: CancellationToken,
+        cancellation_token: CancellationToken,
     ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
         let state = EthrexMonitorState {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
-            cancelation_token,
+            cancellation_token,
         };
         Ok(EthrexMonitor::start(state))
-    }
-
-    pub async fn render(&self, state: &mut EthrexMonitorState) -> Result<(), MonitorError> {
-        let mut terminal = state.terminal.lock().await;
-        let widget = &mut state.widget;
-
-        widget.draw(&mut terminal)?;
-
-        widget.on_tick().await?;
-        Ok(())
     }
 }
 
@@ -128,11 +118,13 @@ impl GenServer for EthrexMonitor {
         handle: &GenServerHandle<Self>,
         state: Self::State,
     ) -> Result<Self::State, Self::Error> {
+        // Tick handling
         send_interval(
             Duration::from_millis(state.widget.tick_rate),
             handle.clone(),
-            Self::CastMsg::Render,
+            Self::CastMsg::Tick,
         );
+        // Event handling
         spawn_listener(
             handle.clone(),
             |event: Event| Self::CastMsg::Event(event),
@@ -148,12 +140,7 @@ impl GenServer for EthrexMonitor {
         mut state: Self::State,
     ) -> CastResponse<Self> {
         match message {
-            CastInMessage::Render => {
-                let _ = self
-                    .render(&mut state)
-                    .await
-                    .inspect_err(|err| error!("Rendering error: {err}"));
-            }
+            // On event
             CastInMessage::Event(event) => {
                 let widget = &mut state.widget;
                 if let Some(key) = event.as_key_press_event() {
@@ -162,14 +149,22 @@ impl GenServer for EthrexMonitor {
                 if let Some(mouse) = event.as_mouse_event() {
                     widget.on_mouse_event(mouse.kind);
                 }
-                let _ = self
-                    .render(&mut state)
+            }
+            // Tick received
+            CastInMessage::Tick => {
+                let _ = state
+                    .widget
+                    .on_tick()
                     .await
-                    .inspect_err(|err| error!("MRendering error: {err}"));
+                    .inspect_err(|err| error!("Monitor error: {err}"));
             }
         }
 
         if !state.widget.should_quit {
+            let _ = state
+                .widget
+                .draw(&mut *state.terminal.lock().await)
+                .inspect_err(|err| error!("Render error: {err}"));
             CastResponse::NoReply(state)
         } else {
             CastResponse::Stop
@@ -186,7 +181,7 @@ impl GenServer for EthrexMonitor {
             error!("Error restoring terminal: {err}");
         });
         info!("Monitor has been cancelled");
-        state.cancelation_token.cancel();
+        state.cancellation_token.cancel();
         Ok(())
     }
 }

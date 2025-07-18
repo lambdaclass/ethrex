@@ -40,7 +40,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::Mutex, task::JoinSet};
-use tokio_util::task::TaskTracker;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info};
 
 #[allow(clippy::large_enum_variant)]
@@ -205,11 +205,14 @@ impl Command {
                         error!("{err}");
                     })?;
 
+                let cancellation_token = CancellationToken::new();
+
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
                     blockchain,
                     l2_sequencer_cfg,
+                    cancellation_token.clone(),
                     #[cfg(feature = "metrics")]
                     format!(
                         "http://{}:{}",
@@ -224,7 +227,7 @@ impl Command {
                     _ = tokio::signal::ctrl_c() => {
                         join_set.abort_all();
                     }
-                    _ = join_set.join_next() => {
+                    _ = cancellation_token.cancelled() => {
                     }
                 }
                 info!("Server shut down started...");
