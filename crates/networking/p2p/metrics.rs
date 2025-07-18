@@ -122,10 +122,6 @@ impl Metrics {
             .and_modify(|e| *e += 1)
             .or_insert(1);
 
-        let mut clients = self.peers_by_client_type.lock().await;
-        let split = client_version.split('/').collect::<Vec<&str>>();
-        let client_type = split.first().expect("Split always returns 1 element");
-
         clients
             .entry(client_type.to_string())
             .and_modify(|count| *count -= 1);
