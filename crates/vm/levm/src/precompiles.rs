@@ -475,9 +475,7 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let first_point_is_zero = first_point_x.is_zero() && first_point_y.is_zero();
     let second_point_is_zero = second_point_x.is_zero() && second_point_y.is_zero();
 
-    let result: G1AffineArk;
-
-    match (first_point_is_zero, second_point_is_zero) {
+    let result: G1AffineArk = match (first_point_is_zero, second_point_is_zero) {
         (true, true) => {
             return Ok(Bytes::from([0u8; 64].to_vec()));
         }
@@ -486,14 +484,14 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
             if !first_point.is_on_curve() {
                 return Err(PrecompileError::InvalidPoint.into());
             }
-            result = first_point;
+            first_point
         }
         (true, false) => {
             let second_point = G1AffineArk::new_unchecked(second_point_x, second_point_y);
             if !second_point.is_on_curve() {
                 return Err(PrecompileError::InvalidPoint.into());
             }
-            result = second_point;
+            second_point
         }
         (false, false) => {
             let first_point = G1AffineArk::new_unchecked(first_point_x, first_point_y);
@@ -504,16 +502,20 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
             if !second_point.is_on_curve() {
                 return Err(PrecompileError::InvalidPoint.into());
             }
-            result = (first_point + second_point).into_affine();
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "Valid operation between two elliptic curve points"
+            )]
+            let sum = first_point + second_point;
+            sum.into_affine()
         }
-    }
+    };
 
-    let x_bytes = result.x.into_bigint().to_bytes_be();
-    let y_bytes = result.y.into_bigint().to_bytes_be();
-
-    let mut out = vec![0u8; 64];
-    out[32 - x_bytes.len()..32].copy_from_slice(&x_bytes);
-    out[64 - y_bytes.len()..64].copy_from_slice(&y_bytes);
+    let out = [
+        result.x.into_bigint().to_bytes_be(),
+        result.y.into_bigint().to_bytes_be(),
+    ]
+    .concat();
 
     Ok(Bytes::from(out))
 }
@@ -548,12 +550,11 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
 
     let result = point.mul(scalar).into_affine();
 
-    let x_bytes = result.x.into_bigint().to_bytes_be();
-    let y_bytes = result.y.into_bigint().to_bytes_be();
-
-    let mut out = vec![0u8; 64];
-    out[32 - x_bytes.len()..32].copy_from_slice(&x_bytes);
-    out[64 - y_bytes.len()..64].copy_from_slice(&y_bytes);
+    let out = [
+        result.x.into_bigint().to_bytes_be(),
+        result.y.into_bigint().to_bytes_be(),
+    ]
+    .concat();
 
     Ok(Bytes::from(out))
 }
