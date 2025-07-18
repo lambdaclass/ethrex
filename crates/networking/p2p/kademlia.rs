@@ -40,6 +40,11 @@ impl Contact {
     pub fn has_pending_ping(&self) -> bool {
         self.ping_hash.is_some()
     }
+
+    pub fn record_sent_ping(&mut self, ping_hash: H256) {
+        self.validation_timestamp = Some(Instant::now());
+        self.ping_hash = Some(ping_hash);
+    }
 }
 
 impl From<Node> for Contact {

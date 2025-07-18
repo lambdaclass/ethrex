@@ -79,7 +79,7 @@ impl DiscoveryServerState {
         }
     }
 
-    async fn ping(&self, node: &Node) -> Result<(), DiscoveryServerError> {
+    async fn ping(&self, node: &Node) -> Result<H256, DiscoveryServerError> {
         let mut buf = Vec::new();
 
         // TODO: Parametrize this expiration.
@@ -103,6 +103,10 @@ impl DiscoveryServerState {
 
         ping.encode_with_header(&mut buf, &self.signer);
 
+        let ping_hash: [u8; 32] = buf[..32]
+            .try_into()
+            .expect("first 32 bytes are the message hash");
+
         let bytes_sent = self
             .udp_socket
             .send_to(&buf, node.udp_addr())
@@ -115,7 +119,7 @@ impl DiscoveryServerState {
 
         debug!(sent = "Ping", to = %format!("{:#x}", node.public_key));
 
-        Ok(())
+        Ok(H256::from(ping_hash))
     }
 
     async fn pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryServerError> {
@@ -143,14 +147,6 @@ impl DiscoveryServerState {
         }
 
         debug!(sent = "Pong", to = %format!("{:#x}", node.public_key));
-
-        let _ = self.send_enr_request(node).await.inspect_err(
-            |e| error!(received = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
-        );
-
-        let _ = self.send_find_node(node).await.inspect_err(
-            |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
-        );
 
         Ok(())
     }
@@ -224,6 +220,22 @@ impl DiscoveryServerState {
         }
 
         debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
+
+        Ok(())
+    }
+
+    async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
+        let _ = self.pong(hash, &node).await?;
+
+        let ping_hash = self.ping(&node).await?;
+
+        self.kademlia
+            .table
+            .lock()
+            .await
+            .entry(node.node_id())
+            .or_insert(Contact::from(node))
+            .record_sent_ping(ping_hash);
 
         Ok(())
     }
@@ -422,8 +434,8 @@ impl GenServer for ConnectionHandler {
                     sender_public_key,
                 );
 
-                let _ = state.pong(hash, &node).await.inspect_err(|e| {
-                    error!(sent = "Pong", to = %format!("{sender_public_key:#x}"), err = ?e);
+                let _ = state.handle_ping(hash, node).await.inspect_err(|e| {
+                    error!(received = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
                 });
             }
             Self::CastMsg::Pong {
@@ -513,4 +525,14 @@ async fn handle_pong(state: &DiscoveryServerState, message: PongMessage, node_id
         return;
     }
     contact.ping_hash = None;
+
+    let node = contact.node.clone();
+
+    let _ = state.send_enr_request(&node).await.inspect_err(
+        |e| error!(received = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
+    );
+
+    let _ = state.send_find_node(&node).await.inspect_err(
+        |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
+    );
 }
