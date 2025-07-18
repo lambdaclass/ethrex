@@ -24,7 +24,7 @@ fn main() {
     download_contract_deps(&output_contracts_path);
 
     // ERC1967Proxy contract.
-    compile_contract(
+    compile_contract_to_binary(
         &output_contracts_path,
         &output_contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol"),
         "ERC1967Proxy",
@@ -33,7 +33,7 @@ fn main() {
     );
 
     // SP1VerifierGroth16 contract
-    compile_contract(
+    compile_contract_to_binary(
         &output_contracts_path,
         &output_contracts_path
             .join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
@@ -62,7 +62,7 @@ fn main() {
         (&Path::new("src/l1/CommonBridge.sol"), "CommonBridge"),
     ];
     for (path, name) in l1_contracts {
-        compile_contract(&output_contracts_path, path, name, false, Some(&remappings));
+        compile_contract_to_binary(&output_contracts_path, path, name, false, Some(&remappings));
     }
     // L2 contracts
     let l2_contracts = [
@@ -74,11 +74,11 @@ fn main() {
         ),
     ];
     for (path, name) in l2_contracts {
-        compile_contract(&output_contracts_path, path, name, true, Some(&remappings));
+        compile_contract_to_binary(&output_contracts_path, path, name, true, Some(&remappings));
     }
 
     // Based contracts
-    compile_contract(
+    compile_contract_to_binary(
         &output_contracts_path,
         Path::new("src/l1/based/SequencerRegistry.sol"),
         "SequencerRegistry",
@@ -163,7 +163,7 @@ fn download_contract_deps(contracts_path: &Path) {
     .expect("Failed to clone sp1-contracts");
 }
 
-fn compile_contract(
+fn compile_contract_to_binary(
     output_dir: &Path,
     contract_path: &Path,
     contract_name: &str,
