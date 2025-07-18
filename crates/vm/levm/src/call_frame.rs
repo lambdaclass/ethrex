@@ -117,7 +117,7 @@ impl Stack {
             std::ptr::copy_nonoverlapping(
                 value.0.as_ptr(),
                 self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
-                1,
+                4,
             );
         }
         self.offset = next_offset;
