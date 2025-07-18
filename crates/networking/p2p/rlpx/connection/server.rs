@@ -46,7 +46,7 @@ use crate::{
         },
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
@@ -504,7 +504,6 @@ where
     let supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
-        &SUPPORTED_P2P_CAPABILITIES[..],
     ]
     .concat();
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
