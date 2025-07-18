@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752871246907,
+  "lastUpdate": 1752872125644,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10215,6 +10215,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001235862962962963,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6876c91b7f93ebbf65124410582e6f89513f9768",
+          "message": "perf(levm): codecopy perf improvement (#3675)\n\n**Motivation**\n\nImproves from 200 mgas to 790, this bench was made with this pr along\nmemory, sstore and opcodes ones.\n\nA 295% increase in perf.\n\nRequires the pr #3564 \n\n**Description**",
+          "timestamp": "2025-07-18T05:06:43Z",
+          "tree_id": "295ee8748a84fa9fc38dc54a27f6f57ac03c6626",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6876c91b7f93ebbf65124410582e6f89513f9768"
+        },
+        "date": 1752872109751,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006266347417840375,
             "unit": "Mgas/s"
           }
         ]
