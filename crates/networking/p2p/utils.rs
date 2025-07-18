@@ -26,12 +26,10 @@ pub fn get_msg_expiration_from_seconds(seconds: u64) -> u64 {
         .as_secs()
 }
 
-pub fn is_expired(expiration: u64) -> bool {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    expiration < now
+pub fn is_msg_expired(expiration: u64) -> bool {
+    // this cast to a signed integer is needed as the rlp decoder doesn't take into account the sign
+    // otherwise if a msg contains a negative expiration, it would pass since as it would wrap around the u64.
+    (expiration as i64) < (current_unix_time() as i64)
 }
 
 pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {

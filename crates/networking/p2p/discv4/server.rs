@@ -11,7 +11,7 @@ use spawned_concurrency::{
 use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::utils::{is_expired, unmap_ipv4in6_address};
+use crate::utils::{is_msg_expired, unmap_ipv4in6_address};
 use crate::{
     discv4::messages::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
@@ -464,7 +464,7 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "Ping", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
-                if is_expired(msg.expiration) {
+                if is_msg_expired(msg.expiration) {
                     trace!("Ping expired");
                     return CastResponse::Stop;
                 }
@@ -516,7 +516,7 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
-                if is_expired(msg.expiration) {
+                if is_msg_expired(msg.expiration) {
                     trace!("Neighbors expired");
                     return CastResponse::Stop;
                 }
@@ -542,7 +542,7 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "ENRRequest", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
-                if is_expired(msg.expiration) {
+                if is_msg_expired(msg.expiration) {
                     trace!("ENRRequest expired");
                     return CastResponse::Stop;
                 }
