@@ -74,6 +74,8 @@ pub struct SnapState {
     storage_trie_rebuild_pending: Option<Vec<(H256, H256)>>,
     // Latest root of the rebuilt state trie + the last inserted keys for each state trie segment
     state_trie_rebuild_checkpoint: Option<(H256, [H256; STATE_TRIE_SEGMENTS])>,
+    // Code hashes of bytecodes in need of fetching, will only be populated if the node is restarted mid-sync
+    bytecodes_pending: Option<Vec<H256>>,
 }
 
 impl Store {
@@ -750,6 +752,24 @@ impl StoreEngine for Store {
             .inner()?
             .snap_state
             .storage_trie_rebuild_pending
+            .clone())
+    }
+
+    async fn set_bytecodes_pending(
+        &self,
+        pending: Vec<H256>,
+    ) -> Result<(), StoreError> {
+        self.inner()?.snap_state.bytecodes_pending = Some(pending);
+        Ok(())
+    }
+
+    async fn get_bytecodes_pending(
+        &self,
+    ) -> Result<Option<Vec<H256>>, StoreError> {
+        Ok(self
+            .inner()?
+            .snap_state
+            .bytecodes_pending
             .clone())
     }
 

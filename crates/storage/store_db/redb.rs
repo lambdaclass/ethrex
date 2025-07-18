@@ -1282,6 +1282,28 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
+    async fn set_bytecodes_pending(
+        &self,
+        pending: Vec<H256>,
+    ) -> Result<(), StoreError> {
+        self.write(
+            SNAP_STATE_TABLE,
+            SnapStateIndex::BytecodesPending,
+            pending.encode_to_vec(),
+        )
+        .await
+    }
+
+    async fn get_bytecodes_pending(
+        &self,
+    ) -> Result<Option<Vec<H256>>, StoreError> {
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::BytecodesPending)
+            .await?
+            .map(|p| RLPDecode::decode(&p.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
+
     async fn clear_snapshot(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(Box::new)?;
         write_tx.delete_table(STATE_SNAPSHOT_TABLE)?;

@@ -1170,6 +1170,21 @@ impl Store {
         self.engine.get_storage_trie_rebuild_pending().await
     }
 
+    /// Set the code hashes of the bytecodes awaiting fetching, they will only be populated when the node is restarted mid-sync
+    pub async fn set_bytecodes_pending(
+        &self,
+        pending: Vec<H256>,
+    ) -> Result<(), StoreError> {
+        self.engine.set_bytecodes_pending(pending).await
+    }
+
+    /// Get the code hashes of the bytecodes awaiting fetching, they will only be populated when the node is restarted mid-sync
+    pub async fn get_bytecodes_pending(
+        &self,
+    ) -> Result<Option<Vec<H256>>, StoreError> {
+        self.engine.get_bytecodes_pending().await
+    }
+
     /// Clears the state and storage snapshots
     pub async fn clear_snapshot(&self) -> Result<(), StoreError> {
         self.engine.clear_snapshot().await
