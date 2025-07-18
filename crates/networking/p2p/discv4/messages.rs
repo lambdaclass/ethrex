@@ -11,8 +11,10 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use secp256k1::SecretKey;
-use secp256k1::ecdsa::{RecoverableSignature, RecoveryId};
+use secp256k1::{
+    SecretKey,
+    ecdsa::{RecoverableSignature, RecoveryId},
+};
 use sha3::{Digest, Keccak256};
 
 #[derive(Debug, PartialEq)]

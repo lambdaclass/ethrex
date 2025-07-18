@@ -24,13 +24,11 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use futures::{StreamExt, stream::SplitStream};
-
+use rand::Rng;
 use secp256k1::{
     PublicKey, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-
-use rand::Rng;
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -452,10 +450,8 @@ fn sign_shared_secret(
     let signature_prehash = shared_secret ^ local_nonce;
     let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
     let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
-
     let (rid, signature) = sig.serialize_compact();
     let mut signature_bytes = [0; 65];
-
     signature_bytes[..64].copy_from_slice(&signature);
     signature_bytes[64] = rid
         .to_i32()

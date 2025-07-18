@@ -12,7 +12,6 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
-
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
