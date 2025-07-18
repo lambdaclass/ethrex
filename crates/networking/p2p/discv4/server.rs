@@ -11,7 +11,7 @@ use spawned_concurrency::{
 use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::utils::is_expired;
+use crate::utils::{is_expired, unmap_ipv4in6_address};
 use crate::{
     discv4::messages::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
@@ -469,7 +469,8 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
-                let node = Node::new(from.ip(), from.port(), msg.from.tcp_port, sender_public_key);
+                let sender_ip = unmap_ipv4in6_address(from.ip());
+                let node = Node::new(sender_ip, from.port(), msg.from.tcp_port, sender_public_key);
 
                 let _ = state.handle_ping(hash, node).await.inspect_err(|e| {
                     error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);

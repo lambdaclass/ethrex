@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    net::IpAddr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use ethrex_common::{H256, H512};
 use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
@@ -35,4 +38,13 @@ pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
     let public_key = PublicKey::from(signer.verifying_key());
     let encoded = public_key.to_encoded_point(false);
     H512::from_slice(&encoded.as_bytes()[1..])
+}
+
+pub fn unmap_ipv4in6_address(addr: IpAddr) -> IpAddr {
+    if let IpAddr::V6(v6_addr) = addr {
+        if let Some(v4_addr) = v6_addr.to_ipv4_mapped() {
+            return IpAddr::V4(v4_addr);
+        }
+    }
+    addr
 }
