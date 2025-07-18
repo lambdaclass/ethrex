@@ -147,13 +147,12 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     remote_public_key: H512,
     mut stream: S,
 ) -> Result<LocalState, RLPxError> {
-    let secret_key: SecretKey = *signer;
     let peer_pk = compress_pubkey(remote_public_key).ok_or(RLPxError::InvalidPeerId())?;
 
     let local_nonce = H256::random_using(&mut rand::thread_rng());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
 
-    let msg = encode_auth_message(&secret_key, local_nonce, &peer_pk, &local_ephemeral_key)?;
+    let msg = encode_auth_message(signer, local_nonce, &peer_pk, &local_ephemeral_key)?;
     stream.write_all(&msg).await?;
 
     Ok(LocalState {
@@ -186,8 +185,6 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     signer: &SecretKey,
     stream: S,
 ) -> Result<RemoteState, RLPxError> {
-    let secret_key: SecretKey = *signer;
-
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
@@ -195,7 +192,7 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
     let msg = &msg_bytes
         .get(2..)
         .ok_or(RLPxError::InvalidMessageLength())?;
-    let (auth, remote_ephemeral_key) = decode_auth_message(&secret_key, msg, size_data)?;
+    let (auth, remote_ephemeral_key) = decode_auth_message(signer, msg, size_data)?;
 
     Ok(RemoteState {
         public_key: auth.public_key,
