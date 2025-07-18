@@ -1,6 +1,7 @@
 use ethrex_common::{
-    H256, serde_utils,
-    types::{Blob, Proof},
+    H256,
+    serde_utils::{self},
+    types::{Blob, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,13 +20,13 @@ pub struct BlobsV1Request {
     blob_versioned_hashes: Vec<H256>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobsV1Response {
-    #[serde(with = "serde_utils::blob::vec")]
-    pub blobs: Vec<Blob>,
-    #[serde(with = "serde_utils::bytes48::vec")]
-    pub proofs: Vec<Proof>,
+    #[serde(with = "serde_utils::blob_opt::vec")]
+    pub blobs: Vec<Option<Blob>>,
+    #[serde(with = "serde_utils::bytes48_opt::vec")]
+    pub proofs: Vec<Option<Proof>>,
 }
 
 impl std::fmt::Display for BlobsV1Request {
@@ -56,25 +57,33 @@ impl RpcHandler for BlobsV1Request {
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
+        //TODO: spec https://ethereum.github.io/execution-apis/docs/reference/engine_getblobsv1/ says error should be thrown for unsupported fork.
+        let mut blobs: Vec<Option<Blob>> = vec![None; self.blob_versioned_hashes.len()];
+        let mut proofs: Vec<Option<Proof>> = vec![None; self.blob_versioned_hashes.len()];
 
-        let mut blobs_bundles = Vec::new();
-        for hash in self.blob_versioned_hashes.iter() {
-            let blob_bundle = context.blockchain.mempool.get_blobs_bundle(*hash)?;
-            match blob_bundle {
-                None => blobs_bundles.push(
-                    serde_json::to_value(blob_bundle)
-                        .map_err(|error| RpcErr::Internal(error.to_string()))?,
-                ),
-                Some(blob_bundle) => blobs_bundles.push(
-                    serde_json::to_value(BlobsV1Response {
-                        blobs: blob_bundle.blobs,
-                        proofs: blob_bundle.proofs,
-                    })
-                    .map_err(|error| RpcErr::Internal(error.to_string()))?,
-                ),
+        for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
+            // Go over all blobs bundles from the blobs bundle pool.
+            let blobs_in_bundle = blobs_bundle.blobs;
+            let commitments_in_bundle = blobs_bundle.commitments;
+            let proofs_in_bundle = blobs_bundle.proofs;
+
+            // Go over all the commitments in each blobs bundle to get the blobs versioned hash.
+            for i in 0..commitments_in_bundle.len() {
+                let current_versioned_hash =
+                    kzg_commitment_to_versioned_hash(&commitments_in_bundle[i]);
+                if let Some(index) = self
+                    .blob_versioned_hashes
+                    .iter()
+                    .position(|&hash| hash == current_versioned_hash)
+                {
+                    // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vectors storing them in the same position as the versioned hash was received.
+                    blobs[index] = Some(blobs_in_bundle[i]);
+                    proofs[index] = Some(proofs_in_bundle[i])
+                }
             }
         }
 
-        serde_json::to_value(blobs_bundles).map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(BlobsV1Response { blobs, proofs })
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

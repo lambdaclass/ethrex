@@ -232,6 +232,15 @@ impl Mempool {
             .collect())
     }
 
+    /// Returns all blobs bundles currently in the pool
+    pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
+        let blobs_bundle_pool = self
+            .blobs_bundle_pool
+            .lock()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(blobs_bundle_pool.values().cloned().collect())
+    }
+
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
     pub fn status(&self) -> Result<usize, MempoolError> {
