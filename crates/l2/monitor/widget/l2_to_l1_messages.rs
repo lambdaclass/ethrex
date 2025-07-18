@@ -198,16 +198,16 @@ impl L2ToL1MessagesTable {
             keccak(b"ERC20WithdrawalInitiated(address,address,address,uint256)");
 
         for log in logs {
+            let withdrawal_status = L2ToL1MessageStatus::for_tx(
+                log.transaction_hash,
+                common_bridge_address,
+                l1_client,
+                l2_client,
+            )
+            .await?;
             let start = log.log.data.len().saturating_sub(32);
             match *log.log.topics.first().ok_or(MonitorError::LogsTopics(0))? {
                 topic if topic == eth_withdrawal_topic => {
-                    let withdrawal_status = L2ToL1MessageStatus::for_tx(
-                        log.transaction_hash,
-                        common_bridge_address,
-                        l1_client,
-                        l2_client,
-                    )
-                    .await?;
                     processed_logs.push((
                         L2ToL1MessageKind::ETHWithdraw,
                         withdrawal_status,
@@ -231,13 +231,6 @@ impl L2ToL1MessagesTable {
                     ));
                 }
                 topic if topic == erc20_withdrawal_topic => {
-                    let withdrawal_status = L2ToL1MessageStatus::for_tx(
-                        log.transaction_hash,
-                        common_bridge_address,
-                        l1_client,
-                        l2_client,
-                    )
-                    .await?;
                     processed_logs.push((
                         L2ToL1MessageKind::ERC20Withdraw,
                         withdrawal_status,
