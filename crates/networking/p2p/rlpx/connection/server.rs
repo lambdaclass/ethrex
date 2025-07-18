@@ -222,7 +222,11 @@ impl GenServer for RLPxConnection {
 
             METRICS
                 .record_new_rlpx_conn_established(
-                    &established_state.node.version.clone().unwrap_or_default(),
+                    &established_state
+                        .node
+                        .version
+                        .clone()
+                        .unwrap_or("Unknown".to_string()),
                 )
                 .await;
 
@@ -658,7 +662,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
 
             METRICS
                 .record_new_rlpx_conn_disconnection(
-                    &state.node.version.clone().unwrap_or_default(),
+                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
                     reason,
                 )
                 .await;
