@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     sync::Arc,
     time::Duration,
 };
@@ -164,8 +164,6 @@ impl PeerHandler {
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
- 
-
             if peer_channels.is_empty() {
                 warn!("No peers available to request block headers");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -176,10 +174,11 @@ impl PeerHandler {
                     info!("All headers downloaded successfully");
                     break;
                 } else {
-
                     let batch_show = downloaded_count / 10_000;
                     if current_show < batch_show {
-                        warn!("Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}");
+                        warn!(
+                            "Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}"
+                        );
                         current_show += 1;
                     }
 
