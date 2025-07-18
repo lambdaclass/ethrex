@@ -2546,6 +2546,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more 2.0.1",
  "document-features",
+ "futures-core",
  "mio",
  "parking_lot 0.12.4",
  "rustix 1.0.7",
@@ -4204,7 +4205,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
- "vergen-git2",
  "zkvm_interface",
 ]
 

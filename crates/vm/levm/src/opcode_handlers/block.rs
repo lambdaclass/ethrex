@@ -119,7 +119,7 @@ impl<'a> VM<'a> {
             .info
             .balance;
 
-        self.current_call_frame_mut()?.stack.push(&[balance])?;
+        self.current_call_frame_mut()?.stack.push1(balance)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
