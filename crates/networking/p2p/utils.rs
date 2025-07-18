@@ -4,8 +4,8 @@ use std::{
 };
 
 use ethrex_common::{H256, H512};
-use k256::{PublicKey, ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint};
 use keccak_hash::keccak;
+use secp256k1::{PublicKey, SecretKey};
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {
@@ -32,10 +32,10 @@ pub fn is_msg_expired(expiration: u64) -> bool {
     (expiration as i64) < (current_unix_time() as i64)
 }
 
-pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
-    let public_key = PublicKey::from(signer.verifying_key());
-    let encoded = public_key.to_encoded_point(false);
-    H512::from_slice(&encoded.as_bytes()[1..])
+pub fn public_key_from_signing_key(signer: &SecretKey) -> H512 {
+    let public_key = PublicKey::from_secret_key(secp256k1::SECP256K1, signer);
+    let encoded = public_key.serialize_uncompressed();
+    H512::from_slice(&encoded[1..])
 }
 
 pub fn unmap_ipv4in6_address(addr: IpAddr) -> IpAddr {

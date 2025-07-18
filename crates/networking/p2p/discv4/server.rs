@@ -1,9 +1,9 @@
 use std::{collections::btree_map::Entry, net::SocketAddr, sync::Arc};
 
 use ethrex_common::{H512, types::ForkId};
-use k256::ecdsa::SigningKey;
 use keccak_hash::H256;
 use rand::{rngs::OsRng, seq::IteratorRandom};
+use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle},
@@ -43,7 +43,7 @@ pub enum DiscoveryServerError {
 pub struct DiscoveryServerState {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SigningKey,
+    signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
     kademlia: Kademlia,
 }
@@ -52,7 +52,7 @@ impl DiscoveryServerState {
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
-        signer: SigningKey,
+        signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
@@ -237,7 +237,7 @@ pub struct DiscoveryServer;
 impl DiscoveryServer {
     pub async fn spawn(
         local_node: Node,
-        signer: SigningKey,
+        signer: SecretKey,
         fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,

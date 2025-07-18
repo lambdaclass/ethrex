@@ -5,9 +5,9 @@ use std::{
 };
 
 use ethrex_common::types::ForkId;
-use k256::ecdsa::SigningKey;
 use keccak_hash::H256;
 use rand::rngs::OsRng;
+use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after, send_interval},
@@ -37,7 +37,7 @@ pub enum DiscoverySideCarError {
 pub struct DiscoverySideCarState {
     local_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SigningKey,
+    signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
 
     /// Interval between revalidation checks.
@@ -65,7 +65,7 @@ impl DiscoverySideCarState {
     pub fn new(
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
-        signer: SigningKey,
+        signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,
     ) -> Self {
@@ -135,7 +135,7 @@ impl DiscoverySideCarState {
     async fn send_find_node(&self, node: &Node) -> Result<(), DiscoverySideCarError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let random_priv_key = SigningKey::random(&mut OsRng);
+        let random_priv_key = SecretKey::new(&mut OsRng);
         let random_pub_key = public_key_from_signing_key(&random_priv_key);
 
         let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
@@ -175,7 +175,7 @@ pub struct DiscoverySideCar;
 impl DiscoverySideCar {
     pub async fn spawn(
         local_node: Node,
-        signer: SigningKey,
+        signer: SecretKey,
         fork_id: &ForkId,
         udp_socket: Arc<UdpSocket>,
         kademlia: Kademlia,

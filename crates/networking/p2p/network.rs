@@ -15,7 +15,7 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
-use k256::ecdsa::SigningKey;
+use secp256k1::SecretKey;
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::{TcpListener, TcpSocket, UdpSocket},
@@ -29,7 +29,7 @@ pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 #[derive(Clone, Debug)]
 pub struct P2PContext {
     pub tracker: TaskTracker,
-    pub signer: SigningKey,
+    pub signer: SecretKey,
     pub table: Kademlia,
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
@@ -45,7 +45,7 @@ impl P2PContext {
         local_node: Node,
         local_node_record: Arc<Mutex<NodeRecord>>,
         tracker: TaskTracker,
-        signer: SigningKey,
+        signer: SecretKey,
         peer_table: Kademlia,
         storage: Store,
         blockchain: Arc<Blockchain>,
