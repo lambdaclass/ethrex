@@ -59,7 +59,11 @@ localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Sta
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
-localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
+localnet-snooper: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params.yaml
+	docker logs -f $$(docker ps -q --filter name=snooper-engine-3-lighthouse-ethrex)
+
+localnet-client-comparision: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network and outputs the JSON-RPC requests ethrex receives.
 	cp crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_client_comparision.yaml
 	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
