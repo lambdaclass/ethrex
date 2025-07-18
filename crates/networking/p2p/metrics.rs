@@ -41,8 +41,10 @@ pub struct Metrics {
     pub new_connection_establishments_rate: Gauge,
     /// Peers.
     pub peers: Arc<Mutex<u64>>,
-    /// Ex-peers.
-    pub disconnections: Arc<Mutex<BTreeMap<String, u64>>>,
+    /// The amount of clients connected grouped by client type
+    pub peers_by_client_type: Arc<Mutex<BTreeMap<String, u64>>>,
+    /// Ex-peers by client type and then reason of disconnection.
+    pub disconnections_by_client_type: Arc<Mutex<BTreeMap<String, BTreeMap<String, u64>>>>,
     /// RLPx connection attempt failures grouped and counted by reason
     pub connection_attempt_failures: Arc<Mutex<BTreeMap<String, u64>>>,
 
@@ -79,7 +81,7 @@ impl Metrics {
             .await;
     }
 
-    pub async fn record_new_rlpx_conn_established(&self) {
+    pub async fn record_new_rlpx_conn_established(&self, client_version: &str) {
         let mut events = self.connection_establishments_events.lock().await;
 
         events.push_back(SystemTime::now());
@@ -90,6 +92,15 @@ impl Metrics {
 
         self.update_rate(&mut events, &self.new_connection_establishments_rate)
             .await;
+
+        let mut clients = self.peers_by_client_type.lock().await;
+        let split = client_version.split('/').collect::<Vec<&str>>();
+        let client_type = split.first().expect("Split always returns 1 element");
+
+        clients
+            .entry(client_type.to_string())
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
     }
 
     pub async fn record_ping_sent(&self) {
@@ -102,15 +113,28 @@ impl Metrics {
         self.update_rate(&mut events, &self.pings_sent_rate).await;
     }
 
-    pub async fn record_new_rlpx_conn_disconnection(&self, reason: DisconnectReason) {
+    pub async fn record_new_rlpx_conn_disconnection(
+        &self,
+        client_version: &str,
+        reason: DisconnectReason,
+    ) {
         *self.peers.lock().await -= 1;
 
-        self.disconnections
-            .lock()
-            .await
+        let mut clients = self.peers_by_client_type.lock().await;
+        let split = client_version.split('/').collect::<Vec<&str>>();
+        let client_type = split.first().expect("Split always returns 1 element");
+
+        let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
+        disconnection_by_client
+            .entry(client_type.to_string())
+            .or_insert(BTreeMap::new())
             .entry(reason.to_string())
             .and_modify(|e| *e += 1)
             .or_insert(1);
+
+        clients
+            .entry(client_type.to_string())
+            .and_modify(|count| *count -= 1);
     }
 
     pub async fn record_new_rlpx_conn_failure(&self, reason: RLPxError) {
@@ -420,8 +444,9 @@ impl Default for Metrics {
             pings_sent_rate,
 
             peers: Arc::new(Mutex::new(0)),
+            peers_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
-            disconnections: Arc::new(Mutex::new(BTreeMap::new())),
+            disconnections_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
             connection_attempt_failures: Arc::new(Mutex::new(BTreeMap::new())),
 
