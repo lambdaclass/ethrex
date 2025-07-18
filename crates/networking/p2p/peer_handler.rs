@@ -15,6 +15,7 @@ use ethrex_trie::{Node, verify_range};
 use k256::elliptic_curve::rand_core::le;
 use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
+use tokio_stream::iter;
 
 use crate::{
     kademlia::{KademliaTable, PeerChannels, PeerData},
@@ -36,7 +37,7 @@ use crate::{
     },
     snap::encodable_to_proof,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
@@ -145,10 +146,14 @@ impl PeerHandler {
             reverse: false,
         });
 
-        let (peer_id, mut peer_channel) = self
-            .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-            .await
-            .unwrap();
+        let peers_table = self
+            .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .await;
+
+        let (peer_id, mut peer_channel) = peers_table
+            .get(rand::random::<usize>() % peers_table.len())
+            .expect("No peers available")
+            .clone();
 
         peer_channel
             .connection
@@ -156,19 +161,20 @@ impl PeerHandler {
             .await
             .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
             .unwrap();
-        let mut block_count = 0;
 
-        match peer_channel.receiver.lock().await.recv().await.unwrap() {
-            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) if id == request_id => {
-                info!("Received {} block headers", block_headers.len());
-                let latest = block_headers.last().unwrap();
-                info!("Latest block number: {}", latest.number);
-                block_count = latest.number;
-            }
-            message => {
-                info!("Received unexpected message: {message:?}");
-            }
-        };
+        let mut block_count = 10_000_000;
+
+        // match peer_channel.receiver.lock().await.recv().await.unwrap() {
+        //     RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) if id == request_id => {
+        //         debug!("Received {} block headers", block_headers.len());
+        //         let latest = block_headers.last().unwrap();
+        //         debug!("Latest block number: {}", latest.number);
+        //         block_count = latest.number;
+        //     }
+        //     message => {
+        //         debug!("Received unexpected message: {message:?}");
+        //     }
+        // };
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
         // let block_count = 800_000_u64;
@@ -186,27 +192,79 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
-            Result<Vec<BlockHeader>, String>,
-            H256,
-            PeerChannels,
-            u64,
-        )>(1000);
+        let (task_sender, mut task_receiver) =
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerChannels, u64, u64)>(1000);
 
         let mut current_show = 0;
-        let peers_table = self
-            .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
-            .await;
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
                 .iter()
                 .map(|(peer_id, _peer_data)| (*peer_id, true)),
         );
         // 3) create tasks that will request a chunk of headers from a peer
+        info!("Starting to download block headers from peers");
         loop {
-            println!("Downloaders availability: {downloaders:#?}");
+            if downloaded_count >= 10_000_000 {
+                info!("10M headers downloaded, stopping");
+                break;
+            }
 
-            let mut peer_channels = self
+            if let Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) =
+                task_receiver.try_recv()
+            {
+                if headers.is_empty() {
+                    warn!("Failed to download chunk from peer {peer_id}");
+
+                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                        *downloader_is_free = true; // mark the downloader as free
+                    });
+
+                    debug!("Downloader {peer_id} freed");
+
+                    // reinsert the task to the queue
+                    tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
+
+                    continue; // Retry with the next peer
+                }
+
+                downloaded_count += headers.len() as u64;
+                //#####info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
+                let batch_show = downloaded_count / 10_000;
+                if current_show < batch_show {
+                    info!(
+                        "Downloaded {} headers from peer {} (current count: {downloaded_count})",
+                        headers.len(),
+                        peer_id
+                    );
+                    current_show += 1;
+                }
+                // store headers!!!!
+                ret.extend_from_slice(&headers);
+
+                let downloaded_headers = headers.len() as u64;
+
+                // reinsert the task to the queue if it was not completed
+                if downloaded_headers < previous_chunk_limit {
+                    let new_start = startblock + headers.len() as u64;
+
+                    let new_chunk_limit = previous_chunk_limit - headers.len() as u64;
+
+                    let new_remaining = new_chunk_limit - headers.len() as u64;
+
+                    warn!(
+                        "Task for ({startblock}, {new_chunk_limit}) was not completed, re-adding to the queue, {new_remaining} remaining headers"
+                    );
+
+                    tasks_queue_not_started.push_back((new_start, new_chunk_limit));
+                }
+
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true; // mark the downloader as free
+                });
+                debug!("Downloader {peer_id} freed");
+            }
+
+            let peer_channels = self
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
@@ -214,87 +272,21 @@ impl PeerHandler {
                 downloaders.entry(*peer_id).or_insert(true);
             }
 
-            if downloaders
-                .iter()
-                .filter(|(_downloader_id, downloader_is_free)| **downloader_is_free)
-                .count()
-                == 0
-            {
-                warn!("No free downloaders available, waiting for a peer to finish...");
-                continue;
-            }
-
-            let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
-                if downloaded_count >= block_count {
-                    info!("All headers downloaded successfully");
-                    break;
-                } else {
-                    let batch_show = downloaded_count / 10_000;
-                    if current_show < batch_show {
-                        warn!(
-                            "Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}"
-                        );
-                        current_show += 1;
-                    }
-
-                    // sleep and retry
-                    let ret_task = task_receiver.try_recv();
-
-                    match ret_task {
-                        Ok(headers_result) => {
-                            match headers_result {
-                                (Ok(headers), peer_id, peer_channel, startblock) => {
-                                    downloaded_count += headers.len() as u64;
-
-                                    let batch_show = downloaded_count / 10_000;
-                                    if current_show < batch_show {
-                                        info!(
-                                            "Downloaded {} headers from peer {} - current count: {downloaded_count}",
-                                            headers.len(),
-                                            peer_id
-                                        );
-                                        current_show += 1;
-                                    }
-                                    // store headers!!!!
-                                    ret.extend_from_slice(&headers);
-
-                                    // reinsert the task to the queue if it was not completed
-                                    if (headers.len() as u64) < chunk_limit {
-                                        let new_chunk_limit = chunk_limit - (headers.len() as u64);
-                                        warn!(
-                                            "Task for startblock {startblock} was not completed, re-adding to the queue {new_chunk_limit} remaining headers"
-                                        );
-                                        tasks_queue_not_started
-                                            .push_back((startblock, new_chunk_limit));
-                                    }
-                                }
-                                (Err(err), peer_id, peer_channel, startblock) => {
-                                    warn!("Failed to download chunk from peer {peer_id}: {err}");
-                                    // Optionally, you can re-add the peer to the queue or handle it differently
-
-                                    // reinsert the task to the queue
-                                    tasks_queue_not_started.push_back((startblock, chunk_limit));
-
-                                    continue; // Retry with the next peer
-                                }
-                            }
-                        }
-                        Err(_err) => {
-                            continue;
-                        }
-                    }
-
-                    continue;
-                }
-            };
-
-            let Some((free_peer_id, _)) = downloaders
+            let free_downloaders = downloaders
                 .clone()
                 .into_iter()
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
-                .nth(random::<usize>() % downloaders.len())
+                .collect::<Vec<_>>();
+
+            if free_downloaders.is_empty() {
+                continue;
+            }
+
+            let Some(free_peer_id) = free_downloaders
+                .get(random::<usize>() % free_downloaders.len())
+                .map(|(peer_id, _)| *peer_id)
             else {
-                warn!("No free downloaders available, waiting for a peer to finish...");
+                warn!("(2) No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
 
@@ -303,9 +295,29 @@ impl PeerHandler {
                     peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
                 })
             else {
-                warn!(
-                    "No free downloader channels available for peer {free_peer_id}, waiting for a peer to finish..."
+                // The free downloader is not a peer of us anymore.
+                info!(
+                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
                 );
+                downloaders.remove(&free_peer_id);
+                continue;
+            };
+
+            let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
+                if downloaded_count >= block_count {
+                    info!("All headers downloaded successfully");
+                    break;
+                }
+
+                let batch_show = downloaded_count / 10_000;
+
+                if current_show < batch_show {
+                    warn!(
+                        "Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}"
+                    );
+                    current_show += 1;
+                }
+
                 continue;
             };
 
@@ -317,69 +329,34 @@ impl PeerHandler {
                     *downloader_is_free = false; // mark the downloader as busy
                 });
 
+            debug!("Downloader {free_peer_id} is now busy");
+
             // run download_chunk_from_peer in a different Tokio task
-            let download_result = tokio::spawn(async move {
-                info!(
+            let _download_result = tokio::spawn(async move {
+                debug!(
                     "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
                 );
-                let ret = Self::download_chunk_from_peer(
+
+                let headers = Self::download_chunk_from_peer(
                     free_peer_id,
                     &mut free_downloader_channels,
                     startblock,
                     chunk_limit,
                 )
-                .await;
-                tx.send((ret, free_peer_id, free_downloader_channels, startblock))
-                    .await
-                    .unwrap();
+                .await
+                .inspect_err(|err| error!("{free_peer_id} failed to download chunk: {err}"))
+                .unwrap_or_default();
+
+                tx.send((
+                    headers,
+                    free_peer_id,
+                    free_downloader_channels,
+                    startblock,
+                    chunk_limit,
+                ))
+                .await
+                .unwrap();
             });
-
-            let ret_task = task_receiver.try_recv();
-
-            match ret_task {
-                Ok(headers_result) => {
-                    match headers_result {
-                        (Ok(headers), peer_id, peer_channel, startblock) => {
-                            downloaded_count += headers.len() as u64;
-                            //#####info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
-                            let batch_show = downloaded_count / 10_000;
-                            if current_show < batch_show {
-                                info!(
-                                    "Downloaded {} headers from peer {} (current count: {downloaded_count})",
-                                    headers.len(),
-                                    peer_id
-                                );
-                                current_show += 1;
-                            }
-                            // store headers!!!!
-                            ret.extend_from_slice(&headers);
-                            peer_channels.push((peer_id, peer_channel));
-
-                            // reinsert the task to the queue if it was not completed
-                            if (headers.len() as u64) < chunk_limit {
-                                let new_chunk_limit = chunk_limit - (headers.len() as u64);
-                                warn!(
-                                    "Task for startblock {startblock} was not completed, re-adding to the queue {new_chunk_limit} remaining headers"
-                                );
-                                tasks_queue_not_started.push_back((startblock, new_chunk_limit));
-                            }
-                        }
-                        (Err(err), peer_id, peer_channel, startblock) => {
-                            warn!("Failed to download chunk from peer {peer_id}: {err}");
-                            // Optionally, you can re-add the peer to the queue or handle it differently
-                            peer_channels.push((peer_id, peer_channel));
-
-                            // reinsert the task to the queue
-                            tasks_queue_not_started.push_back((startblock, chunk_limit));
-
-                            continue; // Retry with the next peer
-                        }
-                    }
-                }
-                Err(err) => {
-                    continue;
-                }
-            }
 
             // 4) assign the tasks to the peers
             //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
@@ -387,14 +364,50 @@ impl PeerHandler {
             // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
         }
 
+        {
+            let downloaded_headers = ret.len();
+            let unique_headers = ret.iter().map(|h| h.hash()).collect::<HashSet<_>>();
+
+            info!(
+                "Downloaded {} headers, unique: {}, duplicates: {}",
+                downloaded_headers,
+                unique_headers.len(),
+                downloaded_headers - unique_headers.len()
+            );
+
+            match downloaded_headers.cmp(&unique_headers.len()) {
+                std::cmp::Ordering::Equal => {
+                    info!("All downloaded headers are unique");
+                }
+                std::cmp::Ordering::Greater => {
+                    warn!(
+                        "Downloaded headers contain duplicates, {} duplicates found",
+                        downloaded_headers - unique_headers.len()
+                    );
+                }
+                std::cmp::Ordering::Less => {
+                    warn!("Downloaded headers are less than unique headers, something went wrong");
+                }
+            }
+        }
+
+        // {
+        //     let mut headers_sorted_by_number =
+        //         ret.iter().map(|header| header.number).collect::<Vec<_>>();
+
+        //     headers_sorted_by_number.sort();
+
+        //     while let Some([n, maybe_n_plus_1]) = headers_sorted_by_number.windows(2).next() {
+
+        //     }
+        // }
+
         // 4) assign the tasks to the peers
         //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
         //     4.2) mark the peer as busy
         //     4.3) wait for the response and handle it
 
         // 5) loop until all the chunks are received (retry to get the chunks that failed)
-
-        info!("All headers downloaded successfully");
 
         ret.sort_by(|x, y| x.number.cmp(&y.number));
         info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
