@@ -1,3 +1,4 @@
+use core::sync;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     sync::Arc,
@@ -133,7 +134,7 @@ impl PeerHandler {
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
         let mut ret = Vec::<BlockHeader>::new();
-
+        info!("Sync head: {sync_head:?}");
         // get latest block:
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
@@ -163,6 +164,7 @@ impl PeerHandler {
                 let latest = block_headers.last().unwrap();
                 info!("Latest block number: {}", latest.number);
                 block_count = latest.number;
+                info!("Block count: {block_count}");
             }
             message => {
                 info!("Received unexpected message: {message:?}");
@@ -171,10 +173,10 @@ impl PeerHandler {
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
         // let block_count = 800_000_u64;
-        let chunk_count = 800_usize; // e.g. 8 tasks
+        let chunk_count = (block_count / BLOCK_HEADER_LIMIT) as usize; // e.g. 8 tasks
 
         // 2) partition the amount of headers in `K` tasks
-        let chunk_limit = block_count / chunk_count as u64;
+        let chunk_limit = BLOCK_HEADER_LIMIT;
 
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::with_capacity(chunk_count);
