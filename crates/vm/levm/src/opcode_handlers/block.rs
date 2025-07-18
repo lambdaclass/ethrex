@@ -34,7 +34,7 @@ impl<'a> VM<'a> {
         let block_hash = self.db.store.get_block_hash(block_number)?;
         self.current_call_frame_mut()?
             .stack
-            .push(&[u256_from_big_endian_const(block_hash.to_fixed_bytes())])?;
+            .push1(u256_from_big_endian_const(block_hash.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -45,9 +45,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::COINBASE)?;
 
-        current_call_frame
-            .stack
-            .push(&[address_to_word(coinbase)])?;
+        current_call_frame.stack.push1(address_to_word(coinbase))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -58,7 +56,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::TIMESTAMP)?;
 
-        current_call_frame.stack.push(&[timestamp])?;
+        current_call_frame.stack.push1(timestamp)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -69,7 +67,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::NUMBER)?;
 
-        current_call_frame.stack.push(&[block_number])?;
+        current_call_frame.stack.push1(block_number)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -83,7 +81,7 @@ impl<'a> VM<'a> {
 
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
-        current_call_frame.stack.push(&[randao])?;
+        current_call_frame.stack.push1(randao)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -94,7 +92,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::GASLIMIT)?;
 
-        current_call_frame.stack.push(&[block_gas_limit.into()])?;
+        current_call_frame.stack.push1(block_gas_limit.into())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -105,7 +103,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
 
-        current_call_frame.stack.push(&[chain_id])?;
+        current_call_frame.stack.push1(chain_id)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -132,7 +130,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;
 
-        current_call_frame.stack.push(&[base_fee_per_gas])?;
+        current_call_frame.stack.push1(base_fee_per_gas)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -147,7 +145,7 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
 
-        let [index] = *self.current_call_frame_mut()?.stack.pop()?;
+        let index = self.current_call_frame_mut()?.stack.pop1()?;
 
         let blob_hashes = &self.env.tx_blob_hashes;
 
@@ -187,9 +185,7 @@ impl<'a> VM<'a> {
         let blob_base_fee =
             get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
 
-        self.current_call_frame_mut()?
-            .stack
-            .push(&[blob_base_fee])?;
+        self.current_call_frame_mut()?.stack.push1(blob_base_fee)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

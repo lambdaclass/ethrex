@@ -59,6 +59,19 @@ impl Stack {
     }
 
     #[inline]
+    pub fn pop1(&mut self) -> Result<U256, ExceptionalHalt> {
+        let value = *self
+            .values
+            .get(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        // The following operation can never overflow as both `self.offset` and N are within
+        // STACK_LIMIT (1024).
+        self.offset = self.offset.wrapping_add(1);
+
+        Ok(value)
+    }
+
+    #[inline]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
