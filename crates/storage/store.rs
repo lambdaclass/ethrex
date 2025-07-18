@@ -74,6 +74,15 @@ impl Store {
         self.engine.apply_updates(update_batch).await
     }
 
+    /// Receives a mapping from account hash to a list of node hashes and nodes
+    /// Inserts the corresponding nodes on each storage trie given by its account hash
+    pub async fn commit_storage_nodes(
+        &self,
+        nodes: HashMap<H256, Vec<(NodeHash, Vec<u8>)>>,
+    ) -> Result<(), StoreError> {
+        self.engine.commit_storage_nodes(nodes).await
+    }
+
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
         let store = match engine_type {
@@ -1178,11 +1187,11 @@ impl Store {
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    pub fn read_account_snapshot(
+    pub async fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        self.engine.read_account_snapshot(start)
+        self.engine.read_account_snapshot(start).await
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
