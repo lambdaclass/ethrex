@@ -336,20 +336,18 @@ pub mod bytes48 {
             Ok(output)
         }
     }
-}
 
-pub mod bytes48_opt {
-    use super::*;
-
-    pub mod vec {
-
+    pub mod opt {
         use super::*;
 
-        pub fn serialize<S>(value: &Vec<Option<[u8; 48]>>, serializer: S) -> Result<S::Ok, S::Error>
+        pub fn serialize<S>(value: &Option<[u8; 48]>, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            serialize_vec_of_opt_hex_encodables(value, serializer)
+            match value {
+                Some(value) => serializer.serialize_str(&format!("0x{}", hex::encode(value))),
+                None => serializer.serialize_none(),
+            }
         }
     }
 }
@@ -395,24 +393,23 @@ pub mod blob {
             Ok(output)
         }
     }
-}
 
-pub mod blob_opt {
-    use super::*;
-
-    pub mod vec {
+    pub mod opt {
         use crate::types::BYTES_PER_BLOB;
 
         use super::*;
 
         pub fn serialize<S>(
-            value: &Vec<Option<[u8; BYTES_PER_BLOB]>>,
+            value: &Option<[u8; BYTES_PER_BLOB]>,
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            serialize_vec_of_opt_hex_encodables(value, serializer)
+            match value {
+                Some(value) => serializer.serialize_str(&format!("0x{}", hex::encode(value))),
+                None => serializer.serialize_none(),
+            }
         }
     }
 }
@@ -425,22 +422,6 @@ fn serialize_vec_of_hex_encodables<S: Serializer, T: std::convert::AsRef<[u8]>>(
     let mut seq_serializer = serializer.serialize_seq(Some(value.len()))?;
     for encoded in value {
         seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded)))?;
-    }
-    seq_serializer.end()
-}
-
-fn serialize_vec_of_opt_hex_encodables<S: Serializer, T: std::convert::AsRef<[u8]>>(
-    value: &Vec<Option<T>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    let mut seq_serializer = serializer.serialize_seq(Some(value.len()))?;
-    for encoded in value {
-        match encoded {
-            Some(encoded) => {
-                seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded)))?
-            }
-            None => seq_serializer.serialize_element(&"null".to_string())?,
-        }
     }
     seq_serializer.end()
 }

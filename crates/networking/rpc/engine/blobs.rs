@@ -20,23 +20,19 @@ pub struct BlobsV1Request {
     blob_versioned_hashes: Vec<H256>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlobsV1Response {
-    #[serde(with = "serde_utils::blob_opt::vec")]
-    pub blobs: Vec<Option<Blob>>,
-    #[serde(with = "serde_utils::bytes48_opt::vec")]
-    pub proofs: Vec<Option<Proof>>,
-}
-
 impl std::fmt::Display for BlobsV1Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Blob versioned hashes: {:#?}",
-            self.blob_versioned_hashes
-        )
+        write!(f, "Requested Blobs")
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobsV1ResponseItem {
+    #[serde(with = "serde_utils::blob::opt")]
+    pub blob: Option<Blob>,
+    #[serde(with = "serde_utils::bytes48::opt")]
+    pub proof: Option<Proof>,
 }
 
 impl RpcHandler for BlobsV1Request {
@@ -58,8 +54,13 @@ impl RpcHandler for BlobsV1Request {
             return Err(RpcErr::TooLargeRequest);
         }
         //TODO: spec https://ethereum.github.io/execution-apis/docs/reference/engine_getblobsv1/ says error should be thrown for unsupported fork.
-        let mut blobs: Vec<Option<Blob>> = vec![None; self.blob_versioned_hashes.len()];
-        let mut proofs: Vec<Option<Proof>> = vec![None; self.blob_versioned_hashes.len()];
+        let mut res: Vec<BlobsV1ResponseItem> = vec![
+            BlobsV1ResponseItem {
+                blob: None,
+                proof: None
+            };
+            self.blob_versioned_hashes.len()
+        ];
 
         for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
             // Go over all blobs bundles from the blobs bundle pool.
@@ -77,13 +78,12 @@ impl RpcHandler for BlobsV1Request {
                     .position(|&hash| hash == current_versioned_hash)
                 {
                     // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vectors storing them in the same position as the versioned hash was received.
-                    blobs[index] = Some(blobs_in_bundle[i]);
-                    proofs[index] = Some(proofs_in_bundle[i])
+                    res[index].blob = Some(blobs_in_bundle[i]);
+                    res[index].proof = Some(proofs_in_bundle[i]);
                 }
             }
         }
 
-        serde_json::to_value(BlobsV1Response { blobs, proofs })
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
