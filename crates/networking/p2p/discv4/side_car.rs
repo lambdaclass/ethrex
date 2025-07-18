@@ -198,9 +198,9 @@ impl DiscoverySideCar {
             InMessage::Revalidate,
         );
 
-        let _ = server.cast(InMessage::Lookup).await;
+        send_interval(state.prune_interval, server.clone(), InMessage::Prune);
 
-        let _ = server.cast(InMessage::Prune).await;
+        let _ = server.cast(InMessage::Lookup).await;
 
         Ok(())
     }
@@ -245,8 +245,6 @@ impl GenServer for DiscoverySideCar {
                 debug!(received = "Prune");
 
                 prune(&state).await;
-
-                send_after(state.prune_interval, handle.clone(), Self::CastMsg::Prune);
 
                 CastResponse::NoReply(state)
             }
