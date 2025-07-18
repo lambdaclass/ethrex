@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752841564700,
+  "lastUpdate": 1752844241995,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9828,6 +9828,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006066963636363636,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "me+git@droak.sh",
+            "name": "Oak",
+            "username": "d-roak"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8272969a64958abfed0f7085cb7c4d684f2202df",
+          "message": "docs(l2, levm): move crates docs to root docs (#3303)\n\n**Motivation**\nDocs are sparsed across the repo. This PR puts everything in the same\nplace\n\n**Description**\n- Added the docs that lived under `/crates/*` in the root `/docs`. Used\nthe same file structure\n- Deleted all instances of docs under `/crates/*`\n\n\nCloses: none\n\nSigned-off-by: droak <me+git@droak.sh>",
+          "timestamp": "2025-07-17T18:10:12Z",
+          "tree_id": "17e6af6a4ed0b436216ded6e99f2ed41de21d5c1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8272969a64958abfed0f7085cb7c4d684f2202df"
+        },
+        "date": 1752844241214,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0012370083410565339,
             "unit": "Mgas/s"
           }
         ]
