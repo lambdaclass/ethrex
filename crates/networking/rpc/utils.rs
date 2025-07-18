@@ -303,7 +303,7 @@ pub mod test_utils {
         Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1)
     }
 
-    pub async fn example_local_node_record(storage: &Store) -> NodeRecord {
+    pub fn example_local_node_record() -> NodeRecord {
         let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
         let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
@@ -337,7 +337,7 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
-        let local_node_record = example_local_node_record(&storage).await;
+        let local_node_record = example_local_node_record();
         start_api(
             http_addr,
             authrpc_addr,
@@ -356,7 +356,7 @@ pub mod test_utils {
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let local_node_record = example_local_node_record(&storage).await;
+        let local_node_record = example_local_node_record();
         RpcApiContext {
             storage,
             blockchain,
