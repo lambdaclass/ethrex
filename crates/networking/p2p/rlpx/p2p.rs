@@ -11,7 +11,7 @@ use ethrex_rlp::{
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
 };
-use k256::PublicKey;
+use secp256k1::PublicKey;
 use serde::Serialize;
 
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];

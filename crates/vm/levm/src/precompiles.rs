@@ -811,8 +811,8 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
 /// Converts the provided commitment to match the provided versioned_hash.
 /// Taken from the same name function from crates/common/types/blobs_bundle.rs
 fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
-    use k256::sha2::Digest;
-    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(commitment_bytes).into();
+    use sha2::{Digest, Sha256};
+    let mut versioned_hash: [u8; 32] = Sha256::digest(commitment_bytes).into();
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
     versioned_hash.into()
 }

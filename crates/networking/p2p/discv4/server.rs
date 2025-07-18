@@ -15,7 +15,7 @@ use crate::{
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
-use k256::ecdsa::{Signature, VerifyingKey, signature::hazmat::PrehashVerifier};
+use secp256k1::{PublicKey, ecdsa::Signature};
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -402,26 +402,32 @@ impl Discv4Server {
                     let signature_valid = match id.as_str() {
                         "v4" => {
                             let digest = msg.node_record.get_signature_digest();
-                            let Some(public_key) = record.secp256k1 else {
-                                return Err(DiscoveryError::InvalidMessage(
+                            let public_key = record.secp256k1.ok_or(DiscoveryError::InvalidMessage(
                                 "signature could not be verified because public key was not provided".into(),
-                            ));
-                            };
+                            ))?;
+                            let public_key =
+                                PublicKey::from_slice(public_key.as_bytes()).map_err(|_| {
+                                    DiscoveryError::InvalidMessage(
+                                        "public key could not be created from provided value"
+                                            .into(),
+                                    )
+                                })?;
                             let signature_bytes = msg.node_record.signature.as_bytes();
-                            let Ok(signature) = Signature::from_slice(&signature_bytes[0..64])
-                            else {
-                                return Err(DiscoveryError::InvalidMessage(
-                                    "signature could not be build from msg signature bytes".into(),
-                                ));
-                            };
-                            let Ok(verifying_key) =
-                                VerifyingKey::from_sec1_bytes(public_key.as_bytes())
-                            else {
-                                return Err(DiscoveryError::InvalidMessage(
-                                    "public key could no be built from msg pub key bytes".into(),
-                                ));
-                            };
-                            verifying_key.verify_prehash(&digest, &signature).is_ok()
+                            let signature = Signature::from_compact(&signature_bytes[0..64])
+                                .map_err(|_| {
+                                    DiscoveryError::InvalidMessage(
+                                        "signature could not be build from msg signature bytes"
+                                            .into(),
+                                    )
+                                })?;
+                            let msg =
+                                secp256k1::Message::from_digest_slice(&digest).map_err(|_| {
+                                    DiscoveryError::InvalidMessage("digest must be 32 bytes".into())
+                                })?;
+
+                            secp256k1::SECP256K1
+                                .verify_ecdsa(&msg, &signature, &public_key)
+                                .is_ok()
                         }
                         _ => false,
                     };
@@ -732,8 +738,8 @@ pub(super) mod tests {
     use ethrex_storage::Store;
     use ethrex_storage::error::StoreError;
 
-    use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
+    use secp256k1::SecretKey;
     use std::net::{IpAddr, Ipv4Addr};
     use tokio::{sync::Mutex, time::sleep};
 
@@ -741,7 +747,7 @@ pub(super) mod tests {
         table: Arc<Mutex<KademliaTable>>,
         bucket_idx: usize,
     ) {
-        let public_key = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let public_key = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
         let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
         table
             .lock()
@@ -763,7 +769,7 @@ pub(super) mod tests {
         should_start_server: bool,
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
-        let signer = SigningKey::random(&mut OsRng);
+        let signer = SecretKey::new(&mut OsRng);
         let public_key = public_key_from_signing_key(&signer);
         let local_node = Node::new(addr.ip(), udp_port, udp_port, public_key);
 
@@ -786,7 +792,7 @@ pub(super) mod tests {
             local_node,
             local_node_record,
             tracker: tracker.clone(),
-            signer: signer.clone(),
+            signer,
             table,
             storage,
             blockchain,

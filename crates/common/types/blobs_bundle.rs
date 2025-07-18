@@ -68,8 +68,8 @@ pub fn bytes_from_blob(blob: Bytes) -> [u8; SAFE_BYTES_PER_BLOB] {
 }
 
 pub fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
-    use k256::sha2::Digest;
-    let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
+    use sha2::{Digest, Sha256};
+    let mut versioned_hash: [u8; 32] = Sha256::digest(data).into();
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
     versioned_hash.into()
 }

@@ -526,7 +526,8 @@ mod tests {
     use super::*;
     use ethrex_common::H512;
     use hex_literal::hex;
-    use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
+    use rand::rngs::OsRng;
+    use secp256k1::SecretKey;
     use std::{
         net::{IpAddr, Ipv4Addr},
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -551,7 +552,7 @@ mod tests {
         table: &mut KademliaTable,
         bucket_idx: usize,
     ) -> (Option<PeerData>, bool) {
-        let public_key = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let public_key = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
         let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
         table.insert_node_on_custom_bucket(node, bucket_idx)
     }
@@ -565,7 +566,7 @@ mod tests {
     }
 
     fn get_test_table() -> KademliaTable {
-        let signer = SigningKey::random(&mut OsRng);
+        let signer = SecretKey::new(&mut OsRng);
         let local_public_key = public_key_from_signing_key(&signer);
         let local_node_id = node_id(&local_public_key);
 
@@ -575,7 +576,7 @@ mod tests {
     #[test]
     fn get_least_recently_pinged_peers_should_return_the_right_peers() {
         let mut table = get_test_table();
-        let node_1_pubkey = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node_1_pubkey = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
         {
             table.insert_node(Node::new(
                 IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
@@ -591,7 +592,7 @@ mod tests {
             .as_secs();
         }
 
-        let node_2_pubkey = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node_2_pubkey = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
         {
             table.insert_node(Node::new(
                 IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
@@ -607,7 +608,7 @@ mod tests {
             .as_secs();
         }
 
-        let node_3_pubkey = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node_3_pubkey = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
         {
             table.insert_node(Node::new(
                 IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
@@ -725,7 +726,7 @@ mod tests {
         let mut table = get_test_table();
 
         // Initialization and basic scoring operations
-        let public_key = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let public_key = public_key_from_signing_key(&SecretKey::new(&mut OsRng));
         let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
         table.insert_node(node);
         let first_node_id = node_id(&public_key);
@@ -756,7 +757,7 @@ mod tests {
 
         // Weighted selection with multiple peers
         let peer_keys: Vec<_> = (0..3)
-            .map(|_| public_key_from_signing_key(&SigningKey::random(&mut OsRng)))
+            .map(|_| public_key_from_signing_key(&SecretKey::new(&mut OsRng)))
             .collect();
         let mut peer_ids = Vec::new();
 
