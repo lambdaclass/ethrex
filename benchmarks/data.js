@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752828378006,
+  "lastUpdate": 1752832331468,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4615,6 +4615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209991999050,
             "range": "± 536409015",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b38493e92ea2602d73e0a840bfae103011105285",
+          "message": "refactor(l1, l2): metrics folder (#3346)\n\n**Motivation**\n\nHaving all our metrics dashboards in one folder, so it's all better\norganized.\n\n**Description**\n\nThis PR moves all the dashboards and yaml files needed to set up the\nPrometheus and Grafana containers into one folder at the root.\n\nCloses #3181\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-07-18T08:56:10Z",
+          "tree_id": "52f41fa0b6b4c2b4b76f577d91652b6854afd484",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b38493e92ea2602d73e0a840bfae103011105285"
+        },
+        "date": 1752832319059,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211134435450,
+            "range": "± 649571186",
             "unit": "ns/iter"
           }
         ]
