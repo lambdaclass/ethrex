@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752799606885,
+  "lastUpdate": 1752808838845,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9418,6 +9418,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012111905626134302,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "22b64308b7b0badb3e78279b12f8b36f69bd0642",
+          "message": "perf(levm): new memory model (#3564)\n\n**Motivation**\n\nGas benchmarks show an 23% improvement on opcode based timings and 12%\non end to end.\n30% improvement in mgas for mstore (before unsafe)\n\nAfter adding unsafe we see a 30% improvement on top of the mstore\nimprovements and overall general improvements on other opcodes.",
+          "timestamp": "2025-07-17T14:04:33Z",
+          "tree_id": "eeb024c2f8db6140858e55a60a1250ff8fa4cd1b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/22b64308b7b0badb3e78279b12f8b36f69bd0642"
+        },
+        "date": 1752808838038,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006237065420560748,
             "unit": "Mgas/s"
           }
         ]
