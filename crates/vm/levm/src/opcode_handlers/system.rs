@@ -579,7 +579,7 @@ impl<'a> VM<'a> {
             if current_call_frame.is_static {
                 return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
             }
-            let target_address = word_to_address(current_call_frame.stack.pop::<1>()?[0]);
+            let target_address = word_to_address(current_call_frame.stack.pop1()?);
             let to = current_call_frame.to;
             (target_address, to)
         };
@@ -709,7 +709,7 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.has_code_or_nonce() {
-            self.current_call_frame_mut()?.stack.push(&[FAIL])?;
+            self.current_call_frame_mut()?.stack.push1(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
@@ -915,11 +915,11 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match &ctx_result.result {
             TxResult::Success => {
-                self.current_call_frame_mut()?.stack.push(&[SUCCESS])?;
+                self.current_call_frame_mut()?.stack.push1(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
-                self.current_call_frame_mut()?.stack.push(&[FAIL])?;
+                self.current_call_frame_mut()?.stack.push1(FAIL)?;
             }
         };
 
@@ -961,7 +961,7 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match ctx_result.result.clone() {
             TxResult::Success => {
-                parent_call_frame.stack.push(&[address_to_word(to)])?;
+                parent_call_frame.stack.push1(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
@@ -970,7 +970,7 @@ impl<'a> VM<'a> {
                     parent_call_frame.sub_return_data = ctx_result.output.clone();
                 }
 
-                parent_call_frame.stack.push(&[FAIL])?;
+                parent_call_frame.stack.push1(FAIL)?;
             }
         };
 
@@ -1033,7 +1033,7 @@ impl<'a> VM<'a> {
             .gas_remaining
             .checked_add(gas_limit)
             .ok_or(InternalError::Overflow)?;
-        callframe.stack.push(&[FAIL])?; // It's the same as revert for CREATE
+        callframe.stack.push1(FAIL)?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;
         Ok(())

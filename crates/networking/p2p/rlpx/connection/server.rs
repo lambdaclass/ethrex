@@ -49,7 +49,7 @@ use crate::{
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
         utils::{log_peer_debug, log_peer_error, log_peer_warn},
     },
@@ -532,7 +532,6 @@ where
     let mut supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
-        &SUPPORTED_P2P_CAPABILITIES[..],
     ]
     .concat();
     if let L2ConnState::Disconnected(_) = state.l2_state {

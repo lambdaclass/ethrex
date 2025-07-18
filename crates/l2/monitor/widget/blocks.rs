@@ -19,7 +19,7 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct BlocksTable {
     pub state: TableState,
     // block number | #transactions | hash | coinbase | gas | blob gas | size

@@ -41,7 +41,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::Mutex, task::JoinSet};
-use tokio_util::task::TaskTracker;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info};
 
 #[allow(clippy::large_enum_variant)]
@@ -183,6 +183,7 @@ impl Command {
                     SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
                         error!("{err}");
                     })?;
+                let cancellation_token = CancellationToken::new();
 
                 // TODO: This should be handled differently, the current problem
                 // with using opts.node_opts.p2p_enabled is that with the removal
@@ -222,6 +223,7 @@ impl Command {
                     rollup_store,
                     blockchain,
                     l2_sequencer_cfg,
+                    cancellation_token.clone(),
                     #[cfg(feature = "metrics")]
                     format!(
                         "http://{}:{}",
@@ -236,7 +238,7 @@ impl Command {
                     _ = tokio::signal::ctrl_c() => {
                         join_set.abort_all();
                     }
-                    _ = join_set.join_next() => {
+                    _ = cancellation_token.cancelled() => {
                     }
                 }
                 info!("Server shut down started...");
