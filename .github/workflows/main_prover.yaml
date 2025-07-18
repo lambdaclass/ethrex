@@ -171,15 +171,15 @@ jobs:
       - name: Register sequencer
         run: |
           cd crates/l2
-          SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
-          export SEQUENCER_REGISTRY
+          source .env
 
-          if [ -z "$SEQUENCER_REGISTRY" ]; then
-            echo "Failed to get SEQUENCER_REGISTRY from .env file"
+          if [ -z "$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" ]; then
+            echo "Failed to get ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS from .env file"
             exit 1
           fi
-          rex send "$SEQUENCER_REGISTRY" 1000000000000000000 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-          rex call "$SEQUENCER_REGISTRY" -- "leaderSequencer()"
+          
+          rex send "$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" 1000000000000000000 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+          rex call "$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" -- "leaderSequencer()"
 
       - name: Start Sequencer
         run: |
