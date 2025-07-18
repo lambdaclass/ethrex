@@ -45,8 +45,18 @@ pub struct DiscoverySideCarState {
     /// Interval between revalidations.
     revalidation_interval: Duration,
 
-    lookup_period: Duration,
-    prune_period: Duration,
+    /// The initial interval between peer lookups, until the number of peers reaches
+    /// [target_peers](DiscoverySideCarState::target_peers), or the number of
+    /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
+    initial_lookup_interval: Duration,
+    lookup_interval: Duration,
+
+    prune_interval: Duration,
+
+    /// The target number of RLPx connections to reach.
+    target_peers: u64,
+    /// The target number of contacts to maintain in the Kademlia table.
+    target_contacts: u64,
 
     kademlia: Kademlia,
 }
@@ -69,8 +79,13 @@ impl DiscoverySideCarState {
             revalidation_check_interval: Duration::from_secs(5),
             revalidation_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
 
-            lookup_period: Duration::from_secs(5),
-            prune_period: Duration::from_secs(5),
+            initial_lookup_interval: Duration::from_secs(5),
+            lookup_interval: Duration::from_secs(5 * 60), // 5 minutes
+
+            prune_interval: Duration::from_secs(5),
+
+            target_peers: 50,
+            target_contacts: 50_000,
         }
     }
 
@@ -223,7 +238,8 @@ impl GenServer for DiscoverySideCar {
 
                 lookup(&state).await;
 
-                send_after(state.lookup_period, handle.clone(), Self::CastMsg::Lookup);
+                let interval = get_lookup_interval(&state).await;
+                send_after(interval, handle.clone(), Self::CastMsg::Lookup);
 
                 CastResponse::NoReply(state)
             }
@@ -232,7 +248,7 @@ impl GenServer for DiscoverySideCar {
 
                 prune(&state).await;
 
-                send_after(state.prune_period, handle.clone(), Self::CastMsg::Prune);
+                send_after(state.prune_interval, handle.clone(), Self::CastMsg::Prune);
 
                 CastResponse::NoReply(state)
             }
@@ -309,4 +325,15 @@ fn is_validation_needed(state: &DiscoverySideCarState, contact: &Contact) -> boo
         .unwrap_or(false);
 
     validation_is_stale || sent_ping_is_stale
+}
+
+async fn get_lookup_interval(state: &DiscoverySideCarState) -> Duration {
+    let number_of_contacts = state.kademlia.table.lock().await.len() as u64;
+    let number_of_peers = state.kademlia.peers.lock().await.len() as u64;
+    if number_of_peers < state.target_peers && number_of_contacts < state.target_contacts {
+        state.initial_lookup_interval
+    } else {
+        info!("Reached target number of peers or contacts. Using longer lookup interval.");
+        state.lookup_interval
+    }
 }
