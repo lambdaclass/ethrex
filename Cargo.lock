@@ -2546,6 +2546,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more 2.0.1",
  "document-features",
+ "futures-core",
  "mio",
  "parking_lot 0.12.4",
  "rustix 1.0.7",
@@ -3896,7 +3897,6 @@ dependencies = [
  "eyre",
  "hex",
  "itertools 0.14.0",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "lazy_static",
  "local-ip-address",
@@ -3929,7 +3929,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "secp256k1",
  "serde_json",
  "sha3",
@@ -3951,7 +3950,6 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "kzg-rs",
  "lazy_static",
@@ -3960,6 +3958,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "sha2",
  "sha3",
  "thiserror 2.0.12",
  "tinyvec",
@@ -4108,7 +4107,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "hex",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "lambdaworks-math 0.11.0",
  "lazy_static",
@@ -4157,11 +4155,12 @@ dependencies = [
  "hex",
  "hex-literal",
  "hmac",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "rand 0.8.5",
+ "secp256k1",
  "serde",
  "serde_json",
+ "sha2",
  "sha3",
  "snap",
  "spawned-concurrency",
@@ -4204,7 +4203,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
- "vergen-git2",
  "zkvm_interface",
 ]
 
@@ -4278,7 +4276,6 @@ dependencies = [
  "hex",
  "hex-literal",
  "jsonwebtoken 9.3.1",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "rand 0.8.5",
  "reqwest 0.12.20",
@@ -11085,9 +11082,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.1.5"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01bd46fef02d70d06e3e169d89eaddf1a3c8db6cb689a541705463f7a12260d7"
+checksum = "239ab1253b4872aa9104a64e2d884859d909b075444e3fa8a2f3a1b51f0d3df3"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -11097,9 +11094,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.1.5"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7105ceb2a49ea3566f29c57bdc164397d81db934ff6241e1a555df76069b657"
+checksum = "972bbfe83337d386c1ba0a464b3bc6371b285b59cc35dfc3f605a0790f6558b1"
 dependencies = [
  "crossbeam",
  "tokio",

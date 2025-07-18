@@ -29,7 +29,7 @@ members = [
   "tooling/hive_report",
   "tooling/load_test",
   "tooling/loc",
-  "tooling/archive_sync"
+  "tooling/archive_sync",
 ]
 resolver = "2"
 
@@ -87,11 +87,10 @@ cfg-if = "1.0.0"
 reqwest = { version = "0.12.7", features = ["json"] }
 redb = "=2.4.0"
 snap = "1.1.1"
-k256 = { version = "0.13.3", features = ["ecdh"] }
 secp256k1 = { version = "0.29.1", default-features = false, features = [
-  "global-context",
-  "recovery",
-  "rand",
+    "global-context",
+    "recovery",
+    "rand",
 ] }
 keccak-hash = "0.11.0"
 axum = "0.8.1"
@@ -103,10 +102,8 @@ url = "2.5.4"
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-# Changing the tag for spawned will break the TDX image build
-# When updating it try to build the TDX image and update service.nix with the new hash
-spawned-concurrency = "0.1.5"
-spawned-rt = "0.1.5"
+spawned-concurrency = "0.1.7"
+spawned-rt = "0.1.7"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 

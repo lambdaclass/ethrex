@@ -313,6 +313,10 @@ pub enum MonitorError {
     GetBlockByNumber(u64, #[source] StoreError),
     #[error("Block {0} not found in the store")]
     BlockNotFound(u64),
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
     #[error("Failed to get logs topics {0}")]
     LogsTopics(usize),
     #[error("Failed to get logs data from {0}")]
