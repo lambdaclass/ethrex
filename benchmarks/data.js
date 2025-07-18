@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752869782078,
+  "lastUpdate": 1752871246907,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4975,6 +4975,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209643134431,
             "range": "± 638634859",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a7c1554b0e7d90a58dd8d17c1f4e0709727bcf0d",
+          "message": "refactor(l1,l2): remove k256 crate  (#3689)\n\n**Motivation**\n\nHaving both k256 and secp256k1 crates makes it so that sp1 patches don't\ncompile\n\n**Description**\n\n- Remove k256 from the workspace\n- Migrate all functions from k256 to use secp256k1 crate",
+          "timestamp": "2025-07-18T19:43:52Z",
+          "tree_id": "a0448274d014503f744bd56b85166c9ac49383fc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a7c1554b0e7d90a58dd8d17c1f4e0709727bcf0d"
+        },
+        "date": 1752871234653,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207733524355,
+            "range": "± 421094072",
             "unit": "ns/iter"
           }
         ]
