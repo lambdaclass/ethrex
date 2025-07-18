@@ -27,6 +27,8 @@ jobs:
 
       - name: RISC-V SP1 toolchain install
         # if: ${{ always() && github.event_name == 'merge_group' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash

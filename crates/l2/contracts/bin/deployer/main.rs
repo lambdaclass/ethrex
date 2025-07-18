@@ -13,13 +13,17 @@ use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::{
+    clients::send_eip1559_transaction,
+    signer::{LocalSigner, Signer},
+};
 use ethrex_l2_sdk::{
     calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
-    get_address_from_secret_key, initialize_contract,
+    initialize_contract,
 };
 use ethrex_rpc::{
     EthClient,
-    clients::Overrides,
+    clients::{Overrides, eth::get_address_from_secret_key},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
 use keccak_hash::H256;
@@ -28,10 +32,8 @@ use tracing::{Level, debug, error, info, trace, warn};
 mod cli;
 mod error;
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[])";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -55,6 +57,7 @@ async fn main() -> Result<(), DeployerError> {
 
     trace!("Starting deployer binary");
     let opts = DeployerOptions::parse();
+    let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
         vec![&opts.rpc_url],
@@ -70,9 +73,9 @@ async fn main() -> Result<(), DeployerError> {
 
     compile_contracts(&opts)?;
 
-    let contract_addresses = deploy_contracts(&eth_client, &opts).await?;
+    let contract_addresses = deploy_contracts(&eth_client, &opts, &signer).await?;
 
-    initialize_contracts(contract_addresses, &eth_client, &opts).await?;
+    initialize_contracts(contract_addresses, &eth_client, &opts, &signer).await?;
 
     if opts.deposit_rich {
         let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
@@ -131,6 +134,7 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
+    deployer: &Signer,
 ) -> Result<ContractAddresses, DeployerError> {
     trace!("Deploying contracts");
 
@@ -147,13 +151,12 @@ async fn deploy_contracts(
 
     trace!("Attempting to deploy OnChainProposer contract");
     let on_chain_proposer_deployment = deploy_with_proxy(
-        opts.private_key,
+        deployer,
         eth_client,
         &opts.contracts_path.join("solc_out/OnChainProposer.bin"),
         &salt,
     )
     .await?;
-
     info!(
         "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
         on_chain_proposer_deployment.proxy_address,
@@ -165,7 +168,7 @@ async fn deploy_contracts(
     info!("Deploying CommonBridge");
 
     let bridge_deployment = deploy_with_proxy(
-        opts.private_key,
+        deployer,
         eth_client,
         &opts.contracts_path.join("solc_out/CommonBridge.bin"),
         &salt,
@@ -184,7 +187,7 @@ async fn deploy_contracts(
         info!("Deploying SequencerRegistry");
 
         let sequencer_registry_deployment = deploy_with_proxy(
-            opts.private_key,
+            deployer,
             eth_client,
             &opts.contracts_path.join("solc_out/SequencerRegistry.bin"),
             &salt,
@@ -208,7 +211,7 @@ async fn deploy_contracts(
         let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
             &[],
             &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
-            &opts.private_key,
+            deployer,
             &salt,
             eth_client,
         )
@@ -312,6 +315,7 @@ async fn initialize_contracts(
     contract_addresses: ContractAddresses,
     eth_client: &EthClient,
     opts: &DeployerOptions,
+    initializer: &Signer,
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
@@ -343,6 +347,7 @@ async fn initialize_contracts(
             Value::FixedBytes(risc0_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
+            Value::Uint(genesis.config.chain_id.into()),
         ];
 
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
@@ -351,10 +356,12 @@ async fn initialize_contracts(
             &calldata_values,
         )?;
 
+        let deployer = Signer::Local(LocalSigner::new(opts.private_key));
+
         let initialize_tx_hash = initialize_contract(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
-            &opts.private_key,
+            &deployer,
             eth_client,
         )
         .await?;
@@ -375,7 +382,7 @@ async fn initialize_contracts(
             initialize_contract(
                 contract_addresses.sequencer_registry_address,
                 sequencer_registry_initialization_calldata,
-                &opts.private_key,
+                &deployer,
                 eth_client,
             )
             .await?
@@ -397,6 +404,7 @@ async fn initialize_contracts(
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
             ]),
+            Value::Uint(genesis.config.chain_id.into()),
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
@@ -405,7 +413,7 @@ async fn initialize_contracts(
         let initialize_tx_hash = initialize_contract(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
-            &opts.private_key,
+            initializer,
             eth_client,
         )
         .await?;
@@ -420,7 +428,7 @@ async fn initialize_contracts(
         initialize_contract(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
-            &opts.private_key,
+            initializer,
             eth_client,
         )
         .await?
@@ -431,7 +439,7 @@ async fn initialize_contracts(
         "OnChainProposer bridge address initialized"
     );
 
-    if opts.on_chain_proposer_owner != deployer_address {
+    if opts.on_chain_proposer_owner != initializer.address() {
         let transfer_ownership_tx_hash = {
             let owener_transfer_calldata = encode_calldata(
                 TRANSFER_OWNERSHIP_SIGNATURE,
@@ -441,13 +449,14 @@ async fn initialize_contracts(
             initialize_contract(
                 contract_addresses.on_chain_proposer_address,
                 owener_transfer_calldata,
-                &opts.private_key,
+                initializer,
                 eth_client,
             )
             .await?
         };
 
         if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
+            let signer = Signer::Local(LocalSigner::new(owner_pk));
             let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
             let accept_tx = eth_client
                 .build_eip1559_transaction(
@@ -457,9 +466,7 @@ async fn initialize_contracts(
                     Overrides::default(),
                 )
                 .await?;
-            let accept_tx_hash = eth_client
-                .send_eip1559_transaction(&accept_tx, &owner_pk)
-                .await?;
+            let accept_tx_hash = send_eip1559_transaction(eth_client, &accept_tx, &signer).await?;
 
             eth_client
                 .wait_for_transaction_receipt(accept_tx_hash, 100)
@@ -490,7 +497,7 @@ async fn initialize_contracts(
         initialize_contract(
             contract_addresses.bridge_address,
             bridge_initialization_calldata,
-            &opts.private_key,
+            initializer,
             eth_client,
         )
         .await?
@@ -530,18 +537,18 @@ async fn make_deposits(
         let secret_key = parse_private_key(pk).map_err(|_| {
             DeployerError::DecodingError("Error while parsing private key".to_string())
         })?;
-        let address = get_address_from_secret_key(&secret_key)?;
+        let signer = Signer::Local(LocalSigner::new(secret_key));
 
-        let Some(_) = genesis.alloc.get(&address) else {
+        let Some(_) = genesis.alloc.get(&signer.address()) else {
             debug!(
-                ?address,
+                address =? signer.address(),
                 "Skipping deposit for address as it is not in the genesis file"
             );
             continue;
         };
 
         let get_balance = eth_client
-            .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
+            .get_balance(signer.address(), BlockIdentifier::Tag(BlockTag::Latest))
             .await?;
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
@@ -549,28 +556,25 @@ async fn make_deposits(
 
         let overrides = Overrides {
             value: Some(value_to_deposit),
-            from: Some(address),
+            from: Some(signer.address()),
             ..Overrides::default()
         };
 
         let build = eth_client
-            .build_eip1559_transaction(bridge, address, Bytes::new(), overrides)
+            .build_eip1559_transaction(bridge, signer.address(), Bytes::new(), overrides)
             .await?;
 
-        match eth_client
-            .send_eip1559_transaction(&build, &secret_key)
-            .await
-        {
+        match send_eip1559_transaction(eth_client, &build, &signer).await {
             Ok(hash) => {
                 info!(
-                    ?address,
+                    address =? signer.address(),
                     ?value_to_deposit,
                     ?hash,
                     "Deposit transaction sent to L1"
                 );
             }
             Err(e) => {
-                error!(?address, ?value_to_deposit, "Failed to deposit");
+                error!(address =? signer.address(), ?value_to_deposit, "Failed to deposit");
                 return Err(DeployerError::EthClientError(e));
             }
         }
