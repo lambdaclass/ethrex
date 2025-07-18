@@ -168,13 +168,12 @@ impl Syncer {
 
         // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
         let mut search_head = current_head;
-
         loop {
             info!("Requesting Block Headers from {search_head}");
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers_2(search_head, BlockRequestOrder::OldToNew)
+                .request_block_headers_2(search_head, sync_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");

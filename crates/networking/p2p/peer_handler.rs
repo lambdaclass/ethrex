@@ -12,7 +12,6 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use k256::elliptic_curve::rand_core::le;
 use rand::seq::SliceRandom;
 use tokio::sync::Mutex;
 
@@ -130,12 +129,48 @@ impl PeerHandler {
     pub async fn request_block_headers_2(
         &self,
         start: H256,
+        sync_head: H256,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
         let mut ret = Vec::<BlockHeader>::new();
 
+        // get latest block:
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Hash(sync_head),
+            limit: 1,
+            skip: 0,
+            reverse: false,
+        });
+
+        let (peer_id, mut peer_channel) = self
+            .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+            .await
+            .unwrap();
+
+        peer_channel
+            .connection
+            .cast(CastMessage::BackendMessage(request.clone()))
+            .await
+            .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
+            .unwrap();
+        let mut block_count = 0;
+
+        match peer_channel.receiver.lock().await.recv().await.unwrap() {
+            RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }) if id == request_id => {
+                info!("Received {} block headers", block_headers.len());
+                let latest = block_headers.last().unwrap();
+                info!("Latest block number: {}", latest.number);
+                block_count = latest.number;
+            }
+            message => {
+                info!("Received unexpected message: {message:?}");
+            }
+        };
+
         // 1) get the number of total headers in the chain (e.g. 800.000)
-        let block_count = 800_000_u64;
+        // let block_count = 800_000_u64;
         let chunk_count = 800_usize; // e.g. 8 tasks
 
         // 2) partition the amount of headers in `K` tasks
@@ -164,8 +199,6 @@ impl PeerHandler {
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
- 
-
             if peer_channels.is_empty() {
                 warn!("No peers available to request block headers");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -176,10 +209,11 @@ impl PeerHandler {
                     info!("All headers downloaded successfully");
                     break;
                 } else {
-
                     let batch_show = downloaded_count / 10_000;
                     if current_show < batch_show {
-                        warn!("Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}");
+                        warn!(
+                            "Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}"
+                        );
                         current_show += 1;
                     }
 
@@ -227,7 +261,7 @@ impl PeerHandler {
                                 }
                             }
                         }
-                        Err(err) => {
+                        Err(_err) => {
                             continue;
                         }
                     }
