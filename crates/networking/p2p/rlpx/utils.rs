@@ -5,6 +5,7 @@ use secp256k1::ecdh::shared_secret_point;
 use secp256k1::{PublicKey, SecretKey};
 use sha3::{Digest, Keccak256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
+use std::array::TryFromSliceError;
 use tracing::{debug, error, warn};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
@@ -35,10 +36,8 @@ pub fn ecdh_xchng(
     public_key: &PublicKey,
 ) -> Result<[u8; 32], CryptographyError> {
     let point = shared_secret_point(public_key, secret_key);
-    point[..32].try_into().map_err(|_| {
-        CryptographyError::InvalidGeneratedSecret(
-            "Generated shared point invalid length".to_string(),
-        )
+    point[..32].try_into().map_err(|error: TryFromSliceError| {
+        CryptographyError::InvalidGeneratedSecret(error.to_string())
     })
 }
 
