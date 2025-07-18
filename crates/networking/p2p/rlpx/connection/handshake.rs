@@ -207,7 +207,6 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     remote_public_key: H512,
     stream: S,
 ) -> Result<RemoteState, RLPxError> {
-    let secret_key: SecretKey = *signer;
     let msg_bytes = receive_handshake_msg(stream).await?;
     let size_data = &msg_bytes
         .get(..2)
@@ -215,7 +214,7 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
     let msg = &msg_bytes
         .get(2..)
         .ok_or(RLPxError::InvalidMessageLength())?;
-    let ack = decode_ack_message(&secret_key, msg, size_data)?;
+    let ack = decode_ack_message(signer, msg, size_data)?;
     let remote_ephemeral_key = ack
         .get_ephemeral_pubkey()
         .ok_or(RLPxError::NotFound("Remote ephemeral key".to_string()))?;
@@ -439,19 +438,10 @@ fn retrieve_remote_ephemeral_key(
     signature: Signature,
 ) -> Result<PublicKey, RLPxError> {
     let signature_prehash = shared_secret ^ remote_nonce;
-    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())
-        .map_err(|_| RLPxError::CryptographyError("Failed to build message".into()))?;
-
-    let rid = RecoveryId::from_i32(signature[64].into())
-        .map_err(|_| RLPxError::CryptographyError("Failed to get revery id".into()))?;
-
-    let sig = RecoverableSignature::from_compact(&signature[0..64], rid).map_err(|_| {
-        RLPxError::CryptographyError("Failed to build recoverable signatrue".into())
-    })?;
-    let pubkey = secp256k1::SECP256K1
-        .recover_ecdsa(&msg, &sig)
-        .map_err(|_| RLPxError::CryptographyError("Failed to recover pubkey".into()))?;
-    Ok(pubkey)
+    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
+    let rid = RecoveryId::from_i32(signature[64].into())?;
+    let sig = RecoverableSignature::from_compact(&signature[0..64], rid)?;
+    Ok(secp256k1::SECP256K1.recover_ecdsa(&msg, &sig)?)
 }
 
 fn sign_shared_secret(
