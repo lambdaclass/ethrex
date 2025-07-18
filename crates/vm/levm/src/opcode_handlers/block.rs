@@ -17,13 +17,13 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BLOCKHASH)?;
 
-        let [block_number] = *current_call_frame.stack.pop()?;
+        let block_number = current_call_frame.stack.pop1()?;
 
         // If the block number is not valid, return zero
         if block_number < current_block.saturating_sub(LAST_AVAILABLE_BLOCK_LIMIT)
             || block_number >= current_block
         {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
