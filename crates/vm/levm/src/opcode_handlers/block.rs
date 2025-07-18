@@ -154,13 +154,13 @@ impl<'a> VM<'a> {
         let index: usize = match index.try_into() {
             Ok(index) => index,
             Err(_) => {
-                self.current_call_frame_mut()?.stack.push(&[U256::zero()])?;
+                self.current_call_frame_mut()?.stack.push1(U256::zero())?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
 
         if index >= blob_hashes.len() {
-            self.current_call_frame_mut()?.stack.push(&[U256::zero()])?;
+            self.current_call_frame_mut()?.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -169,7 +169,7 @@ impl<'a> VM<'a> {
         let blob_hash = unsafe { blob_hashes.get_unchecked(index) };
         let hash = u256_from_big_endian_const(blob_hash.to_fixed_bytes());
 
-        self.current_call_frame_mut()?.stack.push(&[hash])?;
+        self.current_call_frame_mut()?.stack.push1(hash)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
