@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752860812146,
+  "lastUpdate": 1752862078234,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10096,6 +10096,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.006237065420560748,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "me+git@droak.sh",
+            "name": "Oak",
+            "username": "d-roak"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "96c7eeeabfc03ea6b8a20b92f5310cb59d7a63c8",
+          "message": "docs(l2): add quotes on init-prover command (#3304)\n\n**Motivation**\nCopy paste on the command provided in the docs doesn't work\n\n**Description**\n- Added quotes to the command mentioned\n\nCloses: none",
+          "timestamp": "2025-07-17T18:18:56Z",
+          "tree_id": "f41598ce40f7d42ba9c46c352b21d5f3ea010eed",
+          "url": "https://github.com/lambdaclass/ethrex/commit/96c7eeeabfc03ea6b8a20b92f5310cb59d7a63c8"
+        },
+        "date": 1752862063024,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001235862962962963,
             "unit": "Mgas/s"
           }
         ]
