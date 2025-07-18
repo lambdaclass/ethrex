@@ -39,6 +39,7 @@ pub async fn start_l2(
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    cancellation_token: CancellationToken,
     #[cfg(feature = "metrics")] l2_url: String,
 ) -> Result<(), errors::SequencerError> {
     let initial_status = if cfg.based.based {
@@ -163,39 +164,14 @@ pub async fn start_l2(
     }
 
     if cfg.monitor.enabled {
-        let cancelation_token = CancellationToken::new();
         EthrexMonitor::spawn(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
             &cfg,
-            cancelation_token.clone(),
+            cancellation_token.clone(),
         )
         .await?;
-
-        task_set.spawn(async move {
-            cancelation_token.cancelled().await;
-            Ok(())
-        });
-    }
-
-    if let Some(res) = task_set.join_next().await {
-        // If a task finishes, the whole sequencer should stop
-        match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error starting Proposer: {err}");
-            }
-            Err(err) => {
-                error!("JoinSet error: {err}");
-            }
-        };
-        task_set.abort_all();
-    } else {
-        // If no tasks were spawned, we let the sequencer run until it is cancelled
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
     }
 
     Ok(())
