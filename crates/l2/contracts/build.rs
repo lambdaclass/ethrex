@@ -24,7 +24,7 @@ fn main() {
     download_contract_deps(&output_contracts_path);
 
     // ERC1967Proxy contract.
-    compile_contract_to_binary(
+    compile_contract_to_bytecode(
         &output_contracts_path,
         &output_contracts_path.join("lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol"),
         "ERC1967Proxy",
@@ -33,7 +33,7 @@ fn main() {
     );
 
     // SP1VerifierGroth16 contract
-    compile_contract_to_binary(
+    compile_contract_to_bytecode(
         &output_contracts_path,
         &output_contracts_path
             .join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
@@ -62,7 +62,7 @@ fn main() {
         (&Path::new("src/l1/CommonBridge.sol"), "CommonBridge"),
     ];
     for (path, name) in l1_contracts {
-        compile_contract_to_binary(&output_contracts_path, path, name, false, Some(&remappings));
+        compile_contract_to_bytecode(&output_contracts_path, path, name, false, Some(&remappings));
     }
     // L2 contracts
     let l2_contracts = [
@@ -74,11 +74,11 @@ fn main() {
         ),
     ];
     for (path, name) in l2_contracts {
-        compile_contract_to_binary(&output_contracts_path, path, name, true, Some(&remappings));
+        compile_contract_to_bytecode(&output_contracts_path, path, name, true, Some(&remappings));
     }
 
     // Based contracts
-    compile_contract_to_binary(
+    compile_contract_to_bytecode(
         &output_contracts_path,
         Path::new("src/l1/based/SequencerRegistry.sol"),
         "SequencerRegistry",
@@ -94,15 +94,9 @@ fn main() {
     .unwrap();
 
     // To avoid colision with the original OnChainProposer bytecode, we rename it to OnChainProposerBased
-    let original_path = output_contracts_path.join("solc_out/OnChainProposer.bin");
-    let bytecode_hex =
-        fs::read_to_string(&original_path).expect("Failed to read OnChainProposer.bin");
-    let bytecode = hex::decode(bytecode_hex.trim()).expect("Failed to decode bytecode");
-    fs::write(
-        output_contracts_path.join("solc_out/OnChainProposerBased.bytecode"),
-        bytecode,
-    )
-    .expect("Failed to write renamed bytecode");
+    let file_path = output_contracts_path.join("solc_out/OnChainProposer.bin");
+    let output_file_path = output_contracts_path.join("solc_out/OnChainProposerBased.bytecode");
+    decode_to_bytecode(&file_path, &output_file_path);
 }
 
 fn watch_solidity_files(dir: &Path) {
@@ -163,7 +157,7 @@ fn download_contract_deps(contracts_path: &Path) {
     .expect("Failed to clone sp1-contracts");
 }
 
-fn compile_contract_to_binary(
+fn compile_contract_to_bytecode(
     output_dir: &Path,
     contract_path: &Path,
     contract_name: &str,
@@ -174,27 +168,29 @@ fn compile_contract_to_binary(
     ethrex_l2_sdk::compile_contract(output_dir, contract_path, runtime_bin, remappings)
         .expect("Failed to compile contract");
     println!("Successfully compiled {contract_name} contract");
-    decode_to_bytecode(output_dir, contract_name, runtime_bin);
+
+    // Resolve the resulted file path
+    let filename = if runtime_bin {
+        format!("{contract_name}.bin-runtime")
+    } else {
+        format!("{contract_name}.bin")
+    };
+    let file_path = output_dir.join("solc_out").join(&filename);
+
+    // Get the output file path
+    let output_file_path = output_dir
+        .join("solc_out")
+        .join(format!("{contract_name}.bytecode"));
+
+    decode_to_bytecode(&file_path, &output_file_path);
+
     println!("Successfully generated {contract_name} bytecode");
 }
 
-fn decode_to_bytecode(output_dir: &Path, contract: &str, runtime_bin: bool) {
-    let filename = if runtime_bin {
-        format!("{contract}.bin-runtime")
-    } else {
-        format!("{contract}.bin")
-    };
-
-    let bytecode_hex = fs::read_to_string(output_dir.join("solc_out").join(&filename))
-        .expect("Failed to read file");
+fn decode_to_bytecode(input_file_path: &Path, output_file_path: &Path) {
+    let bytecode_hex = fs::read_to_string(input_file_path).expect("Failed to read file");
 
     let bytecode = hex::decode(bytecode_hex.trim()).expect("Failed to decode bytecode");
 
-    fs::write(
-        output_dir
-            .join("solc_out")
-            .join(format!("{contract}.bytecode")),
-        bytecode,
-    )
-    .expect("Failed to write bytecode");
+    fs::write(output_file_path, bytecode).expect("Failed to write bytecode");
 }
