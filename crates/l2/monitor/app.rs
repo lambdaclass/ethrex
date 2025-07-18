@@ -6,7 +6,6 @@ use crossterm::{
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -14,6 +13,10 @@ use ratatui::widgets::{Block, Paragraph, StatefulWidget, Tabs, Widget};
 use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
+};
+use ratatui::{
+    buffer::Buffer,
+    widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use spawned_concurrency::{
     messages::Unused,
@@ -38,7 +41,8 @@ use crate::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
+const SCROLL_DEBOUNCE_DURATION_LOGS: Duration = Duration::from_millis(700); // 700ms
+const SCROLL_DEBOUNCE_DURATION_OVERVIEW: Duration = Duration::from_millis(50); // 50ms
 #[derive(Clone)]
 pub struct EthrexMonitorWidget {
     pub title: String,
@@ -60,6 +64,9 @@ pub struct EthrexMonitorWidget {
     pub store: Store,
     pub rollup_store: StoreRollup,
     pub last_scroll: Instant,
+    pub vertical_scroll: u16,
+    pub vertical_scroll_state: ScrollbarState,
+    pub total_height: u16,
 }
 
 #[derive(Clone)]
@@ -222,6 +229,9 @@ impl EthrexMonitorWidget {
             store,
             rollup_store,
             last_scroll: Instant::now(),
+            vertical_scroll: 0,
+            vertical_scroll_state: ScrollbarState::default(),
+            total_height: 104, // Default height for the terminal
         };
         monitor_widget.on_tick().await?;
         Ok(monitor_widget)
@@ -253,14 +263,24 @@ impl EthrexMonitorWidget {
                 self.logger.transition(TuiWidgetEvent::MinusKey)
             }
             (TabsState::Overview | TabsState::Logs, KeyCode::Char('Q')) => self.should_quit = true,
-            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => self.tabs.next(),
+            (TabsState::Overview | TabsState::Logs, KeyCode::Tab) => {
+                self.vertical_scroll = 0;
+                self.vertical_scroll_state = self
+                    .vertical_scroll_state
+                    .position(self.vertical_scroll.into());
+                self.tabs.next();
+            }
             _ => {}
         }
     }
 
     pub fn on_mouse_event(&mut self, kind: MouseEventKind) {
+        let scroll_debounce = match &self.tabs {
+            TabsState::Logs => SCROLL_DEBOUNCE_DURATION_LOGS,
+            TabsState::Overview => SCROLL_DEBOUNCE_DURATION_OVERVIEW,
+        };
         let now = Instant::now();
-        if now.duration_since(self.last_scroll) < SCROLL_DEBOUNCE_DURATION {
+        if now.duration_since(self.last_scroll) < scroll_debounce {
             return; // Ignore the scroll — too soon
         }
 
@@ -272,6 +292,18 @@ impl EthrexMonitorWidget {
             }
             (TabsState::Logs, MouseEventKind::ScrollUp) => {
                 self.logger.transition(TuiWidgetEvent::PrevPageKey)
+            }
+            (TabsState::Overview, MouseEventKind::ScrollDown) => {
+                self.vertical_scroll = self.total_height.min(self.vertical_scroll + 1);
+                self.vertical_scroll_state = self
+                    .vertical_scroll_state
+                    .position(self.vertical_scroll.into());
+            }
+            (TabsState::Overview, MouseEventKind::ScrollUp) => {
+                self.vertical_scroll = self.vertical_scroll.saturating_sub(1);
+                self.vertical_scroll_state = self
+                    .vertical_scroll_state
+                    .position(self.vertical_scroll.into());
             }
             _ => {}
         }
@@ -301,7 +333,10 @@ impl EthrexMonitorWidget {
     where
         Self: Sized,
     {
-        let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
+        self.vertical_scroll = self.vertical_scroll.min(self.total_height - area.height);
+        self.vertical_scroll_state = self
+            .vertical_scroll_state
+            .position(self.vertical_scroll.into());
         let tabs = Tabs::default()
             .titles([TabsState::Overview.to_string(), TabsState::Logs.to_string()])
             .block(
@@ -315,17 +350,36 @@ impl EthrexMonitorWidget {
             .highlight_style(Style::default().add_modifier(Modifier::BOLD))
             .select(self.tabs.clone());
 
-        tabs.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
-
         match self.tabs {
             TabsState::Overview => {
+                let mut offscreen_buffer = Buffer::empty(Rect {
+                    x: 0,
+                    y: 0,
+                    width: area.width,
+                    height: self.total_height,
+                });
+
+                let scroll_area: Rect = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: self.total_height,
+                };
+                let chunks = Layout::vertical([Constraint::Length(3), Constraint::Min(0)])
+                    .split(scroll_area);
+
+                tabs.render(
+                    *chunks.first().ok_or(MonitorError::Chunks)?,
+                    &mut offscreen_buffer,
+                );
+
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
-                    Constraint::Fill(1),
-                    Constraint::Fill(1),
-                    Constraint::Fill(1),
-                    Constraint::Fill(1),
-                    Constraint::Fill(1),
+                    Constraint::Length(20),
+                    Constraint::Length(20),
+                    Constraint::Length(20),
+                    Constraint::Length(20),
+                    Constraint::Length(10),
                     Constraint::Length(1),
                 ])
                 .split(*chunks.get(1).ok_or(MonitorError::Chunks)?);
@@ -343,7 +397,10 @@ impl EthrexMonitorWidget {
                         .style(Style::default())
                         .block(Block::bordered().border_style(Style::default().fg(Color::Cyan)));
 
-                    logo.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
+                    logo.render(
+                        *chunks.first().ok_or(MonitorError::Chunks)?,
+                        &mut offscreen_buffer,
+                    );
 
                     {
                         let constraints = vec![Constraint::Fill(1), Constraint::Fill(1)];
@@ -354,14 +411,14 @@ impl EthrexMonitorWidget {
                         let mut node_status_state = self.node_status.state.clone();
                         self.node_status.render(
                             *chunks.first().ok_or(MonitorError::Chunks)?,
-                            buf,
+                            &mut offscreen_buffer,
                             &mut node_status_state,
                         );
 
                         let mut global_chain_status_state = self.global_chain_status.state.clone();
                         self.global_chain_status.render(
                             *chunks.get(1).ok_or(MonitorError::Chunks)?,
-                            buf,
+                            &mut offscreen_buffer,
                             &mut global_chain_status_state,
                         );
                     }
@@ -369,43 +426,76 @@ impl EthrexMonitorWidget {
                 let mut batches_table_state = self.batches_table.state.clone();
                 self.batches_table.render(
                     *chunks.get(1).ok_or(MonitorError::Chunks)?,
-                    buf,
+                    &mut offscreen_buffer,
                     &mut batches_table_state,
                 );
 
                 let mut blocks_table_state = self.blocks_table.state.clone();
                 self.blocks_table.render(
                     *chunks.get(2).ok_or(MonitorError::Chunks)?,
-                    buf,
+                    &mut offscreen_buffer,
                     &mut blocks_table_state,
                 );
 
                 let mut mempool_state = self.mempool.state.clone();
                 self.mempool.render(
                     *chunks.get(3).ok_or(MonitorError::Chunks)?,
-                    buf,
+                    &mut offscreen_buffer,
                     &mut mempool_state,
                 );
 
                 let mut l1_to_l2_messages_state = self.l1_to_l2_messages.state.clone();
                 self.l1_to_l2_messages.render(
                     *chunks.get(4).ok_or(MonitorError::Chunks)?,
-                    buf,
+                    &mut offscreen_buffer,
                     &mut l1_to_l2_messages_state,
                 );
 
                 let mut l2_to_l1_messages_state = self.l2_to_l1_messages.state.clone();
                 self.l2_to_l1_messages.render(
                     *chunks.get(5).ok_or(MonitorError::Chunks)?,
-                    buf,
+                    &mut offscreen_buffer,
                     &mut l2_to_l1_messages_state,
                 );
 
                 let help = Line::raw("tab: switch tab |  Q: quit").centered();
 
-                help.render(*chunks.get(6).ok_or(MonitorError::Chunks)?, buf);
+                help.render(
+                    *chunks.get(6).ok_or(MonitorError::Chunks)?,
+                    &mut offscreen_buffer,
+                );
+
+                let visible_height = area
+                    .height
+                    .min(self.total_height - self.vertical_scroll + area.height);
+                for y in 0..visible_height {
+                    for x in 0..area.width {
+                        // Copy cell from offscreen_buffer at (x, y+scroll) to terminal buffer at (x, y)
+                        if let Some(cell) = offscreen_buffer.cell((x, y + self.vertical_scroll)) {
+                            if let Some(original_cell) = buf.cell_mut((x, y)) {
+                                *original_cell = cell.clone();
+                            }
+                        };
+                    }
+                }
+
+                let scroll_bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("↑"))
+                    .end_symbol(Some("↓"));
+                scroll_bar.render(
+                    area,
+                    buf,
+                    &mut self
+                        .vertical_scroll_state
+                        .content_length((self.total_height - area.height).into()),
+                );
             }
             TabsState::Logs => {
+                let chunks =
+                    Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
+
+                tabs.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
+
                 let chunks = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
                     .split(*chunks.get(1).ok_or(MonitorError::Chunks)?);
                 let log_widget = TuiLoggerSmartWidget::default()
