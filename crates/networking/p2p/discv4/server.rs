@@ -225,7 +225,7 @@ impl DiscoveryServerState {
     }
 
     async fn handle_ping(&self, hash: H256, node: Node) -> Result<(), DiscoveryServerError> {
-        let _ = self.pong(hash, &node).await?;
+        self.pong(hash, &node).await?;
 
         let mut table = self.kademlia.table.lock().await;
 
