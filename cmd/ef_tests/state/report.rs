@@ -1,4 +1,6 @@
+use crate::parser::get_test_relative_path;
 use crate::runner::{EFTestRunnerError, InternalError};
+use crate::types::EFTestInfo;
 use colored::Colorize;
 use ethrex_common::{
     Address, H256,
@@ -25,7 +27,7 @@ pub type TestVector = (usize, usize, usize);
 
 pub fn progress(reports: &[EFTestReport], time: Duration) -> String {
     format!(
-        "{}: {} {} {} - {}",
+        "\r{}: {} {} {} - {}",
         "Ethereum Foundation Tests".bold(),
         format!(
             "{} passed",
@@ -279,7 +281,7 @@ pub fn test_dir_summary_for_shell(reports: &[EFTestReport]) -> String {
             let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
             let test_dir_summary = format!(
                 "{}: {}/{total_run} ({success_percentage:.2}%)\n",
-                dir.bold(),
+                get_test_relative_path(PathBuf::from(dir)).bold(),
                 if total_passed == total_run {
                     format!("{total_passed}").green()
                 } else if total_passed > 0 {
@@ -337,7 +339,7 @@ impl Display for EFTestsReport {
             if report.passed() {
                 continue;
             }
-            writeln!(f, "Test: {}", report.name)?;
+            writeln!(f, "{} \n{}", "Test:".bold(), report)?;
             writeln!(f)?;
             for (fork, result) in &report.fork_results {
                 if result.failed_vectors.is_empty() {
@@ -436,6 +438,9 @@ impl Display for EFTestsReport {
 pub struct EFTestReport {
     pub name: String,
     pub dir: String,
+    pub description: String,
+    pub url: String,
+    pub reference_spec: String,
     pub test_hash: H256,
     pub re_run_report: Option<TestReRunReport>,
     pub fork_results: HashMap<Fork, EFTestReportForkResult>,
@@ -448,10 +453,19 @@ pub struct EFTestReportForkResult {
 }
 
 impl EFTestReport {
-    pub fn new(name: String, dir: String, test_hash: H256) -> Self {
+    pub fn new(name: String, dir: String, info: EFTestInfo, test_hash: H256) -> Self {
         EFTestReport {
             name,
             dir,
+            description: info
+                .description
+                .unwrap_or("No description provided by this tests".to_string()),
+            url: info
+                .url
+                .unwrap_or("No url provided by this tests".to_string()),
+            reference_spec: info
+                .reference_spec
+                .unwrap_or("No reference spec provided by this tests".to_string()),
             test_hash,
             re_run_report: None,
             fork_results: HashMap::new(),
@@ -474,6 +488,37 @@ impl EFTestReport {
         self.fork_results
             .values()
             .all(|fork_result| fork_result.failed_vectors.is_empty())
+    }
+}
+
+impl Display for EFTestReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut json_name = String::from(""); //In some cases there are more than one tests per file, so the name of the tests and the name of the file are different.
+        if self.name.contains("::") {
+            json_name = self.name.clone().split("::").collect::<Vec<&str>>()[1]
+                .split("[")
+                .collect::<Vec<&str>>()[0]
+                .strip_prefix("test")
+                .unwrap_or("")
+                .to_owned()
+                + ".json";
+        }
+        writeln!(f, "Test name: {}", self.name)?;
+        writeln!(f, "Test path: {}", self.dir.clone() + &json_name)?;
+        writeln!(f)?;
+        writeln!(f, "Test description: {}", self.description)?;
+        writeln!(f)?;
+        writeln!(
+            f,
+            "Note: The following links may help when debugging `ef-tests`:"
+        )?;
+        writeln!(
+            f,
+            "- https://ethereum-tests.readthedocs.io/en/latest/test_types/gstate_tests.html#"
+        )?;
+        writeln!(f, "- Test reference spec: {}", self.reference_spec)?;
+        writeln!(f, "- Test url: {}", self.url)?;
+        Ok(())
     }
 }
 
