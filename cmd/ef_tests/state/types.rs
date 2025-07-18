@@ -3,16 +3,16 @@ use crate::{
         deserialize_access_lists, deserialize_authorization_lists,
         deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe,
         deserialize_hex_bytes, deserialize_hex_bytes_vec, deserialize_post,
-        deserialize_transaction_expected_exception, deserialize_u256_optional_safe,
-        deserialize_u256_safe, deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
-        deserialize_u64_safe, deserialize_u64_vec_safe,
+        deserialize_transaction_expected_exception, deserialize_u64_safe, deserialize_u64_vec_safe,
+        deserialize_u256_optional_safe, deserialize_u256_safe,
+        deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
     },
     report::TestVector,
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Fork, Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
+    types::{Fork, Genesis, GenesisAccount, TxKind},
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
