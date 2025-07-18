@@ -1,0 +1,7 @@
+[package]
+name = "ethrex-crypto"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "./lib.rs"

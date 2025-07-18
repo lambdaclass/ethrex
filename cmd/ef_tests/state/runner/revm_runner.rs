@@ -29,7 +29,7 @@ use revm::{
         TxEnv as RevmTxEnv, TxKind as RevmTxKind,
     },
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 fn levm_and_revm_logs_match(
     levm_logs: &Vec<ethrex_common::types::Log>,
@@ -126,7 +126,7 @@ pub async fn re_run_failed_ef_test(
 }
 
 pub async fn re_run_failed_ef_test_tx(
-    levm_cache: HashMap<Address, Account>,
+    levm_cache: BTreeMap<Address, Account>,
     vector: &TestVector,
     test: &EFTest,
     levm_execution_report: &ExecutionReport,
@@ -365,7 +365,7 @@ pub fn compare_levm_revm_execution_results(
 }
 
 pub async fn ensure_post_state(
-    levm_cache: HashMap<Address, Account>,
+    levm_cache: BTreeMap<Address, Account>,
     vector: &TestVector,
     revm_state: &mut EvmState,
     test: &EFTest,
@@ -557,7 +557,7 @@ pub async fn _ensure_post_state_revm(
                         }),
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
-                        HashMap::new(),
+                        BTreeMap::new(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -579,7 +579,7 @@ pub async fn _ensure_post_state_revm(
                             }),
                             //TODO: This is not a TransactionReport because it is REVM
                             "Post-state root mismatch".to_string(),
-                            HashMap::new(),
+                            BTreeMap::new(),
                         ));
                     }
                 }
