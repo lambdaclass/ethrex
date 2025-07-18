@@ -492,6 +492,11 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "FindNode", msg = ?message, from = %format!("{:#x}", sender_public_key));
 
+                if is_msg_expired(message.expiration) {
+                    trace!("FindNode expired");
+                    return CastResponse::Stop;
+                }
+
                 let node_id = node_id(&sender_public_key);
 
                 let table = state.kademlia.table.lock().await;
