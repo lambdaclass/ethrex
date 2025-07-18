@@ -4,7 +4,6 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::calculate_memory_size,
-    opcodes::Opcode,
     vm::VM,
 };
 use ethrex_common::{
@@ -332,16 +331,13 @@ impl<'a> VM<'a> {
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
     ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
     ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &CallFrame, jump_address: usize) -> bool {
-        #[expect(clippy::as_conversions)]
-        call_frame.bytecode.get(jump_address).is_some_and(|&value| {
-            // It's a constant, therefore the conversion cannot fail.
-            value == Opcode::JUMPDEST as u8
-                && call_frame
-                    .invalid_jump_destinations
-                    .binary_search(&jump_address)
-                    .is_err()
-        })
+    fn target_address_is_valid(call_frame: &CallFrame, jump_address: usize) -> Option<usize> {
+        #[expect(clippy::indexing_slicing)]
+        call_frame
+            .jumpdest_mappings
+            .binary_search_by_key(&jump_address, |&(addr, _)| addr)
+            .ok()
+            .map(|index| call_frame.jumpdest_mappings[index].1)
     }
 
     /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
@@ -354,8 +350,8 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        if Self::target_address_is_valid(call_frame, jump_address_usize) {
-            call_frame.pc = jump_address_usize;
+        if let Some(target_addr) = Self::target_address_is_valid(call_frame, jump_address_usize) {
+            call_frame.pc = target_addr;
             Ok(())
         } else {
             Err(ExceptionalHalt::InvalidJump.into())

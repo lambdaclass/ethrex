@@ -100,24 +100,48 @@ pub fn calculate_create2_address(
 /// This is a necessary calculation because of PUSH opcodes.
 /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
 /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
-    let mut address_blacklist = Vec::new();
+pub fn get_jumpdest_mappings(code: &Bytes) -> Result<Box<[(usize, usize)]>, VMError> {
+    // Iterate until:
+    //   - A PUSH?? is found, then skip ?? bytes.
+    //   - A JUMPDEST is found, then:
+    //     - Log all consecutive JUMPDESTs
+    //     - Once a non-JUMPDEST is found, set all logged JUMPDESTs to that offset.
 
-    let mut iter = code.iter().enumerate();
-    while let Some((_, &value)) = iter.next() {
-        let op_code = Opcode::from(value);
-        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
-            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
-            let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
-            address_blacklist.extend(
-                (&mut iter)
-                    .take(num_bytes)
-                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
-            );
+    let code = code.as_ref();
+    let mut mappings = Vec::new();
+
+    let mut iter = code.iter();
+    let mut offset = 0;
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::indexing_slicing
+    )]
+    while let Some(delta) = iter.position(|&value| {
+        let opcode = Opcode::from(value);
+        opcode == Opcode::JUMPDEST || (Opcode::PUSH1..=Opcode::PUSH32).contains(&opcode)
+    }) {
+        offset += delta;
+        let value = code[offset];
+
+        if Opcode::from(value) == Opcode::JUMPDEST {
+            let count = 1 + iter
+                .take_while(|&&x| Opcode::from(x) == Opcode::JUMPDEST)
+                .count();
+            mappings.extend((0..count).map(|x| (offset + x, offset + count)));
+            offset += count;
+        } else {
+            offset += (value - Opcode::PUSH0 as u8) as usize;
+        }
+
+        offset += 1;
+        iter = match code.get(offset..) {
+            Some(rest) => rest.iter(),
+            None => break,
         }
     }
 
-    Ok(address_blacklist.into_boxed_slice())
+    Ok(mappings.into_boxed_slice())
 }
 
 // ================== Backup related functions =======================
