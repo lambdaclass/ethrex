@@ -13,7 +13,7 @@ use ratatui::{
 
 use crate::{SequencerConfig, sequencer::errors::MonitorError};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct GlobalChainStatusTable {
     pub state: TableState,
     pub items: Vec<(String, String)>,
