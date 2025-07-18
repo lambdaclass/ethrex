@@ -14,9 +14,9 @@ use ethrex_p2p::{
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
-use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
+use secp256k1::SecretKey;
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
@@ -145,7 +145,7 @@ pub async fn init_network(
     data_dir: &str,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
-    signer: SigningKey,
+    signer: SecretKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     store: Store,
     tracker: TaskTracker,
@@ -262,11 +262,11 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
     bootnodes
 }
 
-pub fn get_signer(data_dir: &str) -> SigningKey {
+pub fn get_signer(data_dir: &str) -> SecretKey {
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = Path::new(data_dir).join("node.key");
     match fs::read(key_path.clone()) {
-        Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
+        Ok(content) => SecretKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
             info!(
                 "Key file not found, creating a new key and saving to {:?}",
@@ -275,15 +275,15 @@ pub fn get_signer(data_dir: &str) -> SigningKey {
             if let Some(parent) = key_path.parent() {
                 fs::create_dir_all(parent).expect("Key file path could not be created.")
             }
-            let signer = SigningKey::random(&mut OsRng);
-            fs::write(key_path, signer.to_bytes())
+            let signer = SecretKey::new(&mut OsRng);
+            fs::write(key_path, signer.secret_bytes())
                 .expect("Newly created signer could not be saved to disk.");
             signer
         }
     }
 }
 
-pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
+pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
     let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
         .expect("Failed to parse discovery address and port");
     let tcp_socket_addr =
@@ -317,7 +317,7 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
 pub fn get_local_node_record(
     data_dir: &str,
     local_p2p_node: &Node,
-    signer: &SigningKey,
+    signer: &SecretKey,
 ) -> NodeRecord {
     let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 

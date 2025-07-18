@@ -15,7 +15,7 @@ ethereum-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-k256.workspace = true
+sha2.workspace = true
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "^1.0.3", optional = true }
 kzg-rs.workspace = true
