@@ -110,6 +110,7 @@ pub enum OutMessage {
     Error,
 }
 
+#[derive(Default)]
 pub struct L1Committer;
 
 impl L1Committer {
@@ -144,10 +145,6 @@ impl GenServer for L1Committer {
     type State = CommitterState;
 
     type Error = CommitterError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,

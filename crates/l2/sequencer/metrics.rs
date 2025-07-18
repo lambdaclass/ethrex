@@ -51,6 +51,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct MetricsGatherer;
 
 impl MetricsGatherer {
@@ -77,10 +78,6 @@ impl GenServer for MetricsGatherer {
     type State = MetricsGathererState;
 
     type Error = MetricsGathererError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_call(
         &mut self,

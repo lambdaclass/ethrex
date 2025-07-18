@@ -102,8 +102,8 @@ url = "2.5.4"
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.1.5"
-spawned-rt = "0.1.5"
+spawned-concurrency = "0.1.7"
+spawned-rt = "0.1.7"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 

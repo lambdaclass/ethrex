@@ -80,6 +80,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct BlockProducer;
 
 impl BlockProducer {
@@ -113,10 +114,6 @@ impl GenServer for BlockProducer {
     type State = BlockProducerState;
 
     type Error = BlockProducerError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,
