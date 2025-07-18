@@ -12,7 +12,8 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches â
 
 ```sh
 curl -L https://risczero.com/install | bash
-rzup install cargo-risczero 1.2.0
+rzup install cargo-risczero 2.1.0
+rzup install rust
 ```
 
 #### [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
