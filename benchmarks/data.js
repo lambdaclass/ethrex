@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752841144553,
+  "lastUpdate": 1752841564700,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9799,6 +9799,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012509203373945643,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "23191af7468828cb68d161143b460a6f25c96181",
+          "message": "perf(levm): improve sstore perfomance  further (#3657)\n\n**Motivation**\nImproves sstore perfomance\n\nRequires #3564\n\nFrom 1100 to over 2200\n\n<img width=\"1896\" height=\"281\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/7f5697a3-048c-4554-91bb-22839bb91d95\"\n/>\n\nThe main change is going from Hashmaps to BTreeMaps.\n\nThey are more efficient for the type of storages we use, for small\ndatasets (1k~100k i would say) they overperform hashmaps due to avoiding\nentirely the hashing cost, which seemed to be the biggest factor.\n\nThis changes comes with 2 other minor changes, like a more efficient\nu256 to big endian and a change to backup_storage_slot.",
+          "timestamp": "2025-07-17T17:29:21Z",
+          "tree_id": "ad97fe646e7b6d407f1bfc5a7afa50ca64c47427",
+          "url": "https://github.com/lambdaclass/ethrex/commit/23191af7468828cb68d161143b460a6f25c96181"
+        },
+        "date": 1752841550102,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.006066963636363636,
             "unit": "Mgas/s"
           }
         ]
