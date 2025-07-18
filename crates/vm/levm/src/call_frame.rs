@@ -2,7 +2,6 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    opcodes::Opcode,
     utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
 };
@@ -59,6 +58,19 @@ impl Stack {
     }
 
     #[inline]
+    pub fn pop1(&mut self) -> Result<U256, ExceptionalHalt> {
+        let value = *self
+            .values
+            .get(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        // The following operation can never overflow as both `self.offset` and N are within
+        // STACK_LIMIT (1024).
+        self.offset = self.offset.wrapping_add(1);
+
+        Ok(value)
+    }
+
+    #[inline]
     pub fn push<const N: usize>(&mut self, values: &[U256; N]) -> Result<(), ExceptionalHalt> {
         // Since the stack grows downwards, when an offset underflow is detected the stack is
         // overflowing.
@@ -80,6 +92,31 @@ impl Stack {
                     .get_unchecked_mut(next_offset..self.offset)
                     .as_mut_ptr(),
                 N,
+            );
+        }
+        self.offset = next_offset;
+
+        Ok(())
+    }
+
+    /// Push a single U256 value to the stack, faster than the generic push.
+    #[inline]
+    pub fn push1(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
+        // Since the stack grows downwards, when an offset underflow is detected the stack is
+        // overflowing.
+        let next_offset = self
+            .offset
+            .checked_sub(1)
+            .ok_or(ExceptionalHalt::StackOverflow)?;
+
+        // The following index cannot fail because `next_offset` has already been checked and
+        // `self.offset` is known to be within `STACK_LIMIT`.
+        #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                value.0.as_ptr(),
+                self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
+                4,
             );
         }
         self.offset = next_offset;
@@ -292,12 +329,10 @@ impl CallFrame {
         }
     }
 
-    pub fn next_opcode(&self) -> Opcode {
-        self.bytecode
-            .get(self.pc)
-            .copied()
-            .map(Opcode::from)
-            .unwrap_or(Opcode::STOP)
+    #[inline(always)]
+    pub fn next_opcode(&self) -> u8 {
+        // 0 is the opcode stop.
+        self.bytecode.get(self.pc).copied().unwrap_or(0)
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {

@@ -14,6 +14,7 @@ WORKDIR /ethrex
 FROM chef AS planner
 COPY crates ./crates
 COPY tooling ./tooling
+COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
 # Determine the crates that need to be built from dependencies
@@ -28,6 +29,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 ARG BUILD_FLAGS=""
 COPY crates ./crates
 COPY cmd ./cmd
+COPY metrics ./metrics
 COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
