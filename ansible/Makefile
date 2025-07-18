@@ -101,7 +101,7 @@ explorer_backend: ## Installs explorer backend
 	DISABLE_WEBAPP=true
 	ansible-playbook -i inventory.ini explorer_backend.yml
 
-explorer_fontend: ## Installs explorer frontend
+explorer_frontend: ## Installs explorer frontend
 	NEXT_PUBLIC_API_HOST=$(NEXT_PUBLIC_API_HOST)
 	NEXT_PUBLIC_API_PORT=8000
 	NEXT_PUBLIC_API_PROTOCOL=https
