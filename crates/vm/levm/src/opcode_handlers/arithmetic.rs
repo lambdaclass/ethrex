@@ -17,7 +17,7 @@ impl<'a> VM<'a> {
 
         let [augend, addend] = *current_call_frame.stack.pop()?;
         let sum = augend.overflowing_add(addend).0;
-        current_call_frame.stack.push(&[sum])?;
+        current_call_frame.stack.push1(sum)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -29,7 +29,7 @@ impl<'a> VM<'a> {
 
         let [minuend, subtrahend] = *current_call_frame.stack.pop()?;
         let difference = minuend.overflowing_sub(subtrahend).0;
-        current_call_frame.stack.push(&[difference])?;
+        current_call_frame.stack.push1(difference)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -41,7 +41,7 @@ impl<'a> VM<'a> {
 
         let [multiplicand, multiplier] = *current_call_frame.stack.pop()?;
         let product = multiplicand.overflowing_mul(multiplier).0;
-        current_call_frame.stack.push(&[product])?;
+        current_call_frame.stack.push1(product)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -53,10 +53,10 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         let Some(quotient) = dividend.checked_div(divisor) else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         };
-        current_call_frame.stack.push(&[quotient])?;
+        current_call_frame.stack.push1(quotient)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -68,7 +68,7 @@ impl<'a> VM<'a> {
 
         let [dividend, divisor] = *current_call_frame.stack.pop()?;
         if divisor.is_zero() || dividend.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -87,7 +87,7 @@ impl<'a> VM<'a> {
             None => U256::zero(),
         };
 
-        current_call_frame.stack.push(&[quotient])?;
+        current_call_frame.stack.push1(quotient)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -101,7 +101,7 @@ impl<'a> VM<'a> {
 
         let remainder = dividend.checked_rem(divisor).unwrap_or_default();
 
-        current_call_frame.stack.push(&[remainder])?;
+        current_call_frame.stack.push1(remainder)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -114,7 +114,7 @@ impl<'a> VM<'a> {
         let [unchecked_dividend, unchecked_divisor] = *current_call_frame.stack.pop()?;
 
         if unchecked_divisor.is_zero() || unchecked_dividend.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -124,7 +124,7 @@ impl<'a> VM<'a> {
         let unchecked_remainder = match dividend.checked_rem(divisor) {
             Some(remainder) => remainder,
             None => {
-                current_call_frame.stack.push(&[U256::zero()])?;
+                current_call_frame.stack.push1(U256::zero())?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
@@ -135,7 +135,7 @@ impl<'a> VM<'a> {
             unchecked_remainder
         };
 
-        current_call_frame.stack.push(&[remainder])?;
+        current_call_frame.stack.push1(remainder)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -165,7 +165,7 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| InternalError::Overflow)?;
 
-        current_call_frame.stack.push(&[sum_mod])?;
+        current_call_frame.stack.push1(sum_mod)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -178,7 +178,7 @@ impl<'a> VM<'a> {
         let [multiplicand, multiplier, modulus] = *current_call_frame.stack.pop()?;
 
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -194,7 +194,7 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| InternalError::Overflow)?;
 
-        current_call_frame.stack.push(&[product_mod])?;
+        current_call_frame.stack.push1(product_mod)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -209,7 +209,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
         let power = base.overflowing_pow(exponent).0;
-        current_call_frame.stack.push(&[power])?;
+        current_call_frame.stack.push1(power)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -222,7 +222,7 @@ impl<'a> VM<'a> {
         let [byte_size_minus_one, value_to_extend] = *current_call_frame.stack.pop()?;
 
         if byte_size_minus_one > U256::from(31) {
-            current_call_frame.stack.push(&[value_to_extend])?;
+            current_call_frame.stack.push1(value_to_extend)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -247,7 +247,7 @@ impl<'a> VM<'a> {
         } else {
             value_to_extend | !sign_bit_mask
         };
-        current_call_frame.stack.push(&[result])?;
+        current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
