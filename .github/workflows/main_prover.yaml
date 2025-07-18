@@ -17,7 +17,7 @@ env:
 jobs:
   test:
     name: Integration Test Prover SP1
-    runs-on: gpu-test
+    runs-on: gpu
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -100,7 +100,7 @@ jobs:
 
   test-based:
     name: Integration Test Prover SP1 - Based
-    runs-on: gpu-test
+    runs-on: gpu
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
