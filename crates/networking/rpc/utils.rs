@@ -307,7 +307,9 @@ pub mod test_utils {
         let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
         let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
-        let fork_id = storage.get_fork_id().await.unwrap();
+
+        // NOTE: we use a dummy fork ID, since it is not used in tests
+        let fork_id = Default::default();
 
         NodeRecord::from_node(&node, 1, &signer, fork_id).unwrap()
     }
