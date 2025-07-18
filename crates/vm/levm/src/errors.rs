@@ -159,8 +159,6 @@ pub enum InternalError {
     MemorySizeOverflow,
     #[error("Custom error: {0}")]
     Custom(String),
-    #[error("Missing opcode table")]
-    MissingOpcodeTable,
     /// Unexpected error when accessing the database, used in trait `Database`.
     #[error("Database access error: {0}")]
     Database(#[from] DatabaseError),
