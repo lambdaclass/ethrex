@@ -13,7 +13,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use k256::elliptic_curve::rand_core::le;
-use rand::seq::SliceRandom;
+use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -158,17 +158,36 @@ impl PeerHandler {
         )>(1000);
 
         let mut current_show = 0;
+        let peers_table = self
+            .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .await;
+        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+            peers_table
+                .iter()
+                .map(|(peer_id, _peer_data)| (*peer_id, true)),
+        );
         // 3) create tasks that will request a chunk of headers from a peer
         loop {
+            println!("Downloaders availability: {downloaders:#?}");
+
             let mut peer_channels = self
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
-            if peer_channels.is_empty() {
-                warn!("No peers available to request block headers");
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            for (peer_id, _peer_channels) in &peer_channels {
+                downloaders.entry(*peer_id).or_insert(true);
+            }
+
+            if downloaders
+                .iter()
+                .filter(|(_downloader_id, downloader_is_free)| **downloader_is_free)
+                .count()
+                == 0
+            {
+                warn!("No free downloaders available, waiting for a peer to finish...");
                 continue;
             }
+
             let Some((startblock, chunk_limit)) = tasks_queue_not_started.pop_front() else {
                 if downloaded_count >= block_count {
                     info!("All headers downloaded successfully");
@@ -202,7 +221,6 @@ impl PeerHandler {
                                     }
                                     // store headers!!!!
                                     ret.extend_from_slice(&headers);
-                                    peer_channels.push((peer_id, peer_channel));
 
                                     // reinsert the task to the queue if it was not completed
                                     if (headers.len() as u64) < chunk_limit {
@@ -217,7 +235,6 @@ impl PeerHandler {
                                 (Err(err), peer_id, peer_channel, startblock) => {
                                     warn!("Failed to download chunk from peer {peer_id}: {err}");
                                     // Optionally, you can re-add the peer to the queue or handle it differently
-                                    peer_channels.push((peer_id, peer_channel));
 
                                     // reinsert the task to the queue
                                     tasks_queue_not_started.push_back((startblock, chunk_limit));
@@ -234,28 +251,49 @@ impl PeerHandler {
                     continue;
                 }
             };
-            peer_channels.shuffle(&mut rand::thread_rng());
 
-            let (peer_id, mut peer_channel) = match peer_channels.pop() {
-                Some((id, channel)) => (id, channel),
-                None => {
-                    warn!("No peers available to request block headers");
-                    return None; // No peers available
-                }
+            let Some((free_peer_id, _)) = downloaders
+                .clone()
+                .into_iter()
+                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+                .nth(random::<usize>() % downloaders.len())
+            else {
+                warn!("No free downloaders available, waiting for a peer to finish...");
+                continue;
+            };
+
+            let Some(mut free_downloader_channels) =
+                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
+                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+                })
+            else {
+                warn!(
+                    "No free downloader channels available for peer {free_peer_id}, waiting for a peer to finish..."
+                );
+                continue;
             };
 
             let tx = task_sender.clone();
+
+            downloaders
+                .entry(free_peer_id)
+                .and_modify(|downloader_is_free| {
+                    *downloader_is_free = false; // mark the downloader as busy
+                });
+
             // run download_chunk_from_peer in a different Tokio task
             let download_result = tokio::spawn(async move {
-                info!("Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}");
+                info!(
+                    "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
+                );
                 let ret = Self::download_chunk_from_peer(
-                    peer_id,
-                    &mut peer_channel,
+                    free_peer_id,
+                    &mut free_downloader_channels,
                     startblock,
                     chunk_limit,
                 )
                 .await;
-                tx.send((ret, peer_id, peer_channel, startblock))
+                tx.send((ret, free_peer_id, free_downloader_channels, startblock))
                     .await
                     .unwrap();
             });
