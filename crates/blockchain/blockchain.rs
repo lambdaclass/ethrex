@@ -378,6 +378,7 @@ impl Blockchain {
 
         let update_batch = UpdateBatch {
             account_updates: state_updates,
+            invalidated_state_nodes: apply_updates_list.invalidated_state_nodes,
             storage_updates: accounts_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
@@ -546,6 +547,7 @@ impl Blockchain {
 
         let update_batch = UpdateBatch {
             account_updates: state_updates,
+            invalidated_state_nodes: account_updates_list.invalidated_state_nodes,
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,

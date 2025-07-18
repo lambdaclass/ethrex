@@ -8,6 +8,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
 use secp256k1::{PublicKey, SecretKey};
@@ -18,9 +19,14 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
+
+/// Interval at which the pruning task will run in seconds
+pub const PRUNING_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Deserialize)]
 pub struct NodeConfigFile {
@@ -163,4 +169,42 @@ pub fn get_client_version() -> String {
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         env!("VERGEN_RUSTC_SEMVER")
     )
+}
+
+/// Start the pruning task in the background, it will run every [`PRUNING_INTERVAL`]
+/// seconds
+pub fn start_pruner_task(
+    store: Store,
+    cancellation_token: CancellationToken,
+) -> JoinHandle<Result<(), StoreError>> {
+    let store_clone = store.clone();
+
+    // Start the pruning task in the background
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(PRUNING_INTERVAL);
+
+        loop {
+            let cancellation_token = cancellation_token.clone();
+            tokio::select! {
+                _ = interval.tick() => {
+                    let result = tokio::task::spawn_blocking({
+                        let store = store_clone.clone();
+                        // TODO: pass the block to keep
+                        move || store.prune_state_and_storage_log(cancellation_token)
+                    }).await;
+
+                    match result {
+                        Ok(Ok(())) => tracing::debug!("[PRUNING] Pruning completed"),
+                        Ok(Err(e)) => tracing::error!("[PRUNING] Pruning error: {:?}", e),
+                        Err(e) => tracing::error!("[PRUNING] Task join error: {:?}", e),
+                    }
+                }
+                _ = cancellation_token.cancelled() => {
+                    tracing::info!("[PRUNING] Pruner task shutting down");
+                    break;
+                }
+            }
+        }
+        Ok(())
+    })
 }
