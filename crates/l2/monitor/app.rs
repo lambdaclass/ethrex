@@ -467,9 +467,7 @@ impl EthrexMonitorWidget {
                     &mut offscreen_buffer,
                 );
 
-                let visible_height = area
-                    .height
-                    .min(self.total_height - self.vertical_scroll);
+                let visible_height = area.height.min(self.total_height - self.vertical_scroll);
                 for y in 0..visible_height {
                     for x in 0..area.width {
                         // Copy cell from offscreen_buffer at (x, y+scroll) to terminal buffer at (x, y)
