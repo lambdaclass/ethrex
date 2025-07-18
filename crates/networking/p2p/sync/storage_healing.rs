@@ -80,7 +80,7 @@ pub(crate) async fn storage_healer(
         // If the pivot became stale don't process anything and just save incoming requests
         let mut storage_tasks = tokio::task::JoinSet::new();
         let mut task_num = 0;
-        while !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES/2 {
+        while !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
             let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
