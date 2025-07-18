@@ -448,7 +448,14 @@ async fn test_erc20_roundtrip(
         .unwrap()
         < proof.batch_number
     {
-        println!("Withdrawal is not verified on L1 yet");
+        let last_verified_batch = l1_client
+            .get_last_verified_batch(on_chain_proposer_address)
+            .await
+            .unwrap();
+        println!(
+            "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+            last_verified_batch, proof.batch_number
+        );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
@@ -577,7 +584,14 @@ async fn test_erc20_failed_deposit(
         .unwrap()
         < proof.batch_number
     {
-        println!("Withdrawal is not verified on L1 yet");
+        let last_verified_batch = l1_client
+            .get_last_verified_batch(on_chain_proposer_address)
+            .await
+            .unwrap();
+        println!(
+            "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+            last_verified_batch, proof.batch_number
+        );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
@@ -667,7 +681,14 @@ async fn test_forced_withdrawal(
         .unwrap()
         < proof.batch_number
     {
-        println!("Withdrawal is not verified on L1 yet");
+        let last_verified_batch = l1_client
+            .get_last_verified_batch(on_chain_proposer_address)
+            .await
+            .unwrap();
+        println!(
+            "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+            last_verified_batch, proof.batch_number
+        );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
@@ -1227,7 +1248,14 @@ async fn test_n_withdraws(
             .unwrap()
             < proof.batch_number
         {
-            println!("Withdrawal is not verified on L1 yet");
+            let last_verified_batch = eth_client
+                .get_last_verified_batch(on_chain_proposer_address)
+                .await
+                .unwrap();
+            println!(
+                "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+                last_verified_batch, proof.batch_number
+            );
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }
