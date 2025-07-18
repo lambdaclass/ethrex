@@ -377,16 +377,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
 
     /// Set the code hashes of the bytecodes awaiting fetching, they will only be populated when the node is restarted mid-sync
-    async fn set_bytecodes_pending(
-        &self,
-        pending: Vec<H256>,
-    ) -> Result<(), StoreError>;
+    async fn set_bytecodes_pending(&self, pending: Vec<H256>) -> Result<(), StoreError>;
 
     /// Get the code hashes of the bytecodes awaiting fetching, they will only be populated when the node is restarted mid-sync
-    async fn get_bytecodes_pending(
-        &self,
-    ) -> Result<Option<Vec<H256>>, StoreError>;
-
+    async fn get_bytecodes_pending(&self) -> Result<Option<Vec<H256>>, StoreError>;
 
     /// Clears the state and storage snapshots
     async fn clear_snapshot(&self) -> Result<(), StoreError>;

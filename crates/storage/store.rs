@@ -1171,17 +1171,12 @@ impl Store {
     }
 
     /// Set the code hashes of the bytecodes awaiting fetching, they will only be populated when the node is restarted mid-sync
-    pub async fn set_bytecodes_pending(
-        &self,
-        pending: Vec<H256>,
-    ) -> Result<(), StoreError> {
+    pub async fn set_bytecodes_pending(&self, pending: Vec<H256>) -> Result<(), StoreError> {
         self.engine.set_bytecodes_pending(pending).await
     }
 
     /// Get the code hashes of the bytecodes awaiting fetching, they will only be populated when the node is restarted mid-sync
-    pub async fn get_bytecodes_pending(
-        &self,
-    ) -> Result<Option<Vec<H256>>, StoreError> {
+    pub async fn get_bytecodes_pending(&self) -> Result<Option<Vec<H256>>, StoreError> {
         self.engine.get_bytecodes_pending().await
     }
 

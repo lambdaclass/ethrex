@@ -1035,20 +1035,12 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    async fn set_bytecodes_pending(
-        &self,
-        pending: Vec<H256>,
-    ) -> Result<(), StoreError> {
-        self.write::<SnapState>(
-            SnapStateIndex::BytecodesPending,
-            pending.encode_to_vec(),
-        )
-        .await
+    async fn set_bytecodes_pending(&self, pending: Vec<H256>) -> Result<(), StoreError> {
+        self.write::<SnapState>(SnapStateIndex::BytecodesPending, pending.encode_to_vec())
+            .await
     }
 
-    async fn get_bytecodes_pending(
-        &self,
-    ) -> Result<Option<Vec<H256>>, StoreError> {
+    async fn get_bytecodes_pending(&self) -> Result<Option<Vec<H256>>, StoreError> {
         self.read::<SnapState>(SnapStateIndex::BytecodesPending)
             .await?
             .map(|ref h| <Vec<H256>>::decode(h))

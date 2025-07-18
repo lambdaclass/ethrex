@@ -755,22 +755,13 @@ impl StoreEngine for Store {
             .clone())
     }
 
-    async fn set_bytecodes_pending(
-        &self,
-        pending: Vec<H256>,
-    ) -> Result<(), StoreError> {
+    async fn set_bytecodes_pending(&self, pending: Vec<H256>) -> Result<(), StoreError> {
         self.inner()?.snap_state.bytecodes_pending = Some(pending);
         Ok(())
     }
 
-    async fn get_bytecodes_pending(
-        &self,
-    ) -> Result<Option<Vec<H256>>, StoreError> {
-        Ok(self
-            .inner()?
-            .snap_state
-            .bytecodes_pending
-            .clone())
+    async fn get_bytecodes_pending(&self) -> Result<Option<Vec<H256>>, StoreError> {
+        Ok(self.inner()?.snap_state.bytecodes_pending.clone())
     }
 
     async fn get_latest_valid_ancestor(
