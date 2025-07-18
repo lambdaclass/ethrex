@@ -7,7 +7,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use k256::ecdsa::{SigningKey, VerifyingKey};
+use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
 use std::{
@@ -161,10 +161,10 @@ impl Node {
             .map_err(|_| "Could not build node record from enr")?;
         let pairs = record.decode_pairs();
         let public_key = pairs.secp256k1.ok_or("public key not found in record")?;
-        let verifying_key = VerifyingKey::from_sec1_bytes(public_key.as_bytes())
+        let verifying_key = PublicKey::from_slice(public_key.as_bytes())
             .map_err(|_| "public key could no be built from msg pub key bytes")?;
-        let encoded = verifying_key.to_encoded_point(false);
-        let public_key = H512::from_slice(&encoded.as_bytes()[1..]);
+        let encoded = verifying_key.serialize_uncompressed();
+        let public_key = H512::from_slice(&encoded[1..]);
 
         let ip = pairs
             .ip
@@ -287,7 +287,7 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(node: &Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -300,10 +300,8 @@ impl NodeRecord {
             .push(("ip".into(), node.ip.encode_to_vec().into()));
         record.pairs.push((
             "secp256k1".into(),
-            signer
-                .verifying_key()
-                .to_encoded_point(true)
-                .as_bytes()
+            PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
+                .serialize()
                 .encode_to_vec()
                 .into(),
         ));
@@ -319,13 +317,13 @@ impl NodeRecord {
         Ok(record)
     }
 
-    pub fn update_seq(&mut self, signer: &SigningKey) -> Result<(), String> {
+    pub fn update_seq(&mut self, signer: &SecretKey) -> Result<(), String> {
         self.seq += 1;
         self.signature = self.sign_record(signer)?;
         Ok(())
     }
 
-    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SigningKey) -> Result<(), String> {
+    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SecretKey) -> Result<(), String> {
         if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
             if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
                 return Ok(());
@@ -342,12 +340,13 @@ impl NodeRecord {
         Ok(())
     }
 
-    fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
+    fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, String> {
         let digest = &self.get_signature_digest();
-        let (signature, _recovery_id) = signer
-            .sign_prehash_recoverable(digest)
-            .map_err(|err| format!("Could not sign record: {err}"))?;
-        let signature_bytes = signature.to_bytes().to_vec();
+        let msg = secp256k1::Message::from_digest_slice(digest)
+            .map_err(|_| "Invalid message digest".to_string())?;
+        let (_recovery_id, signature_bytes) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&msg, signer)
+            .serialize_compact();
 
         Ok(H512::from_slice(&signature_bytes))
     }
@@ -437,7 +436,7 @@ mod tests {
         types::{Node, NodeRecord},
     };
     use ethrex_common::H512;
-    use k256::ecdsa::SigningKey;
+    use secp256k1::SecretKey;
     use std::{net::SocketAddr, str::FromStr};
 
     #[test]
@@ -495,7 +494,7 @@ mod tests {
     #[test]
     fn encode_node_record_to_enr_url() {
         // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
-        let signer = SigningKey::from_slice(&[
+        let signer = SecretKey::from_slice(&[
             16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
             87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
         ])
