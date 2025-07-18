@@ -16,7 +16,6 @@ use crate::{
 };
 use ethrex_common::H256;
 use secp256k1::{PublicKey, ecdsa::Signature};
-
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
