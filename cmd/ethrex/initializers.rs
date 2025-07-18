@@ -43,6 +43,7 @@ pub fn init_tracing(opts: &Options) {
         .add_directive(Directive::from(opts.log_level));
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
+        .with_ansi(false)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }

@@ -8,7 +8,7 @@ use spawned_concurrency::{
     tasks::{CastResponse, GenServer, GenServerHandle},
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     discv4::messages::{
@@ -426,7 +426,7 @@ impl GenServer for ConnectionHandler {
                 hash,
                 sender_public_key,
             } => {
-                debug!(received = "Ping", from = %format!("{sender_public_key:#x}"));
+                trace!(received = "Ping", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
                 let node = Node::new(
                     msg.from.ip,
@@ -436,27 +436,27 @@ impl GenServer for ConnectionHandler {
                 );
 
                 let _ = state.handle_ping(hash, node).await.inspect_err(|e| {
-                    error!(received = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
+                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
                 });
             }
             Self::CastMsg::Pong {
                 message,
                 sender_public_key,
             } => {
-                debug!(received = "Pong", from = %format!("{:#x}", sender_public_key));
+                trace!(received = "Pong", msg = ?message, from = %format!("{:#x}", sender_public_key));
 
                 let node_id = node_id(&sender_public_key);
 
                 handle_pong(&state, message, node_id).await;
             }
             Self::CastMsg::FindNode(packet) => {
-                debug!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
+                trace!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
             }
             Self::CastMsg::Neighbors {
                 message: msg,
                 sender_public_key,
             } => {
-                debug!(received = "Neighbors", from = %format!("{sender_public_key:#x}"));
+                trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
                 let mut contacts = state.kademlia.table.lock().await;
                 let discarded_contacts = state.kademlia.discarded_contacts.lock().await;
@@ -472,12 +472,12 @@ impl GenServer for ConnectionHandler {
                 }
             }
             Self::CastMsg::ENRRequest {
-                message: _,
+                message: msg,
                 from,
                 hash,
                 sender_public_key,
             } => {
-                debug!(received = "ENRRequest", from = %format!("{sender_public_key:#x}"));
+                trace!(received = "ENRRequest", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
                 if let Err(err) = state.send_enr_response(hash, from).await {
                     error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
@@ -493,7 +493,7 @@ impl GenServer for ConnectionHandler {
                     .and_modify(|c| c.knows_us = true);
             }
             Self::CastMsg::ENRResponse {
-                message: _msg,
+                message: msg,
                 sender_public_key,
             } => {
                 /*
@@ -503,7 +503,7 @@ impl GenServer for ConnectionHandler {
                     - Check valid signature
                     - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
                 */
-                debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"));
+                trace!(received = "ENRResponse", msg = ?msg, from = %format!("{sender_public_key:#x}"));
             }
         }
         CastResponse::Stop
