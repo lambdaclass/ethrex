@@ -21,6 +21,7 @@ use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_l2_sdk::call_contract;
 use ethrex_p2p::network::peer_table;
+use ethrex_p2p::rlpx::l2::l2_connection::P2PBasedContext;
 use ethrex_rpc::{
     EthClient, clients::beacon::BeaconClient, types::block_identifier::BlockIdentifier,
 };
@@ -178,11 +179,17 @@ impl Command {
                     l2::initializers::init_metrics(&opts.node_opts, tracker.clone());
                 }
 
+                let l2_sequencer_cfg =
+                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
+                        error!("{err}");
+                    })?;
+                let cancellation_token = CancellationToken::new();
+
                 // TODO: This should be handled differently, the current problem
                 // with using opts.node_opts.p2p_enabled is that with the removal
                 // of the l2 feature flag, p2p_enabled is set to true by default
                 // prioritizing the L1 UX.
-                if opts.sequencer_opts.based {
+                if l2_sequencer_cfg.based.enabled {
                     init_network(
                         &opts.node_opts,
                         &network,
@@ -194,18 +201,22 @@ impl Command {
                         store.clone(),
                         tracker,
                         blockchain.clone(),
+                        Some(P2PBasedContext {
+                            store_rollup: rollup_store.clone(),
+                            // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
+                            // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
+                            // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
+                            // This should be replaced with the Signer enum once the refactor is complete.
+                            committer_key: Arc::new(
+                                SecretKey::from_slice(&hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").expect("Invalid committer key"))
+                                    .expect("Failed to create committer key"),
+                            ),
+                        }),
                     )
                     .await;
                 } else {
                     info!("P2P is disabled");
                 }
-
-                let l2_sequencer_cfg =
-                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
-                        error!("{err}");
-                    })?;
-
-                let cancellation_token = CancellationToken::new();
 
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,

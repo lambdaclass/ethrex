@@ -34,6 +34,10 @@ struct StoreInner {
     lastest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
+    /// Map of signatures from the sequencer by block hashes
+    signatures_by_block: HashMap<H256, [u8; 68]>,
+    /// Map of signatures from the sequencer by batch numbers
+    signatures_by_batch: HashMap<u64, [u8; 68]>,
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
@@ -167,6 +171,46 @@ impl StoreEngineRollup for Store {
 
     async fn get_operations_count(&self) -> Result<[u64; 3], RollupStoreError> {
         Ok(self.inner()?.operations_counts)
+    }
+
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .signatures_by_block
+            .insert(block_hash, signature);
+        Ok(())
+    }
+
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+        Ok(self.inner()?.signatures_by_block.get(&block_hash).cloned())
+    }
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .signatures_by_batch
+            .insert(batch_number, signature);
+        Ok(())
+    }
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .signatures_by_batch
+            .get(&batch_number)
+            .cloned())
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {

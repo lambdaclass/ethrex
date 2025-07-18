@@ -42,6 +42,10 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
         },
+        l2::{
+            self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            l2_connection::{self, L2Cast, L2ConnState, handle_based_capability_message},
+        },
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
@@ -111,6 +115,7 @@ pub struct Established {
     pub(crate) table: Arc<Mutex<KademliaTable>>,
     pub(crate) backend_channel: Option<Sender<Message>>,
     pub(crate) inbound: bool,
+    pub(crate) l2_state: L2ConnState,
 }
 
 #[derive(Clone)]
@@ -137,7 +142,7 @@ impl RLPxConnectionState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
@@ -146,6 +151,7 @@ pub enum CastMessage {
     SendNewPooledTxHashes,
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
+    L2(L2Cast),
 }
 
 #[derive(Clone)]
@@ -254,6 +260,17 @@ impl GenServer for RLPxConnection {
                     log_peer_debug(&established_state.node, "Block Range Update");
                     let _ = handle_block_range_update(&mut established_state).await;
                 }
+                Self::CastMsg::L2(msg) => {
+                    log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
+                    match msg {
+                        L2Cast::BatchBroadcast => {
+                            let _ = l2_connection::send_sealed_batch(&mut established_state).await;
+                        }
+                        L2Cast::BlockBroadcast => {
+                            let _ = l2::l2_connection::send_new_block(&mut established_state).await;
+                        }
+                    }
+                }
             }
             // Update the state
             state.0 = InnerState::Established(established_state);
@@ -320,6 +337,19 @@ where
         handle.clone(),
         CastMessage::BlockRangeUpdate,
     );
+
+    if state.l2_state.connection_state().is_ok() {
+        send_interval(
+            PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            handle.clone(),
+            CastMessage::L2(L2Cast::BlockBroadcast),
+        );
+        send_interval(
+            PERIODIC_BATCH_BROADCAST_INTERVAL,
+            handle.clone(),
+            CastMessage::L2(L2Cast::BatchBroadcast),
+        );
+    }
 
     spawn_listener(handle.clone(), &state.node, stream);
 
@@ -499,11 +529,14 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
-    let supported_capabilities: Vec<Capability> = [
+    let mut supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
     ]
     .concat();
+    if let L2ConnState::Disconnected(_) = state.l2_state {
+        supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+    }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
         PublicKey::from(state.signer.verifying_key()),
@@ -548,6 +581,9 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
+                    "based" => {
+                        state.l2_state.set_established()?;
+                    }
                     _ => {}
                 }
             }
@@ -577,7 +613,7 @@ where
     }
 }
 
-async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
+pub(crate) async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     state.sink.lock().await.send(message).await
 }
 
@@ -771,6 +807,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let response = process_trie_nodes_request(req, state.storage.clone())?;
             send(state, Message::TrieNodes(response)).await?
         }
+        Message::L2(req) => {
+            handle_based_capability_message(state, req).await?;
+        }
         // Send response messages to the backend
         message @ Message::AccountRange(_)
         | message @ Message::StorageRanges(_)
@@ -816,6 +855,11 @@ async fn handle_broadcast(
                 });
                 send(state, new_msg).await?;
             }
+            l2_msg @ Message::L2(_) => {
+                // TODO: Only broadcast L2 messages that are intended to be broadcasted.
+                // In the future, some of the messages don't need to be broadcasted.
+                send(state, l2_msg.clone()).await?;
+            }
             msg => {
                 let error_message = format!("Non-supported message broadcasted: {msg}");
                 log_peer_error(&state.node, &error_message);
@@ -834,13 +878,25 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
     }
 }
 
-fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
+pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
         txs_msg @ Message::Transactions(_) => {
             let txs = Arc::new(txs_msg);
             let task_id = tokio::task::id();
             let Ok(_) = state.connection_broadcast_send.send((task_id, txs)) else {
                 let error_message = "Could not broadcast received transactions";
+                log_peer_error(&state.node, error_message);
+                return Err(RLPxError::BroadcastError(error_message.to_owned()));
+            };
+            Ok(())
+        }
+        l2_msg @ Message::L2(_) => {
+            let task_id = tokio::task::id();
+            let Ok(_) = state
+                .connection_broadcast_send
+                .send((task_id, l2_msg.into()))
+            else {
+                let error_message = "Could not broadcast l2 message";
                 log_peer_error(&state.node, error_message);
                 return Err(RLPxError::BroadcastError(error_message.to_owned()));
             };
