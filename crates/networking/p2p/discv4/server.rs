@@ -496,7 +496,6 @@ impl GenServer for ConnectionHandler {
                     trace!("FindNode expired");
                     return CastResponse::Stop;
                 }
-
                 let node_id = node_id(&sender_public_key);
 
                 let table = state.kademlia.table.lock().await;
@@ -505,6 +504,10 @@ impl GenServer for ConnectionHandler {
                     drop(table);
                     return CastResponse::Stop;
                 };
+                if !contact.was_validated() {
+                    debug!(received = "FindNode", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+                    return CastResponse::Stop;
+                }
 
                 let neighbors = table
                     .iter()
@@ -551,6 +554,18 @@ impl GenServer for ConnectionHandler {
                     trace!("ENRRequest expired");
                     return CastResponse::Stop;
                 }
+                let node_id = node_id(&sender_public_key);
+
+                let table = state.kademlia.table.lock().await;
+
+                let Some(contact) = table.get(&node_id) else {
+                    drop(table);
+                    return CastResponse::Stop;
+                };
+                if !contact.was_validated() {
+                    debug!(received = "ENRRequest", to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+                    return CastResponse::Stop;
+                }
 
                 if let Err(err) = state.send_enr_response(hash, from).await {
                     error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
@@ -562,7 +577,7 @@ impl GenServer for ConnectionHandler {
                     .table
                     .lock()
                     .await
-                    .entry(node_id(&sender_public_key))
+                    .entry(node_id)
                     .and_modify(|c| c.knows_us = true);
             }
             Self::CastMsg::ENRResponse {
