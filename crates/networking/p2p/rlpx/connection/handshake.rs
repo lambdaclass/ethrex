@@ -450,8 +450,7 @@ fn sign_shared_secret(
     local_ephemeral_key: &SecretKey,
 ) -> Result<Signature, RLPxError> {
     let signature_prehash = shared_secret ^ local_nonce;
-    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())
-        .map_err(|_| RLPxError::CryptographyError("Failed to build message".into()))?;
+    let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())?;
     let sig = secp256k1::SECP256K1.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
 
     let (rid, signature) = sig.serialize_compact();
@@ -461,7 +460,7 @@ fn sign_shared_secret(
     signature_bytes[64] = rid
         .to_i32()
         .try_into()
-        .map_err(|_| RLPxError::CryptographyError("Failed to serialize siganture byte".into()))?;
+        .map_err(|_| RLPxError::CryptographyError("Invalid recovery id".into()))?;
     Ok(signature_bytes.into())
 }
 
