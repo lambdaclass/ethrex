@@ -16,7 +16,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::LT)?;
         let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho < rho);
-        current_call_frame.stack.push(&[result])?;
+        current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -27,7 +27,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::GT)?;
         let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho > rho);
-        current_call_frame.stack.push(&[result])?;
+        current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -46,7 +46,7 @@ impl<'a> VM<'a> {
             // Negative is smaller if signs differ
             u256_from_bool(lho_is_negative)
         };
-        current_call_frame.stack.push(&[result])?;
+        current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -65,7 +65,7 @@ impl<'a> VM<'a> {
             // Positive is bigger if signs differ
             u256_from_bool(rho_is_negative)
         };
-        current_call_frame.stack.push(&[result])?;
+        current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -77,7 +77,7 @@ impl<'a> VM<'a> {
         let [lho, rho] = *current_call_frame.stack.pop()?;
         let result = u256_from_bool(lho == rho);
 
-        current_call_frame.stack.push(&[result])?;
+        current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -90,7 +90,7 @@ impl<'a> VM<'a> {
         let [operand] = current_call_frame.stack.pop()?;
         let result = u256_from_bool(operand.is_zero());
 
-        current_call_frame.stack.push(&[result])?;
+        current_call_frame.stack.push1(result)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -129,7 +129,7 @@ impl<'a> VM<'a> {
     pub fn op_not(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
-        let [a] = *current_call_frame.stack.pop()?;
+        let a = current_call_frame.stack.pop1()?;
         current_call_frame.stack.push(&[!a])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -144,7 +144,7 @@ impl<'a> VM<'a> {
             Ok(byte_index) => byte_index,
             Err(_) => {
                 // Index is out of bounds, then push 0
-                current_call_frame.stack.push(&[U256::zero()])?;
+                current_call_frame.stack.push1(U256::zero())?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
         };
@@ -159,7 +159,7 @@ impl<'a> VM<'a> {
                 .stack
                 .push(&[U256::from(op2.byte(byte_to_push))])?;
         } else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -175,7 +175,7 @@ impl<'a> VM<'a> {
         if shift < U256::from(256) {
             current_call_frame.stack.push(&[value << shift])?;
         } else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -191,7 +191,7 @@ impl<'a> VM<'a> {
         if shift < U256::from(256) {
             current_call_frame.stack.push(&[value >> shift])?;
         } else {
-            current_call_frame.stack.push(&[U256::zero()])?;
+            current_call_frame.stack.push1(U256::zero())?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -218,7 +218,7 @@ impl<'a> VM<'a> {
         } else {
             U256::zero()
         };
-        current_call_frame.stack.push(&[res])?;
+        current_call_frame.stack.push1(res)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
