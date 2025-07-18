@@ -186,8 +186,11 @@ impl<'a> VM<'a> {
         to: Address,
         value: U256,
     ) -> Result<(), InternalError> {
-        self.decrease_account_balance(from, value)?;
-        self.increase_account_balance(to, value)?;
+        if value != U256::zero() {
+            self.decrease_account_balance(from, value)?;
+            self.increase_account_balance(to, value)?;
+        }
+
         Ok(())
     }
 
