@@ -4,6 +4,10 @@
 
 ### 2025-07-18
 
+- Add specialized push1 and pop1 to stack [#3705](https://github.com/lambdaclass/ethrex/pull/3705)
+
+- Improve precompiles by avoiding 0 value transfers [#3715](https://github.com/lambdaclass/ethrex/pull/3715)
+
 - Improve BlobHash [#3704](https://github.com/lambdaclass/ethrex/pull/3704)
 
   Added push1 and pop1 to avoid using arrays for single variable operations.

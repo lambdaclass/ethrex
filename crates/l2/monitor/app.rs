@@ -1,8 +1,5 @@
-use std::io;
-use std::time::{Duration, Instant};
-
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, KeyCode, MouseEventKind},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, MouseEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -18,6 +15,14 @@ use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
 };
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
+};
+use std::io;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::based::sequencer_state::SequencerState;
@@ -30,16 +35,18 @@ use crate::{
     },
     sequencer::errors::MonitorError,
 };
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
 
 const SCROLL_DEBOUNCE_DURATION: Duration = Duration::from_millis(700); // 700ms
-
-pub struct EthrexMonitor {
+#[derive(Clone)]
+pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
     pub tick_rate: u64,
 
-    pub logger: TuiWidgetState,
+    pub logger: Arc<TuiWidgetState>,
     pub node_status: NodeStatusTable,
     pub global_chain_status: GlobalChainStatusTable,
     pub mempool: MempoolTable,
@@ -55,7 +62,130 @@ pub struct EthrexMonitor {
     pub last_scroll: Instant,
 }
 
+#[derive(Clone)]
+pub struct EthrexMonitorState {
+    widget: EthrexMonitorWidget,
+    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
+    cancellation_token: CancellationToken,
+}
+
+#[derive(Clone, Debug)]
+pub enum CastInMessage {
+    Tick,
+    Event(Event),
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum OutMessage {
+    Done,
+}
+
+#[derive(Default)]
+pub struct EthrexMonitor {}
+
 impl EthrexMonitor {
+    pub async fn spawn(
+        sequencer_state: SequencerState,
+        store: Store,
+        rollup_store: StoreRollup,
+        cfg: &SequencerConfig,
+        cancellation_token: CancellationToken,
+    ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
+        let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
+        let state = EthrexMonitorState {
+            widget,
+            terminal: Arc::new(Mutex::new(setup_terminal()?)),
+            cancellation_token,
+        };
+        Ok(EthrexMonitor::start(state))
+    }
+}
+
+impl GenServer for EthrexMonitor {
+    type CallMsg = Unused;
+    type CastMsg = CastInMessage;
+    type OutMsg = OutMessage;
+    type State = EthrexMonitorState;
+    type Error = MonitorError;
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn init(
+        &mut self,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> Result<Self::State, Self::Error> {
+        // Tick handling
+        send_interval(
+            Duration::from_millis(state.widget.tick_rate),
+            handle.clone(),
+            Self::CastMsg::Tick,
+        );
+        // Event handling
+        spawn_listener(
+            handle.clone(),
+            |event: Event| Self::CastMsg::Event(event),
+            EventStream::new(),
+        );
+        Ok(state)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        _handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
+        match message {
+            // On event
+            CastInMessage::Event(event) => {
+                let widget = &mut state.widget;
+                if let Some(key) = event.as_key_press_event() {
+                    widget.on_key_event(key.code);
+                }
+                if let Some(mouse) = event.as_mouse_event() {
+                    widget.on_mouse_event(mouse.kind);
+                }
+            }
+            // Tick received
+            CastInMessage::Tick => {
+                let _ = state
+                    .widget
+                    .on_tick()
+                    .await
+                    .inspect_err(|err| error!("Monitor error: {err}"));
+            }
+        }
+
+        if !state.widget.should_quit {
+            let _ = state
+                .widget
+                .draw(&mut *state.terminal.lock().await)
+                .inspect_err(|err| error!("Render error: {err}"));
+            CastResponse::NoReply(state)
+        } else {
+            CastResponse::Stop
+        }
+    }
+
+    async fn teardown(
+        &mut self,
+        _handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> Result<(), Self::Error> {
+        let mut terminal = state.terminal.lock().await;
+        let _ = restore_terminal(&mut terminal).inspect_err(|err| {
+            error!("Error restoring terminal: {err}");
+        });
+        info!("Monitor has been cancelled");
+        state.cancellation_token.cancel();
+        Ok(())
+    }
+}
+
+impl EthrexMonitorWidget {
     pub async fn new(
         sequencer_state: SequencerState,
         store: Store,
@@ -68,7 +198,7 @@ impl EthrexMonitor {
         let rollup_client =
             EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
 
-        let mut monitor = EthrexMonitor {
+        let mut monitor_widget = EthrexMonitorWidget {
             title: if cfg.based.based {
                 "Based Ethrex Monitor".to_string()
             } else {
@@ -78,7 +208,9 @@ impl EthrexMonitor {
             tabs: TabsState::default(),
             tick_rate: cfg.monitor.tick_rate,
             global_chain_status: GlobalChainStatusTable::new(cfg),
-            logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
+            logger: Arc::new(
+                TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
+            ),
             node_status: NodeStatusTable::new(sequencer_state.clone()),
             mempool: MempoolTable::new(),
             batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
@@ -91,62 +223,8 @@ impl EthrexMonitor {
             rollup_store,
             last_scroll: Instant::now(),
         };
-        monitor.on_tick().await?;
-        Ok(monitor)
-    }
-
-    pub async fn start(mut self) -> Result<(), MonitorError> {
-        // setup terminal
-        enable_raw_mode().map_err(MonitorError::Io)?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io)?;
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend).map_err(MonitorError::Io)?;
-
-        let app_result = self.run(&mut terminal).await;
-
-        // restore terminal
-        disable_raw_mode().map_err(MonitorError::Io)?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )
-        .map_err(MonitorError::Io)?;
-        terminal.show_cursor().map_err(MonitorError::Io)?;
-
-        let _ = app_result.inspect_err(|err| {
-            eprintln!("Monitor error: {err}");
-        });
-
-        Ok(())
-    }
-
-    async fn run<B>(&mut self, terminal: &mut Terminal<B>) -> Result<(), MonitorError>
-    where
-        B: Backend,
-    {
-        let mut last_tick = Instant::now();
-        loop {
-            self.draw(terminal)?;
-
-            let timeout = Duration::from_millis(self.tick_rate).saturating_sub(last_tick.elapsed());
-            if !event::poll(timeout)? {
-                self.on_tick().await?;
-                last_tick = Instant::now();
-                continue;
-            }
-            let event = event::read()?;
-            if let Some(key) = event.as_key_press_event() {
-                self.on_key_event(key.code);
-            }
-            if let Some(mouse) = event.as_mouse_event() {
-                self.on_mouse_event(mouse.kind);
-            }
-            if self.should_quit {
-                return Ok(());
-            }
-        }
+        monitor_widget.on_tick().await?;
+        Ok(monitor_widget)
     }
 
     fn draw(&mut self, terminal: &mut Terminal<impl Backend>) -> Result<(), MonitorError> {
@@ -356,7 +434,30 @@ impl EthrexMonitor {
     }
 }
 
-impl Widget for &mut EthrexMonitor {
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>, MonitorError> {
+    enable_raw_mode().map_err(MonitorError::Io)?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(MonitorError::Io)?;
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = Terminal::new(backend).map_err(MonitorError::Io)?;
+    Ok(terminal)
+}
+
+fn restore_terminal(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<(), MonitorError> {
+    disable_raw_mode().map_err(MonitorError::Io)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .map_err(MonitorError::Io)?;
+    terminal.show_cursor().map_err(MonitorError::Io)?;
+    Ok(())
+}
+
+impl Widget for &mut EthrexMonitorWidget {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
