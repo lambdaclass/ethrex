@@ -204,6 +204,8 @@ impl DiscoveryServerState {
         Ok(())
     }
 
+    #[expect(dead_code)]
+    // TODO: this should be used to filter peers before connecting to them
     async fn send_enr_request(&self, node: &Node) -> Result<(), DiscoveryServerError> {
         let mut buf = Vec::new();
 
@@ -225,28 +227,6 @@ impl DiscoveryServerState {
         }
 
         debug!(sent = "ENRRequest", to = %format!("{:#x}", node.public_key));
-
-        Ok(())
-    }
-
-    async fn send_find_node(&self, node: &Node) -> Result<(), DiscoveryServerError> {
-        let expiration: u64 = get_msg_expiration_from_seconds(20);
-
-        let msg = Message::FindNode(FindNodeMessage::new(node.public_key, expiration));
-
-        let mut buf = Vec::new();
-        msg.encode_with_header(&mut buf, &self.signer);
-        let bytes_sent = self
-            .udp_socket
-            .send_to(&buf, SocketAddr::new(node.ip, node.udp_port))
-            .await
-            .map_err(DiscoveryServerError::MessageSendFailure)?;
-
-        if bytes_sent != buf.len() {
-            return Err(DiscoveryServerError::PartialMessageSent);
-        }
-
-        debug!(sent = "FindNode", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -614,14 +594,4 @@ async fn handle_pong(state: &DiscoveryServerState, message: PongMessage, node_id
         return;
     }
     contact.ping_hash = None;
-
-    let node = contact.node.clone();
-
-    let _ = state.send_enr_request(&node).await.inspect_err(
-        |e| error!(received = "ENRRequest", to = %format!("{:#x}", node.public_key), err = ?e),
-    );
-
-    let _ = state.send_find_node(&node).await.inspect_err(
-        |e| error!(sent = "FindNode", to = %format!("{:#x}", node.public_key), err = ?e),
-    );
 }
