@@ -43,6 +43,8 @@ use tracing::{error, info};
 
 const SCROLL_DEBOUNCE_DURATION_LOGS: Duration = Duration::from_millis(700); // 700ms
 const SCROLL_DEBOUNCE_DURATION_OVERVIEW: Duration = Duration::from_millis(50); // 50ms
+
+const DEFAULT_TOTAL_HEIGHT: u16 = 104; // Default height for the terminal
 #[derive(Clone)]
 pub struct EthrexMonitorWidget {
     pub title: String,
@@ -231,7 +233,7 @@ impl EthrexMonitorWidget {
             last_scroll: Instant::now(),
             vertical_scroll: 0,
             vertical_scroll_state: ScrollbarState::default(),
-            total_height: 104, // Default height for the terminal
+            total_height: DEFAULT_TOTAL_HEIGHT,
         };
         monitor_widget.on_tick().await?;
         Ok(monitor_widget)
@@ -467,7 +469,7 @@ impl EthrexMonitorWidget {
 
                 let visible_height = area
                     .height
-                    .min(self.total_height - self.vertical_scroll + area.height);
+                    .min(self.total_height - self.vertical_scroll);
                 for y in 0..visible_height {
                     for x in 0..area.width {
                         // Copy cell from offscreen_buffer at (x, y+scroll) to terminal buffer at (x, y)
