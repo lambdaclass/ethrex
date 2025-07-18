@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752874861972,
+  "lastUpdate": 1752876238635,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5095,6 +5095,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212693819346,
             "range": "± 359091162",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d93521e7397fbab87d4f8a431f06e8132fd35b40",
+          "message": "chore(l1): move network_params_ethrex_only.yaml to the fixtures folder  (#3729)\n\n**Motivation**\n\nThe localnet ethrex_only was used for CI, now it isn't but the\nnetwork_params_ethrex_only.yaml was kept for testing but it still was in\nthe `.github/config/assertoor` folder\n\n**Description**\n\nIn PR #3324 the file was moved into `fixtures/network`\nChanged path to file in the `Makefile` so that `make\nlocalnet-ethrex-only` works again\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3625",
+          "timestamp": "2025-07-18T21:07:02Z",
+          "tree_id": "3c98c36d78e26ba06ccccd3dd5c51fa89503c507",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d93521e7397fbab87d4f8a431f06e8132fd35b40"
+        },
+        "date": 1752876226132,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209142808308,
+            "range": "± 1592141185",
             "unit": "ns/iter"
           }
         ]
