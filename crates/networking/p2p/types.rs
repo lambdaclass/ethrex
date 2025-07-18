@@ -163,8 +163,8 @@ impl Node {
         let public_key = pairs.secp256k1.ok_or("public key not found in record")?;
         let verifying_key = PublicKey::from_slice(public_key.as_bytes())
             .map_err(|_| "public key could no be built from msg pub key bytes")?;
-        let uncompressed = verifying_key.serialize_uncompressed();
-        let public_key = H512::from_slice(&uncompressed[1..]);
+        let encoded = verifying_key.serialize_uncompressed();
+        let public_key = H512::from_slice(&encoded[1..]);
 
         let ip = pairs
             .ip
