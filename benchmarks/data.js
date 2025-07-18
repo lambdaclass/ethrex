@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752876238635,
+  "lastUpdate": 1752877321428,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5125,6 +5125,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209142808308,
             "range": "± 1592141185",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "db2b5a52032ac4e7c6934e92c2f259db8e545910",
+          "message": "feat(l1): improve rebuild progress tracking (#2428)\n\n**Motivation**\nPreviously, state and storage rebuilding took approximately the same\ntime, so showing state trie rebuild progress was enough to keep the user\nupdated. After some recent changes storage rebuilding is taking a bit\nlonger, making its progress more relevant.\nAlso, the estimated finish time calculation takes into account all time\nsince start, which means estimations at the start will be abnormally\nhigh as time is spent waiting for data to be downloaded instead of pure\nrebuilding time.\nThis PR tracks the average speed and remaining storages to rebuild and\nperiodically shows them. It will only show the estimated finish time if\nthe state sync is complete, and it will show the average rebuild speed\nas debug tracing.\nIt also counts the time spend rebuilding storages instead of the time\nthat has passed since the rebuild started when performing time\nestimation\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Periodically show storage tries rebuild stats (speed/remaining for\ndebug, estimated finish time if state sync is finished)\n* Count time taken during rebuild instead of total time taken when\nestimating rebuild finish times\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-07-18T21:26:37Z",
+          "tree_id": "16144ff626bcf651a6fab3598ece2b7389c8f45f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/db2b5a52032ac4e7c6934e92c2f259db8e545910"
+        },
+        "date": 1752877308973,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 205533662870,
+            "range": "± 782561225",
             "unit": "ns/iter"
           }
         ]
