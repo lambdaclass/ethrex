@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752832331468,
+  "lastUpdate": 1752834815746,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9623,6 +9623,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0012122906448683015,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "df3710b203a0214e243a157f46147d48b2d9d38a",
+          "message": "ci(l1,l2): remove ethrex replay from releases  (#3663)\n\n**Motivation**\n\nWe don't want to make releases for ethrex replay\n\n**Description**\n\n- Remove matrix.binary from ci and only build ethrex and prover binaries\n- Update docs on how to run ethrex-replay\n- Successful run\n[here](https://github.com/lambdaclass/ethrex/actions/runs/16346228196/job/46180528866)",
+          "timestamp": "2025-07-17T15:36:58Z",
+          "tree_id": "e74c7e272ffd46bdc24eae77eb489c4cc5e1e7a2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/df3710b203a0214e243a157f46147d48b2d9d38a"
+        },
+        "date": 1752834799037,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0061793148148148146,
             "unit": "Mgas/s"
           }
         ]
