@@ -3,7 +3,8 @@
 
 IMAGE_NAME = ethrex-image_0.1.raw
 NIXPKGS_URL = https://github.com/NixOS/nixpkgs/archive/3fcbdcfc707e0aa42c541b7743e05820472bdaec.tar.gz
-NIX_BUILD_ARGS = --no-out-link -I nixpkgs=$(NIXPKGS_URL)
+GIT_REV := $(shell git rev-parse --short=7 HEAD)
+NIX_BUILD_ARGS = --no-out-link -I nixpkgs=$(NIXPKGS_URL) --argstr gitRev "$(GIT_REV)"
 
 image.raw:
 	$(eval IMAGE := $(shell nix-build image.nix ${NIX_BUILD_ARGS})/${IMAGE_NAME})
