@@ -12,8 +12,11 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use rand::random;
+use k256::elliptic_curve::rand_core::le;
+use rand::{Rng, random, seq::SliceRandom};
+use spawned_rt::tasks::oneshot;
 use tokio::sync::Mutex;
+use tokio_stream::iter;
 
 use crate::{
     kademlia::{KademliaTable, PeerChannels, PeerData},
@@ -431,7 +434,7 @@ impl PeerHandler {
         ret.sort_by(|x, y| x.number.cmp(&y.number));
         info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret);
-        panic!()
+        std::process::exit(0);
     }
 
     /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
@@ -443,7 +446,7 @@ impl PeerHandler {
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, String> {
-        info!("Requesting block headers from peer {peer_id}");
+        debug!("Requesting block headers from peer {peer_id}");
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
