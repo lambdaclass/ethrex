@@ -20,14 +20,14 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[u256_from_big_endian_const(addr.to_fixed_bytes())])?;
+            .push1(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // BALANCE operation
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
+        let address = word_to_address(self.current_call_frame_mut()?.stack.pop1()?);
 
         let address_was_cold = self.substate.accessed_addresses.insert(address);
         let account_balance = self.db.get_account(address)?.info.balance;
@@ -49,7 +49,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[u256_from_big_endian_const(origin.to_fixed_bytes())])?;
+            .push1(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -125,7 +125,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.calldata.len())])?;
+            .push1(U256::from(current_call_frame.calldata.len()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -189,7 +189,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.bytecode.len())])?;
+            .push1(U256::from(current_call_frame.bytecode.len()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -276,7 +276,7 @@ impl<'a> VM<'a> {
 
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame_mut()?.stack.pop::<1>()?[0]);
+        let address = word_to_address(self.current_call_frame_mut()?.stack.pop1()?);
         let address_was_cold = self.substate.accessed_addresses.insert(address);
         let account_code_length = self.db.get_account(address)?.code.len().into();
 
@@ -351,7 +351,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.sub_return_data.len())])?;
+            .push1(U256::from(current_call_frame.sub_return_data.len()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
