@@ -226,18 +226,33 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
+        if let Some(code_offset_end) = code_offset.checked_add(size) {
+            if code_offset_end < current_call_frame.bytecode.len() {
+                #[expect(unsafe_code, reason = "bounds checked beforehand")]
+                let slice = unsafe {
+                    current_call_frame
+                        .bytecode
+                        .get_unchecked(code_offset..code_offset_end)
+                };
+                current_call_frame
+                    .memory
+                    .store_data(destination_offset, slice)?;
+
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            }
+        }
+
         let mut data = vec![0u8; size];
         if code_offset < current_call_frame.bytecode.len() {
-            for (i, byte) in current_call_frame
-                .bytecode
-                .iter()
-                .skip(code_offset)
-                .take(size)
-                .enumerate()
-            {
-                if let Some(data_byte) = data.get_mut(i) {
-                    *data_byte = *byte;
-                }
+            let diff = current_call_frame.bytecode.len().wrapping_sub(code_offset);
+            let final_size = size.min(diff);
+            let end = code_offset.wrapping_add(final_size);
+
+            #[expect(unsafe_code, reason = "bounds checked beforehand")]
+            unsafe {
+                data.get_unchecked_mut(..final_size)
+                    .copy_from_slice(current_call_frame.bytecode.get_unchecked(code_offset..end));
             }
         }
 
