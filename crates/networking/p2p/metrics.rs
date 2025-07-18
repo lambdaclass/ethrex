@@ -39,8 +39,8 @@ pub struct Metrics {
     pub peers: Arc<Mutex<u64>>,
     /// The amount of clients connected grouped by client type
     pub peers_by_client_type: Arc<Mutex<BTreeMap<String, u64>>>,
-    /// Ex-peers.
-    pub disconnections: Arc<Mutex<BTreeMap<String, u64>>>,
+    /// Ex-peers by client type and then reason of disconnection.
+    pub disconnections_by_client_type: Arc<Mutex<BTreeMap<String, BTreeMap<String, u64>>>>,
     /// RLPx connection attempt failures grouped and counted by reason
     pub connection_attempt_failures: Arc<Mutex<BTreeMap<String, u64>>>,
 
@@ -106,16 +106,21 @@ impl Metrics {
     ) {
         *self.peers.lock().await -= 1;
 
-        self.disconnections
-            .lock()
-            .await
-            .entry(reason.to_string())
-            .and_modify(|e| *e += 1)
-            .or_insert(1);
-
         let mut clients = self.peers_by_client_type.lock().await;
         let split = client_version.split('/').collect::<Vec<&str>>();
         let client_type = split.first().expect("Split always returns 1 element");
+
+        clients
+            .entry(client_type.to_string())
+            .and_modify(|count| *count -= 1);
+
+        let mut disconnection_by_client = self.disconnections_by_client_type.lock().await;
+        disconnection_by_client
+            .entry(client_type.to_string())
+            .or_insert(BTreeMap::new())
+            .entry(reason.to_string())
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
 
         clients
             .entry(client_type.to_string())
@@ -413,7 +418,7 @@ impl Default for Metrics {
             peers: Arc::new(Mutex::new(0)),
             peers_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
-            disconnections: Arc::new(Mutex::new(BTreeMap::new())),
+            disconnections_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
             connection_attempt_failures: Arc::new(Mutex::new(BTreeMap::new())),
 
