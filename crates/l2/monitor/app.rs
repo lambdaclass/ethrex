@@ -60,7 +60,6 @@ pub struct EthrexMonitorWidget {
     pub store: Store,
     pub rollup_store: StoreRollup,
     pub last_scroll: Instant,
-    pub last_tick: Instant,
 }
 
 #[derive(Clone)]
@@ -223,7 +222,6 @@ impl EthrexMonitorWidget {
             store,
             rollup_store,
             last_scroll: Instant::now(),
-            last_tick: Instant::now(),
         };
         monitor_widget.on_tick().await?;
         Ok(monitor_widget)
