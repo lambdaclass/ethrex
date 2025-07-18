@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752873194577,
+  "lastUpdate": 1752874190584,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5035,6 +5035,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207259697929,
             "range": "± 648030357",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "894ac4965366c7e956dcc105fb118fd54257d173",
+          "message": "feat(l2): privileged transaction inclusion deadline (#3427)\n\n**Motivation**\n\nTo prevent the sequencer from censoring transactions, we want to force\nit to include at least some of them.\n\n**Description**\n\nThis PR introduces a deadline after which either `INCLUSION_BATCH_SIZE`\n(or all pending transactions, if there are less) privileged transactions\nare included, or the batch is rejected.\n\nCloses #3230",
+          "timestamp": "2025-07-18T20:33:42Z",
+          "tree_id": "28cbcf100c80d1d325cfb9dc2464fe929feb32c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/894ac4965366c7e956dcc105fb118fd54257d173"
+        },
+        "date": 1752874178496,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208030310237,
+            "range": "± 452013088",
             "unit": "ns/iter"
           }
         ]
