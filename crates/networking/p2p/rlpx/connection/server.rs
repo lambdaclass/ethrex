@@ -44,8 +44,10 @@ use crate::{
         },
         l2::{
             self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            l2_connection::{self, L2Cast, L2ConnState, handle_based_capability_message},
-            messages::L2Message,
+            l2_connection::{
+                self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
+                handle_l2_broadcast,
+            },
         },
         message::Message,
         p2p::{
@@ -857,11 +859,8 @@ async fn handle_broadcast(
                 });
                 send(state, new_msg).await?;
             }
-            l2_msg @ Message::L2(L2Message::BatchSealed(_)) => {
-                send(state, l2_msg.clone()).await?;
-            }
-            l2_msg @ Message::L2(L2Message::NewBlock(_)) => {
-                send(state, l2_msg.clone()).await?;
+            l2_msg @ Message::L2(_) => {
+                handle_l2_broadcast(state, l2_msg).await?;
             }
             msg => {
                 let error_message = format!("Non-supported message broadcasted: {msg}");
@@ -893,40 +892,7 @@ pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(),
             };
             Ok(())
         }
-        l2_msg @ Message::L2(L2Message::BatchSealed(_)) => {
-            let task_id = tokio::task::id();
-            state
-                .connection_broadcast_send
-                .send((task_id, l2_msg.into()))
-                .inspect_err(|e| {
-                    log_peer_error(
-                        &state.node,
-                        &format!("Could not broadcast l2 message BatchSealed: {e}"),
-                    );
-                })
-                .map_err(|_| {
-                    RLPxError::BroadcastError(
-                        "Could not broadcast l2 message BatchSealed".to_owned(),
-                    )
-                })?;
-            Ok(())
-        }
-        l2_msg @ Message::L2(L2Message::NewBlock(_)) => {
-            let task_id = tokio::task::id();
-            state
-                .connection_broadcast_send
-                .send((task_id, l2_msg.into()))
-                .inspect_err(|e| {
-                    log_peer_error(
-                        &state.node,
-                        &format!("Could not broadcast l2 message NewBlock: {e}"),
-                    );
-                })
-                .map_err(|_| {
-                    RLPxError::BroadcastError("Could not broadcast l2 message NewBlock".to_owned())
-                })?;
-            Ok(())
-        }
+        l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
             log_peer_error(&state.node, &error_message);

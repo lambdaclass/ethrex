@@ -112,6 +112,62 @@ pub(crate) async fn handle_based_capability_message(
     Ok(())
 }
 
+pub(crate) async fn handle_l2_broadcast(
+    state: &mut Established,
+    l2_msg: &Message,
+) -> Result<(), RLPxError> {
+    match l2_msg {
+        msg @ Message::L2(L2Message::BatchSealed(_)) => send(state, msg.clone()).await,
+        msg @ Message::L2(L2Message::NewBlock(_)) => send(state, msg.clone()).await,
+        // Uncomment when new L2 messages are implemented
+        // Message::L2(_) => Ok(()),
+        _ => Err(RLPxError::InternalError(
+            "This is a bug. Handle L2 broadcast called with a non-L2 message".to_string(),
+        ))?,
+    }
+}
+
+pub(crate) fn broadcast_l2_message(state: &Established, l2_msg: Message) -> Result<(), RLPxError> {
+    match l2_msg {
+        msg @ Message::L2(L2Message::BatchSealed(_)) => {
+            let task_id = tokio::task::id();
+            state
+                .connection_broadcast_send
+                .send((task_id, msg.into()))
+                .inspect_err(|e| {
+                    log_peer_error(
+                        &state.node,
+                        &format!("Could not broadcast l2 message BatchSealed: {e}"),
+                    );
+                })
+                .map_err(|_| {
+                    RLPxError::BroadcastError(
+                        "Could not broadcast l2 message BatchSealed".to_owned(),
+                    )
+                })?;
+            Ok(())
+        }
+        msg @ Message::L2(L2Message::NewBlock(_)) => {
+            let task_id = tokio::task::id();
+            state
+                .connection_broadcast_send
+                .send((task_id, msg.into()))
+                .inspect_err(|e| {
+                    log_peer_error(
+                        &state.node,
+                        &format!("Could not broadcast l2 message NewBlock: {e}"),
+                    );
+                })
+                .map_err(|_| {
+                    RLPxError::BroadcastError("Could not broadcast l2 message NewBlock".to_owned())
+                })?;
+            Ok(())
+        }
+        _ => Err(RLPxError::InternalError(
+            "This is a bug. Broadcast L2 message called with a non-L2 message".to_string(),
+        )),
+    }
+}
 pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), RLPxError> {
     let latest_block_number = established.storage.get_latest_block_number().await?;
     let latest_block_sent = established
