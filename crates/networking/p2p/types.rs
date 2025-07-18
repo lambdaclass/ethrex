@@ -304,10 +304,8 @@ impl NodeRecord {
             IpAddr::V4(ipv4_addr) => (Some(ipv4_addr), None),
             IpAddr::V6(ipv6_addr) => (None, Some(ipv6_addr)),
         };
-        let secp256k1 = Some(H264::from_slice(
-            &PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
-                .serialize()
-                .encode_to_vec(),
+        let secp256k1 = Some(H264(
+            PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
         ));
         let pairs = NodeRecordPairs {
             id: Some("v4".to_string()),
