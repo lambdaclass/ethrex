@@ -1,6 +1,6 @@
 use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     utils::*,
     vm::VM,
@@ -150,17 +150,23 @@ impl<'a> VM<'a> {
         let [index] = *self.current_call_frame_mut()?.stack.pop()?;
 
         let blob_hashes = &self.env.tx_blob_hashes;
-        if index >= blob_hashes.len().into() {
+
+        let index: usize = match index.try_into() {
+            Ok(index) => index,
+            Err(_) => {
+                self.current_call_frame_mut()?.stack.push(&[U256::zero()])?;
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            }
+        };
+
+        if index >= blob_hashes.len() {
             self.current_call_frame_mut()?.stack.push(&[U256::zero()])?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let index: usize = index
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
-
         //This should never fail because we check if the index fits above
-        let blob_hash = blob_hashes.get(index).ok_or(InternalError::Slicing)?;
+        #[expect(unsafe_code, reason = "bounds checked beforehand already")]
+        let blob_hash = unsafe { blob_hashes.get_unchecked(index) };
         let hash = u256_from_big_endian_const(blob_hash.to_fixed_bytes());
 
         self.current_call_frame_mut()?.stack.push(&[hash])?;

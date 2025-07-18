@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-18
+
+- Improve BlobHash [#3704](https://github.com/lambdaclass/ethrex/pull/3704)
+
 ### 2025-07-17
 
 - Improve CodeCopy perfomance [#3675](https://github.com/lambdaclass/ethrex/pull/3675)
