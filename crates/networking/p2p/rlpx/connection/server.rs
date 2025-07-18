@@ -18,10 +18,10 @@ use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
 };
-use spawned_rt::tasks::BroadcastStream;
+use spawned_rt::tasks::{BroadcastStream, mpsc};
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, broadcast, mpsc::Sender},
+    sync::{Mutex, broadcast},
     task::{self, Id},
 };
 use tokio_stream::StreamExt;
@@ -29,10 +29,11 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error};
 
 use crate::{
-    discv4::server::MAX_PEERS_TCP_CONNECTIONS,
-    kademlia::{KademliaTable, PeerChannels},
+    kademlia::{Kademlia, PeerChannels},
+    metrics::METRICS,
     network::P2PContext,
     rlpx::{
+        Message,
         connection::{codec::RLPxCodec, handshake},
         error::RLPxError,
         eth::{
@@ -43,7 +44,6 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
         },
-        message::Message,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
@@ -109,9 +109,8 @@ pub struct Established {
     /// TODO: Improve this mechanism
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
-    pub(crate) table: Arc<Mutex<KademliaTable>>,
-    pub(crate) backend_channel: Option<Sender<Message>>,
-    pub(crate) inbound: bool,
+    pub(crate) table: Kademlia,
+    pub(crate) backend_channel: Option<mpsc::Sender<Message>>,
 }
 
 #[derive(Clone)]
@@ -195,20 +194,42 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = handshake::perform(state.0).await?;
+        let (mut established_state, stream) = match handshake::perform(state.0.clone()).await {
+            Ok(result) => result,
+            Err(reason) => {
+                METRICS.record_new_rlpx_conn_failure(reason).await;
+
+                return Err(RLPxError::Disconnected());
+            }
+        };
+
         log_peer_debug(&established_state.node, "Starting RLPx connection");
 
         if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
             connection_failed(
                 &mut established_state,
                 "Failed to initialize RLPx connection",
-                reason,
+                &reason,
             )
             .await;
+
+            METRICS.record_new_rlpx_conn_failure(reason).await;
+
             Err(RLPxError::Disconnected())
         } else {
             // New state
-            state.0 = InnerState::Established(established_state);
+            state.0 = InnerState::Established(established_state.clone());
+
+            METRICS
+                .record_new_rlpx_conn_established(
+                    &established_state
+                        .node
+                        .version
+                        .clone()
+                        .unwrap_or("Unknown".to_string()),
+                )
+                .await;
+
             Ok(state)
         }
     }
@@ -286,20 +307,13 @@ where
     // Updating the state to establish the backend channel
     state.backend_channel = Some(sender);
 
-    // NOTE: if the peer came from the discovery server it will already be inserted in the table
-    // but that might not always be the case, so we try to add it to the table
-    // Note: we don't ping the node we let the validation service do its job
-    {
-        let mut table_lock = state.table.lock().await;
-        table_lock.insert_node_forced(state.node.clone());
-        table_lock.init_backend_communication(
-            state.node.node_id(),
-            peer_channels,
-            state.capabilities.clone(),
-            state.inbound,
-        );
-    }
     init_capabilities(state, &mut stream).await?;
+
+    state
+        .table
+        .set_connected_peer(state.node.clone(), peer_channels)
+        .await;
+
     log_peer_debug(&state.node, "Peer connection initialized.");
 
     // Send transactions transaction hashes from mempool at connection start
@@ -436,19 +450,7 @@ where
     Ok(())
 }
 
-async fn post_handshake_checks(
-    table: Arc<Mutex<crate::kademlia::KademliaTable>>,
-) -> Result<(), RLPxError> {
-    // Check if connected peers exceed the limit
-    let peer_count = {
-        let table_lock = table.lock().await;
-        table_lock.count_connected_peers()
-    };
-
-    if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
-        return Err(RLPxError::DisconnectSent(DisconnectReason::TooManyPeers));
-    }
-
+async fn post_handshake_checks(_table: Kademlia) -> Result<(), RLPxError> {
     Ok(())
 }
 
@@ -463,13 +465,13 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
         });
 }
 
-async fn connection_failed(state: &mut Established, error_text: &str, error: RLPxError) {
+async fn connection_failed(state: &mut Established, error_text: &str, error: &RLPxError) {
     log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
 
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
     if !matches!(error, RLPxError::DisconnectReceived(_)) {
-        send_disconnect_message(state, match_disconnect_reason(&error)).await;
+        send_disconnect_message(state, match_disconnect_reason(error)).await;
     }
 
     // Discard peer from kademlia table in some cases
@@ -485,7 +487,6 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
                 &state.node,
                 &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
             );
-            state.table.lock().await.replace_peer(state.node.node_id());
         }
     }
 
@@ -613,12 +614,20 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
     match message {
         Message::Disconnect(msg_data) => {
-            log_peer_debug(
-                &state.node,
-                &format!("Received Disconnect: {}", msg_data.reason()),
-            );
+            let reason = msg_data.reason();
+
+            log_peer_debug(&state.node, &format!("Received Disconnect: {reason}"));
+
+            METRICS
+                .record_new_rlpx_conn_disconnection(
+                    &state.node.version.clone().unwrap_or("Unknown".to_string()),
+                    reason,
+                )
+                .await;
+
             // TODO handle the disconnection request
-            return Err(RLPxError::DisconnectReceived(msg_data.reason()));
+
+            return Err(RLPxError::DisconnectReceived(reason));
         }
         Message::Ping(_) => {
             log_peer_debug(&state.node, "Sending pong message");
@@ -744,8 +753,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                 .as_mut()
                 // TODO: this unwrap() is temporary, until we fix the backend process to use spawned
                 .expect("Backend channel is not available")
-                .send(message)
-                .await?
+                .send(message)?
         }
         // TODO: Add new message types and handlers as they are implemented
         message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),

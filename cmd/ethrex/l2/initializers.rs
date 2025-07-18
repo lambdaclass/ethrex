@@ -3,13 +3,12 @@ use std::sync::Arc;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
-use ethrex_p2p::kademlia::KademliaTable;
+use ethrex_p2p::kademlia::Kademlia;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::warn;
@@ -26,7 +25,7 @@ use crate::utils::{get_client_version, read_jwtsecret_file};
 pub async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
-    peer_table: Arc<Mutex<KademliaTable>>,
+    peer_table: Kademlia,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     store: Store,

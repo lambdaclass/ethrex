@@ -308,7 +308,10 @@ pub mod test_utils {
         let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
 
-        NodeRecord::from_node(&node, 1, &signer).unwrap()
+        // NOTE: we use a dummy fork ID, since it is not used in tests
+        let fork_id = Default::default();
+
+        NodeRecord::from_node(&node, 1, &signer, fork_id).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
@@ -334,6 +337,7 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
+        let local_node_record = example_local_node_record();
         start_api(
             http_addr,
             authrpc_addr,
@@ -341,7 +345,7 @@ pub mod test_utils {
             blockchain,
             jwt_secret,
             local_p2p_node,
-            example_local_node_record(),
+            local_node_record,
             SyncManager::dummy(),
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
@@ -352,6 +356,7 @@ pub mod test_utils {
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let local_node_record = example_local_node_record();
         RpcApiContext {
             storage,
             blockchain,
@@ -361,7 +366,7 @@ pub mod test_utils {
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
-                local_node_record: example_local_node_record(),
+                local_node_record,
                 client_version: "ethrex/test".to_string(),
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
