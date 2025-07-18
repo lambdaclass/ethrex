@@ -1074,27 +1074,23 @@ pub(super) mod tests {
         sleep(Duration::from_millis(2500)).await;
 
         assert!(
-            dbg!(
-                server_a
-                    .ctx
-                    .table
-                    .lock()
-                    .await
-                    .get_by_node_id(server_b.ctx.local_node.node_id())
-            )
-            .is_some()
+            server_a
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_by_node_id(server_b.ctx.local_node.node_id())
+                .is_some()
         );
 
         assert!(
-            dbg!(
-                server_a
-                    .ctx
-                    .table
-                    .lock()
-                    .await
-                    .get_by_node_id(server_c.ctx.local_node.node_id())
-            )
-            .is_none()
+            server_a
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_by_node_id(server_c.ctx.local_node.node_id())
+                .is_none()
         );
 
         Ok(())
