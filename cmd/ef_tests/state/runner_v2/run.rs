@@ -10,6 +10,11 @@ pub async fn main() -> Result<(), RunnerError> {
     let tests = parse_dir(path.into())?;
     println!("Finalized parsing. Executing tests...");
     run_tests(tests).await?;
-    println!("Tests finalized running. Find the report at: './runner_v2/runner_report.txt'");
+    println!(
+        "Tests finalized running.
+    Find successful tests (if any) report at: './runner_v2/success_report.txt'.
+    Find failing    tests (if any) report at: './runner_v2/failure_report.txt'.
+    "
+    );
     Ok(())
 }
