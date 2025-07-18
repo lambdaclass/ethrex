@@ -171,7 +171,7 @@ async fn test_upgrade(
     l2_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let private_key = l1_rich_wallet_private_key();
-    let rich_wallet_signer: Signer = LocalSigner::new(rich_wallet_private_key).into();
+    let rich_wallet_signer: Signer = LocalSigner::new(private_key).into();
     let rich_address = rich_wallet_signer.address();
     dbg!(rich_address);
 
