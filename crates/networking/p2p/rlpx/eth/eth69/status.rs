@@ -10,7 +10,7 @@ use ethrex_rlp::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct StatusMessage69 {
+pub struct StatusMessage69 {
     pub(crate) eth_version: u8,
     pub(crate) network_id: u64,
     pub(crate) genesis: BlockHash,
