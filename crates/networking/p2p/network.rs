@@ -97,7 +97,7 @@ pub async fn start_network(
 
     DiscoveryServer::spawn(
         context.local_node.clone(),
-        context.signer.clone(),
+        context.signer,
         fork_id,
         udp_socket.clone(),
         context.table.clone(),
@@ -110,7 +110,7 @@ pub async fn start_network(
 
     DiscoverySideCar::spawn(
         context.local_node.clone(),
-        context.signer.clone(),
+        context.signer,
         fork_id,
         udp_socket,
         context.table.clone(),
