@@ -2060,6 +2060,34 @@ We can compute it as follows:</p>
 <li>The malicious contract sends a privileged transaction, which can steal A's resourced on the L2</li>
 </ul>
 <p>By modifying the address of L1 contracts by adding a constant, we prevent this attack since both won't have the same address.</p>
+<h2 id="forced-inclusion"><a class="header" href="#forced-inclusion">Forced Inclusion</a></h2>
+<p>Each transaction is given a deadline for processing. If the sequencer is unwilling to include a privileged transaction before this timer expires, batches stop being processed and the network halts until the sequencer processes every expired transaction.</p>
+<p>After an extended downtime, the sequencer can catch up by sending batches made solely out of privileged transactions.</p>
+<pre class="mermaid">---
+title: Sequencer goes offline
+---
+sequenceDiagram
+    box rgb(33,66,99) L1
+        actor L1Alice
+        actor Sequencer
+        participant CommonBridge
+        participant OnChainProposer
+    end
+
+    L1Alice -&gt;&gt; CommonBridge: Sends a privileged transaction
+
+    Note over Sequencer: Sequencer goes offline for a long time
+    Sequencer -&gt;&gt; OnChainProposer: Sends batch as usual
+    OnChainProposer -&gt;&gt; Sequencer: Error
+    Note over Sequencer: Operator configures the sequencer to catch up
+    Sequencer -&gt;&gt; OnChainProposer: Sends batch of only privileged transactions
+    OnChainProposer -&gt;&gt; Sequencer: OK
+    Sequencer -&gt;&gt; OnChainProposer: Sends batch with remaining expired privileged transactions, along with other transactions
+    OnChainProposer -&gt;&gt; Sequencer: OK
+    Note over Sequencer: Sequencer is now catched up
+    Sequencer -&gt;&gt; OnChainProposer: Sends batch as usual
+    OnChainProposer -&gt;&gt; Sequencer: OK
+</pre>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <style>
 .mdbook-alerts {
