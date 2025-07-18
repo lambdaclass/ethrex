@@ -171,6 +171,9 @@ async fn test_upgrade(
     l2_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let private_key = l1_rich_wallet_private_key();
+    let rich_wallet_signer: Signer = LocalSigner::new(private_key).into();
+    let rich_address = rich_wallet_signer.address();
+    dbg!(rich_address);
 
     let contracts_path = Path::new("contracts");
     download_contract_deps(contracts_path).unwrap();
@@ -445,7 +448,14 @@ async fn test_erc20_roundtrip(
         .unwrap()
         < proof.batch_number
     {
-        println!("Withdrawal is not verified on L1 yet");
+        let last_verified_batch = l1_client
+            .get_last_verified_batch(on_chain_proposer_address)
+            .await
+            .unwrap();
+        println!(
+            "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+            last_verified_batch, proof.batch_number
+        );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
@@ -574,7 +584,14 @@ async fn test_erc20_failed_deposit(
         .unwrap()
         < proof.batch_number
     {
-        println!("Withdrawal is not verified on L1 yet");
+        let last_verified_batch = l1_client
+            .get_last_verified_batch(on_chain_proposer_address)
+            .await
+            .unwrap();
+        println!(
+            "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+            last_verified_batch, proof.batch_number
+        );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
@@ -664,7 +681,14 @@ async fn test_forced_withdrawal(
         .unwrap()
         < proof.batch_number
     {
-        println!("Withdrawal is not verified on L1 yet");
+        let last_verified_batch = l1_client
+            .get_last_verified_batch(on_chain_proposer_address)
+            .await
+            .unwrap();
+        println!(
+            "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+            last_verified_batch, proof.batch_number
+        );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
@@ -1224,7 +1248,14 @@ async fn test_n_withdraws(
             .unwrap()
             < proof.batch_number
         {
-            println!("Withdrawal is not verified on L1 yet");
+            let last_verified_batch = eth_client
+                .get_last_verified_batch(on_chain_proposer_address)
+                .await
+                .unwrap();
+            println!(
+                "Withdrawal is not verified on L1 yet. Last verified batch: {:?}, needed: {:?}",
+                last_verified_batch, proof.batch_number
+            );
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }
@@ -1576,7 +1607,8 @@ fn l1_rich_wallet_private_key() -> SecretKey {
     let l1_rich_wallet_pk = std::env::var("INTEGRATION_TEST_L1_RICH_WALLET_PRIVATE_KEY")
         .map(|pk| pk.parse().expect("Invalid l1 rich wallet pk"))
         .unwrap_or(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY);
-    SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
+    dbg!(l1_rich_wallet_pk);
+    dbg!(SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap())
 }
 
 fn l2_return_transfer_private_key() -> SecretKey {

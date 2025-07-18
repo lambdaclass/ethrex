@@ -4,6 +4,7 @@ pragma solidity =0.8.29;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "../CommonBridge.sol";
 import {ICommonBridge} from "../interfaces/ICommonBridge.sol";
@@ -18,7 +19,8 @@ contract OnChainProposer is
     IOnChainProposer,
     Initializable,
     UUPSUpgradeable,
-    Ownable2StepUpgradeable
+    Ownable2StepUpgradeable,
+    PausableUpgradeable
 {
     /// @notice Committed batches data.
     /// @dev This struct holds the information about the committed batches.
@@ -30,7 +32,7 @@ contract OnChainProposer is
     /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
-        bytes32 blobVersionedHash;
+        bytes32 stateDiffKZGVersionedHash;
         bytes32 processedPrivilegedTransactionsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
@@ -56,6 +58,10 @@ contract OnChainProposer is
     /// @dev Batches with a block number greater than `lastCommittedBatch` have not been committed yet.
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
+
+    // /// @dev The sequencer addresses that are authorized to commit and verify batches.
+    // mapping(address _authorizedAddress => bool)
+    //     public authorizedSequencerAddresses;
 
     address public BRIDGE;
     address public PICOVERIFIER;
@@ -119,64 +125,38 @@ contract OnChainProposer is
 
         // Set the AlignedProofAggregator address
         require(
-            ALIGNEDPROOFAGGREGATOR == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             alignedProofAggregator != address(0),
             "OnChainProposer: alignedProofAggregator is the zero address"
         );
-        require(
-            alignedProofAggregator != address(this),
-            "OnChainProposer: alignedProofAggregator is the contract address"
-        );
-
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         // Set the Risc0Groth16Verifier address
         require(
-            R0VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             r0verifier != address(0),
             "OnChainProposer: r0verifier is the zero address"
-        );
-        require(
-            r0verifier != address(this),
-            "OnChainProposer: r0verifier is the contract address"
         );
         R0VERIFIER = r0verifier;
 
         // Set the SP1Groth16Verifier address
         require(
-            SP1VERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             sp1verifier != address(0),
             "OnChainProposer: sp1verifier is the zero address"
-        );
-        require(
-            sp1verifier != address(this),
-            "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
 
         // Set the TDXVerifier address
         require(
-            TDXVERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
             tdxverifier != address(0),
             "OnChainProposer: tdxverifier is the zero address"
         );
-        require(
-            tdxverifier != address(this),
-            "OnChainProposer: tdxverifier is the contract address"
-        );
         TDXVERIFIER = tdxverifier;
+
+        // Set the SequencerRegistry address
+        require(
+            sequencer_registry != address(0),
+            "OnChainProposer: sequencer_registry is the zero address"
+        );
+        SEQUENCER_REGISTRY = sequencer_registry;
 
         // Set verification keys (or image id in risc0's case)
         SP1_VERIFICATION_KEY = sp1Vk;
@@ -190,20 +170,9 @@ contract OnChainProposer is
             bytes32(0)
         );
 
-        // Set the SequencerRegistry address
-        require(
-            SEQUENCER_REGISTRY == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            sequencer_registry != address(0),
-            "OnChainProposer: sequencer_registry is the zero address"
-        );
-        require(
-            sequencer_registry != address(this),
-            "OnChainProposer: sequencer_registry is the contract address"
-        );
-        SEQUENCER_REGISTRY = sequencer_registry;
+        // for (uint256 i = 0; i < sequencerAddresses.length; i++) {
+        //             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
+        //         }
 
         CHAIN_ID = chainId;
 
@@ -213,16 +182,8 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
-            BRIDGE == address(0),
-            "OnChainProposer: bridge already initialized"
-        );
-        require(
             bridge != address(0),
             "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
         );
         BRIDGE = bridge;
     }
@@ -249,8 +210,6 @@ contract OnChainProposer is
             lastBlockHash != bytes32(0),
             "OnChainProposer: lastBlockHash cannot be zero"
         );
-
-        // Check if commitment is equivalent to blob's KZG commitment.
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
@@ -351,7 +310,7 @@ contract OnChainProposer is
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues[16:]);
+            _verifyPublicData(batchNumber, sp1PublicValues);
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 SP1_VERIFICATION_KEY,
                 sp1PublicValues,
@@ -367,8 +326,9 @@ contract OnChainProposer is
 
         lastVerifiedBatch = batchNumber;
 
+        // In based we might want to handle multiple verification proofs for a single batch.
         // Remove previous batch commitment as it is no longer needed.
-        delete batchCommitments[batchNumber - 1];
+        // delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
     }
@@ -474,9 +434,15 @@ contract OnChainProposer is
             batchCommitments[batchNumber]
                 .processedPrivilegedTransactionsRollingHash ==
                 privilegedTransactionsHash,
-            "OnChainProposer: privileged transaction hash public input does not match with committed transactions"
+            "OnChainProposer: privileged transactions hash public input does not match with committed transactions"
         );
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
+        bytes32 blobVersionedHash = bytes32(publicData[128:160]);
+        require(
+            batchCommitments[batchNumber].stateDiffKZGVersionedHash ==
+                blobVersionedHash,
+            "OnChainProposer: blob versioned hash public input does not match with committed hash"
+        );
+        bytes32 lastBlockHash = bytes32(publicData[160:192]);
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
@@ -496,9 +462,42 @@ contract OnChainProposer is
         );
     }
 
+    // /// @inheritdoc IOnChainProposer
+    // function revertBatch(
+    //     uint256 batchNumber
+    // ) external override onlySequencer whenPaused {
+    //     require(
+    //         batchNumber >= lastVerifiedBatch,
+    //         "OnChainProposer: can't revert verified batch"
+    //     );
+    //     require(
+    //         batchNumber < lastCommittedBatch,
+    //         "OnChainProposer: no batches are being reverted"
+    //     );
+
+    //     // Remove old batches
+    //     for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
+    //         delete batchCommitments[i + 1];
+    //     }
+
+    //     lastCommittedBatch = batchNumber;
+
+    //     emit BatchReverted(batchCommitments[lastCommittedBatch].newStateRoot);
+    // }
+
     /// @notice Allow owner to upgrade the contract.
     /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyOwner {}
+
+    /// @inheritdoc IOnChainProposer
+    function pause() external override onlyOwner {
+        _pause();
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function unpause() external override onlyOwner {
+        _unpause();
+    }
 }
