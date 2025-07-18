@@ -2,7 +2,6 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    opcodes::Opcode,
     utils::{get_invalid_jump_destinations, restore_cache_state},
     vm::VM,
 };
@@ -292,12 +291,10 @@ impl CallFrame {
         }
     }
 
-    pub fn next_opcode(&self) -> Opcode {
-        self.bytecode
-            .get(self.pc)
-            .copied()
-            .map(Opcode::from)
-            .unwrap_or(Opcode::STOP)
+    #[inline(always)]
+    pub fn next_opcode(&self) -> u8 {
+        // 0 is the opcode stop.
+        self.bytecode.get(self.pc).copied().unwrap_or(0)
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {

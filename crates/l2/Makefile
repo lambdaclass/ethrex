@@ -34,8 +34,8 @@ ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
 ethrex_DEV_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
 ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
-ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics.yaml
-ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
+ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics.yaml
+ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONTRACTS_PATH=./contracts
