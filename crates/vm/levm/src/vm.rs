@@ -11,7 +11,6 @@ use crate::{
     },
     l2_precompiles,
     memory::Memory,
-    opcodes::OpCodeFn,
     precompiles,
     tracing::LevmCallTracer,
 };
@@ -65,7 +64,6 @@ pub struct VM<'a> {
     /// A pool of stacks to avoid reallocating too much when creating new call frames.
     pub stack_pool: Vec<Stack>,
     pub vm_type: VMType,
-    pub(crate) opcode_table: Option<[OpCodeFn<'a>; 256]>,
 }
 
 impl<'a> VM<'a> {
@@ -78,7 +76,7 @@ impl<'a> VM<'a> {
     ) -> Self {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        let mut vm = Self {
+        Self {
             call_frames: vec![],
             env,
             substate: Substate::default(),
@@ -91,12 +89,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
-            opcode_table: None,
-        };
-
-        vm.setup_opcode_table();
-
-        vm
+        }
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
@@ -188,17 +181,13 @@ impl<'a> VM<'a> {
             return self.execute_precompile();
         }
 
-        let Some(opcode_table) = self.opcode_table else {
-            return Err(VMError::Internal(InternalError::MissingOpcodeTable));
-        };
-
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = opcode_table[opcode as usize].call(self);
+            let op_result = VM::OPCODE_TABLE[opcode as usize].call(self);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {

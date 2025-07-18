@@ -365,17 +365,15 @@ impl<'a> OpCodeFn<'a> {
 }
 
 impl<'a> VM<'a> {
+    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
+    pub(crate) const OPCODE_TABLE: [OpCodeFn<'a>; 256] = VM::build_opcode_table();
+
     /// Setups the opcode lookup function pointer table.
     ///
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn setup_opcode_table(&mut self) {
-        if self.opcode_table.is_some() {
-            return;
-        }
-
-        let mut opcode_table: [OpCodeFn<'a>; 256] =
-            std::array::from_fn(|_| OpCodeFn(VM::on_invalid_opcode));
+    pub(crate) const fn build_opcode_table() -> [OpCodeFn<'a>; 256] {
+        let mut opcode_table: [OpCodeFn<'a>; 256] = [OpCodeFn(VM::on_invalid_opcode); 256];
 
         opcode_table[Opcode::STOP as usize] = OpCodeFn(VM::op_stop);
         opcode_table[Opcode::MLOAD as usize] = OpCodeFn(VM::op_mload);
@@ -531,7 +529,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::LOG3 as usize] = OpCodeFn(VM::op_log::<3>);
         opcode_table[Opcode::LOG4 as usize] = OpCodeFn(VM::op_log::<4>);
 
-        self.opcode_table = Some(opcode_table);
+        opcode_table
     }
 
     /// Used within the opcode table for invalid opcodes.
