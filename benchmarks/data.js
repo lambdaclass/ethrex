@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752838181868,
+  "lastUpdate": 1752838444289,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4645,6 +4645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211134435450,
             "range": "± 649571186",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d0cb238de7d942202283a47fb8f937144cf595eb",
+          "message": "perf(levm): use a lookup table for opcode execution (#3669)\n\n**Motivation**\n\nThe current match is not the fastest option, a function lookup table is\nbetter.\n\nOn gas benchmarks:\n\n- 24% further improvement on MSTORE on top of the new memory model pr\n- Improvement on all gas benches\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3353",
+          "timestamp": "2025-07-18T10:37:32Z",
+          "tree_id": "0245ea0a64492e20d5dac49e92e1aae31311c387",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d0cb238de7d942202283a47fb8f937144cf595eb"
+        },
+        "date": 1752838432272,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210050718364,
+            "range": "± 648313586",
             "unit": "ns/iter"
           }
         ]
