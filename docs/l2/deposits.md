@@ -266,19 +266,20 @@ sequenceDiagram
         actor L1Alice
         actor Sequencer
         participant CommonBridge
+        participant OnChainProposer
     end
 
     L1Alice ->> CommonBridge: Sends a privileged transaction
 
     Note over Sequencer: Sequencer goes offline for a long time
-    Sequencer ->> CommonBridge: Sends batch as usual
-    CommonBridge ->> Sequencer: Error
+    Sequencer ->> OnChainProposer: Sends batch as usual
+    OnChainProposer ->> Sequencer: Error
     Note over Sequencer: Operator configures the sequencer to catch up
-    Sequencer ->> CommonBridge: Sends batch of only privileged transactions
-    CommonBridge ->> Sequencer: OK
-    Sequencer ->> CommonBridge: Sends batch of only privileged transactions
-    CommonBridge ->> Sequencer: OK
-    Note over Sequencer: Sequencer catches up
-    Sequencer ->> CommonBridge: Sends batch as usual
-    CommonBridge ->> Sequencer: OK
+    Sequencer ->> OnChainProposer: Sends batch of only privileged transactions
+    OnChainProposer ->> Sequencer: OK
+    Sequencer ->> OnChainProposer: Sends batch with remaining expired privileged transactions, along with other transactions
+    OnChainProposer ->> Sequencer: OK
+    Note over Sequencer: Sequencer is now catched up
+    Sequencer ->> OnChainProposer: Sends batch as usual
+    OnChainProposer ->> Sequencer: OK
 ```
