@@ -70,17 +70,28 @@ pub fn prove(
     let mut stdin = SP1Stdin::new();
     stdin.write(&JSONProgramInput(input));
 
-    let setup = &*PROVER_SETUP;
-
-    // contains the receipt along with statistics about execution of the guest
-    let proof = if aligned_mode {
-        setup.client.prove(&setup.pk, &stdin).compressed().run()?
+    let (proof, vk) = if cfg!(feature = "gpu") {
+        let client = ProverClient::builder().cuda().local().port(3001).build();
+        let (pk, vk) = client.setup(PROGRAM_ELF);
+        let proof = if aligned_mode {
+            client.prove(&pk, &stdin).compressed().run()?
+        } else {
+            client.prove(&pk, &stdin).groth16().run()?
+        };
+        (proof, vk)
     } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?
+        let client = ProverClient::builder().cpu().build();
+        let (pk, vk) = client.setup(PROGRAM_ELF);
+        let proof = if aligned_mode {
+            client.prove(&pk, &stdin).compressed().run()?
+        } else {
+            client.prove(&pk, &stdin).groth16().run()?
+        };
+        (proof, vk)
     };
 
     info!("Successfully generated SP1Proof.");
-    Ok(ProveOutput::new(proof, setup.vk.clone()))
+    Ok(ProveOutput::new(proof, vk))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
