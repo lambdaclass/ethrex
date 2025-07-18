@@ -14,7 +14,7 @@ use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 
 use rand::random;
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
@@ -508,7 +508,7 @@ where
     .concat();
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
-        PublicKey::from_secret_key(&Secp256k1::new(), &state.signer),
+        PublicKey::from_secret_key(secp256k1::global::SECP256K1, &state.signer),
         state.client_version.clone(),
     ));
 

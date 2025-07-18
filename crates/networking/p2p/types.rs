@@ -7,7 +7,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
 use std::{
@@ -300,7 +300,7 @@ impl NodeRecord {
             .push(("ip".into(), node.ip.encode_to_vec().into()));
         record.pairs.push((
             "secp256k1".into(),
-            PublicKey::from_secret_key(&Secp256k1::new(), signer)
+            PublicKey::from_secret_key(secp256k1::global::SECP256K1, signer)
                 .serialize()
                 .encode_to_vec()
                 .into(),

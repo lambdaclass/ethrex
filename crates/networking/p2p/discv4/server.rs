@@ -15,7 +15,7 @@ use crate::{
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
-use secp256k1::{PublicKey, Secp256k1, ecdsa::Signature};
+use secp256k1::{PublicKey, ecdsa::Signature};
 
 use std::{
     collections::HashSet,
@@ -426,7 +426,7 @@ impl Discv4Server {
                                     DiscoveryError::InvalidMessage("digest must be 32 bytes".into())
                                 })?;
 
-                            Secp256k1::verification_only()
+                            secp256k1::global::SECP256K1
                                 .verify_ecdsa(&msg, &signature, &public_key)
                                 .is_ok()
                         }

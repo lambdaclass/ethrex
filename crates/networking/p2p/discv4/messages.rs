@@ -12,10 +12,7 @@ use ethrex_rlp::{
     structs::{self, Decoder, Encoder},
 };
 use secp256k1::SecretKey;
-use secp256k1::{
-    Secp256k1,
-    ecdsa::{RecoverableSignature, RecoveryId},
-};
+use secp256k1::ecdsa::{RecoverableSignature, RecoveryId};
 use sha3::{Digest, Keccak256};
 
 #[derive(Debug, PartialEq)]
@@ -64,7 +61,7 @@ impl Packet {
         let rid = RecoveryId::from_i32(signature_bytes[64].into())
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
 
-        let peer_pk = Secp256k1::new()
+        let peer_pk = secp256k1::global::SECP256K1
             .recover_ecdsa(
                 &secp256k1::Message::from_digest(digest),
                 &RecoverableSignature::from_compact(&signature_bytes[0..64], rid)
