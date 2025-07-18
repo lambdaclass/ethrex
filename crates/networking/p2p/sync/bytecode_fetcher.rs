@@ -4,16 +4,18 @@
 //! Bytecodes are not tied to a block so this process will not be affected by pivot staleness
 //! The fetcher will remain active and listening until a termination signal (an empty batch) is received
 
+use std::time::Instant;
+
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::peer_handler::PeerHandler;
 
 use super::{
-    BYTECODE_BATCH_SIZE, MAX_CHANNEL_MESSAGES, SyncError,
+    BYTECODE_BATCH_SIZE, MAX_CHANNEL_MESSAGES, SHOW_PROGRESS_INTERVAL_DURATION, SyncError,
     fetcher_queue::{read_incoming_requests, spawn_fetch_tasks},
 };
 
@@ -65,10 +67,18 @@ async fn bytecode_fetcher(
             .await
             .map(|res| (res, false))
     };
+    let mut last_update = Instant::now();
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose incoming messages
     let mut incoming = true;
     while incoming || !pending_bytecodes.is_empty() {
+        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_update = Instant::now();
+            info!(
+                "Bytecode Fetching in Progress, queuded: {}",
+                pending_bytecodes.len(),
+            );
+        }
         if cancel_token.is_cancelled() {
             // TODO: store them in DB
             tracing::warn!(
