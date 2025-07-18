@@ -504,7 +504,7 @@ mod tests {
             addr.ip(),
             addr.port(),
             addr.port(),
-            dbg!(public_key_from_signing_key(&signer)),
+            public_key_from_signing_key(&signer),
         );
         let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
         let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
