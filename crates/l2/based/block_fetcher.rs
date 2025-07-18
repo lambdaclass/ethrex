@@ -36,7 +36,7 @@ pub enum BlockFetcherError {
     EthClientError(#[from] ethrex_rpc::clients::EthClientError),
     #[error("Block Fetcher failed due to a Store error: {0}")]
     StoreError(#[from] ethrex_storage::error::StoreError),
-    #[error("State Updater failed due to a RollupStore error: {0}")]
+    #[error("Block Fetcher failed due to a RollupStore error: {0}")]
     RollupStoreError(#[from] RollupStoreError),
     #[error("Internal Error: {0}")]
     InternalError(String),
@@ -88,10 +88,29 @@ impl BlockFetcherState {
         sequencer_state: SequencerState,
     ) -> Result<Self, BlockFetcherError> {
         let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
-        let last_l1_block_fetched = eth_client
-            .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
-            .await?
-            .into();
+
+        let last_l1_block_fetched = match rollup_store.get_latest_safe_batch().await? {
+            Some(latest_safe_batch) => {
+                let last_l1_block_fetched = latest_safe_batch.last_block;
+
+                let latest_store_block = store.get_latest_block_number().await?;
+
+                for block_number in last_l1_block_fetched + 1..=latest_store_block {
+                    info!("removing block {block_number}");
+                    store.remove_block(block_number).await?;
+                }
+                store
+                    .update_latest_block_number(last_l1_block_fetched)
+                    .await?;
+                last_l1_block_fetched
+            }
+            None => {
+                eth_client
+                    .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
+                    .await?
+            }
+        };
+
         Ok(Self {
             eth_client,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
@@ -100,7 +119,7 @@ impl BlockFetcherState {
             blockchain,
             sequencer_state,
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
-            last_l1_block_fetched,
+            last_l1_block_fetched: last_l1_block_fetched.into(),
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
         })
     }
