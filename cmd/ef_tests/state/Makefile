@@ -163,4 +163,4 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 ## New EF state tests runner
 TESTS_PATH := ./vectors/GeneralStateTests
 run-new-runner:
-	cargo test --package ef_tests-state --test new_runner -- $(TESTS_PATH)
+	cargo test --package ef_tests-state --test new_runner --release -- $(TESTS_PATH)
