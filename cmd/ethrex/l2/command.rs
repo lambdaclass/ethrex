@@ -397,16 +397,18 @@ impl Command {
                                 .await
                                 .expect("Error applying account updates");
 
-                            let (new_state_root, state_updates, accounts_updates) =
+                            let (new_state_root, state_updates, accounts_updates, invalidated_state_nodes) =
                                 (
                                     account_updates_list.state_trie_hash,
                                     account_updates_list.state_updates,
-                                    account_updates_list.storage_updates
+                                    account_updates_list.storage_updates,
+                                    account_updates_list.invalidated_state_nodes,
                                 );
 
                             let pseudo_update_batch = UpdateBatch {
                                 account_updates: state_updates,
                                 storage_updates: accounts_updates,
+                                invalidated_state_nodes,
                                 blocks: vec![],
                                 receipts: vec![],
                                 code_updates: vec![],

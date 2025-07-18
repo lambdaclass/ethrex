@@ -12,6 +12,7 @@ use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
+use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, warn};
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
     initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2,
     networks::Network,
-    utils::{self, get_client_version, set_datadir},
+    utils::{self, get_client_version, set_datadir, start_pruner_task},
 };
 
 #[allow(clippy::upper_case_acronyms)]
@@ -294,6 +295,7 @@ impl Subcommand {
                 remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
+                let cancel_token = CancellationToken::new();
                 if removedb {
                     remove_db(&opts.datadir.clone(), opts.force);
                 }
@@ -305,7 +307,15 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(&path, &opts.datadir, genesis, opts.evm, blockchain_type).await?;
+                import_blocks(
+                    &path,
+                    &opts.datadir,
+                    genesis,
+                    opts.evm,
+                    blockchain_type,
+                    cancel_token,
+                )
+                .await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
@@ -354,9 +364,12 @@ pub async fn import_blocks(
     genesis: Genesis,
     evm: EvmEngine,
     blockchain_type: BlockchainType,
+    cancel_token: CancellationToken,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
+    start_pruner_task(store.clone(), cancel_token);
+
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
 

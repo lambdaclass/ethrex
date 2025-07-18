@@ -1,6 +1,7 @@
+use crate::store::BlockNumHash;
 use crate::{
     UpdateBatch,
-    api::StoreEngine,
+    api::{KEEP_BLOCKS, StoreEngine},
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
@@ -12,10 +13,11 @@ use ethrex_common::types::{
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
+use tokio_util::sync::CancellationToken;
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
@@ -47,6 +49,24 @@ struct StoreInner {
     state_snapshot: BTreeMap<H256, AccountState>,
     // Stores Storage trie leafs from the last downloaded tries
     storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    /// State trie pruning log
+    state_trie_pruning_log: BTreeMap<BlockNumHash, HashSet<[u8; 32]>>,
+    /// Storage trie pruning log
+    storage_trie_pruning_log: BTreeMap<BlockNumHash, HashSet<([u8; 32], NodeHash)>>,
+    /// Reference counters for [`state_trie_nodes`](`StoreInner::state_trie_nodes`)
+    /// Used to keep track of the number of times a node is referenced and avoid deleting it
+    /// when it is still referenced by the state trie.
+    /// This counter is incremented when a node is inserted into the state trie
+    /// and decremented when a node is removed from the state trie. When the counter reaches 0,
+    /// the node is deleted.
+    state_trie_ref_counters: HashMap<NodeHash, u32>,
+    /// Reference counters for [`storage_trie_nodes`](`StoreInner::storage_trie_nodes`)
+    /// Used to keep track of the number of times a node is referenced and avoid deleting it
+    /// when it is still referenced by the storage trie.
+    /// This counter is incremented when a node is inserted into the storage trie
+    /// and decremented when a node is removed from the storage trie. When the counter reaches 0,
+    /// the node is deleted.
+    storage_trie_ref_counters: HashMap<(H256, NodeHash), u32>,
 }
 
 #[derive(Default, Debug)]
@@ -88,33 +108,153 @@ impl Store {
 #[async_trait::async_trait]
 impl StoreEngine for Store {
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        // Validation first - fail fast
         let mut store = self.inner()?;
+
+        if let (Some(first_block), Some(last_block)) =
+            (update_batch.blocks.first(), update_batch.blocks.last())
         {
-            // store account updates
-            let mut state_trie_store = store
-                .state_trie_nodes
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
+            let parent_block: BlockNumHash = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
+            let final_block: BlockNumHash = (last_block.header.number, last_block.hash()).into();
+
+            // Preparar state trie updates
+            let mut state_trie_updates = Vec::new();
             for (node_hash, node_data) in update_batch.account_updates {
-                state_trie_store.insert(node_hash, node_data);
+                tracing::debug!(
+                    node_hash = hex::encode(node_hash),
+                    parent_block_number = parent_block.block_number,
+                    parent_block_hash = hex::encode(parent_block.block_hash),
+                    final_block_number = final_block.block_number,
+                    final_block_hash = hex::encode(final_block.block_hash),
+                    "[WRITING STATE TRIE NODE]",
+                );
+                state_trie_updates.push((node_hash, node_data));
+            }
+
+            let mut storage_updates_by_address: HashMap<H256, Vec<(NodeHash, Vec<u8>)>> =
+                HashMap::new();
+            let mut storage_invalidations_by_address: HashMap<H256, Vec<H256>> = HashMap::new();
+
+            for (hashed_address, nodes, invalid_nodes) in update_batch.storage_updates {
+                let mut prepared_nodes = Vec::new();
+                for (node_hash, node_data) in nodes {
+                    tracing::debug!(
+                        hashed_address = hex::encode(hashed_address.0),
+                        node_hash = hex::encode(node_hash),
+                        parent_block_number = parent_block.block_number,
+                        parent_block_hash = hex::encode(parent_block.block_hash),
+                        final_block_number = final_block.block_number,
+                        final_block_hash = hex::encode(final_block.block_hash),
+                        "[WRITING STORAGE TRIE NODE]",
+                    );
+                    prepared_nodes.push((node_hash, node_data));
+                }
+                storage_updates_by_address.insert(hashed_address, prepared_nodes);
+
+                storage_invalidations_by_address.insert(hashed_address, invalid_nodes);
+            }
+
+            // Process state trie updates - separate ref counting from node insertion
+            for (node_hash, _) in &state_trie_updates {
+                // Increment reference counter
+                *store.state_trie_ref_counters.entry(*node_hash).or_insert(0) += 1;
+            }
+
+            {
+                let mut state_trie_store = store
+                    .state_trie_nodes
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
+
+                for (node_hash, node_data) in state_trie_updates {
+                    // Insert/update node data
+                    state_trie_store.insert(node_hash, node_data);
+                }
+            }
+
+            // State trie invalidations
+            for node_hash in update_batch.invalidated_state_nodes {
+                store
+                    .state_trie_pruning_log
+                    .entry(final_block)
+                    .or_default()
+                    .insert(node_hash.0);
+            }
+            // Process storage trie ref counts first
+            for (hashed_address, prepared_nodes) in &storage_updates_by_address {
+                for (node_hash, _) in prepared_nodes {
+                    // Increment reference counter for storage node
+                    *store
+                        .storage_trie_ref_counters
+                        .entry((*hashed_address, *node_hash))
+                        .or_insert(0) += 1;
+                }
+            }
+
+            for (hashed_address, prepared_nodes) in storage_updates_by_address {
+                // Add all the nodes for the specific address
+                let mut addr_store = store
+                    .storage_trie_nodes
+                    .entry(hashed_address)
+                    .or_default()
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
+
+                for (node_hash, node_data) in prepared_nodes {
+                    tracing::debug!(
+                        hashed_address = hex::encode(hashed_address.0),
+                        stored_node_hash = hex::encode(node_hash),
+                        "[STORING STORAGE NODE]"
+                    );
+
+                    addr_store.insert(node_hash, node_data);
+                }
+            }
+
+            // Storage invalidations
+            for (hashed_address, invalid_nodes) in storage_invalidations_by_address {
+                let key_address: [u8; 32] = hashed_address.into();
+                for node_hash in invalid_nodes {
+                    store
+                        .storage_trie_pruning_log
+                        .entry(final_block)
+                        .or_default()
+                        .insert((key_address, NodeHash::Hashed(node_hash)));
+                }
+            }
+        } else {
+            // In case that we are in a reconstruct scenario (L2), we need to update the state and storage tries
+            {
+                let mut state_trie_store = store
+                    .state_trie_nodes
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
+
+                for (node_hash, node_data) in update_batch.account_updates {
+                    state_trie_store.insert(node_hash, node_data);
+                }
+            }
+
+            for (hashed_address, nodes, _invalidated_nodes) in update_batch.storage_updates {
+                let mut addr_store = store
+                    .storage_trie_nodes
+                    .entry(hashed_address)
+                    .or_default()
+                    .lock()
+                    .map_err(|_| StoreError::LockError)?;
+                for (node_hash, node_data) in nodes {
+                    addr_store.insert(node_hash, node_data);
+                }
             }
         }
 
         // store code updates
         for (hashed_address, code) in update_batch.code_updates {
             store.account_codes.insert(hashed_address, code);
-        }
-
-        for (hashed_address, nodes) in update_batch.storage_updates {
-            let mut addr_store = store
-                .storage_trie_nodes
-                .entry(hashed_address)
-                .or_default()
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            for (node_hash, node_data) in nodes {
-                addr_store.insert(node_hash, node_data);
-            }
         }
 
         for block in update_batch.blocks {
@@ -142,6 +282,156 @@ impl StoreEngine for Store {
                     .or_default()
                     .insert(index as u64, receipt);
             }
+        }
+
+        Ok(())
+    }
+
+    fn prune_state_and_storage_log(
+        &self,
+        // TODO: either don't receive it or consider it after each iteration
+        cancellation_token: CancellationToken,
+    ) -> Result<(), StoreError> {
+        if cancellation_token.is_cancelled() {
+            tracing::warn!("Received shutdown signal, aborting pruning");
+            return Ok(());
+        }
+
+        let mut store = self.inner()?;
+
+        // Get the block number of the last state trie pruning log entry
+        if let Some(&max_block) = store.state_trie_pruning_log.keys().last() {
+            let keep_from = max_block.block_number.saturating_sub(KEEP_BLOCKS);
+            tracing::debug!(
+                keep_from = keep_from,
+                last_num = max_block.block_number,
+                "[KEEPING STATE TRIE PRUNING LOG]"
+            );
+
+            // Get the blocks to remove from the state trie pruning log
+            // from the start to the keep from block number
+            let blocks_to_remove: Vec<_> = store
+                .state_trie_pruning_log
+                .iter()
+                .take_while(|(block, _)| block.block_number < keep_from)
+                .map(|(block, _)| *block)
+                .collect();
+
+            // Process each block and decrement counters directly
+            for block in blocks_to_remove {
+                let hashes = store
+                    .state_trie_pruning_log
+                    .remove(&block)
+                    .ok_or(StoreError::LockError)?;
+
+                let mut nodes_to_delete = Vec::new();
+
+                // Get the nodes to delete from the state trie
+                for hash in hashes {
+                    let node_hash = NodeHash::Hashed(hash.into());
+
+                    // Decrement reference counter for state node
+                    if let Some(counter) = store.state_trie_ref_counters.get_mut(&node_hash) {
+                        *counter -= 1;
+
+                        // Only delete if reference count reaches 0
+                        if *counter == 0 {
+                            nodes_to_delete.push(node_hash);
+                            store.state_trie_ref_counters.remove(&node_hash);
+                        }
+                    }
+                }
+
+                // Delete nodes from the state trie and the pruning log
+                if !nodes_to_delete.is_empty() {
+                    let mut trie = store
+                        .state_trie_nodes
+                        .lock()
+                        .map_err(|_| StoreError::LockError)?;
+
+                    for key in nodes_to_delete {
+                        trie.remove(&key);
+                        tracing::debug!(
+                            node = hex::encode(key),
+                            block_number = max_block.block_number,
+                            block_hash = hex::encode(max_block.block_hash.0.as_ref()),
+                            "[DELETING STATE NODE]"
+                        );
+                    }
+                }
+            }
+
+            tracing::debug!(
+                keep_from = keep_from,
+                last_num = max_block.block_number,
+                "[STOPPING STATE TRIE PRUNING]"
+            );
+        }
+
+        // Get the block number of the last storage trie pruning log entry
+        if let Some(&max_block) = store.storage_trie_pruning_log.keys().last() {
+            let keep_from = max_block.block_number.saturating_sub(KEEP_BLOCKS);
+            tracing::debug!(
+                keep_from,
+                last_num = max_block.block_number,
+                "[KEEPING STORAGE TRIE PRUNING LOG]"
+            );
+
+            // Get the blocks to remove from the storage trie pruning log
+            // from the start to the keep from block number
+            let blocks_to_remove: Vec<_> = store
+                .storage_trie_pruning_log
+                .iter()
+                .take_while(|(block, _)| block.block_number < keep_from)
+                .map(|(block, _)| *block)
+                .collect();
+
+            // Process each block and decrement counters directly
+            for block in blocks_to_remove {
+                let entries = store
+                    .storage_trie_pruning_log
+                    .remove(&block)
+                    .ok_or(StoreError::LockError)?;
+
+                let mut storage_nodes_to_delete = Vec::new();
+
+                // Get the nodes to delete from the storage trie
+                for (addr_hash, node_hash) in entries {
+                    let addr = H256(addr_hash);
+                    let storage_key = (addr, node_hash);
+
+                    // Decrement reference counter for storage node
+                    if let Some(counter) = store.storage_trie_ref_counters.get_mut(&storage_key) {
+                        *counter -= 1;
+
+                        // Only delete if reference count reaches 0
+                        if *counter == 0 {
+                            storage_nodes_to_delete.push((addr, node_hash));
+                            store.storage_trie_ref_counters.remove(&storage_key);
+                        }
+                    }
+                }
+
+                // Remove storage nodes from tries
+                for (addr, key) in storage_nodes_to_delete {
+                    if let Some(storage_store) = store.storage_trie_nodes.get(&addr) {
+                        let mut trie = storage_store.lock().map_err(|_| StoreError::LockError)?;
+
+                        trie.remove(&key);
+                        tracing::debug!(
+                            hashed_address = hex::encode(addr.0),
+                            node_hash = hex::encode(key),
+                            "[DELETING STORAGE NODE]"
+                        );
+                    }
+                }
+            }
+
+            tracing::debug!(
+                keep_from = keep_from,
+                last_num = max_block.block_number,
+                "[STOPPING STORAGE TRIE PRUNING]"
+            );
         }
 
         Ok(())

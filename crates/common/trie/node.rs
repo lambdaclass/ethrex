@@ -8,6 +8,7 @@ use std::{
 };
 
 pub use branch::BranchNode;
+use ethereum_types::H256;
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
@@ -175,10 +176,11 @@ impl Node {
         db: &dyn TrieDB,
         path: Nibbles,
         value: impl Into<ValueOrHash>,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<Node, TrieError> {
         match self {
-            Node::Branch(n) => n.insert(db, path, value.into()),
-            Node::Extension(n) => n.insert(db, path, value.into()),
+            Node::Branch(n) => n.insert(db, path, value.into(), invalidated_nodes),
+            Node::Extension(n) => n.insert(db, path, value.into(), invalidated_nodes),
             Node::Leaf(n) => n.insert(path, value.into()),
         }
     }
@@ -189,10 +191,11 @@ impl Node {
         self,
         db: &dyn TrieDB,
         path: Nibbles,
+        invalidated_nodes: &mut Vec<H256>,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         match self {
-            Node::Branch(n) => n.remove(db, path),
-            Node::Extension(n) => n.remove(db, path),
+            Node::Branch(n) => n.remove(db, path, invalidated_nodes),
+            Node::Extension(n) => n.remove(db, path, invalidated_nodes),
             Node::Leaf(n) => n.remove(path),
         }
     }
