@@ -361,6 +361,7 @@ pub enum ConnectionHandlerError {}
 #[derive(Debug, Clone)]
 pub enum ConnectionHandlerInMessage {
     Ping {
+        from: SocketAddr,
         message: PingMessage,
         hash: H256,
         sender_public_key: H512,
@@ -393,6 +394,7 @@ impl ConnectionHandlerInMessage {
     pub fn from(packet: Packet, from: SocketAddr) -> Self {
         match packet.get_message() {
             Message::Ping(msg) => Self::Ping {
+                from,
                 message: msg.clone(),
                 hash: packet.get_hash(),
                 sender_public_key: packet.get_public_key(),
@@ -455,6 +457,7 @@ impl GenServer for ConnectionHandler {
     ) -> CastResponse<Self> {
         match message {
             Self::CastMsg::Ping {
+                from,
                 message: msg,
                 hash,
                 sender_public_key,
@@ -466,12 +469,7 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
-                let node = Node::new(
-                    msg.from.ip,
-                    msg.from.udp_port,
-                    msg.from.tcp_port,
-                    sender_public_key,
-                );
+                let node = Node::new(from.ip(), from.port(), msg.from.tcp_port, sender_public_key);
 
                 let _ = state.handle_ping(hash, node).await.inspect_err(|e| {
                     error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e);
