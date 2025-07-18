@@ -184,6 +184,7 @@ jobs:
       - name: Start Sequencer
         run: |
           cd crates/l2
+          source .env
 
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
@@ -193,16 +194,7 @@ jobs:
           ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           ETHREX_COMMITTER_COMMIT_TIME=180000 \
-          docker compose -f docker-compose-l2.yaml up --build ethrex_l2  --detach
-
-      - name: Debug balance
-        run: |
-          # rex l2 balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-          rex balance 0x4417092b70a3e5f10dc504d0947dd256b965fc62
-          # rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
-          rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
-          # rex l2 balance 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-          rex balance 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+          docker compose -f docker-compose-l2.yaml up --build ethrex_l2 --detach
 
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
