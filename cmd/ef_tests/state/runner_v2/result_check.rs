@@ -122,7 +122,7 @@ pub fn check_exception(
 ) {
     if execution_result.is_err() {
         let execution_err = execution_result.err().unwrap();
-        if !exception_is_expected(expected_exceptions.clone(), execution_err.clone()) {
+        if !exception_matches_expected(expected_exceptions.clone(), execution_err.clone()) {
             check_result.exception_diff = Some((expected_exceptions, Some(execution_err)));
             check_result.passed = false;
         }
@@ -132,7 +132,7 @@ pub fn check_exception(
     }
 }
 
-fn exception_is_expected(
+fn exception_matches_expected(
     expected_exceptions: Vec<TransactionExpectedException>,
     returned_error: VMError,
 ) -> bool {
