@@ -25,8 +25,10 @@ use ethrex_rlp::{
 };
 use futures::{StreamExt, stream::SplitStream};
 
-use secp256k1::{PublicKey, SecretKey, ecdsa::RecoverableSignature};
-use secp256k1::{Secp256k1, ecdsa::RecoveryId};
+use secp256k1::{
+    PublicKey, SecretKey,
+    ecdsa::{RecoverableSignature, RecoveryId},
+};
 
 use rand::Rng;
 use sha3::{Digest, Keccak256};
@@ -260,8 +262,7 @@ fn encode_auth_message(
     remote_static_pubkey: &PublicKey,
     local_ephemeral_key: &SecretKey,
 ) -> Result<Vec<u8>, RLPxError> {
-    let secp = Secp256k1::new();
-    let public_key = decompress_pubkey(&static_key.public_key(&secp));
+    let public_key = decompress_pubkey(&static_key.public_key(secp256k1::global::SECP256K1));
 
     // Derive a shared secret from the static keys.
     let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey).map_err(|error| {
@@ -311,10 +312,9 @@ fn encode_ack_message(
     local_nonce: H256,
     remote_static_pubkey: &PublicKey,
 ) -> Result<Vec<u8>, RLPxError> {
-    let secp = Secp256k1::new();
     // Compose the ack message.
     let ack_msg = AckMessage::new(
-        decompress_pubkey(&local_ephemeral_key.public_key(&secp)),
+        decompress_pubkey(&local_ephemeral_key.public_key(secp256k1::global::SECP256K1)),
         local_nonce,
     );
 
@@ -419,11 +419,9 @@ fn encrypt_message(
     aes_cipher.try_apply_keystream(&mut encoded_msg)?;
     let encrypted_auth_msg = encoded_msg;
 
-    let secp = Secp256k1::new();
-
     // Use the MAC secret to compute the MAC.
     let r_public_key = message_secret_key
-        .public_key(&secp)
+        .public_key(secp256k1::global::SECP256K1)
         .serialize_uncompressed();
     let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes)
         .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
@@ -449,12 +447,11 @@ fn retrieve_remote_ephemeral_key(
 
     let rid = RecoveryId::from_i32(signature[64].into())
         .map_err(|_| RLPxError::CryptographyError("Failed to get revery id".into()))?;
-    let secp = Secp256k1::verification_only();
 
     let sig = RecoverableSignature::from_compact(&signature[0..64], rid).map_err(|_| {
         RLPxError::CryptographyError("Failed to build recoverable signatrue".into())
     })?;
-    let pubkey = secp
+    let pubkey = secp256k1::global::SECP256K1
         .recover_ecdsa(&msg, &sig)
         .map_err(|_| RLPxError::CryptographyError("Failed to recover pubkey".into()))?;
     Ok(pubkey)
@@ -466,10 +463,9 @@ fn sign_shared_secret(
     local_ephemeral_key: &SecretKey,
 ) -> Result<Signature, RLPxError> {
     let signature_prehash = shared_secret ^ local_nonce;
-    let secp = Secp256k1::signing_only();
     let msg = secp256k1::Message::from_digest_slice(signature_prehash.as_bytes())
         .map_err(|_| RLPxError::CryptographyError("Failed to build message".into()))?;
-    let sig = secp.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
+    let sig = secp256k1::global::SECP256K1.sign_ecdsa_recoverable(&msg, local_ephemeral_key);
 
     let (rid, signature) = sig.serialize_compact();
     let mut signature_bytes = [0; 65];
@@ -597,7 +593,7 @@ mod tests {
 
     use ethrex_common::H256;
     use hex_literal::hex;
-    use secp256k1::{Secp256k1, SecretKey};
+    use secp256k1::SecretKey;
 
     use crate::rlpx::{connection::handshake::decode_ack_message, utils::decompress_pubkey};
 
@@ -616,13 +612,12 @@ mod tests {
         let expected_nonce_b =
             H256::from_str("559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd")
                 .unwrap();
-        let secp = Secp256k1::new();
         let expected_ephemeral_key_b = decompress_pubkey(
             &SecretKey::from_slice(&hex!(
                 "e238eb8e04fee6511ab04c6dd3c89ce097b11f25d584863ac2b6d5b35b1847e4"
             ))
             .unwrap()
-            .public_key(&secp),
+            .public_key(secp256k1::global::SECP256K1),
         );
 
         let ack = decode_ack_message(&static_key_a, &msg[2..], &msg[..2]).unwrap();

@@ -143,9 +143,8 @@ impl Message {
 
         let digest: [u8; 32] = Keccak256::digest(&data[signature_size..]).into();
 
-        let secp = Secp256k1::new();
-        let signature =
-            secp.sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer);
+        let signature = secp256k1::global::SECP256K1
+            .sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer);
 
         let (recovery_id, signature) = signature.serialize_compact();
 

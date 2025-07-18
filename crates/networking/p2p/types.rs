@@ -342,10 +342,9 @@ impl NodeRecord {
 
     fn sign_record(&mut self, signer: &SecretKey) -> Result<H512, String> {
         let digest = &self.get_signature_digest();
-        let secp = Secp256k1::signing_only();
         let msg = secp256k1::Message::from_digest_slice(digest)
             .map_err(|_| "Invalid message digest".to_string())?;
-        let sig = secp.sign_ecdsa_recoverable(&msg, signer);
+        let sig = secp256k1::global::SECP256K1.sign_ecdsa_recoverable(&msg, signer);
         let (_recovery_id, signature_bytes) = sig.serialize_compact();
 
         Ok(H512::from_slice(&signature_bytes))
