@@ -290,7 +290,7 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
         .or_insert_with(|| msg.block.clone());
 
     let mut next_block_to_add = l2_state.latest_block_added + 1;
-    while let Some(block) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
+    while let Some(block) = l2_state.blocks_on_queue.get(&next_block_to_add) {
         // This check is necessary if a connection to another peer already applied the block but this connection
         // did not register that update.
         if let Ok(Some(_)) = established.storage.get_block_body(next_block_to_add).await {
@@ -300,7 +300,7 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
         }
         established
             .blockchain
-            .add_block(&block)
+            .add_block(block)
             .await
             .inspect_err(|e| {
                 log_peer_error(
@@ -314,15 +314,6 @@ async fn process_new_block(established: &mut Established, msg: &NewBlock) -> Res
             })?;
         let block_hash = block.hash();
 
-        apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
-            .await
-            .map_err(|e| {
-                RLPxError::BlockchainError(ChainError::Custom(format!(
-                    "Error adding new block {} with hash {:?}, error: {e}",
-                    block.header.number,
-                    block.hash()
-                )))
-            })?;
         info!(
             "Added new block {} with hash {:?}",
             next_block_to_add, block_hash
@@ -386,6 +377,24 @@ async fn process_batch_sealed(
     msg: &BatchSealed,
 ) -> Result<(), RLPxError> {
     let l2_state = established.l2_state.connection_state_mut()?;
+    for block_number in msg.batch.first_block..=msg.batch.last_block {
+        let block_hash =
+            l2_state
+                .blocks_on_queue
+                .remove(&block_number)
+                .ok_or(RLPxError::MessageNotHandled(format!(
+                    "Tried to seal a batch but block {block_number} was not found in the queue or received by a peer."
+                )))?.hash();
+
+        apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
+            .await
+            .map_err(|e| {
+                RLPxError::BlockchainError(ChainError::Custom(format!(
+                    "Error adding new block {} with hash {:?}, error: {e}",
+                    block_number, block_hash
+                )))
+            })?;
+    }
     l2_state.store_rollup.seal_batch(*msg.batch.clone()).await?;
     info!(
         "Sealed batch {} with blocks from {} to {}",
