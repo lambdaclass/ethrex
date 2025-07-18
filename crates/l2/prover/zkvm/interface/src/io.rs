@@ -1,5 +1,5 @@
 use ethrex_common::{
-    H256,
+    H256, U256,
     types::{Block, block_execution_witness::ExecutionWitnessResult},
 };
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,8 @@ pub struct ProgramOutput {
     pub blob_versioned_hash: H256,
     /// hash of the last block in a batch
     pub last_block_hash: H256,
+    /// chain_id of the network
+    pub chain_id: U256,
 }
 
 impl ProgramOutput {
@@ -104,6 +106,7 @@ impl ProgramOutput {
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),
+            self.chain_id.to_big_endian(),
         ]
         .concat()
     }
