@@ -302,19 +302,17 @@ impl NodeRecord {
             seq,
             ..Default::default()
         };
+        // The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
+        record
+            .pairs
+            .push(("id".into(), "v4".encode_to_vec().into()));
         match node.ip {
             IpAddr::V4(ipv4_addr) => {
-                record
-                    .pairs
-                    .push(("id".into(), "v4".encode_to_vec().into()));
                 record
                     .pairs
                     .push(("ip".into(), ipv4_addr.encode_to_vec().into()));
             }
             IpAddr::V6(ipv6_addr) => {
-                record
-                    .pairs
-                    .push(("id".into(), "v6".encode_to_vec().into()));
                 record
                     .pairs
                     .push(("ip6".into(), ipv6_addr.encode_to_vec().into()));
