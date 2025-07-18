@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{constants::EMPTY_KECCACK_HASH, types::BlockHeader, BigEndianHash, H256, U256, U512};
+use ethrex_common::{
+    BigEndianHash, H256, U256, U512, constants::EMPTY_KECCACK_HASH, types::BlockHeader,
+};
 use ethrex_storage::{STATE_TRIE_SEGMENTS, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::{
@@ -20,9 +22,12 @@ use tokio::{
 use tracing::{debug, info};
 
 use crate::{
-    kademlia::PeerChannels, peer_handler::PeerHandler, sync::{
-        bytecode_fetcher, seconds_to_readable, storage_fetcher::storage_fetcher, MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START
-    }
+    kademlia::PeerChannels,
+    peer_handler::PeerHandler,
+    sync::{
+        MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, bytecode_fetcher,
+        seconds_to_readable, storage_fetcher::storage_fetcher,
+    },
 };
 
 use super::{SHOW_PROGRESS_INTERVAL_DURATION, SyncError};
@@ -46,17 +51,16 @@ pub(crate) async fn state_sync(
     let state_sync_progress = StateSyncProgress::new(Instant::now());
     let show_progress_handle =
         tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
-    for i in 0..STATE_TRIE_SEGMENTS {
-        state_trie_tasks.spawn(state_sync_segment(
-            state_root,
-            peers.clone(),
-            store.clone(),
-            i,
-            key_checkpoints.map(|chs| chs[i]),
-            state_sync_progress.clone(),
-            storage_trie_rebuilder_sender.clone(),
-        ));
-    }
+
+    // TODO CONTINUAR ACA!!! ⭐⭐⭐⭐⭐⭐
+    state_trie_tasks.spawn(state_sync_segment_2(
+        state_root,
+        peers.clone(),
+        store.clone(),
+        state_sync_progress.clone(),
+        storage_trie_rebuilder_sender.clone(),
+    ));
+
     // Check for pivot staleness
     let mut stale_pivot = false;
     let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
@@ -73,12 +77,12 @@ pub(crate) async fn state_sync(
     Ok(stale_pivot)
 }
 
+// TODO: COMPLETAR ESTA FUNCION ⭐⭐⭐⭐⭐⭐
 async fn state_sync_segment_2(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
-    segment_number: usize,
-    checkpoint: Option<H256>,
+    //checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(usize, bool, H256), SyncError> {
@@ -126,7 +130,7 @@ async fn state_sync_segment_2(
             // Request Account Range
 
             let Some((account_hashes, accounts, should_continue)) = peers
-                .request_account_range(
+                .request_account_range_2(
                     state_root,
                     start_account_hash,
                     STATE_TRIE_SEGMENTS_END[segment_number],
