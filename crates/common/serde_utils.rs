@@ -69,6 +69,51 @@ pub mod u256 {
     {
         serializer.serialize_str(&value.to_string())
     }
+
+    pub mod vec {
+        use super::*;
+        use serde::de::IntoDeserializer;
+        use serde::{Deserialize, Deserializer};
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<U256>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let raw_vec = Vec::<String>::deserialize(deserializer)?;
+            raw_vec
+                .into_iter()
+                .map(|s| {
+                    let deser = s.into_deserializer();
+                    super::deser_hex_or_dec_str(deser)
+                })
+                .collect()
+        }
+    }
+
+    pub mod hashmap {
+        use super::*;
+        use serde::de::IntoDeserializer;
+        use serde::{Deserialize, Deserializer};
+        use std::collections::HashMap;
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<U256, U256>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let raw_map = HashMap::<String, String>::deserialize(deserializer)?;
+            raw_map
+                .into_iter()
+                .map(|(k, v)| {
+                    let key_deser = k.into_deserializer();
+                    let val_deser = v.into_deserializer();
+
+                    let key = super::deser_hex_or_dec_str(key_deser)?;
+                    let value = super::deser_hex_or_dec_str(val_deser)?;
+                    Ok((key, value))
+                })
+                .collect()
+        }
+    }
 }
 
 pub mod u64 {
