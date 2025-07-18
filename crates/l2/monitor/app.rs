@@ -79,7 +79,7 @@ impl EthrexMonitor {
             tick_rate: cfg.monitor.tick_rate,
             global_chain_status: GlobalChainStatusTable::new(cfg),
             logger: TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
-            node_status: NodeStatusTable::new(sequencer_state.clone()),
+            node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.based.based),
             mempool: MempoolTable::new(),
             batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
             blocks_table: BlocksTable::new(),
@@ -200,7 +200,9 @@ impl EthrexMonitor {
     }
 
     pub async fn on_tick(&mut self) -> Result<(), MonitorError> {
-        self.node_status.on_tick(&self.store).await?;
+        self.node_status
+            .on_tick(&self.store, &self.rollup_client)
+            .await?;
         self.global_chain_status
             .on_tick(&self.eth_client, &self.store, &self.rollup_store)
             .await?;
