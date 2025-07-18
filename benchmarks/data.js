@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752860388818,
+  "lastUpdate": 1752860599035,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4855,6 +4855,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210887572622,
             "range": "± 452025328",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "afb42a55a189abd969b62e46b066a819185fafef",
+          "message": "chore(l1): include Merkle step in metrics logs (#3630)\n\nIn preparation for performance analysis tooling, we need to include\nMerkle-tree specific measures.\nRigorously speaking, this includes most of the data preparation before\ncommitting to the DB. The code assumes Merkle-tree operations to be the\nbottleneck there.\n\nThe notebook part will be handled in a separate PR based on this branch,\nso we can keep the logic in it simpler by only handling one version of\nthe logs at a time. It also should make it easier to review.\n\nBased on #3274\nCoauthored-by: @Arkenan\n\nPart of: #3331",
+          "timestamp": "2025-07-18T16:46:13Z",
+          "tree_id": "f48445b5455b560bd98288480929a48e01fd7a9e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/afb42a55a189abd969b62e46b066a819185fafef"
+        },
+        "date": 1752860586939,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209821384176,
+            "range": "± 503832231",
             "unit": "ns/iter"
           }
         ]
