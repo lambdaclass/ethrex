@@ -1,5 +1,4 @@
 use std::{collections::btree_map::Entry, net::SocketAddr, sync::Arc};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ethrex_common::{H512, types::ForkId};
 use k256::ecdsa::SigningKey;
@@ -12,6 +11,7 @@ use spawned_concurrency::{
 use tokio::{net::UdpSocket, sync::Mutex};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::utils::is_expired;
 use crate::{
     discv4::messages::{
         ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
@@ -461,7 +461,7 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "Ping", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
-                if msg.expiration < SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() {
+                if is_expired(msg.expiration) {
                     trace!("Ping expired");
                     return CastResponse::Stop;
                 }
@@ -517,7 +517,7 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
-                if msg.expiration < SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() {
+                if is_expired(msg.expiration) {
                     trace!("Neighbors expired");
                     return CastResponse::Stop;
                 }
@@ -543,7 +543,7 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "ENRRequest", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
-                if msg.expiration < SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() {
+                if is_expired(msg.expiration) {
                     trace!("ENRRequest expired");
                     return CastResponse::Stop;
                 }

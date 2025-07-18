@@ -23,6 +23,14 @@ pub fn get_msg_expiration_from_seconds(seconds: u64) -> u64 {
         .as_secs()
 }
 
+pub fn is_expired(expiration: u64) -> bool {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    expiration < now
+}
+
 pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
     let public_key = PublicKey::from(signer.verifying_key());
     let encoded = public_key.to_encoded_point(false);
