@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752853184716,
+  "lastUpdate": 1752855017141,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4735,6 +4735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212176728173,
             "range": "± 1164775792",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5f138d0fc9bc695a8e3865ab911ee75f5707ca0d",
+          "message": "ci(l2): cargo.lock check was done before compiling (#3713)\n\n**Motivation**\n\nThe check for if the Cargo.lock was not committed was being done before\ncompiling the zkvm\n\n**Description**\n\n- Move the check to after running cargo clippy",
+          "timestamp": "2025-07-18T15:13:22Z",
+          "tree_id": "efd06ead27ae2c21187f9a35de926827ff18b339",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5f138d0fc9bc695a8e3865ab911ee75f5707ca0d"
+        },
+        "date": 1752855004378,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209024604121,
+            "range": "± 280192752",
             "unit": "ns/iter"
           }
         ]
