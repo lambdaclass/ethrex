@@ -9,12 +9,14 @@ members = [
   "crates/common",
   "crates/common/rlp",
   "crates/common/trie",
+  "crates/common/crypto",
   "crates/l2/",
   "crates/l2/contracts",
   "crates/l2/common",
   "crates/l2/prover",
   "crates/l2/prover/zkvm/interface",
   "crates/l2/sdk",
+  "crates/l2/sdk/contract_utils",
   "crates/l2/storage",
   "crates/l2/networking/rpc",
   "crates/networking/p2p",
@@ -51,6 +53,7 @@ ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
+ethrex-crypto = { path = "./crates/common/crypto" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
@@ -95,6 +98,8 @@ axum = "0.8.1"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
+rustc-hex = "2.1.0"
+url = "2.5.4"
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
