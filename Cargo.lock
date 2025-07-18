@@ -4204,7 +4204,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
- "vergen-git2",
  "zkvm_interface",
 ]
 

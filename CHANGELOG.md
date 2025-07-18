@@ -2,6 +2,14 @@
 
 ## Perf
 
+### 2025-07-18
+
+- Improve BlobHash [#3704](https://github.com/lambdaclass/ethrex/pull/3704)
+
+  Added push1 and pop1 to avoid using arrays for single variable operations.
+
+  Avoid checking for blob hashes length twice.
+
 ### 2025-07-17
 
 - Use a lookup table for opcode execution [#3669](https://github.com/lambdaclass/ethrex/pull/3669)
