@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752872125644,
+  "lastUpdate": 1752873194577,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5005,6 +5005,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207733524355,
             "range": "± 421094072",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "552bc18da6f30075a0b833cf755441497ad8805e",
+          "message": "ci(l1): fix assertoor tests  (#3718)\n\n**Motivation**\n\nWe were using an old kurtosis version and when the\n`ethrex-only-different-cl` job was failing because of this\n\n**Description**\n\nIn this PR the kurtosis version used in Github actions was updated to\nlatest from 1.6 (up to now the current version is 1.10.2)\nAlso the el and cl images used in those jobs were removed, by doing this\nthe default one is used\nThis PR changes the `lambda/ethereum-package` branch into main.\n\n⚠️ **Depends on this\n[PR](https://github.com/lambdaclass/ethereum-package/pull/16)** ⚠️\n\n\nCloses #3712",
+          "timestamp": "2025-07-18T20:16:35Z",
+          "tree_id": "6c9056b04628842c517fc3e06d29558793b00943",
+          "url": "https://github.com/lambdaclass/ethrex/commit/552bc18da6f30075a0b833cf755441497ad8805e"
+        },
+        "date": 1752873182824,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207259697929,
+            "range": "± 648030357",
             "unit": "ns/iter"
           }
         ]
