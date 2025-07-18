@@ -196,8 +196,10 @@ impl EthrexMonitor {
             }
             (TabsState::Overview, KeyCode::Up) => {
                 self.selected_table().selected(false);
-                self.overview_selected_widget =
-                    self.overview_selected_widget.wrapping_sub(1) % SCROLLABLE_WIDGETS;
+                self.overview_selected_widget = self
+                    .overview_selected_widget
+                    .wrapping_add(SCROLLABLE_WIDGETS - 1)
+                    % SCROLLABLE_WIDGETS;
                 self.selected_table().selected(true);
             }
             (TabsState::Overview, KeyCode::Down) => {
