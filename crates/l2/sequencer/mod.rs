@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
-use crate::{BlockFetcher, SequencerConfig, StateUpdater, monitor};
+use crate::monitor::EthrexMonitor;
+use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_l2_common::prover::ProverType;
@@ -15,6 +16,7 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
 
@@ -37,8 +39,9 @@ pub async fn start_l2(
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    cancellation_token: CancellationToken,
     #[cfg(feature = "metrics")] l2_url: String,
-) {
+) -> Result<(), errors::SequencerError> {
     let initial_status = if cfg.based.based {
         SequencerStatus::default()
     } else {
@@ -56,14 +59,14 @@ pub async fn start_l2(
     )
     .await
     .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
-        return;
+        return Ok(());
     };
 
     if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
         error!(
             "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
         );
-        return;
+        return Ok(());
     }
 
     let _ = L1Watcher::spawn(
@@ -161,30 +164,15 @@ pub async fn start_l2(
     }
 
     if cfg.monitor.enabled {
-        task_set.spawn(monitor::start_monitor(
+        EthrexMonitor::spawn(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
-            cfg.clone(),
-        ));
+            &cfg,
+            cancellation_token.clone(),
+        )
+        .await?;
     }
 
-    if let Some(res) = task_set.join_next().await {
-        // If a task finishes, the whole sequencer should stop
-        match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error starting Proposer: {err}");
-            }
-            Err(err) => {
-                error!("JoinSet error: {err}");
-            }
-        };
-        task_set.abort_all();
-    } else {
-        // If no tasks were spawned, we let the sequencer run until it is cancelled
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
-    }
+    Ok(())
 }
