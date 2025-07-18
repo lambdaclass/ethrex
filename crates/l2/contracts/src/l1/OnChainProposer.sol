@@ -279,6 +279,19 @@ contract OnChainProposer is
             "OnChainProposer: cannot verify an uncommitted batch"
         );
 
+        // The first 2 bytes are the number of privileged transactions.
+        uint16 privileged_transaction_count = uint16(
+            bytes2(
+                batchCommitments[batchNumber]
+                    .processedPrivilegedTransactionsRollingHash
+            )
+        );
+        if (privileged_transaction_count > 0) {
+            ICommonBridge(BRIDGE).removePendingTransactionHashes(
+                privileged_transaction_count
+            );
+        }
+
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, risc0Journal);
@@ -306,18 +319,6 @@ contract OnChainProposer is
         }
 
         lastVerifiedBatch = batchNumber;
-        // The first 2 bytes are the number of privileged transactions.
-        uint16 privileged_transaction_count = uint16(
-            bytes2(
-                batchCommitments[batchNumber]
-                    .processedPrivilegedTransactionsRollingHash
-            )
-        );
-        if (privileged_transaction_count > 0) {
-            ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                privileged_transaction_count
-            );
-        }
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -352,6 +353,19 @@ contract OnChainProposer is
                 "OnChainProposer: cannot verify an uncommitted batch"
             );
 
+            // The first 2 bytes are the number of transactions.
+            uint16 privileged_transaction_count = uint16(
+                bytes2(
+                    batchCommitments[batchNumber]
+                        .processedPrivilegedTransactionsRollingHash
+                )
+            );
+            if (privileged_transaction_count > 0) {
+                ICommonBridge(BRIDGE).removePendingTransactionHashes(
+                    privileged_transaction_count
+                );
+            }
+
             // Verify public data for the batch
             _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
 
@@ -373,19 +387,6 @@ contract OnChainProposer is
                 "OnChainProposer: Aligned proof verification failed"
             );
 
-            // The first 2 bytes are the number of transactions.
-            uint16 privileged_transaction_count = uint16(
-                bytes2(
-                    batchCommitments[batchNumber]
-                        .processedPrivilegedTransactionsRollingHash
-                )
-            );
-            if (privileged_transaction_count > 0) {
-                ICommonBridge(BRIDGE).removePendingTransactionHashes(
-                    privileged_transaction_count
-                );
-            }
-
             // Remove previous batch commitment
             delete batchCommitments[batchNumber - 1];
 
@@ -401,7 +402,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 224,
+            publicData.length == 256,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -443,6 +444,14 @@ contract OnChainProposer is
         require(
             chainId == CHAIN_ID,
             "OnChainProposer: given chain id does not correspond to this network"
+        );
+        uint256 nonPrivilegedTransactions = uint256(
+            bytes32(publicData[224:256])
+        );
+        require(
+            !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
+                nonPrivilegedTransactions == 0,
+            "OnChainProposer: exceeded privileged transaction inclusion deadline, can't include non-privileged transactions"
         );
     }
 
