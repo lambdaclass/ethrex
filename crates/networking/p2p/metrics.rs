@@ -30,6 +30,10 @@ pub struct Metrics {
     pub connection_attempts_events: Arc<Mutex<VecDeque<SystemTime>>>,
     pub new_connection_attempts_rate: Gauge,
 
+    pub pings_sent: IntCounter,
+    pub pings_sent_events: Arc<Mutex<VecDeque<SystemTime>>>,
+    pub pings_sent_rate: Gauge,
+
     /// Peers we've connected over time.
     pub connection_establishments: IntCounter,
     pub connection_establishments_events: Arc<Mutex<VecDeque<SystemTime>>>,
@@ -97,6 +101,16 @@ impl Metrics {
             .entry(client_type.to_string())
             .and_modify(|count| *count += 1)
             .or_insert(1);
+    }
+
+    pub async fn record_ping_sent(&self) {
+        let mut events = self.pings_sent_events.lock().await;
+
+        events.push_back(SystemTime::now());
+
+        self.pings_sent.inc();
+
+        self.update_rate(&mut events, &self.pings_sent_rate).await;
     }
 
     pub async fn record_new_rlpx_conn_disconnection(
@@ -377,6 +391,12 @@ impl Default for Metrics {
         )
         .expect("Failed to create established_rlpx_conn_rate gauge");
 
+        let pings_sent = IntCounter::new("pings_sent", "Total number of pings sent")
+            .expect("Failed to create pings_sent counter");
+
+        let pings_sent_rate = Gauge::new("pings_sent_rate", "Rate of pings sent per second")
+            .expect("Failed to create pings_sent_rate gauge");
+
         registry
             .register(Box::new(attempted_rlpx_conn.clone()))
             .expect("Failed to register attempted_rlpx_conn counter");
@@ -392,6 +412,14 @@ impl Default for Metrics {
         registry
             .register(Box::new(established_rlpx_conn_rate.clone()))
             .expect("Failed to register established_rlpx_conn_rate gauge");
+
+        registry
+            .register(Box::new(pings_sent.clone()))
+            .expect("Failed to register pings_sent counter");
+
+        registry
+            .register(Box::new(pings_sent_rate.clone()))
+            .expect("Failed to register pings_sent_rate gauge");
 
         Metrics {
             _registry: registry,
@@ -410,6 +438,10 @@ impl Default for Metrics {
             connection_establishments: established_rlpx_conn,
             connection_establishments_events: Arc::new(Mutex::new(VecDeque::new())),
             new_connection_establishments_rate: established_rlpx_conn_rate,
+
+            pings_sent,
+            pings_sent_events: Arc::new(Mutex::new(VecDeque::new())),
+            pings_sent_rate,
 
             peers: Arc::new(Mutex::new(0)),
             peers_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),

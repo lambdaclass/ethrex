@@ -173,6 +173,7 @@ elapsed: {elapsed}
 {current_contacts} current contacts ({new_contacts_rate} contacts/m)
 {discarded_nodes} discarded nodes
 {discovered_nodes} total discovered nodes over time
+{sent_pings} pings sent ({sent_pings_rate} new pings sent/m)
 {peers} peers ({new_peers_rate} new peers/m)
 {lost_peers} lost peers
 {rlpx_connections} total peers made over time
@@ -186,6 +187,8 @@ RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reaso
             new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
             discarded_nodes = METRICS.discarded_nodes.get(),
             discovered_nodes = METRICS.discovered_nodes.get(),
+            sent_pings = METRICS.pings_sent.get(),
+            sent_pings_rate = METRICS.pings_sent_rate.get().floor(),
             peers = METRICS.peers.lock().await,
             new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
             peers_by_client = rlpx_connection_client_types,

@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
+    time::Instant,
 };
 
 use ethrex_common::H256;
@@ -17,6 +18,13 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Contact {
     pub node: Node,
+    /// The timestamp when the contact was last sent a ping.
+    /// If None, the contact has never been pinged.
+    pub validation_timestamp: Option<Instant>,
+    /// The hash of the last unacknowledged ping sent to this contact, or
+    /// None if no ping was sent yet or it was already acknowledged.
+    pub ping_hash: Option<H256>,
+
     pub n_find_node_sent: u64,
     // This contact failed to respond our Ping.
     pub disposable: bool,
@@ -24,10 +32,22 @@ pub struct Contact {
     pub knows_us: bool,
 }
 
+impl Contact {
+    pub fn was_validated(&self) -> bool {
+        self.validation_timestamp.is_some() && !self.has_pending_ping()
+    }
+
+    pub fn has_pending_ping(&self) -> bool {
+        self.ping_hash.is_some()
+    }
+}
+
 impl From<Node> for Contact {
     fn from(node: Node) -> Self {
         Self {
             node,
+            validation_timestamp: None,
+            ping_hash: None,
             n_find_node_sent: 0,
             disposable: false,
             knows_us: true,

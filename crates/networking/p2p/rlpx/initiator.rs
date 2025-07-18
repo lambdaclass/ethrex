@@ -28,7 +28,7 @@ pub struct RLPxInitiatorState {
     /// The initial interval between peer lookups, until the number of peers
     /// reaches [target_peers](RLPxInitiatorState::target_peers).
     initial_lookup_interval: Duration,
-    lookup_period: Duration,
+    lookup_interval: Duration,
 
     /// The target number of RLPx connections to reach.
     target_peers: u64,
@@ -41,7 +41,7 @@ impl RLPxInitiatorState {
         Self {
             context,
             initial_lookup_interval: Duration::from_secs(3),
-            lookup_period: Duration::from_secs(5 * 60),
+            lookup_interval: Duration::from_secs(5 * 60),
             target_peers: 50,
             new_connections_per_lookup: 5000,
         }
@@ -144,6 +144,6 @@ async fn get_lookup_interval(state: &RLPxInitiatorState) -> Duration {
         state.initial_lookup_interval
     } else {
         info!("Reached target number of peers. Using longer lookup interval.");
-        state.lookup_period
+        state.lookup_interval
     }
 }

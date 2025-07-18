@@ -325,7 +325,10 @@ pub enum ConnectionHandlerInMessage {
         hash: H256,
         sender_public_key: H512,
     },
-    Pong(Packet),
+    Pong {
+        message: PongMessage,
+        sender_public_key: H512,
+    },
     FindNode(Packet),
     Neighbors {
         message: NeighborsMessage,
@@ -351,7 +354,10 @@ impl ConnectionHandlerInMessage {
                 hash: packet.get_hash(),
                 sender_public_key: packet.get_public_key(),
             },
-            Message::Pong(..) => Self::Pong(packet),
+            Message::Pong(msg) => Self::Pong {
+                message: msg.clone(),
+                sender_public_key: packet.get_public_key(),
+            },
             Message::FindNode(..) => Self::FindNode(packet),
             Message::Neighbors(msg) => Self::Neighbors {
                 message: msg.clone(),
@@ -420,8 +426,15 @@ impl GenServer for ConnectionHandler {
                     error!(sent = "Pong", to = %format!("{sender_public_key:#x}"), err = ?e);
                 });
             }
-            Self::CastMsg::Pong(packet) => {
-                debug!(received = "Pong", from = %format!("{:#x}", packet.get_public_key()));
+            Self::CastMsg::Pong {
+                message,
+                sender_public_key,
+            } => {
+                debug!(received = "Pong", from = %format!("{:#x}", sender_public_key));
+
+                let node_id = node_id(&sender_public_key);
+
+                handle_pong(&state, message, node_id).await;
             }
             Self::CastMsg::FindNode(packet) => {
                 debug!(received = "FindNode", from = %format!("{:#x}", packet.get_public_key()));
@@ -482,4 +495,18 @@ impl GenServer for ConnectionHandler {
         }
         CastResponse::Stop
     }
+}
+
+async fn handle_pong(state: &DiscoveryServerState, message: PongMessage, node_id: H256) {
+    let mut contacts = state.kademlia.table.lock().await;
+
+    // Received a pong from a node we don't know about
+    let Some(contact) = contacts.get_mut(&node_id) else {
+        return;
+    };
+    // Received a pong for an unknown ping
+    if !contact.ping_hash.is_some_and(|ph| ph == message.ping_hash) {
+        return;
+    }
+    contact.ping_hash = None;
 }
