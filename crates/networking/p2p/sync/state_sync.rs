@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{BigEndianHash, H256, U256, U512, constants::EMPTY_KECCACK_HASH};
+use ethrex_common::{constants::EMPTY_KECCACK_HASH, types::BlockHeader, BigEndianHash, H256, U256, U512};
 use ethrex_storage::{STATE_TRIE_SEGMENTS, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::{
@@ -20,11 +20,9 @@ use tokio::{
 use tracing::{debug, info};
 
 use crate::{
-    peer_handler::PeerHandler,
-    sync::{
-        MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, bytecode_fetcher,
-        seconds_to_readable, storage_fetcher::storage_fetcher,
-    },
+    kademlia::PeerChannels, peer_handler::PeerHandler, sync::{
+        bytecode_fetcher, seconds_to_readable, storage_fetcher::storage_fetcher, MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START
+    }
 };
 
 use super::{SHOW_PROGRESS_INTERVAL_DURATION, SyncError};

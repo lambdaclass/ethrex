@@ -408,8 +408,7 @@ impl PeerHandler {
 
         ret.sort_by(|x, y| x.number.cmp(&y.number));
         info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
-        Some(ret);
-        panic!()
+        Some(ret)
     }
 
     /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
