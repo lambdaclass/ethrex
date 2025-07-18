@@ -23,6 +23,14 @@ contract SequencerRegistry is
     address[] public sequencers;
     mapping(uint256 => address) public sequencerForBatch;
 
+    modifier onlyOnChainProposer() {
+        require(
+            msg.sender == ON_CHAIN_PROPOSER,
+            "SequencerRegistry: Only onChainProposer can push sequencer"
+        );
+        _;
+    }
+
     function initialize(
         address owner,
         address onChainProposer
@@ -39,11 +47,10 @@ contract SequencerRegistry is
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
-    function pushSequencer(uint256 batchNumber, address sequencer) external {
-        require(
-            msg.sender == ON_CHAIN_PROPOSER,
-            "SequencerRegistry: Only onChainProposer can push sequencer"
-        );
+    function pushSequencer(
+        uint256 batchNumber,
+        address sequencer
+    ) external override onlyOnChainProposer {
         sequencerForBatch[batchNumber] = sequencer;
     }
 
