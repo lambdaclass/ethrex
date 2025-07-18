@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752862078234,
+  "lastUpdate": 1752866205518,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4915,6 +4915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211254886551,
             "range": "± 597374231",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "baf5803c56eba68abef46706bd64c97ce64aba47",
+          "message": "refactor(levm): make runner more usefull for debugging (#3601)\n\n**Motivation**\n\nMake runner more usefull for debugging. \n- When running specific tests, stop showing all the directories parsed\nto get the tests, and only show the ones where the selected tests are\nin.\n- Give more detail about the failing tests.\n- Don't saturate console output with endless log messages.\n\n**Description**\n\nThis pr makes changes in the runners code, now when parsing the tests\nonly the relative paths of the directories parsed are printed, not just\nthe names of the directories. (Closes #3578)\n\nTo see this change you can run:\n\n```bash\ncd cmd/ef_tests/state\nmake test-levm\n```\n\nThis command downloads and runs all tests only for levm. If you want to\nrun specific tests you can run:\n\n```bash\ncd cmd/ef_tests/state\ncargo test --package ef_tests-state --test all --release -- --forks Prague,Cancun --tests blob_tx_attribute_calldata_opcodes.json\n```\n\nIt also incorporates a new `paths` flag for running tests given their\npaths. The flag is to parse directly a test file instead of going over\nall directories trying to find the file only by its name. (This also\nCloses #3578)\n\nYou can try it by running:\n\n```bash\ncd cmd/ef_tests/state\ncargo test --package ef_tests-state --test all --release -- --forks Prague,Cancun --summary  --paths --tests LegacyTests/Cancun/GeneralStateTests/Shanghai/stEIP3855-push0/push0.json,GeneralStateTests/Shanghai/stEIP3855-push0/push0.json,GeneralStateTests/stBadOpcode/invalidAddr.json,LegacyTests/Cancun/GeneralStateTests/stBadOpcode/invalidAddr.json\n```\n\nThis should be the same as running the example we have in the read me:\n\n```bash\ncd cmd/ef_tests/state\ncargo test --package ef_tests-state --test all --release -- --forks Prague,Cancun --summary --tests push0.json,invalidAddr.json\n```\n\nFor failing tests, now the code shows the name and the path of the\nfailing tests, and it mentions the runner and the line where the error\nwas thrown. (Closes #3579)\nAlso, to provide more information about the tests, this pr also includes\nparsing more information from the test's .json in the `EFTestReport`\nstruct. This information is saved in the fields `description`, `url` and\n`reference_spec`. `url` and `reference_spec` refer to the url to the\npython test, and to the repo of the EIP the tests refer to,\nrespectively. It also lists\n[https://ethereum-tests.readthedocs.io/en/latest/test_types/gstate_tests.html#](https://ethereum-tests.readthedocs.io/en/latest/test_types/gstate_tests.html#)\nas a resource for understanding the tests. (Closes #3581)\n\nNow when a test fails it looks like this:\n```\nstate_tests/frontier/precompiles/precompile_absence: 6/6 (100.00%)\nstate_tests/cancun/eip6780_selfdestruct/dynamic_create2_selfdestruct_collision: 12/12 (100.00%)\nGeneralStateTests/stTransitionTest: 12/12 (100.00%)\nstate_tests/cancun/eip4844_blobs/blob_txs: 1173/1174 (99.91%)\n\n\nRunning failed tests with REVM...\nRe-running failed tests with REVM 1/1 - 00:00\nFailing Test: \nTest name: tests/cancun/eip4844_blobs/test_blob_txs.py::test_blob_tx_attribute_calldata_opcodes[fork_Cancun-state_test-tx_gas_500000-empty-opcode_CALLDATACOPY]\nTest path: /Users/camiladiielsi/Documents/ethrex/cmd/ef_tests/state/vectors/state_tests/cancun/eip4844_blobs/blob_txs_blob_tx_attribute_calldata_opcodes.json\n\nTest description: Test calldata related opcodes to verify their behavior is not affected by blobs.\n\n    - CALLDATALOAD\n    - CALLDATASIZE\n    - CALLDATACOPY\n\nNote: The following links may help when debugging `ef-tests`:\n- https://ethereum-tests.readthedocs.io/en/latest/test_types/gstate_tests.html#\n- Test reference spec: https://github.com/ethereum/EIPs/blob/master/EIPS/eip-4844.md\n- Test url: https://github.com/ethereum/execution-spec-tests/tree/v4.5.0/tests/cancun/eip4844_blobs/test_blob_txs.py#L1218\n\nError: Internal(MainRunnerInternal(\"Non-internal error raised when executing revm. This should not happen: Err(Internal(Custom(\\\"Error at LEVM::get_state_transitions() thrown in REVM runner line: 391 when executing ensure_post_state()\\\")))\"))\nerror: test failed, to rerun pass `-p ef_tests-state --test all`\n```\n(Note: the error shown was fabricated by changing the post hash value of\nthe test.)\n\nAnother change introduced is that now there are no more endless log\nmessages, the messages are overwritten with actualized information of\nthe tests that are being executed. (Closes #3580) You can see that by\nrunning any of the commands mentioned.\n\nThis solution is meant to be a temporary fix since there's a new runner\nbeing programmed from scratch to improve the user experience.",
+          "timestamp": "2025-07-18T18:20:27Z",
+          "tree_id": "b6823ee0a0d7af9bc64ced7939b1b34fe6222a76",
+          "url": "https://github.com/lambdaclass/ethrex/commit/baf5803c56eba68abef46706bd64c97ce64aba47"
+        },
+        "date": 1752866193448,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210347514164,
+            "range": "± 1722701120",
             "unit": "ns/iter"
           }
         ]
