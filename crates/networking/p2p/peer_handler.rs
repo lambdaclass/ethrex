@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use bytes::Bytes;
@@ -12,11 +12,8 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use k256::elliptic_curve::rand_core::le;
-use rand::{Rng, random, seq::SliceRandom};
-use spawned_rt::tasks::oneshot;
+use rand::random;
 use tokio::sync::Mutex;
-use tokio_stream::iter;
 
 use crate::{
     kademlia::{KademliaTable, PeerChannels, PeerData},
@@ -135,6 +132,8 @@ impl PeerHandler {
         sync_head: H256,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
+        let start = SystemTime::now();
+
         let mut ret = Vec::<BlockHeader>::new();
 
         let peers_table = self
@@ -200,9 +199,18 @@ impl PeerHandler {
         let chunk_limit = block_count / chunk_count as u64;
 
         // list of tasks to be executed
-        let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::with_capacity(chunk_count);
+        let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
+
         for i in 0..(chunk_count as u64) {
             tasks_queue_not_started.push_back((i * chunk_limit, chunk_limit));
+        }
+
+        // Push the reminder
+        if block_count % chunk_count as u64 != 0 {
+            tasks_queue_not_started.push_back((
+                chunk_count as u64 * chunk_limit,
+                block_count % chunk_count as u64,
+            ));
         }
 
         let mut downloaded_count = 0_u64;
@@ -239,8 +247,9 @@ impl PeerHandler {
                 }
 
                 downloaded_count += headers.len() as u64;
-                //#####info!("Downloaded {} headers from peer {}", headers.len(), peer_id);
+
                 let batch_show = downloaded_count / 10_000;
+
                 if current_show < batch_show {
                     info!(
                         "Downloaded {} headers from peer {} (current count: {downloaded_count})",
@@ -260,10 +269,8 @@ impl PeerHandler {
 
                     let new_chunk_limit = previous_chunk_limit - headers.len() as u64;
 
-                    let new_remaining = new_chunk_limit - headers.len() as u64;
-
-                    warn!(
-                        "Task for ({startblock}, {new_chunk_limit}) was not completed, re-adding to the queue, {new_remaining} remaining headers"
+                    debug!(
+                        "Task for ({startblock}, {new_chunk_limit}) was not completed, re-adding to the queue, {new_chunk_limit} remaining headers"
                     );
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
@@ -287,7 +294,7 @@ impl PeerHandler {
 
                 downloaders.insert(*peer_id, true);
 
-                info!("{peer_id} added as downloader");
+                debug!("{peer_id} added as downloader");
             }
 
             let free_downloaders = downloaders
@@ -304,7 +311,7 @@ impl PeerHandler {
                 .get(random::<usize>() % free_downloaders.len())
                 .map(|(peer_id, _)| *peer_id)
             else {
-                warn!("(2) No free downloaders available, waiting for a peer to finish, retrying");
+                debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
 
@@ -314,7 +321,7 @@ impl PeerHandler {
                 })
             else {
                 // The free downloader is not a peer of us anymore.
-                info!(
+                debug!(
                     "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
                 );
                 downloaders.remove(&free_peer_id);
@@ -330,9 +337,6 @@ impl PeerHandler {
                 let batch_show = downloaded_count / 10_000;
 
                 if current_show < batch_show {
-                    warn!(
-                        "Not all headers were downloaded, only {downloaded_count} out of {block_count} - current count: {downloaded_count}"
-                    );
                     current_show += 1;
                 }
 
@@ -382,6 +386,14 @@ impl PeerHandler {
             // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
         }
 
+        let elapsed = start.elapsed().expect("Failed to get elapsed time");
+
+        info!(
+            "Downloaded {} headers in {} seconds",
+            ret.len(),
+            format_duration(elapsed)
+        );
+
         {
             let downloaded_headers = ret.len();
             let unique_headers = ret.iter().map(|h| h.hash()).collect::<HashSet<_>>();
@@ -408,17 +420,6 @@ impl PeerHandler {
                 }
             }
         }
-
-        // {
-        //     let mut headers_sorted_by_number =
-        //         ret.iter().map(|header| header.number).collect::<Vec<_>>();
-
-        //     headers_sorted_by_number.sort();
-
-        //     while let Some([n, maybe_n_plus_1]) = headers_sorted_by_number.windows(2).next() {
-
-        //     }
-        // }
 
         // 4) assign the tasks to the peers
         //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
@@ -460,7 +461,7 @@ impl PeerHandler {
             .await
             .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
 
-        let block_headers = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+        let block_headers = tokio::time::timeout(Duration::from_secs(5), async move {
             loop {
                 match receiver.recv().await {
                     Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
@@ -1220,4 +1221,13 @@ fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequest
         BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
         BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
     })
+}
+
+fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
 }
