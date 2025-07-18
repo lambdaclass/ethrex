@@ -154,7 +154,6 @@ impl Command {
                     &fork_id,
                 )));
 
-                // let peer_table = peer_table(local_p2p_node.node_id());
                 let peer_table = peer_table();
 
                 // TODO: Check every module starts properly.
