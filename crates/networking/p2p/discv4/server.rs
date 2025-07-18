@@ -460,6 +460,11 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "Ping", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
+                if msg.expiration < SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(0) {
+                    trace!("Ping expired");
+                    return CastResponse::Stop;
+                }
+
                 let node = Node::new(
                     msg.from.ip,
                     msg.from.udp_port,
@@ -511,6 +516,11 @@ impl GenServer for ConnectionHandler {
             } => {
                 trace!(received = "Neighbors", msg = ?msg, from = %format!("{sender_public_key:#x}"));
 
+                if msg.expiration < SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(0) {
+                    trace!("Neighbors expired");
+                    return CastResponse::Stop;
+                }
+
                 let mut contacts = state.kademlia.table.lock().await;
                 let discarded_contacts = state.kademlia.discarded_contacts.lock().await;
 
@@ -531,6 +541,11 @@ impl GenServer for ConnectionHandler {
                 sender_public_key,
             } => {
                 trace!(received = "ENRRequest", msg = ?msg, from = %format!("{sender_public_key:#x}"));
+
+                if msg.expiration < SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(0) {
+                    trace!("ENRRequest expired");
+                    return CastResponse::Stop;
+                }
 
                 if let Err(err) = state.send_enr_response(hash, from).await {
                     error!(sent = "ENRResponse", to = %format!("{from}"), err = ?err);
