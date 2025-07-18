@@ -116,6 +116,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct BlockFetcher;
 
 impl BlockFetcher {
@@ -142,10 +143,6 @@ impl GenServer for BlockFetcher {
     type OutMsg = OutMessage;
     type State = BlockFetcherState;
     type Error = BlockFetcherError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,

@@ -107,6 +107,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct L1ProofSender;
 
 impl L1ProofSender {
@@ -141,10 +142,6 @@ impl GenServer for L1ProofSender {
     type State = L1ProofSenderState;
 
     type Error = ProofSenderError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,
