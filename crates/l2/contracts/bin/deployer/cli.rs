@@ -134,14 +134,6 @@ pub struct DeployerOptions {
         help = "Address of the L1 proof sender account. This is the address of the account that sends the proofs to be verified in L1."
     )]
     pub proof_sender_l1_address: Address,
-    #[arg(
-        long,
-        value_name = "PATH",
-        env = "ETHREX_DEPLOYER_CONTRACTS_PATH",
-        help_heading = "Deployer options",
-        help = "Path to the contracts directory. The default is the current directory."
-    )]
-    pub contracts_path: PathBuf,
     // TODO: This should work side by side with a risc0_deploy_verifier flag.
     #[arg(
         long = "risc0.verifier-address",
@@ -327,7 +319,6 @@ impl Default for DeployerOptions {
                 0xe2, 0x55, 0x83, 0x09, 0x9b, 0xa1, 0x05, 0xd9, 0xec, 0x0a, 0x67, 0xf5, 0xae, 0x86,
                 0xd9, 0x0e, 0x50, 0x03, 0x64, 0x25,
             ]),
-            contracts_path: PathBuf::from("."),
             risc0_verifier_address: Some(H160([
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
