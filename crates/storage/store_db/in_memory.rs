@@ -1,7 +1,7 @@
 use crate::store::BlockNumHash;
 use crate::{
     UpdateBatch,
-    api::{KEEP_BLOCKS, StoreEngine},
+    api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
@@ -17,7 +17,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-use tokio_util::sync::CancellationToken;
+
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
@@ -287,21 +287,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn prune_state_and_storage_log(
-        &self,
-        // TODO: either don't receive it or consider it after each iteration
-        cancellation_token: CancellationToken,
-    ) -> Result<(), StoreError> {
-        if cancellation_token.is_cancelled() {
-            tracing::warn!("Received shutdown signal, aborting pruning");
-            return Ok(());
-        }
-
+    fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
         let mut store = self.inner()?;
 
         // Get the block number of the last state trie pruning log entry
         if let Some(&max_block) = store.state_trie_pruning_log.keys().last() {
-            let keep_from = max_block.block_number.saturating_sub(KEEP_BLOCKS);
+            let keep_from = max_block.block_number.saturating_sub(keep_blocks);
             tracing::debug!(
                 keep_from = keep_from,
                 last_num = max_block.block_number,
@@ -370,7 +361,7 @@ impl StoreEngine for Store {
 
         // Get the block number of the last storage trie pruning log entry
         if let Some(&max_block) = store.storage_trie_pruning_log.keys().last() {
-            let keep_from = max_block.block_number.saturating_sub(KEEP_BLOCKS);
+            let keep_from = max_block.block_number.saturating_sub(keep_blocks);
             tracing::debug!(
                 keep_from,
                 last_num = max_block.block_number,

@@ -177,6 +177,9 @@ pub fn start_pruner_task(
     store: Store,
     cancellation_token: CancellationToken,
 ) -> JoinHandle<Result<(), StoreError>> {
+    // TODO: read from config
+    const KEEP_BLOCKS: u64 = 1024;
+
     let store_clone = store.clone();
 
     // Start the pruning task in the background
@@ -190,7 +193,7 @@ pub fn start_pruner_task(
                     let result = tokio::task::spawn_blocking({
                         let store = store_clone.clone();
                         // TODO: pass the block to keep
-                        move || store.prune_state_and_storage_log(cancellation_token)
+                        move || store.prune_state_and_storage_log(KEEP_BLOCKS)
                     }).await;
 
                     match result {

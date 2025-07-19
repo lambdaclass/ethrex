@@ -7,7 +7,6 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
-use tokio_util::sync::CancellationToken;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::constants::EMPTY_TRIE_HASH;
@@ -126,11 +125,8 @@ impl Store {
     }
 
     /// /// Prune the state and storage trie from the pruning log
-    pub fn prune_state_and_storage_log(
-        &self,
-        cancellation_token: CancellationToken,
-    ) -> Result<(), StoreError> {
-        self.engine.prune_state_and_storage_log(cancellation_token)
+    pub fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
+        self.engine.prune_state_and_storage_log(keep_blocks)
     }
 
     pub async fn get_account_info(
@@ -394,9 +390,23 @@ impl Store {
         let mut code_updates = Vec::new();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
+            let fixed_hashed_address = H256::from_slice(&hashed_address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(hashed_address)?;
+                let account_state = state_trie.remove(hashed_address)?;
+                if let Some(Ok(account_state)) = account_state.map(|v| AccountState::decode(&v)) {
+                    let storage_trie =
+                        self.open_storage_trie(fixed_hashed_address, account_state.storage_root)?;
+                    let invalidated_storage_nodes = storage_trie
+                        .into_iter()
+                        .map(|(_, node)| node.compute_hash().finalize())
+                        .collect();
+                    ret_storage_updates.push((
+                        fixed_hashed_address,
+                        Vec::new(),
+                        invalidated_storage_nodes,
+                    ));
+                }
                 continue;
             }
             // Add or update AccountState in the trie
@@ -416,10 +426,9 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie = self.engine.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    account_state.storage_root,
-                )?;
+                let mut storage_trie = self
+                    .engine
+                    .open_storage_trie(fixed_hashed_address, account_state.storage_root)?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -432,7 +441,7 @@ impl Store {
                     storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((
-                    H256::from_slice(&hashed_address),
+                    fixed_hashed_address,
                     storage_updates,
                     invalidated_storage_nodes,
                 ));

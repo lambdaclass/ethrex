@@ -22,14 +22,11 @@ use redb::{
     TableDefinition, TypeName, Value,
 };
 use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
-use tokio_util::sync::CancellationToken;
 
 use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::SnapStateIndex;
 use crate::{api::StoreEngine, store::BlockNumHash, utils::ChainDataIndex};
-
-const KEEP_BLOCKS: u64 = 128;
 
 const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("StateTrieNodes");
@@ -487,15 +484,7 @@ impl StoreEngine for RedBStore {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    fn prune_state_and_storage_log(
-        &self,
-        cancellation_token: CancellationToken,
-    ) -> Result<(), StoreError> {
-        if cancellation_token.is_cancelled() {
-            tracing::warn!("Received shutdown signal, aborting pruning");
-            return Ok(());
-        }
-
+    fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
         let txn = self.db.begin_write().map_err(Box::new)?;
 
         {
@@ -511,7 +500,7 @@ impl StoreEngine for RedBStore {
             } else {
                 return Ok(());
             };
-            let keep_from = last_block.saturating_sub(KEEP_BLOCKS);
+            let keep_from = last_block.saturating_sub(keep_blocks);
 
             tracing::debug!(keep_from, last_block, "[KEEPING STATE TRIE PRUNING LOG]");
 
@@ -589,7 +578,7 @@ impl StoreEngine for RedBStore {
                 } else {
                     return Ok(());
                 };
-            let keep_from = last_storage_block.saturating_sub(KEEP_BLOCKS);
+            let keep_from = last_storage_block.saturating_sub(keep_blocks);
 
             tracing::debug!(
                 keep_from,

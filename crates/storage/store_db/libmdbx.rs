@@ -33,11 +33,6 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
-
-/// The number of blocks to keep in the state and storage log tables
-/// TODO: this should be shared
-const KEEP_BLOCKS: u64 = 128;
 
 type StateTriePruningLogEntry = [u8; 32];
 dupsort!(
@@ -187,7 +182,15 @@ impl StoreEngine for Store {
                         final_block_hash = hex::encode(final_block.block_hash),
                         "[WRITING STATE TRIE NODE]",
                     );
-                    node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+                    let mut refcnt = 1;
+                    if let Some(node) = tx
+                        .get::<StateTrieNodes>(node_hash)
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
+                        refcnt += u64::from_be_bytes(bytes);
+                    }
+                    node_data.extend_from_slice(&refcnt.to_be_bytes());
                     tx.upsert::<StateTrieNodes>(node_hash, node_data)
                         .map_err(StoreError::LibmdbxError)?;
                 }
@@ -213,7 +216,15 @@ impl StoreEngine for Store {
                             final_block_hash = hex::encode(final_block.block_hash),
                             "[WRITING STORAGE TRIE NODE]",
                         );
-                        node_data.extend_from_slice(&final_block.block_number.to_be_bytes());
+                        let mut refcnt = 1;
+                        if let Some(node) = tx
+                            .get::<StorageTriesNodes>((key_1, key_2))
+                            .map_err(StoreError::LibmdbxError)?
+                        {
+                            let bytes = node[node.len() - 8..].try_into().unwrap_or_default();
+                            refcnt += u64::from_be_bytes(bytes);
+                        }
+                        node_data.extend_from_slice(&refcnt.to_be_bytes());
                         tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                             .map_err(StoreError::LibmdbxError)?;
                     }
@@ -310,15 +321,7 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    fn prune_state_and_storage_log(
-        &self,
-        cancellation_token: CancellationToken,
-    ) -> Result<(), StoreError> {
-        if cancellation_token.is_cancelled() {
-            tracing::warn!("Received shutdown signal, aborting pruning");
-            return Ok(());
-        }
-
+    fn prune_state_and_storage_log(&self, keep_blocks: u64) -> Result<(), StoreError> {
         let tx = self
             .db
             .begin_readwrite()
@@ -355,7 +358,7 @@ impl StoreEngine for Store {
             .last()
             .map_err(StoreError::LibmdbxError)?
         {
-            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
+            let keep_from = last_num.saturating_sub(keep_blocks);
             tracing::debug!(keep_from, last_num, "[KEEPING STATE TRIE PRUNING LOG]");
 
             let mut cursor_state_trie = tx
@@ -376,7 +379,7 @@ impl StoreEngine for Store {
 
                 // Delete the node from the state trie and the pruning log
                 let k_delete = NodeHash::Hashed(node_hash.into());
-                if let Some((key, _)) = cursor_state_trie
+                if let Some((key, mut value)) = cursor_state_trie
                     .seek_exact(k_delete)
                     .map_err(StoreError::LibmdbxError)?
                 {
@@ -387,12 +390,24 @@ impl StoreEngine for Store {
                             block_hash = hex::encode(block.block_hash.0.as_ref()),
                             "[DELETING STATE NODE]"
                         );
-                        cursor_state_trie
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
                         cursor_state_trie_pruning_log
                             .delete_current()
                             .map_err(StoreError::LibmdbxError)?;
+                        let refcnt_index = value.len() - 8;
+                        let bytes = value[refcnt_index..].try_into().unwrap_or_default();
+                        let mut refcnt = u64::from_be_bytes(bytes);
+                        if refcnt == 1 {
+                            cursor_state_trie
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else {
+                            refcnt -= 1;
+                            let bytes = refcnt.to_be_bytes();
+                            value[refcnt_index..].copy_from_slice(&bytes);
+                            cursor_state_trie
+                                .upsert(key, value)
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
                     }
                 }
                 kv_state_trie_pruning = cursor_state_trie_pruning_log
@@ -415,7 +430,7 @@ impl StoreEngine for Store {
             .last()
             .map_err(StoreError::LibmdbxError)?
         {
-            let keep_from = last_num.saturating_sub(KEEP_BLOCKS);
+            let keep_from = last_num.saturating_sub(keep_blocks);
             tracing::debug!(keep_from, last_num, "[KEEPING STORAGE TRIE PRUNING LOG]");
 
             let mut cursor_storage_trie = tx
@@ -439,7 +454,7 @@ impl StoreEngine for Store {
                 }
 
                 // If the storage trie hash is found, delete it from the trie and the pruning log
-                if let Some((key, _)) = cursor_storage_trie
+                if let Some((key, mut value)) = cursor_storage_trie
                     .seek_exact(storage_trie_pruning_hash)
                     .map_err(StoreError::LibmdbxError)?
                 {
@@ -451,12 +466,24 @@ impl StoreEngine for Store {
                             block_hash = hex::encode(block.block_hash.0.as_ref()),
                             "[DELETING STORAGE NODE]"
                         );
-                        cursor_storage_trie
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
                         cursor_storage_trie_pruning_log
                             .delete_current()
                             .map_err(StoreError::LibmdbxError)?;
+                        let refcnt_index = value.len() - 8;
+                        let bytes = value[refcnt_index..].try_into().unwrap_or_default();
+                        let mut refcnt = u64::from_be_bytes(bytes);
+                        if refcnt == 1 {
+                            cursor_storage_trie
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else {
+                            refcnt -= 1;
+                            let bytes = refcnt.to_be_bytes();
+                            value[refcnt_index..].copy_from_slice(&bytes);
+                            cursor_storage_trie
+                                .upsert(key, value)
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
                     }
                 }
                 kv_storage_trie_pruning = cursor_storage_trie_pruning_log
@@ -1576,7 +1603,7 @@ dupsort!(
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
-dupsort!(
+table!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
     ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>

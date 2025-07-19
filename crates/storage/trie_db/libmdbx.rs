@@ -46,7 +46,7 @@ where
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, mut value) in key_values {
             // Add 8 extra bytes to store the block number
-            value.extend_from_slice(&[0u8; 8]);
+            value.extend_from_slice(&1u64.to_be_bytes());
             txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
