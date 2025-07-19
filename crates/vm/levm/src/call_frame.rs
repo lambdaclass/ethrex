@@ -2,7 +2,7 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::{get_invalid_jump_destinations, restore_cache_state},
+    utils::{get_jumpdest_mappings, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
@@ -230,7 +230,7 @@ pub struct CallFrame {
     pub depth: usize,
     /// Sorted blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
     /// push instructions).
-    pub invalid_jump_destinations: Box<[usize]>,
+    pub jumpdest_mappings: Box<[(usize, usize)]>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -301,8 +301,7 @@ impl CallFrame {
         stack: Stack,
         memory: Memory,
     ) -> Self {
-        let invalid_jump_destinations =
-            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
+        let jumpdest_mappings = get_jumpdest_mappings(&bytecode).unwrap_or_default();
         // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
             gas_limit,
@@ -315,7 +314,7 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            invalid_jump_destinations,
+            jumpdest_mappings,
             should_transfer_value,
             is_create,
             ret_offset,
@@ -354,7 +353,7 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
+        self.jumpdest_mappings = get_jumpdest_mappings(&code)?;
         self.bytecode = code;
         Ok(())
     }
