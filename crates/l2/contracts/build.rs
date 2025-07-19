@@ -105,7 +105,7 @@ fn watch_solidity_files(dir: &Path) {
         let path = entry.path();
         if path.is_dir() {
             watch_solidity_files(&path);
-        } else if path.extension().map_or(false, |ext| ext == "sol") {
+        } else if path.extension().is_some_and(|ext| ext == "sol") {
             println!("cargo::rerun-if-changed={}", path.display());
         }
     }
