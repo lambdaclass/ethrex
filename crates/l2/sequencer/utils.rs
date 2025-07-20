@@ -83,8 +83,12 @@ pub async fn get_needed_proof_types(
             let resp = eth_client
                 .call(on_chain_proposer_address, sig.into(), Overrides::default())
                 .await?;
-            let addr = Address::from_str(&format!("0x{}", &resp[26..]))
-                .map_err(|_| EthClientError::Custom("invalid on‑chain response".into()))?;
+            let addr = Address::from_str(&format!("0x{}", &resp[26..])).map_err(|e| {
+                EthClientError::InternalError(format!(
+                    "Invalid on‑chain response: {:?}, parse error: {}",
+                    resp, e
+                ))
+            })?;
 
             if addr != DEV_MODE_ADDRESS {
                 info!("{pt} proof needed");
