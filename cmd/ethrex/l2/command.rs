@@ -39,7 +39,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{sync::Mutex, task::JoinSet};
+use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info};
 
