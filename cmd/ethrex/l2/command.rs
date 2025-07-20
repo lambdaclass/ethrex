@@ -155,7 +155,6 @@ impl Command {
 
                 // TODO: Check every module starts properly.
                 let tracker = TaskTracker::new();
-                let mut join_set = JoinSet::new();
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
@@ -206,11 +205,10 @@ impl Command {
                     })?;
 
                 let cancellation_token = CancellationToken::new();
-
-                let l2_sequencer = ethrex_l2::start_l2(
-                    store,
-                    rollup_store,
-                    blockchain,
+                let l2_task = ethrex_l2::start_l2(
+                    store.clone(),
+                    rollup_store.clone(),
+                    blockchain.clone(),
                     l2_sequencer_cfg,
                     cancellation_token.clone(),
                     #[cfg(feature = "metrics")]
@@ -220,16 +218,13 @@ impl Command {
                     ),
                 )
                 .into_future();
-
-                join_set.spawn(l2_sequencer);
+                let sequencer_handle = tokio::spawn(l2_task);
 
                 tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {
-                        join_set.abort_all();
-                    }
-                    _ = cancellation_token.cancelled() => {
-                    }
+                    _ = tokio::signal::ctrl_c() => sequencer_handle.abort(),
+                    _ = cancellation_token.cancelled() => {},
                 }
+
                 info!("Server shut down started...");
                 let node_config_path = PathBuf::from(data_dir + "/node_config.json");
                 info!("Storing config at {:?}...", node_config_path);
