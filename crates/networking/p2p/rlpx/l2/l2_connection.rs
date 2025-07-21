@@ -3,6 +3,7 @@ use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::utils::{log_peer_error, recover_address};
 use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
 use ethereum_types::Address;
+use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::Block;
@@ -226,7 +227,7 @@ async fn should_process_new_block(
     signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_block(block_hash, signature)
+        .store_signature_by_block(block_hash, Signature::from_slice(&signature))
         .await?;
     Ok(true)
 }
@@ -280,7 +281,7 @@ async fn should_process_batch_sealed(
     signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_batch(msg.batch.number, signature)
+        .store_signature_by_batch(msg.batch.number, Signature::from_slice(&signature))
         .await?;
     Ok(true)
 }

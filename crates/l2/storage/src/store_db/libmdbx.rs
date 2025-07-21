@@ -252,25 +252,30 @@ impl StoreEngineRollup for Store {
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: [u8; 65],
+        signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         let key = block_hash.as_fixed_bytes();
+        let signature = signature.to_fixed_bytes();
         self.write::<SignatureByBlockHash>(*key, signature).await
     }
 
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<[u8; 65]>, RollupStoreError> {
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         let key = block_hash.as_fixed_bytes();
-        self.read::<SignatureByBlockHash>(*key).await
+        Ok(self
+            .read::<SignatureByBlockHash>(*key)
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s)))
     }
 
     async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: [u8; 65],
+        signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
+        let signature = signature.to_fixed_bytes();
         self.write::<SignatureByBatch>(batch_number, signature)
             .await
     }
@@ -278,8 +283,11 @@ impl StoreEngineRollup for Store {
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<[u8; 65]>, RollupStoreError> {
-        self.read::<SignatureByBatch>(batch_number).await
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .read::<SignatureByBatch>(batch_number)
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s)))
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {

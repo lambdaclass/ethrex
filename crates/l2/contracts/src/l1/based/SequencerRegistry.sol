@@ -81,7 +81,9 @@ contract SequencerRegistry is
         sequencerForBatch[batchNumber] = sequencer;
     }
 
-    /// @inheritdoc ISequencerRegistry
+    /// @notice Register a sequencer.
+    /// @dev This function allows a sequencer to register itself by providing collateral.
+    /// @dev The sequencer does not have to be previously registered.
     function register(address sequencer) public payable {
         require(
             collateral[sequencer] == 0,
