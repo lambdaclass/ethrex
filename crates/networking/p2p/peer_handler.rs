@@ -188,7 +188,7 @@ impl PeerHandler {
         // let block_count = 800_000_u64;
         let chunk_count = 800_usize; // e.g. 8 tasks
 
-        let block_count = *sync_head_number.lock().await;
+        let block_count = *sync_head_number.lock().await + 1;
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count as u64;
@@ -681,6 +681,7 @@ impl PeerHandler {
 
         // 2) request the chunks from peers
 
+        std::process::exit(0);
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let mut peer_ids = HashSet::new();
