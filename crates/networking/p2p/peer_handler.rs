@@ -1,9 +1,3 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
-use indexmap::IndexMap;
 use bytes::Bytes;
 use ethrex_common::{
     H256, U256,
@@ -12,8 +6,14 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
+use indexmap::IndexMap;
 use rand::random;
 use spawned_concurrency::error::GenServerError;
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -367,7 +367,9 @@ impl PeerHandler {
                     peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
                 });
 
-                if max_score_peer_id.is_some() {
+                if max_score_peer_id.is_some()
+                    && (free_downloaders.contains(&(max_score_peer_id.unwrap(), true)))
+                {
                     // TODO: remove these logs
                     let max_score = self
                         .get_peer_score(max_score_peer_id.unwrap())
