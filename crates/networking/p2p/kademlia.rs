@@ -24,7 +24,7 @@ pub struct Bucket {
 #[derive(Debug)]
 pub struct KademliaTable {
     local_node_id: H256,
-    buckets: Vec<Bucket>,
+    pub buckets: Vec<Bucket>,
 }
 
 impl KademliaTable {
@@ -379,6 +379,27 @@ impl KademliaTable {
                 .clone()
                 .map(|channel| (peer.node.node_id(), channel))
         })
+    }
+
+    /// Returns a vector containing the node id and channels for all the peers that
+    /// support the given capability, without considering their scores.
+    pub fn get_all_peer_channels(&self, capabilities: &[Capability]) -> Vec<(H256, PeerChannels)> {
+        let filter = |peer: &PeerData| -> bool {
+            // Search for peers with an active connection that support the required capabilities
+            peer.channels.is_some()
+                && capabilities
+                    .iter()
+                    .any(|cap| peer.supported_capabilities.contains(cap))
+        };
+        let filtered_peers: Vec<&PeerData> = self.filter_peers(&filter).collect();
+        filtered_peers
+            .iter()
+            .filter_map(|peer| {
+                peer.channels
+                    .clone()
+                    .map(|channel| (peer.node.node_id(), channel))
+            })
+            .collect()
     }
 }
 

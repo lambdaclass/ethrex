@@ -106,22 +106,6 @@ impl Syncer {
         }
     }
 
-    /// Creates a dummy Syncer for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy(),
-            last_snap_pivot: 0,
-            trie_rebuilder: None,
-            // This won't be used
-            cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
-            )),
-        }
-    }
-
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
     /// Will perforn either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
@@ -184,13 +168,12 @@ impl Syncer {
 
         // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
         let mut search_head = current_head;
-
         loop {
             info!("Requesting Block Headers from {search_head}");
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(search_head, BlockRequestOrder::OldToNew)
+                .request_block_headers_2(search_head, sync_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -305,7 +288,8 @@ impl Syncer {
         }
         info!("Finished downloading and storing block headers");
 
-        self.snap_enabled.store(false, Ordering::Relaxed);
+        // This turns on full sync from wherever you left
+        // self.snap_enabled.store(false, Ordering::Relaxed);
         match sync_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
