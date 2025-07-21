@@ -735,8 +735,6 @@ impl PeerHandler {
                         .map(|unit| AccountState::from(unit.account.clone())),
                 );
 
-                // TODO: handle should_continue for each chunk if needed
-
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
                 });
@@ -898,6 +896,12 @@ impl PeerHandler {
                 }
             });
         }
+
+        info!(
+            "Finished downloading account ranges, total accounts: {}",
+            all_account_hashes.len()
+        );
+        info!("Starting to compute the state root...");
 
         let store = Box::new(InMemoryTrieDB::new_empty());
         let mut trie = Trie::new(store);
