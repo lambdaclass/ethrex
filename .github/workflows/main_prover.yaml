@@ -112,6 +112,8 @@ jobs:
 
       - name: RISC-V SP1 toolchain install
         # if: ${{ always() && github.event_name == 'merge_group' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash
@@ -187,7 +189,6 @@ jobs:
           source .env
 
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_COMMITTER_VALIDIUM=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
           ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" \
