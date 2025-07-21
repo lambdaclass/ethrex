@@ -17,8 +17,6 @@ pub enum EvmError {
     Header(String),
     #[error("DB error: {0}")]
     DB(String),
-    #[error("{0}")]
-    Precompile(String),
     #[error("Invalid EVM or EVM not supported: {0}")]
     InvalidEVM(String),
     #[error("{0}")]
@@ -106,7 +104,7 @@ impl<E: Display> From<RevmError<E>> for EvmError {
             RevmError::Header(err) => EvmError::Header(err.to_string()),
             RevmError::Database(err) => EvmError::DB(err.to_string()),
             RevmError::Custom(err) => EvmError::Custom(err),
-            RevmError::Precompile(err) => EvmError::Precompile(err),
+            RevmError::Precompile(err) => EvmError::Custom(err),
         }
     }
 }
