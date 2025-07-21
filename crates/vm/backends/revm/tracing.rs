@@ -119,24 +119,12 @@ fn run_evm_with_call_tracer(
 
 fn result_to_err_or_revert_string(result: RevmExecutionResult) -> String {
     match result {
-        RevmExecutionResult::Success {
-            reason: _,
-            gas_used: _,
-            gas_refunded: _,
-            logs: _,
-            output: _,
-        } => String::new(),
-        RevmExecutionResult::Revert {
-            gas_used: _,
-            output,
-        } => format!(
+        RevmExecutionResult::Success { .. } => String::new(),
+        RevmExecutionResult::Revert { output, .. } => format!(
             "Transaction reverted due to: {}",
             std::str::from_utf8(&output).unwrap_or("unknown")
         ),
-        RevmExecutionResult::Halt {
-            reason,
-            gas_used: _,
-        } => format!("{reason:?}"),
+        RevmExecutionResult::Halt { reason, .. } => format!("{reason:?}"),
     }
 }
 

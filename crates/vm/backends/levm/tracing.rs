@@ -50,21 +50,13 @@ impl LEVM {
         with_log: bool,
         vm_type: VMType,
     ) -> Result<CallTrace, EvmError> {
-        let env = Self::setup_env(
-            tx,
-            tx.sender().map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?,
-            block_header,
-            db,
-        )?;
-        let mut vm = VM::new(
-            env,
-            db,
-            tx,
-            LevmCallTracer::new(only_top_call, with_log),
-            vm_type,
-        );
+        let sender = tx.sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })?;
+        let env = Self::setup_env(tx, sender, block_header, db)?;
+
+        let tracer = LevmCallTracer::new(only_top_call, with_log);
+        let mut vm = VM::new(env, db, tx, tracer, vm_type);
 
         vm.execute()?;
 
