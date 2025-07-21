@@ -4,6 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use ethrex_common::H256;
 use prometheus::{Gauge, IntCounter, Registry};
 use tokio::sync::Mutex;
 
@@ -47,6 +48,17 @@ pub struct Metrics {
     pub disconnections_by_client_type: Arc<Mutex<BTreeMap<String, BTreeMap<String, u64>>>>,
     /// RLPx connection attempt failures grouped and counted by reason
     pub connection_attempt_failures: Arc<Mutex<BTreeMap<String, u64>>>,
+
+    /* Snap Sync */
+    pub sync_head_block: Arc<Mutex<u64>>,
+    pub sync_head_hash: Arc<Mutex<H256>>,
+    pub headers_to_download: Arc<Mutex<u64>>,
+    pub downloaded_headers: Arc<Mutex<u64>>,
+    pub total_downloaders: Arc<Mutex<u64>>,
+    pub free_downloaders: Arc<Mutex<u64>>,
+    pub tasks_queued: Arc<Mutex<u64>>,
+    pub time_to_retrieve_sync_head_block: Arc<Mutex<Option<Duration>>>,
+    pub headers_download_start_time: Arc<Mutex<Option<SystemTime>>>,
 
     start_time: SystemTime,
 }
@@ -449,6 +461,17 @@ impl Default for Metrics {
             disconnections_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
             connection_attempt_failures: Arc::new(Mutex::new(BTreeMap::new())),
+
+            // Snap Sync
+            sync_head_block: Arc::new(Mutex::new(0)),
+            sync_head_hash: Arc::new(Mutex::new(H256::default())),
+            headers_to_download: Arc::new(Mutex::new(0)),
+            downloaded_headers: Arc::new(Mutex::new(0)),
+            total_downloaders: Arc::new(Mutex::new(0)),
+            free_downloaders: Arc::new(Mutex::new(0)),
+            tasks_queued: Arc::new(Mutex::new(0)),
+            time_to_retrieve_sync_head_block: Arc::new(Mutex::new(None)),
+            headers_download_start_time: Arc::new(Mutex::new(None)),
 
             start_time: SystemTime::now(),
         }

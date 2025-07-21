@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
+    metrics::METRICS,
     rlpx::{
         connection::server::CastMessage,
         eth::{
@@ -137,7 +138,12 @@ impl PeerHandler {
 
         let sync_head_number = Arc::new(Mutex::new(0_u64));
 
+        let sync_head_number_retrieval_start = SystemTime::now();
+
+        info!("Retrieving sync head block number from peers");
+
         let mut retries = 1;
+
         while *sync_head_number.lock().await == 0 {
             for (peer_id, mut peer_channel) in peers_table.clone() {
                 let sync_head_number = sync_head_number.clone();
@@ -158,7 +164,7 @@ impl PeerHandler {
                         .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
                         .unwrap();
 
-                    info!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
+                    debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
 
                     match tokio::time::timeout(Duration::from_secs(5), async move {
                         peer_channel.receiver.lock().await.recv().await.unwrap()
@@ -172,10 +178,10 @@ impl PeerHandler {
                             }
                         }
                         Ok(_other_msgs) => {
-                            warn!("Received unexpected message from peer {peer_id}");
+                            debug!("Received unexpected message from peer {peer_id}");
                         }
                         Err(_err) => {
-                            warn!("Timeout while waiting for sync head from {peer_id}");
+                            debug!("Timeout while waiting for sync head from {peer_id}");
                         }
                     }
                 });
@@ -183,6 +189,18 @@ impl PeerHandler {
 
             retries += 1;
         }
+
+        let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
+            .elapsed()
+            .expect("Failed to get elapsed time");
+
+        info!("Sync head block number retrieved");
+
+        *METRICS.time_to_retrieve_sync_head_block.lock().await =
+            Some(sync_head_number_retrieval_elapsed);
+        *METRICS.sync_head_block.lock().await = *sync_head_number.lock().await;
+        *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await;
+        *METRICS.sync_head_hash.lock().await = sync_head;
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
         // let block_count = 800_000_u64;
@@ -220,14 +238,29 @@ impl PeerHandler {
                 .iter()
                 .map(|(peer_id, _peer_data)| (*peer_id, true)),
         );
+
         // 3) create tasks that will request a chunk of headers from a peer
+
         info!("Starting to download block headers from peers");
+
+        *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
+
+        let mut last_metrics_update = SystemTime::now();
+
         loop {
+            let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
+
+            if new_last_metrics_update >= Duration::from_secs(1) {
+                *METRICS.tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
+
+                *METRICS.total_downloaders.lock().await = downloaders.len() as u64;
+            }
+
             if let Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 if headers.is_empty() {
-                    warn!("Failed to download chunk from peer {peer_id}");
+                    debug!("Failed to download chunk from peer {peer_id}");
 
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true; // mark the downloader as free
@@ -243,10 +276,14 @@ impl PeerHandler {
 
                 downloaded_count += headers.len() as u64;
 
+                if new_last_metrics_update >= Duration::from_secs(1) {
+                    *METRICS.downloaded_headers.lock().await = downloaded_count;
+                }
+
                 let batch_show = downloaded_count / 10_000;
 
                 if current_show < batch_show {
-                    info!(
+                    debug!(
                         "Downloaded {} headers from peer {} (current count: {downloaded_count})",
                         headers.len(),
                         peer_id
@@ -298,6 +335,10 @@ impl PeerHandler {
                 .into_iter()
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
+
+            if new_last_metrics_update >= Duration::from_secs(1) {
+                *METRICS.free_downloaders.lock().await = free_downloaders.len() as u64;
+            }
 
             if free_downloaders.is_empty() {
                 continue;
@@ -362,7 +403,7 @@ impl PeerHandler {
                     chunk_limit,
                 )
                 .await
-                .inspect_err(|err| error!("{free_peer_id} failed to download chunk: {err}"))
+                .inspect_err(|err| debug!("{free_peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
 
                 tx.send((
@@ -380,7 +421,16 @@ impl PeerHandler {
             //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
 
             // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
+
+            if new_last_metrics_update >= Duration::from_secs(1) {
+                last_metrics_update = SystemTime::now();
+            }
         }
+
+        *METRICS.tasks_queued.lock().await = tasks_queue_not_started.len() as u64;
+        *METRICS.free_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.total_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.downloaded_headers.lock().await = downloaded_count;
 
         let elapsed = start.elapsed().expect("Failed to get elapsed time");
 

@@ -8,7 +8,7 @@ use ethrex_common::H256;
 use spawned_concurrency::tasks::GenServerHandle;
 use spawned_rt::tasks::mpsc;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     rlpx::{self, connection::server::RLPxConnection, p2p::Capability},
@@ -123,7 +123,7 @@ impl Kademlia {
     }
 
     pub async fn set_connected_peer(&mut self, node: Node, channels: PeerChannels) {
-        info!("New peer connected");
+        debug!("New peer connected");
 
         let new_peer_id = node.node_id();
 
