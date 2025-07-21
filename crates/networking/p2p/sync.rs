@@ -297,10 +297,7 @@ impl Syncer {
                     .request_account_range(
                         pivot_header.state_root,
                         H256::zero(),
-                        H256::from_str(
-                            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-                        )
-                        .unwrap(),
+                        H256::repeat_byte(0x01),
                     )
                     .await;
                 // let store_bodies_handle = tokio::spawn(store_block_bodies(
