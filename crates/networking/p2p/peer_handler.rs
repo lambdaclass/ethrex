@@ -10,7 +10,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Nibbles;
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
@@ -852,6 +852,22 @@ impl PeerHandler {
                 }
             });
         }
+
+        let store = Box::new(InMemoryTrieDB::new_empty());
+        let mut trie = Trie::new(store);
+
+        for (account_hash, account) in all_account_hashes
+            .clone()
+            .into_iter()
+            .zip(all_accounts.clone())
+        {
+            trie.insert(account_hash.0.into(), account.encode_to_vec())
+                .inspect_err(|e| error!("Failed to insert account into trie: {e}"));
+        }
+
+        let state_root = trie.hash().unwrap();
+        info!("Final state root after account range requests: {state_root}");
+        std::process::exit(0);
 
         // TODO: proof validation and should_continue aggregation
         // For now, just return the collected accounts
