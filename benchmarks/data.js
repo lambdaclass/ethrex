@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752879370463,
+  "lastUpdate": 1753113001472,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5185,6 +5185,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207461544676,
             "range": "± 348294554",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "damian.ramirez@lambdaclass.com",
+            "name": "Damian Ramirez",
+            "username": "damiramirez"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f83a4f9f22c138921781be5a3dda82bcb09bae09",
+          "message": "perf(l1): use rayon for recover address (#3709)\n\n**Motivation**\nThis logic was originally introduced in #2268 but was mistakenly removed\nin a refactor\n[PR](https://github.com/lambdaclass/ethrex/pull/3082/files#diff-6ca74a0741dab646bb82b83636f9513d38a1c66b9db52dae8e20a0ec2fe6c1a3L239-L241).\nWe're adding it back because it improves the performance of our\nbenchmarks.\n\n**Description**\n\nAdd `par_iter` to `recover_address` function \n\nBiggest changes\n- ETH transfers (+117.96%)\n- Gas-Pop (+36.35%)\n- Push0 (+33.08%): Push de ceros al stack mucho más eficiente\n- Timestamp (+20.26%)\n- CoinBase (+17.18%)\n- Caller (+15.19%)\n- GasLimit (-14.33%)\n- BlobHash (-12.97%)\n\nThis change affects most of the benchmark tests, but it restores logic\nthat had previously been part of the codebase.\n\ncloses #3725",
+          "timestamp": "2025-07-21T14:53:07Z",
+          "tree_id": "cf5b10ad7fe07b1e6f4e95114c7230ad623fa3ed",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f83a4f9f22c138921781be5a3dda82bcb09bae09"
+        },
+        "date": 1753112989017,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168562004534,
+            "range": "± 376659506",
             "unit": "ns/iter"
           }
         ]
