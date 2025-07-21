@@ -351,10 +351,12 @@ impl<'a> VM<'a> {
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         if let Some(target_addr) = Self::target_address_is_valid(call_frame, jump_address_usize) {
-            #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
-            call_frame
-                .increase_consumed_gas((target_addr - call_frame.pc) as u64 * gas_cost::JUMPDEST)?;
             call_frame.pc = target_addr;
+            #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+            call_frame.increase_consumed_gas(
+                (target_addr - jump_address_usize) as u64 * gas_cost::JUMPDEST,
+            )?;
+
             Ok(())
         } else {
             Err(ExceptionalHalt::InvalidJump.into())
