@@ -1,7 +1,7 @@
 use crate::authentication::authenticate;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
-    blobs::BlobsV1Request,
+    blobs::{BlobsV1Request, BlobsV2Request},
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -374,6 +374,7 @@ pub async fn map_engine_requests(
             GetPayloadBodiesByRangeV1Request::call(req, context).await
         }
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
+        "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
