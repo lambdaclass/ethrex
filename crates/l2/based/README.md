@@ -225,8 +225,10 @@ export $(cat .env | xargs)
 To register a node as a Sequencer, you can use the following command using `rex`:
 
 ```bash
-rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> // registers SEQUENCER_ADDRESS as a Sequencer supplying 1 ETH as collateral (the minimum).
+rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> 
 ```
+
+This command registers `<SEQUENCER_ADDRESS>` as a Sequencer supplying 1 ETH as collateral (the minimum).
 
 > [!IMPORTANT]
 > The `SEQUENCER_ADDRESS` must be the address of the node's committer since it is the one that will be posting the batches to the L1.
@@ -238,6 +240,11 @@ Once registered, the node will be able to participate in the Sequencer election 
 > 1. Replace `<REGISTRANT_PRIVATE_KEY>` and `<SEQUENCER_ADDRESS>` with the appropriate values.
 > 2. The registrant is not necessarily related to the sequencer, one could pay the registration for someone else.
 > 3. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
+
+> [!NOTE]
+>
+> If you're using the private key provided in previous step, the account address is:
+> `0x589a698b7b7da0bec545177d3963a2741105c7c9`
 
 ### 4. Running a second node as follower
 
@@ -267,7 +274,7 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 init \
 
 > [!NOTE]
 >
-> Replace `<FOLLOWER_PRIVATE_KEY>` with the appropriate value.
+> Replace `<FOLLOWER_PRIVATE_KEY>` with an appropriate value. This account doesn't need to be funded to run as a follower node.
 
 
 ## Documentation
