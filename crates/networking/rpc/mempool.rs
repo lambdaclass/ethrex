@@ -13,8 +13,8 @@ type MempoolContentEntry = HashMap<Address, HashMap<u64, RpcTransaction>>;
 /// Transactions are grouped by sender and indexed by nonce
 #[derive(Serialize, Deserialize)]
 pub struct MempoolContent {
-    pending: MempoolContentEntry,
-    queued: MempoolContentEntry,
+    pub pending: MempoolContentEntry,
+    pub queued: MempoolContentEntry,
 }
 
 #[derive(Serialize, Deserialize)]
