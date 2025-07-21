@@ -2,7 +2,9 @@ use crate::authentication::authenticate;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
-    fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
+    fork_choice::{
+        ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3, handle_forkchoice,
+    },
     payload::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
@@ -33,6 +35,7 @@ use crate::eth::{
     },
 };
 use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
+use crate::types::fork_choice::ForkChoiceState;
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -47,7 +50,8 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, fork_choice};
+use ethrex_common::H256;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -124,6 +128,7 @@ pub async fn start_api(
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: String,
+    header_hash: Option<H256>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -176,7 +181,7 @@ pub async fn start_api(
     let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
-        .with_state(service_context);
+        .with_state(service_context.clone());
     let authrpc_listener = TcpListener::bind(authrpc_addr)
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
@@ -187,6 +192,15 @@ pub async fn start_api(
 
     let _ = tokio::try_join!(authrpc_server, http_server)
         .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+
+    if let Some(header_hash) = header_hash {
+        let fork_choice_state = ForkChoiceState {
+            head_block_hash: header_hash,
+            safe_block_hash: header_hash,
+            finalized_block_hash: header_hash,
+        };
+        handle_forkchoice(&fork_choice_state, service_context, 1).await;
+    }
 
     Ok(())
 }

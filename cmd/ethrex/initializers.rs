@@ -4,7 +4,7 @@ use crate::{
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
 use ethrex_blockchain::{Blockchain, BlockchainType};
-use ethrex_common::types::Genesis;
+use ethrex_common::{H256, types::Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{P2PContext, public_key_from_signing_key},
@@ -121,6 +121,11 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let header_hash: Option<Option<H256>> = opts.header_hash.as_ref().map(|f| {
+        let foo = hex::decode(f).ok()?;
+        Some(H256::from_slice(&foo))
+    });
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
@@ -132,6 +137,7 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
+        header_hash.flatten(),
     );
 
     tracker.spawn(rpc_api);

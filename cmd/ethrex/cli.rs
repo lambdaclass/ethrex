@@ -188,6 +188,13 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "header.hash",
+        value_name = "HASH",
+        help = "Hash to set up as the initial forkchoice in L1/L2 mod. For dev only, for updates, use a consensus clients.",
+        help_heading = "P2P options"
+    )]
+    pub header_hash: Option<String>,
 }
 
 impl Default for Options {
@@ -213,6 +220,7 @@ impl Default for Options {
             metrics_enabled: Default::default(),
             dev: Default::default(),
             evm: Default::default(),
+            header_hash: Default::default(),
             force: false,
         }
     }
