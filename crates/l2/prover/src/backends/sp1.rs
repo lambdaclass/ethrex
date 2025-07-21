@@ -10,7 +10,6 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
 };
-use sp1_sdk::Prover;
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
@@ -71,28 +70,17 @@ pub fn prove(
     let mut stdin = SP1Stdin::new();
     stdin.write(&JSONProgramInput(input));
 
-    let (proof, vk) = if cfg!(feature = "gpu") {
-        let client = ProverClient::builder().cuda().local().port(3001).build();
-        let (pk, vk) = client.setup(PROGRAM_ELF);
-        let proof = if aligned_mode {
-            client.prove(&pk, &stdin).compressed().run()?
-        } else {
-            client.prove(&pk, &stdin).groth16().run()?
-        };
-        (proof, vk)
+    let setup = &*PROVER_SETUP;
+
+    // contains the receipt along with statistics about execution of the guest
+    let proof = if aligned_mode {
+        setup.client.prove(&setup.pk, &stdin).compressed().run()?
     } else {
-        let client = ProverClient::builder().cpu().build();
-        let (pk, vk) = client.setup(PROGRAM_ELF);
-        let proof = if aligned_mode {
-            client.prove(&pk, &stdin).compressed().run()?
-        } else {
-            client.prove(&pk, &stdin).groth16().run()?
-        };
-        (proof, vk)
+        setup.client.prove(&setup.pk, &stdin).groth16().run()?
     };
 
     info!("Successfully generated SP1Proof.");
-    Ok(ProveOutput::new(proof, vk))
+    Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
 pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
