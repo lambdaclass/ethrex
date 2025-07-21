@@ -197,9 +197,9 @@ After running this command, the node will start syncing with the L1 and will be 
 
 > [!NOTE]
 >
-> The private key <SEQUENCER_PRIVATE_KEY> can be sourced from the file fixtures/keys/private_keys_l1.txt. 
+> The private key `<SEQUENCER_PRIVATE_KEY>` can be sourced from the file `fixtures/keys/private_keys_l1.txt`.
 > An example key is:
-> 0xeaba42282ad33c8ef2524f07277c03a776d98ae19f581990ce75becb7cfa1c23
+> `0xeaba42282ad33c8ef2524f07277c03a776d98ae19f581990ce75becb7cfa1c23`
 
 > [!NOTE]
 >
@@ -231,7 +231,7 @@ Once registered, the node will be able to participate in the Sequencer election 
 > [!NOTE]
 >
 > 1. Replace `<REGISTRANT_PRIVATE_KEY>` and `<SEQUENCER_ADDRESS>` with the appropriate values.
-> 2. The registrant is not necessarily related to the sequencer, one could pay the registration for some else.
+> 2. The registrant is not necessarily related to the sequencer, one could pay the registration for someone else.
 > 3. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
 
 ### 4. Running a second node as follower
