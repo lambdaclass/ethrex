@@ -14,6 +14,8 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+const BATCH_WINDOW_SIZE: usize = 50;
+
 #[derive(Clone, Default)]
 pub struct BatchesTable {
     pub state: TableState,
@@ -44,10 +46,11 @@ impl BatchesTable {
             rollup_store,
         )
         .await?;
-        new_latest_batches.truncate(50);
+        new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
         let n_new_latest_batches = new_latest_batches.len();
-        self.items.truncate(50 - n_new_latest_batches);
+        self.items
+            .truncate(BATCH_WINDOW_SIZE - n_new_latest_batches);
         self.refresh_items(rollup_store).await?;
         self.items.extend_from_slice(&new_latest_batches);
         self.items.rotate_right(n_new_latest_batches);
@@ -96,8 +99,13 @@ impl BatchesTable {
             .await
             .map_err(|_| MonitorError::GetLatestBatch)?;
 
-        *last_l2_batch_fetched =
-            (*last_l2_batch_fetched).max(last_l2_batch_number.saturating_sub(50));
+        *last_l2_batch_fetched = (*last_l2_batch_fetched).max(
+            last_l2_batch_number.saturating_sub(
+                BATCH_WINDOW_SIZE
+                    .try_into()
+                    .map_err(|_| MonitorError::BatchWindow)?,
+            ),
+        );
 
         let new_batches =
             Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
