@@ -21,6 +21,7 @@ use state_sync::state_sync;
 use std::{
     array,
     cmp::min,
+    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -291,38 +292,49 @@ impl Syncer {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
-                let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes[pivot_idx + 1..].to_vec(),
-                    self.peers.clone(),
-                    store.clone(),
-                ));
-                // Perform snap sync
-                if !self
-                    .snap_sync(pivot_header.state_root, store.clone())
-                    .await?
-                {
-                    // Snap sync was not completed, abort and resume it on the next cycle
-                    return Ok(());
-                }
-                // Wait for all bodies to be downloaded
-                store_bodies_handle.await??;
-                // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
-                // For all blocks after the pivot: Process them fully
-                for hash in &all_block_hashes[pivot_idx + 1..] {
-                    let block = store
-                        .get_block_by_hash(*hash)
-                        .await?
-                        .ok_or(SyncError::CorruptDB)?;
-                    let block_number = block.header.number;
-                    self.blockchain.add_block(&block).await?;
-                    store.set_canonical_block(block_number, *hash).await?;
-                    store.update_latest_block_number(block_number).await?;
-                }
-                self.last_snap_pivot = pivot_header.number;
-                // Finished a sync cycle without aborting halfway, clear current checkpoint
-                store.clear_snap_state().await?;
-                // Next sync will be full-sync
-                self.snap_enabled.store(false, Ordering::Relaxed);
+
+                self.peers
+                    .request_account_range(
+                        pivot_header.state_root,
+                        H256::zero(),
+                        H256::from_str(
+                            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                        )
+                        .unwrap(),
+                    )
+                    .await;
+                // let store_bodies_handle = tokio::spawn(store_block_bodies(
+                //     all_block_hashes[pivot_idx + 1..].to_vec(),
+                //     self.peers.clone(),
+                //     store.clone(),
+                // ));
+                // // Perform snap sync
+                // if !self
+                //     .snap_sync(pivot_header.state_root, store.clone())
+                //     .await?
+                // {
+                //     // Snap sync was not completed, abort and resume it on the next cycle
+                //     return Ok(());
+                // }
+                // // Wait for all bodies to be downloaded
+                // store_bodies_handle.await??;
+                // // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
+                // // For all blocks after the pivot: Process them fully
+                // for hash in &all_block_hashes[pivot_idx + 1..] {
+                //     let block = store
+                //         .get_block_by_hash(*hash)
+                //         .await?
+                //         .ok_or(SyncError::CorruptDB)?;
+                //     let block_number = block.header.number;
+                //     self.blockchain.add_block(&block).await?;
+                //     store.set_canonical_block(block_number, *hash).await?;
+                //     store.update_latest_block_number(block_number).await?;
+                // }
+                // self.last_snap_pivot = pivot_header.number;
+                // // Finished a sync cycle without aborting halfway, clear current checkpoint
+                // store.clear_snap_state().await?;
+                // // Next sync will be full-sync
+                // self.snap_enabled.store(false, Ordering::Relaxed);
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
