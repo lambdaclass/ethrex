@@ -217,6 +217,11 @@ After running this command, the node will start syncing with the L1 and will be 
 
 For nodes to become lead Sequencers they need to register themselves in the `SequencerRegistry` contract. This can be done by calling the `register` method of the contract with the node's address.
 
+First, you need to open a new terminal in `crates/l2` and load the deployed contracts enviroment variables again:
+```bash
+export $(cat .env | xargs)
+``` 
+
 To register a node as a Sequencer, you can use the following command using `rex`:
 
 ```bash
