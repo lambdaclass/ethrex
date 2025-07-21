@@ -7,7 +7,7 @@ use crate::{
     metrics::METRICS,
     rlpx::{
         connection::server::{RLPxConnBroadcastSender, RLPxConnection},
-        initiator::{RLPxInitiator, RLPxInitiatorError},
+        initiator::RLPxInitiator,
         message::Message,
     },
     types::{Node, NodeRecord},
@@ -16,6 +16,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use spawned_concurrency::error::GenServerError;
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::{TcpListener, TcpSocket, UdpSocket},
@@ -77,7 +78,7 @@ pub enum NetworkError {
     #[error("Failed to start discovery side car: {0}")]
     DiscoverySideCarError(#[from] DiscoverySideCarError),
     #[error("Failed to start RLPx Initiator: {0}")]
-    RLPxInitiatorError(#[from] RLPxInitiatorError),
+    RLPxInitiatorError(#[from] GenServerError),
 }
 
 pub fn peer_table() -> Kademlia {

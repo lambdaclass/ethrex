@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{convert::Infallible, time::Duration};
 
 use spawned_concurrency::{
+    error::GenServerError,
     messages::Unused,
     tasks::{CastResponse, GenServer, send_after},
 };
@@ -10,16 +11,6 @@ use tracing::{debug, info};
 use crate::{metrics::METRICS, network::P2PContext};
 
 use crate::rlpx::connection::server::RLPxConnection;
-
-#[derive(Debug, thiserror::Error)]
-pub enum RLPxInitiatorError {
-    // #[error(transparent)]
-    // IoError(#[from] std::io::Error),
-    // #[error("Failed to send message")]
-    // MessageSendFailure(std::io::Error),
-    // #[error("Only partial message was sent")]
-    // PartialMessageSent,
-}
 
 #[derive(Debug, Clone)]
 pub struct RLPxInitiatorState {
@@ -62,14 +53,14 @@ pub enum OutMessage {
 pub struct RLPxInitiator;
 
 impl RLPxInitiator {
-    pub async fn spawn(context: P2PContext) -> Result<(), RLPxInitiatorError> {
+    pub async fn spawn(context: P2PContext) -> Result<(), GenServerError> {
         info!("Starting RLPx Initiator");
 
         let state = RLPxInitiatorState::new(context);
 
         let mut server = RLPxInitiator::start(state.clone());
 
-        let _ = server.cast(InMessage::LookForPeers).await;
+        server.cast(InMessage::LookForPeers).await?;
 
         Ok(())
     }
@@ -80,7 +71,7 @@ impl GenServer for RLPxInitiator {
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type State = RLPxInitiatorState;
-    type Error = RLPxInitiatorError;
+    type Error = Infallible;
 
     fn new() -> Self {
         Self {}
