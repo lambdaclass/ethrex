@@ -79,8 +79,8 @@ impl PeerScore {
         self.successes += 1;
     }
 
-    pub fn add_failure(&mut self) {
-        self.failures += 1;
+    pub fn add_failure(&mut self, amount: i32) {
+        self.failures -= amount;
     }
 
     // TODO: check for rounding issues.
@@ -158,6 +158,33 @@ pub struct Kademlia {
 impl Kademlia {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub async fn penalize_peer(&self, peer_id: H256) {
+        let mut locked_peers = self.peers.lock().await;
+        let Some(peer) = locked_peers.get_mut(&peer_id) else {
+            return;
+        };
+
+        peer.score.add_failure(1);
+    }
+
+    pub async fn critically_penalize_peer(&self, peer_id: H256) {
+        let mut locked_peers = self.peers.lock().await;
+        let Some(peer) = locked_peers.get_mut(&peer_id) else {
+            return;
+        };
+
+        peer.score.add_failure(5);
+    }
+
+    pub async fn reward_peer(&self, peer_id: H256) {
+        let mut locked_peers = self.peers.lock().await;
+        let Some(peer) = locked_peers.get_mut(&peer_id) else {
+            return;
+        };
+
+        peer.score.add_success();
     }
 
     pub async fn get_max_score_peer_id(&self) -> Option<H256> {

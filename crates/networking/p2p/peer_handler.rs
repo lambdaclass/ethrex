@@ -124,11 +124,11 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
     ) -> Vec<(H256, PeerChannels)> {
-        self.peer_table.get_all_peer_channels(capabilities)
+        self.peer_table.get_peer_channels_sorted_by_score(capabilities).await
     }
 
     pub async fn get_max_score_peer_id(&self) -> Option<H256> {
-        self.peer_table.get_max_score_peer_id()
+        self.peer_table.get_max_score_peer_id().await
     }
 
     pub async fn request_block_headers_2(
@@ -243,9 +243,8 @@ impl PeerHandler {
                         if headers.is_empty() {
                             warn!("Failed to download chunk from peer {peer_id}");
 
-                            let mut peer_table = self.peer_table;
                             info!("Penalizing peer {peer_id}");
-                            peer_table.penalize_peer(peer_id);
+                            self.peer_table.penalize_peer(peer_id);
 
                             downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                                 *downloader_is_free = true; // mark the downloader as free
@@ -258,8 +257,7 @@ impl PeerHandler {
 
                             continue; // Retry with the next peer
                         }
-                        let mut peer_table = self.peer_table.lock().await;
-                        peer_table.reward_peer(peer_id);
+                        self.peer_table.reward_peer(peer_id);
                         downloaded_count += headers.len() as u64;
 
                         let batch_show = downloaded_count / 10_000;
@@ -297,17 +295,16 @@ impl PeerHandler {
                         debug!("Downloader {peer_id} freed");
                     }
                     Err((peer_id, startblock, previous_chunk_limit, err)) => {
-                        let mut peer_table = self.peer_table.lock().await;
                         match err {
                             BlockHeaderDownloadError::InvalidBlockHeaders => {
                                 info!("Critically penalizing peer {peer_id}");
-                                peer_table.critically_penalize_peer(peer_id);
+                                self.peer_table.critically_penalize_peer(peer_id);
                             }
                             // TODO: check if the peer should be penalized on GenServerError
                             BlockHeaderDownloadError::GenServerError(_) => {}
                             _ => {
                                 info!("Penalizing peer {peer_id}");
-                                peer_table.penalize_peer(peer_id);
+                                self.peer_table.penalize_peer(peer_id);
                             }
                         }
                         warn!("Failed to download chunk from peer {peer_id}");
@@ -507,7 +504,7 @@ impl PeerHandler {
     }
 
     async fn get_peer_score(&self, peer_id: H256) -> Option<i32> {
-        self.peer_table.get_peer_score(peer_id)
+        self.peer_table.get_peer_score(peer_id).await
     }
 
     /// TODO: update docs
