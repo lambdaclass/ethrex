@@ -47,7 +47,23 @@ impl RpcHandler for BlobsV1Request {
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        //TODO: spec https://ethereum.github.io/execution-apis/docs/reference/engine_getblobsv1/ says error should be thrown for unsupported fork.
+
+        if let Some(current_block_header) = context
+            .storage
+            .get_block_header(context.storage.get_latest_block_number().await?)?
+        {
+            if !context
+                .storage
+                .get_chain_config()?
+                .is_cancun_activated(current_block_header.timestamp)
+            {
+                return Err(RpcErr::UnsuportedFork(
+                    "getBlobsV1 engine request unsupported for forks previous to Cancun"
+                        .to_string(),
+                ));
+            }
+        };
+
         let mut res: Vec<Option<BlobAndProofV1>> = vec![None; self.blob_versioned_hashes.len()];
 
         for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
@@ -57,9 +73,11 @@ impl RpcHandler for BlobsV1Request {
             let proofs_in_bundle = blobs_bundle.proofs;
 
             // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
-            for i in 0..commitments_in_bundle.len() {
-                let current_versioned_hash =
-                    kzg_commitment_to_versioned_hash(&commitments_in_bundle[i]);
+            for (commitment, (blob, proof)) in commitments_in_bundle
+                .iter()
+                .zip(blobs_in_bundle.iter().zip(proofs_in_bundle.iter()))
+            {
+                let current_versioned_hash = kzg_commitment_to_versioned_hash(&commitment);
                 if let Some(index) = self
                     .blob_versioned_hashes
                     .iter()
@@ -67,8 +85,8 @@ impl RpcHandler for BlobsV1Request {
                 {
                     // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
                     res[index] = Some(BlobAndProofV1 {
-                        blob: blobs_in_bundle[i],
-                        proof: proofs_in_bundle[i],
+                        blob: *blob,
+                        proof: *proof,
                     });
                 }
             }
