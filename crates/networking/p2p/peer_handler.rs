@@ -502,10 +502,8 @@ impl PeerHandler {
         self.peer_table.get_peer_score(peer_id).await
     }
 
-    /// TODO: update docs
-    /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
-    ///
-    /// If it fails, returns an error message.
+    /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
+    /// On success it returns the block headers on success, otherwise it returns an error.
     async fn download_chunk_from_peer(
         peer_id: H256,
         peer_channel: &mut PeerChannels,
@@ -523,7 +521,7 @@ impl PeerHandler {
         });
         let mut receiver = peer_channel.receiver.lock().await;
 
-        // FIXME! modify the cast and wait for a `call` version
+        // TODO: modify the cast and wait for a `call` version
         peer_channel
             .connection
             .cast(CastMessage::BackendMessage(request))
@@ -855,13 +853,6 @@ impl PeerHandler {
                 }
             }
         }
-
-        // 4) assign the tasks to the peers
-        //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-        //     4.2) mark the peer as busy
-        //     4.3) wait for the response and handle it
-
-        // 5) loop until all the chunks are received (retry to get the chunks that failed)
 
         ret.sort_by(|x, y| x.number.cmp(&y.number));
         info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
