@@ -7,12 +7,11 @@ use clap::Parser;
 use ethrex::initializers::open_store;
 use ethrex::utils::init_datadir;
 use ethrex_common::types::BlockHash;
-use ethrex_common::{Address, serde_utils};
-use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
-use ethrex_common({
+use ethrex_common::{Address, serde_utils, BigEndianHash, Bytes, H256, U256, types::BlockNumber};
+use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},
-});
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
@@ -231,7 +230,7 @@ impl DumpAccount {
     fn get_account_state(&self) -> AccountState {
         AccountState {
             nonce: self.nonce,
-            balance: self.b alance,
+            balance: self.balance,
             storage_root: self.storage_root,
             code_hash: self.code_hash,
         }
