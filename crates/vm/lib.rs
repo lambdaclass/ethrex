@@ -10,6 +10,6 @@ pub mod backends;
 
 pub use backends::{BlockExecutionResult, Evm, EvmEngine};
 pub use db::{DynVmDatabase, VmDatabase};
-pub use errors::{EvmError, ProverDBError};
+pub use errors::EvmError;
 pub use execution_result::ExecutionResult;
 pub use helpers::{SpecId, create_contract_address, fork_to_spec_id};

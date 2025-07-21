@@ -1,5 +1,4 @@
 use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
-use ethrex_trie::TrieError;
 use revm::primitives::result::EVMError as RevmError;
 use std::fmt::Display;
 use thiserror::Error;
@@ -22,14 +21,6 @@ pub enum EvmError {
     SystemContractEmpty(String),
     #[error("System call failed: {0}")]
     SystemContractCallFailed(String),
-}
-
-#[derive(Debug, Error)]
-pub enum ProverDBError {
-    #[error("Evm error: {0}")]
-    Evm(#[from] Box<EvmError>), // boxed to avoid cyclic definition
-    #[error("Trie error: {0}")]
-    Trie(#[from] TrieError),
 }
 
 impl<E: Display> From<RevmError<E>> for EvmError {
