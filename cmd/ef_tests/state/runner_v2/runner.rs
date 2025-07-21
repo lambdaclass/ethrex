@@ -2,7 +2,7 @@ use ethrex_common::{
     U256,
     types::{EIP1559Transaction, EIP7702Transaction, Transaction, TxKind},
 };
-use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM};
+use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
 
 use tokio::fs;
 
@@ -30,8 +30,7 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case)?;
         let tracer = LevmCallTracer::disabled();
-        let vm_type = ethrex_levm::vm::VMType::L1;
-        let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, vm_type);
+        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1);
 
         let execution_report = vm.execute();
         let res = check_test_case_results(
@@ -87,6 +86,11 @@ pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, Runner
         .iter()
         .map(|list_item| (list_item.address, list_item.storage_keys.clone()))
         .collect();
+
+    // For simplicity, we only use two types of transactions to represent all cases.
+    // Legacy, EIP-2930, and EIP-1559 transactions (which do not support blobs) are all treated as EIP-1559 transactions.
+    // Blob supporting transactions, EIP-4844 and EIP-7702, are represented using the latest.
+    // This avoids having to handle five different transaction types separately.
     let tx = match &test_case.authorization_list {
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_case.to {
