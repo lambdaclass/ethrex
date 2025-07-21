@@ -265,16 +265,14 @@ impl DiscoveryServer {
 
         info!("Pinging {} bootnodes", bootnodes.len());
 
+        let mut table = kademlia.table.lock().await;
+
         for bootnode in bootnodes {
             let _ = state.ping(&bootnode).await.inspect_err(|e| {
                 error!("Failed to ping bootnode: {e}");
             });
 
-            kademlia
-                .table
-                .lock()
-                .await
-                .insert(bootnode.node_id(), bootnode.into());
+            table.insert(bootnode.node_id(), bootnode.into());
         }
 
         Ok(())
@@ -459,7 +457,6 @@ impl GenServer for ConnectionHandler {
                 let table = state.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
-                    drop(table);
                     return CastResponse::Stop;
                 };
                 if !contact.was_validated() {
@@ -532,10 +529,9 @@ impl GenServer for ConnectionHandler {
                 }
                 let node_id = node_id(&sender_public_key);
 
-                let table = state.kademlia.table.lock().await;
+                let mut table = state.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
-                    drop(table);
                     return CastResponse::Stop;
                 };
                 if !contact.was_validated() {
@@ -548,13 +544,7 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
-                state
-                    .kademlia
-                    .table
-                    .lock()
-                    .await
-                    .entry(node_id)
-                    .and_modify(|c| c.knows_us = true);
+                table.entry(node_id).and_modify(|c| c.knows_us = true);
             }
             Self::CastMsg::ENRResponse {
                 message: msg,
