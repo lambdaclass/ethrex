@@ -188,7 +188,7 @@ impl PeerHandler {
         // let block_count = 800_000_u64;
         let chunk_count = 800_usize; // e.g. 8 tasks
 
-        let block_count = *sync_head_number.lock().await;
+        let block_count = *sync_head_number.lock().await + 1;
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count as u64;
