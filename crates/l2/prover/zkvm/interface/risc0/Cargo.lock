@@ -935,21 +935,22 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
+source = "git+https://github.com/lambdaclass/zkcrypto-bls12_381?branch=expose-fp-struct#80c5568d3a68cecd30f1cc300875732f2a05b2f6"
 dependencies = [
- "digest 0.10.7",
+ "bytemuck",
+ "digest 0.9.0",
  "ff",
  "group",
  "pairing",
  "rand_core 0.6.4",
+ "risc0-bigint2",
  "subtle",
 ]
 
 [[package]]
 name = "blst"
-version = "0.3.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fd49896f12ac9b6dcd7a5998466b9b58263a695a3dd1ecc1aaca2e12a90b080"
+version = "0.3.14"
+source = "git+https://github.com/risc0/blst?tag=blst%2Fv0.3.14-risczero.0#4bb7133be362fce47525dc0c877e058e5a6db5ac"
 dependencies = [
  "cc",
  "glob",
@@ -1050,9 +1051,9 @@ checksum = "0da45bc31171d8d6960122e222a67740df867c1dd53b4d51caa297084c185cab"
 
 [[package]]
 name = "cc"
-version = "1.2.29"
+version = "1.2.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c1599538de2394445747c8cf7935946e3cc27e9625f889d979bfb2aaf569362"
+checksum = "deec109607ca693028562ed836a5f1c4b8bd77755c4e132fc5ce11b0b6211ae7"
 dependencies = [
  "shlex",
 ]
@@ -1285,10 +1286,10 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 [[package]]
 name = "crypto-bigint"
 version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
+source = "git+https://github.com/risc0/RustCrypto-crypto-bigint?tag=v0.5.5-risczero.0#3ab63a6f1048833f7047d5a50532e4a4cc789384"
 dependencies = [
  "generic-array",
+ "getrandom 0.2.16",
  "rand_core 0.6.4",
  "subtle",
  "zeroize",
@@ -2384,13 +2385,14 @@ dependencies = [
 [[package]]
 name = "k256"
 version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6e3919bbaa2945715f0bb6d3934a173d1e9a59ac23767fbaaef277265a7411b"
+source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=k256%2Fv0.13.4-risczero.1#7d4a8d6477e258ce4169ee4669cf92aee0582c39"
 dependencies = [
+ "bytemuck",
  "cfg-if",
  "ecdsa",
  "elliptic-curve",
  "once_cell",
+ "risc0-bigint2",
  "sha2",
 ]
 
@@ -2735,12 +2737,13 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 [[package]]
 name = "p256"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
+source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=p256%2Fv0.13.2-risczero.1#bb0f51ad3ba81585f36ea8a1ea81093d8664b195"
 dependencies = [
+ "bytemuck",
  "ecdsa",
  "elliptic-curve",
  "primeorder",
+ "risc0-bigint2",
  "sha2",
 ]
 
@@ -2985,11 +2988,12 @@ dependencies = [
 
 [[package]]
 name = "primeorder"
-version = "0.13.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
+version = "0.13.1"
+source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=p256%2Fv0.13.2-risczero.1#bb0f51ad3ba81585f36ea8a1ea81093d8664b195"
 dependencies = [
+ "bytemuck",
  "elliptic-curve",
+ "risc0-bigint2",
 ]
 
 [[package]]
@@ -3067,7 +3071,7 @@ dependencies = [
  "bitflags 2.9.1",
  "lazy_static",
  "num-traits",
- "rand 0.9.1",
+ "rand 0.9.2",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -3117,9 +3121,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.1"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fbfd9d094a40bf3ae768db9361049ace4c0e04a4fd6b359518bd7b73a73dd97"
+checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -3330,6 +3334,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "risc0-bigint2"
+version = "1.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9810e2f9e859e2dca279da0b4c53eb87e2186ab21ecaad22a3ffadf3aabebd8d"
+dependencies = [
+ "include_bytes_aligned",
+ "stability",
+]
+
+[[package]]
 name = "risc0-binfmt"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3466,9 +3480,9 @@ dependencies = [
 
 [[package]]
 name = "risc0-zkvm"
-version = "2.3.0"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "910c2023c39ac1e23dd4f7acdff086333f31ca608035f96c74366a79c098de3b"
+checksum = "9684b333c1c5d83f29ce2a92314ccfafd9d8cdfa6c4e19c07b97015d2f1eb9d0"
 dependencies = [
  "anyhow",
  "borsh",
@@ -3556,7 +3570,7 @@ dependencies = [
  "primitive-types 0.12.2",
  "proptest",
  "rand 0.8.5",
- "rand 0.9.1",
+ "rand 0.9.2",
  "rlp 0.5.2",
  "ruint-macro",
  "serde",
@@ -3767,9 +3781,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.140"
+version = "1.0.141"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
+checksum = "30b9eff21ebe718216c6ec64e1d9ac57087aad11efc64e32002bce4a0d4c03d3"
 dependencies = [
  "indexmap 2.10.0",
  "itoa",
@@ -3970,13 +3984,15 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 [[package]]
 name = "substrate-bn"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b5bbfa79abbae15dd642ea8176a21a635ff3c00059961d1ea27ad04e5b441c"
+source = "git+https://github.com/risc0/paritytech-bn?tag=v0.6.0-risczero.0#22108fe8c6ea1ebc1358fc4fd6854a6bf46e3509"
 dependencies = [
+ "bytemuck",
  "byteorder",
  "crunchy",
+ "crypto-bigint",
  "lazy_static",
  "rand 0.8.5",
+ "risc0-bigint2",
  "rustc-hex",
 ]
 
@@ -4806,3 +4822,13 @@ dependencies = [
  "serde_with",
  "thiserror",
 ]
+
+[[patch.unused]]
+name = "ed25519-dalek"
+version = "2.1.1"
+source = "git+https://github.com/risc0/curve25519-dalek?tag=curve25519-4.1.2-risczero.0#3dccc5b71b806f500e73829e2a5cbfe288cce2a0"
+
+[[patch.unused]]
+name = "rsa"
+version = "0.9.6"
+source = "git+https://github.com/risc0/RustCrypto-RSA?tag=v0.9.6-risczero.0#cb42fd295c096c6dddd8386cd57b122add8d0cbc"
