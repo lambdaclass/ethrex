@@ -98,14 +98,13 @@ pub(crate) fn log_peer_warn(node: &Node, text: &str) {
 }
 
 pub fn recover_address(
-    recovery_id: [u8; 4],
+    recovery_id: u8,
     signature: &[u8; 64],
     payload: [u8; 32],
 ) -> Result<Address, CryptographyError> {
-    let recovery_id: i32 = i32::from_be_bytes(recovery_id);
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         signature,
-        RecoveryId::from_i32(recovery_id).expect("Invalid recovery ID"), // cannot fail
+        RecoveryId::from_i32(recovery_id.into()).expect("Invalid recovery ID"), // cannot fail
     )
     .map_err(|error| CryptographyError::CouldNotGetKeyFromSecret(error.to_string()))?;
 
