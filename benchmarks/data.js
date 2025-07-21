@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753126402552,
+  "lastUpdate": 1753127769874,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5215,6 +5215,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168562004534,
             "range": "± 376659506",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b9f189573533b771f82ba45ef7bd65daefd02a55",
+          "message": "refactor(l2): remove blockByNumber (#3752)\n\n**Motivation**\n\nWhile reviewing areas for simplification, I found that `BlockByNumber`\nis not being used.\n\n**Description**\n\nRemoves `BlockByNumber`\n\nCloses #3748",
+          "timestamp": "2025-07-21T19:08:00Z",
+          "tree_id": "030f712bb4c97a9bb320513b3614f976638c92cd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b9f189573533b771f82ba45ef7bd65daefd02a55"
+        },
+        "date": 1753127758216,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 168274212566,
+            "range": "± 567365076",
             "unit": "ns/iter"
           }
         ]
