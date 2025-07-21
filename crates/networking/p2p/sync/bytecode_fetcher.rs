@@ -93,7 +93,7 @@ async fn bytecode_fetcher(
         }
         // Read incoming messages and add them to the queue
         let total_before_reading = pending_bytecodes.len();
-        incoming = read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
+        incoming |= read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
         historical_pending += pending_bytecodes.len() - total_before_reading;
         spawn_fetch_tasks(
             &mut pending_bytecodes,

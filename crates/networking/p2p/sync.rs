@@ -796,7 +796,7 @@ impl Syncer {
             warn!("Stale pivot, aborting healing");
         }
         // Wait for the bytecode fetcher to finish
-        info!("Waiting for the trie rebuild to finish");
+        info!("Waiting for the bytecode fetcher to finish");
         self.bytecode_fetcher
             .take()
             .ok_or(SyncError::Unexpected)?
