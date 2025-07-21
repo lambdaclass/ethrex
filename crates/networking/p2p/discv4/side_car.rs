@@ -84,8 +84,8 @@ impl DiscoverySideCarState {
 
             prune_interval: Duration::from_secs(5),
 
-            target_peers: 50,
-            target_contacts: 50_000,
+            target_peers: 100,
+            target_contacts: 100_000,
         }
     }
 
