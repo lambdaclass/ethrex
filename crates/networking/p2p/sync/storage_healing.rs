@@ -16,6 +16,7 @@ use std::{
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash};
+use indexmap::IndexMap;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -81,7 +82,7 @@ pub(crate) async fn storage_healer(
         let mut storage_tasks = tokio::task::JoinSet::new();
         let mut task_num = 0;
         while !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
-            let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
+            let mut next_batch: IndexMap<H256, Vec<Nibbles>> = IndexMap::new();
             // Fill batch
             let mut batch_size = 0;
             while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
@@ -118,10 +119,10 @@ pub(crate) async fn storage_healer(
 /// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_storage_batch(
     state_root: H256,
-    mut batch: BTreeMap<H256, Vec<Nibbles>>,
+    mut batch: IndexMap<H256, Vec<Nibbles>>,
     peers: PeerHandler,
     store: Store,
-) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool, usize), SyncError> {
+) -> Result<(IndexMap<H256, Vec<Nibbles>>, bool, usize), SyncError> {
     if let Some(mut nodes) = peers
         .request_storage_trienodes(state_root, batch.clone())
         .await
