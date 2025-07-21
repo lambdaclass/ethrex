@@ -342,6 +342,7 @@ impl PeerHandler {
             for (peer_id, _peer_channels) in &peer_channels {
                 if downloaders.contains_key(peer_id) {
                     // Peer is already in the downloaders list, skip it
+                    info!("Peer {peer_id} is already in the downloaders list");
                     continue;
                 }
 
@@ -358,6 +359,16 @@ impl PeerHandler {
                 .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
                 .collect::<Vec<_>>();
 
+            // check if the downloader list is ordered:
+            let mut downloader_scores = vec![];
+            info!("##### DOWNLOADER LIST ######");
+            for d in free_downloaders.iter() {
+                let score = self.get_peer_score(d.0).await.unwrap();
+                downloader_scores.push((d.0, score));
+                info!("Peer {d:?} score: {score}");
+            }
+
+            info!("Free downloaders: {free_downloaders:?}");
             if free_downloaders.is_empty() {
                 continue;
             }
