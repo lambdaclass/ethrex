@@ -10,9 +10,7 @@ use indexmap::IndexMap;
 use rand::random;
 use spawned_concurrency::error::GenServerError;
 use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-    time::{Duration, SystemTime},
+    collections::{HashSet, VecDeque}, process::exit, sync::Arc, time::{Duration, SystemTime}
 };
 use tokio::sync::Mutex;
 
@@ -169,7 +167,7 @@ impl PeerHandler {
                         .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
                         .unwrap();
 
-                    info!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
+                    debug!("(Retry {retries}) Requesting sync head {sync_head} to peer {peer_id}");
 
                     match tokio::time::timeout(Duration::from_secs(5), async move {
                         peer_channel.receiver.lock().await.recv().await.unwrap()
@@ -186,7 +184,7 @@ impl PeerHandler {
                             warn!("Received unexpected message from peer {peer_id}");
                         }
                         Err(_err) => {
-                            warn!("Timeout while waiting for sync head from {peer_id}");
+                            debug!("Timeout while waiting for sync head from {peer_id}");
                         }
                     }
                 });
@@ -331,6 +329,17 @@ impl PeerHandler {
                 .get_all_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
                 .await;
 
+
+            let mut scores = vec![];
+            for (peer_id, _peer_channels) in &peer_channels {
+                let score = self.get_peer_score(*peer_id).await.unwrap();
+                scores.push((peer_id, score));
+                info!("Peer {peer_id} score: {score}");
+            }
+            
+
+
+            exit(2);
             for (peer_id, _peer_channels) in &peer_channels {
                 if downloaders.contains_key(peer_id) {
                     // Peer is already in the downloaders list, skip it
