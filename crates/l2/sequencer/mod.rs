@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::based::sequencer_state::SequencerState;
 use crate::based::sequencer_state::SequencerStatus;
 use crate::monitor::EthrexMonitor;
+use crate::sequencer::l1_proof_verifier::L1ProofVerifier;
 use crate::{BlockFetcher, SequencerConfig, StateUpdater};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
@@ -14,7 +15,6 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -123,13 +123,19 @@ pub async fn start_l2(
             error!("Error starting Block Producer: {err}");
         });
 
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if cfg.aligned.aligned_mode {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
-            cfg.clone(),
+        let _ = L1ProofVerifier::spawn(
+            cfg.clone().proof_coordinator,
+            &cfg.l1_committer,
+            &cfg.eth,
+            &cfg.aligned,
             rollup_store.clone(),
             needed_proof_types.clone(),
-        ));
+        )
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Aligned Proof Verifier: {err}");
+        });
     }
     if cfg.based.based {
         let _ = StateUpdater::spawn(

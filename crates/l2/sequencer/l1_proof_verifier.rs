@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use aligned_sdk::{
     aggregation_layer::{
@@ -17,41 +18,90 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
+use spawned_concurrency::{
+    messages::Unused,
+    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+};
 use tracing::{error, info};
 
 use crate::{
-    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    sequencer::errors::ProofVerifierError,
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, sequencer::errors::ProofVerifierError,
 };
 
-use super::{
-    configs::AlignedConfig,
-    errors::SequencerError,
-    utils::{send_verify_tx, sleep_random},
-};
+use super::{configs::AlignedConfig, utils::send_verify_tx};
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatchesAligned(uint256,bytes[],bytes32[][],bytes32[][])";
 
-pub async fn start_l1_proof_verifier(
-    cfg: SequencerConfig,
-    rollup_store: StoreRollup,
-    needed_proof_types: Vec<ProverType>,
-) -> Result<(), SequencerError> {
-    let l1_proof_verifier = L1ProofVerifier::new(
-        cfg.proof_coordinator,
-        &cfg.l1_committer,
-        &cfg.eth,
-        &cfg.aligned,
-        rollup_store,
-        needed_proof_types,
-    )
-    .await?;
-    l1_proof_verifier.run().await;
-    Ok(())
+#[derive(Clone, Debug)]
+pub enum CastInMessage {
+    Prove,
 }
 
-struct L1ProofVerifier {
+#[derive(Clone, PartialEq, Debug)]
+pub enum OutMessage {
+    Done,
+}
+pub struct L1ProofVerifier {}
+
+impl L1ProofVerifier {
+    pub async fn spawn(
+        proof_coordinator_cfg: ProofCoordinatorConfig,
+        committer_cfg: &CommitterConfig,
+        eth_cfg: &EthConfig,
+        aligned_cfg: &AlignedConfig,
+        rollup_store: StoreRollup,
+        needed_proof_types: Vec<ProverType>,
+    ) -> Result<(), ProofVerifierError> {
+        let state = L1ProofVerifierState::new(
+            proof_coordinator_cfg,
+            committer_cfg,
+            eth_cfg,
+            aligned_cfg,
+            rollup_store,
+            needed_proof_types
+        )
+        .await?;
+        let mut handle = L1ProofVerifier::start(state);
+        handle
+            .cast(CastInMessage::Prove)
+            .await
+            .map_err(ProofVerifierError::GenServer)?;
+        Ok(())
+    }
+}
+
+impl GenServer for L1ProofVerifier {
+    type CallMsg = Unused;
+    type CastMsg = CastInMessage;
+    type OutMsg = OutMessage;
+    type State = L1ProofVerifierState;
+    type Error = ProofVerifierError;
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn handle_cast(
+        &mut self,
+        _message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+        state: Self::State,
+    ) -> CastResponse<Self> {
+        let _ = state.main_logic().await.inspect_err(|err| {
+            error!("L1 Proof Verifier Error: {err}");
+        });
+        send_after(
+            Duration::from_millis(state.proof_verify_interval_ms),
+            handle.clone(),
+            Self::CastMsg::Prove,
+        );
+        CastResponse::NoReply(state)
+    }
+}
+
+#[derive(Clone)]
+pub struct L1ProofVerifierState {
     eth_client: EthClient,
     beacon_urls: Vec<String>,
     l1_signer: Signer,
@@ -64,7 +114,7 @@ struct L1ProofVerifier {
     needed_proof_types: Vec<ProverType>,
 }
 
-impl L1ProofVerifier {
+impl L1ProofVerifierState {
     async fn new(
         proof_coordinator_cfg: ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
@@ -95,17 +145,6 @@ impl L1ProofVerifier {
             risc0_vk,
             needed_proof_types,
         })
-    }
-
-    async fn run(&self) {
-        info!("Running L1 Proof Verifier");
-        loop {
-            if let Err(err) = self.main_logic().await {
-                error!("L1 Proof Verifier Error: {}", err);
-            }
-
-            sleep_random(self.proof_verify_interval_ms).await;
-        }
     }
 
     async fn main_logic(&self) -> Result<(), ProofVerifierError> {
