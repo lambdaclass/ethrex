@@ -718,15 +718,17 @@ impl PeerHandler {
                 }
 
                 downloaded_count += accounts.len() as u64;
-                // let batch_show = downloaded_count / 10_000;
-                // if current_show < batch_show {
-                info!(
-                    "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
-                    accounts.len(),
-                    peer_id
-                );
-                //     current_show += 1;
-                // }
+
+                let batch_show = downloaded_count / 10_000;
+
+                if current_show < batch_show {
+                    info!(
+                        "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
+                        accounts.len(),
+                        peer_id
+                    );
+                    current_show += 1;
+                }
                 // store accounts
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
                 all_accounts_state.extend(
@@ -903,19 +905,14 @@ impl PeerHandler {
         );
         info!("Starting to compute the state root...");
 
-        let store = Box::new(InMemoryTrieDB::new_empty());
-        let mut trie = Trie::new(store);
+        let computed_state_root = Trie::compute_hash_from_unsorted_iter(
+            all_account_hashes
+                .clone()
+                .into_iter()
+                .zip(all_accounts_state.clone())
+                .map(|(account_hash, account)| (account_hash.0.into(), account.encode_to_vec())),
+        );
 
-        for (account_hash, account) in all_account_hashes
-            .clone()
-            .into_iter()
-            .zip(all_accounts_state.clone())
-        {
-            trie.insert(account_hash.0.into(), account.encode_to_vec())
-                .inspect_err(|e| error!("Failed to insert account into trie: {e}"));
-        }
-
-        let computed_state_root = trie.hash().unwrap();
         info!("Expected state root: {state_root}");
         info!("Final state root after account range requests: {computed_state_root}");
         std::process::exit(0);

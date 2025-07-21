@@ -167,42 +167,42 @@ pub async fn periodically_show_peer_stats() {
 
         let rlpx_disconnections = METRICS.disconnections_by_client_type.lock().await;
 
-        info!(
-            r#"
-elapsed: {elapsed}
-{current_contacts} current contacts ({new_contacts_rate} contacts/m)
-{discarded_nodes} discarded nodes
-{discovered_nodes} total discovered nodes over time
-{sent_pings} pings sent ({sent_pings_rate} new pings sent/m)
-{peers} peers ({new_peers_rate} new peers/m)
-{lost_peers} lost peers
-{rlpx_connections} total peers made over time
-{rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
-{rlpx_failed_connection_attempts} failed connection attempts
-Clients Diversity: {peers_by_client:#?}
-RLPx disconnections: {rlpx_disconnections:#?}
-RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reason:#?}"#,
-            elapsed = format_duration(start.elapsed()),
-            current_contacts = METRICS.contacts.lock().await,
-            new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
-            discarded_nodes = METRICS.discarded_nodes.get(),
-            discovered_nodes = METRICS.discovered_nodes.get(),
-            sent_pings = METRICS.pings_sent.get(),
-            sent_pings_rate = METRICS.pings_sent_rate.get().floor(),
-            peers = METRICS.peers.lock().await,
-            new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
-            peers_by_client = rlpx_connection_client_types,
-            lost_peers = rlpx_disconnections
-                .values()
-                .flat_map(|x| x.values())
-                .sum::<u64>(),
-            rlpx_connections = METRICS.connection_establishments.get(),
-            rlpx_connection_attempts = METRICS.connection_attempts.get(),
-            new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
-            rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
-            rlpx_disconnections = rlpx_disconnections,
-            rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
-        );
+        //         info!(
+        //             r#"
+        // elapsed: {elapsed}
+        // {current_contacts} current contacts ({new_contacts_rate} contacts/m)
+        // {discarded_nodes} discarded nodes
+        // {discovered_nodes} total discovered nodes over time
+        // {sent_pings} pings sent ({sent_pings_rate} new pings sent/m)
+        // {peers} peers ({new_peers_rate} new peers/m)
+        // {lost_peers} lost peers
+        // {rlpx_connections} total peers made over time
+        // {rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
+        // {rlpx_failed_connection_attempts} failed connection attempts
+        // Clients Diversity: {peers_by_client:#?}
+        // RLPx disconnections: {rlpx_disconnections:#?}
+        // RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reason:#?}"#,
+        //             elapsed = format_duration(start.elapsed()),
+        //             current_contacts = METRICS.contacts.lock().await,
+        //             new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
+        //             discarded_nodes = METRICS.discarded_nodes.get(),
+        //             discovered_nodes = METRICS.discovered_nodes.get(),
+        //             sent_pings = METRICS.pings_sent.get(),
+        //             sent_pings_rate = METRICS.pings_sent_rate.get().floor(),
+        //             peers = METRICS.peers.lock().await,
+        //             new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
+        //             peers_by_client = rlpx_connection_client_types,
+        //             lost_peers = rlpx_disconnections
+        //                 .values()
+        //                 .flat_map(|x| x.values())
+        //                 .sum::<u64>(),
+        //             rlpx_connections = METRICS.connection_establishments.get(),
+        //             rlpx_connection_attempts = METRICS.connection_attempts.get(),
+        //             new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
+        //             rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
+        //             rlpx_disconnections = rlpx_disconnections,
+        //             rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
+        //         );
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
