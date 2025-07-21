@@ -287,6 +287,14 @@ pub struct DeployerOptions {
         help = "Address of the owner of the SequencerRegistry contract, who can upgrade the contract."
     )]
     pub sequencer_registry_owner: Option<Address>,
+    #[arg(
+        long,
+        default_value = "3000",
+        env = "ETHREX_ON_CHAIN_PROPOSER_INCUSION_MAX_WAIT",
+        help_heading = "Deployer options",
+        help = "Deadline in seconds for the sequencer to process a privileged transaction."
+    )]
+    pub inclusion_max_wait: u64,
 }
 
 impl Default for DeployerOptions {
@@ -352,6 +360,7 @@ impl Default for DeployerOptions {
             risc0_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
+            inclusion_max_wait: 3000,
         }
     }
 }
