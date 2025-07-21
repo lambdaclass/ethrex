@@ -110,6 +110,7 @@ pub enum OutMessage {
     Error,
 }
 
+#[derive(Default)]
 pub struct L1Committer;
 
 impl L1Committer {

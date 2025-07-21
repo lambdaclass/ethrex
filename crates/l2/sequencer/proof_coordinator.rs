@@ -308,6 +308,7 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: Arc<TcpListener
     }
 }
 
+#[derive(Default)]
 struct ConnectionHandler;
 
 impl ConnectionHandler {
