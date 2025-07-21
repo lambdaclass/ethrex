@@ -385,7 +385,7 @@ impl PeerHandler {
                 debug!(
                     "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
                 );
-                downloaders.remove(&free_peer_id);
+                downloaders.shift_remove(&free_peer_id);
                 continue;
             };
 
