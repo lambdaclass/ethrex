@@ -864,7 +864,7 @@ impl PeerHandler {
 
                     let Ok(should_continue) = verify_range(
                         state_root,
-                        &start,
+                        &chunk_start,
                         &account_hashes,
                         &encoded_accounts,
                         &proof,
