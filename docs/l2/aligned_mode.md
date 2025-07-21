@@ -102,7 +102,7 @@ Aligned params explanation:
 In a console with `ethrex/crates/l2` as the current directory, run the following command:
 
 ```bash
-make init-prover PROVER=<sp1/risc0> # optional: GPU=true
+make init-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 ## How to run (local devnet)
@@ -157,7 +157,7 @@ make batcher_start_ethereum_package
 ```
 This is the Aligned component that receives the proofs before sending them in a batch.
 > [!Warning]
-> If you see the following error in the batcher: `[ERROR aligned_batcher] Unexpected error: Space limit exceeded: Message too long: 16940713 > 16777216` modify the file `aligned_layer/batcher/aligned-batcher/src/lib.rs` at line 433 with the following code:
+> > If you see the following error in the batcher: `[ERROR aligned_batcher] Unexpected error: Space limit exceeded: Message too long: 16940713 > 16777216` modify the file `aligned_layer/crates/batcher/src/lib.rs` at line 435 with the following code:
 ```Rust
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
@@ -189,9 +189,6 @@ You will see that some deposits fail with the following error:
 ```
 
 This is because not all the accounts are pre-funded from the genesis.
-
-> [!IMPORTANT]
-> Save the CommonBridge and OnChainProposer proxy addresses.
 
 2. Send some funds to the Aligned batcher payment service contract from the proof sender:
 ```
