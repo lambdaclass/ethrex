@@ -77,7 +77,7 @@ impl RpcHandler for BlobsV1Request {
                 .iter()
                 .zip(blobs_in_bundle.iter().zip(proofs_in_bundle.iter()))
             {
-                let current_versioned_hash = kzg_commitment_to_versioned_hash(&commitment);
+                let current_versioned_hash = kzg_commitment_to_versioned_hash(commitment);
                 if let Some(index) = self
                     .blob_versioned_hashes
                     .iter()
