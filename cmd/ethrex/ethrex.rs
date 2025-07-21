@@ -70,7 +70,7 @@ async fn main() -> eyre::Result<()> {
     init_tracing(&opts);
 
     let network = get_network(&opts);
-    let data_dir = init_datadir(opts.datadir.clone(), opts.chain.clone());
+    let data_dir = init_datadir(opts.datadir.clone(), None, Some(&network));
 
     let genesis = match network.get_genesis() {
         Ok(genesis) => genesis,
@@ -112,6 +112,7 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        &data_dir,
     )
     .await;
 

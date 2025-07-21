@@ -56,16 +56,6 @@ pub struct Options {
     )]
     pub datadir: Option<PathBuf>,
     #[arg(
-        long = "chain",
-        value_name = "CHAIN_NAME",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
-        help_heading = "Node options",
-        env = "ETHREX_CHAIN"
-    )]
-    pub chain: Option<String>,
-    #[arg(
         long = "force",
         help = "Force remove the database",
         long_help = "Delete the database without confirmation.",
@@ -215,7 +205,6 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
-            chain: Default::default(),
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
@@ -294,7 +283,8 @@ impl Subcommand {
         }
         match self {
             Subcommand::RemoveDB => {
-                let datadir = init_datadir(opts.datadir.clone(), opts.chain.clone());
+                let network = get_network(opts);
+                let datadir = init_datadir(opts.datadir.clone(), None, Some(&network));
                 remove_db(&datadir, opts.force);
             }
             Subcommand::Import { path, removedb, l2 } => {
@@ -304,7 +294,7 @@ impl Subcommand {
 
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
-                let datadir = init_datadir(opts.datadir.clone(), opts.chain.clone());
+                let datadir = init_datadir(opts.datadir.clone(), None, Some(&network));
                 let blockchain_type = if l2 {
                     BlockchainType::L2
                 } else {
@@ -320,7 +310,8 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::Export { path, first, last } => {
-                let datadir = init_datadir(opts.datadir.clone(), opts.chain.clone());
+                let network = get_network(opts);
+                let datadir = init_datadir(opts.datadir.clone(), None, Some(&network));
                 export_blocks(Path::new(&path), &datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {

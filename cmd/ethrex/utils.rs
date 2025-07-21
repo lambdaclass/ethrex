@@ -1,4 +1,4 @@
-use crate::decode;
+use crate::{decode, networks::Network};
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::Block;
@@ -105,7 +105,11 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn init_datadir(datadir_path_opt: Option<PathBuf>, chain_opt: Option<String>) -> PathBuf {
+pub fn init_datadir(
+    datadir_path_opt: Option<PathBuf>,
+    chain_opt: Option<String>,
+    network: Option<&Network>,
+) -> PathBuf {
     let data_dir_path = if let Some(datadir_path) = datadir_path_opt {
         datadir_path
     } else {
@@ -116,6 +120,8 @@ pub fn init_datadir(datadir_path_opt: Option<PathBuf>, chain_opt: Option<String>
     let mut path_with_chain = data_dir_path;
     if let Some(chain) = chain_opt {
         path_with_chain.push(chain);
+    } else if let Some(network) = network {
+        path_with_chain.push(network.get_network_subdir());
     }
 
     if !path_with_chain.exists() {

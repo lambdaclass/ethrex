@@ -54,8 +54,6 @@ pub enum Command {
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", required = false)]
         datadir: Option<PathBuf>,
-        #[arg(long = "chain", value_name = "CHAIN_NAME", required = false)]
-        chain: Option<String>,
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -116,13 +114,6 @@ pub enum Command {
             env = "ETHREX_DATADIR"
         )]
         datadir: Option<PathBuf>,
-        #[arg(
-            long = "chain",
-            value_name = "CHAIN_NAME",
-            help = "Receives the name of the chain where the Database is located.",
-            env = "ETHREX_CHAIN"
-        )]
-        chain: Option<String>,
     },
 }
 
@@ -136,10 +127,13 @@ impl Command {
 
                 l2::initializers::init_tracing(&opts);
 
-                let data_dir = init_datadir(opts.node_opts.datadir.clone(), opts.node_opts.chain.clone());
-                let rollup_store_dir = data_dir.join("rollup_store");
-
                 let network = get_network(&opts.node_opts);
+                let data_dir = init_datadir(
+                    opts.node_opts.datadir.clone(),
+                    None,
+                    Some(&network),
+                );
+                let rollup_store_dir = data_dir.join("rollup_store");
 
                 let genesis = network.get_genesis()?;
                 let store = init_store(&data_dir, genesis).await;
@@ -251,13 +245,11 @@ impl Command {
             }
             Self::RemoveDB {
                 datadir,
-                chain,
                 force,
             } => {
                 Box::pin(async {
                     let mut opts = NodeOptions::default();
                     opts.datadir = datadir;
-                    opts.chain = chain;
                     opts.force = force;
                     ethrex_cli::Subcommand::RemoveDB.run(&opts).await
                 })
@@ -500,9 +492,8 @@ impl Command {
                 private_key,
                 datadir,
                 network,
-                chain,
             } => {
-                let data_dir = init_datadir(datadir, chain);
+                let data_dir = init_datadir(datadir, None, Some(&network));
                 let rollup_store_dir = data_dir.join("rollup_store");
 
                 let client = EthClient::new(rpc_url.as_str())?;

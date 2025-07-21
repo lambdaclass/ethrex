@@ -20,7 +20,7 @@ use rand::rngs::OsRng;
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -71,6 +71,9 @@ pub async fn init_store(data_dir: &Path, genesis: Genesis) -> Store {
 
 /// Opens a Pre-exsisting Store or creates a new one
 pub fn open_store(data_dir: &Path) -> Store {
+    let mut store_path = data_dir.to_path_buf();
+    store_path.push("chaindata");
+
     if data_dir.ends_with("memory") {
         Store::new(
             data_dir.to_str().expect("Invalid data directory path"),
@@ -89,7 +92,7 @@ pub fn open_store(data_dir: &Path) -> Store {
             }
         }
         Store::new(
-            data_dir.to_str().expect("Invalid data directory path"),
+            store_path.to_str().expect("Invalid data directory path"),
             engine_type,
         )
         .expect("Failed to create Store")
@@ -115,6 +118,7 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    data_dir: &Path,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -128,12 +132,19 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let jwt_secret_path = PathBuf::from(&opts.authrpc_jwtsecret);
+    let jwt_secret = if jwt_secret_path.is_relative() {
+        read_jwtsecret_file(data_dir.join(jwt_secret_path).to_str().unwrap())
+    } else {
+        read_jwtsecret_file(&opts.authrpc_jwtsecret)
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        jwt_secret,
         local_p2p_node,
         local_node_record,
         syncer,

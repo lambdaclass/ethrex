@@ -126,6 +126,15 @@ impl Network {
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
         }
     }
+
+    /// Returns network specific subdirectory to store the application data
+    pub fn get_network_subdir(&self) -> PathBuf {
+        match self {
+            Network::PublicNetwork(_) => PathBuf::from(&self.to_string()),
+            Network::GenesisPath(_) => PathBuf::from("custom_network"),
+            Network::LocalDevnet => PathBuf::from("local-devnet"),
+        }
+    }
 }
 
 fn get_genesis_contents(network: PublicNetwork) -> &'static str {
@@ -188,13 +197,5 @@ mod tests {
             PublicNetwork::Mainnet,
             "d4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",
         );
-    }
-
-    /// Returns network specific subdirectory to store the application data
-    pub fn get_network_subdir(&self) -> PathBuf {
-        match self {
-            Network::PublicNetwork(_) => PathBuf::from(&self.to_string()),
-            Network::GenesisPath(_) => PathBuf::from("custom_network"),
-        }
     }
 }
