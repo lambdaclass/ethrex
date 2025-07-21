@@ -91,6 +91,7 @@ pub fn open_store(data_dir: &Path) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
+        info!("Opening store at path: {:?}", store_path);
         Store::new(
             store_path.to_str().expect("Invalid data directory path"),
             engine_type,
@@ -284,7 +285,10 @@ pub fn get_signer(data_dir: &Path) -> SigningKey {
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = data_dir.join("node.key");
     match fs::read(key_path.clone()) {
-        Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
+        Ok(content) => {
+            info!("Opening signer key from {:?}", key_path);
+            SigningKey::from_slice(&content).expect("Signing key could not be created.")
+        }
         Err(_) => {
             info!(
                 "Key file not found, creating a new key and saving to {:?}",

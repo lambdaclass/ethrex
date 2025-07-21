@@ -46,13 +46,16 @@ impl NodeConfigFile {
 
 pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     match File::open(jwt_secret_path) {
-        Ok(mut file) => decode::jwtsecret_file(&mut file),
+        Ok(mut file) => {
+            info!("Opening jwt secret from {:?}", jwt_secret_path);
+            decode::jwtsecret_file(&mut file)
+        }
         Err(_) => write_jwtsecret_file(jwt_secret_path),
     }
 }
 
 pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
-    info!("JWT secret not found in the provided path, generating JWT secret");
+    info!("JWT secret not found, generating JWT secret at {:?}", jwt_secret_path);
     let secret = generate_jwt_secret();
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
     hex::decode(secret)
