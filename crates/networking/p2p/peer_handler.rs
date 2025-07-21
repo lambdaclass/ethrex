@@ -920,7 +920,7 @@ impl PeerHandler {
         if all_account_hashes.is_empty() || all_accounts_state.is_empty() {
             return None;
         }
-        Some((all_account_hashes, all_accounts_state, should_continue_any))
+        Some((all_account_hashes, all_accounts_state, false))
     }
 
     /// Requests bytecodes for the given code hashes
