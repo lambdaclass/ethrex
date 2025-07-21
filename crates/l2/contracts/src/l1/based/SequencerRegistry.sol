@@ -106,15 +106,15 @@ contract SequencerRegistry is
         if (batchNumber < _currentBatch) {
             return sequencerForBatch[batchNumber];
         }
-        uint256 _sequencers = sequencers.length;
+        uint256 _sequencersLength = sequencers.length;
 
-        if (_sequencers == 0) {
+        if (_sequencersLength == 0) {
             return address(0);
         }
 
-        uint256 _id = batchNumber / BATCHES_PER_SEQUENCER;
+        uint256 batchSlot = batchNumber / BATCHES_PER_SEQUENCER;
 
-        address _leader = sequencers[_id % _sequencers];
+        address _leader = sequencers[batchSlot % _sequencersLength];
 
         return _leader;
     }
