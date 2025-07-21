@@ -288,6 +288,8 @@ impl Syncer {
         }
         info!("Finished downloading and storing block headers");
 
+        // @@@@@@@@@@@@
+
         // This turns on full sync from wherever you left
         // self.snap_enabled.store(false, Ordering::Relaxed);
         match sync_mode {
@@ -343,6 +345,199 @@ impl Syncer {
         }
         Ok(())
     }
+
+    // ################################################################
+    // TODO IDEAL World: request_account_trie()
+    pub(crate) async fn state_sync(
+        state_root: H256,
+        store: Store,
+        peers: PeerHandler,
+        key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
+        storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    ) -> Result<bool, SyncError> {
+        // Spawn tasks to fetch each state trie segment
+        let mut state_trie_tasks = tokio::task::JoinSet::new();
+
+        // Spawn a task to show the state sync progress
+        //let state_sync_progress = StateSyncProgress::new(Instant::now());
+        //let show_progress_handle =
+        //    tokio::task::spawn(show_state_sync_progress(state_sync_progress.clone()));
+
+        // TODO CONTINUAR ACA!!! ⭐⭐⭐⭐⭐⭐
+        state_trie_tasks.spawn(state_sync_segment_2(
+            state_root,
+            peers.clone(),
+            store.clone(),
+            state_sync_progress.clone(),
+            storage_trie_rebuilder_sender.clone(),
+        ));
+
+        // Check for pivot staleness
+        let mut stale_pivot = false;
+        let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
+        for res in state_trie_tasks.join_all().await {
+            let (index, is_stale, last_key) = res?;
+            stale_pivot |= is_stale;
+            state_trie_checkpoint[index] = last_key;
+        }
+        show_progress_handle.abort();
+        // Update state trie checkpoint
+        store
+            .set_state_trie_key_checkpoint(state_trie_checkpoint)
+            .await?;
+        Ok(stale_pivot);
+        todo!()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn state_sync_segment(
+        state_root: H256,
+        peers: PeerHandler,
+        store: Store,
+        segment_number: usize,
+        checkpoint: Option<H256>,
+        state_sync_progress: StateSyncProgress,
+        storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
+    ) -> Result<(usize, bool, H256), SyncError> {
+        // Resume download from checkpoint if available or start from an empty trie
+        //? let mut start_account_hash =
+        //?     checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
+        //? // Write initial sync progress (this task is not vital so we can detach it)
+        //? tokio::task::spawn(StateSyncProgress::init_segment(
+        //?     state_sync_progress.clone(),
+        //?     segment_number,
+        //?     start_account_hash,
+        //? ));
+
+        // Skip state sync if we are already on healing
+        //? if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
+        //?     // Update sync progress (this task is not vital so we can detach it)
+        //?     tokio::task::spawn(StateSyncProgress::update_key(
+        //?         state_sync_progress.clone(),
+        //?         segment_number,
+        //?         start_account_hash,
+        //?     ));
+        //?     return Ok((segment_number, false, start_account_hash));
+        //? }
+
+        // Spawn storage & bytecode fetchers
+        // let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+        // let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
+        // let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
+        //     bytecode_receiver,
+        //     peers.clone(),
+        //     store.clone(),
+        // ));
+        // let storage_fetcher_handle = tokio::spawn(storage_fetcher(
+        //     storage_receiver,
+        //     peers.clone(),
+        //     store.clone(),
+        //     state_root,
+        //     storage_trie_rebuilder_sender.clone(),
+        // ));
+        info!(
+            "Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}"
+        );
+        // Fetch Account Ranges
+        // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
+        let mut stale = false;
+        loop {
+            // Update sync progress (this task is not vital so we can detach it)
+            tokio::task::spawn(StateSyncProgress::update_key(
+                state_sync_progress.clone(),
+                segment_number,
+                start_account_hash,
+            ));
+            debug!(
+                "[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}"
+            );
+            if let Some((account_hashes, accounts, should_continue)) = peers
+                .request_account_range(
+                    state_root,
+                    start_account_hash,
+                    STATE_TRIE_SEGMENTS_END[segment_number],
+                )
+                .await
+            {
+                info!(
+                    "[Segment {segment_number}]: Received {} account ranges",
+                    accounts.len()
+                );
+                // Update starting hash for next batch
+                let last_account_hash = account_hashes
+                    .last()
+                    .ok_or(SyncError::InvalidRangeReceived)?;
+                start_account_hash = *last_account_hash;
+
+                // Fetch Account Storage & Bytecode
+                let mut code_hashes = vec![];
+                let mut account_hashes_and_storage_roots = vec![];
+                for (account_hash, account) in account_hashes.iter().zip(accounts.iter()) {
+                    // Build the batch of code hashes to send to the bytecode fetcher
+                    // Ignore accounts without code / code we already have stored
+                    if account.code_hash != *EMPTY_KECCACK_HASH
+                        && store.get_account_code(account.code_hash)?.is_none()
+                    {
+                        code_hashes.push(account.code_hash)
+                    }
+                    // Build the batch of hashes and roots to send to the storage fetcher
+                    // Ignore accounts without storage and account's which storage hasn't changed from our current stored state
+                    if account.storage_root != *EMPTY_TRIE_HASH
+                        && !store.contains_storage_node(*account_hash, account.storage_root)?
+                    {
+                        account_hashes_and_storage_roots
+                            .push((*account_hash, account.storage_root));
+                    }
+                }
+                // Send code hash batch to the bytecode fetcher
+                // if !code_hashes.is_empty() {
+                //     bytecode_sender.send(code_hashes).await?;
+                // }
+                // Send hash and root batch to the storage fetcher
+                // if !account_hashes_and_storage_roots.is_empty() {
+                //     storage_sender
+                //         .send(account_hashes_and_storage_roots)
+                //         .await?;
+                // }
+                // Update Snapshot
+                store
+                    .write_snapshot_account_batch(account_hashes, accounts)
+                    .await?;
+                // As we are downloading the state trie in segments the `should_continue` flag will mean that there
+                // are more accounts to be fetched but these accounts may belong to the next segment
+                if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number]
+                {
+                    // All accounts fetched!
+                    info!("All accounts were fetched");
+                    break;
+                }
+            } else {
+                stale = true;
+                info!("Block became stale while fetching account ranges");
+                break;
+            }
+        }
+        info!(
+            "[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process"
+        );
+        // Update sync progress (this task is not vital so we can detach it)
+        tokio::task::spawn(StateSyncProgress::update_key(
+            state_sync_progress.clone(),
+            segment_number,
+            start_account_hash,
+        ));
+        // Send empty batch to signal that no more batches are incoming
+        // storage_sender.send(vec![]).await?;
+        // bytecode_sender.send(vec![]).await?;
+        // storage_fetcher_handle.await??;
+        // bytecode_fetcher_handle.await??;
+        if !stale {
+            // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
+            start_account_hash = STATE_TRIE_SEGMENTS_END[segment_number]
+        }
+        Ok((segment_number, stale, start_account_hash))
+    }
+    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     /// Attempts to fetch up to 1024 block bodies from peers via P2P, starting from the sync head.
     /// Executes and stores the retrieved blocks.
@@ -594,6 +789,7 @@ impl Syncer {
         //     storage_healer_cancell_token.clone(),
         //     state_healing_ended.clone(),
         // ));
+
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
         let key_checkpoints = store.get_state_trie_key_checkpoint().await?;
