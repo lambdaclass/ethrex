@@ -908,8 +908,9 @@ impl PeerHandler {
                 .inspect_err(|e| error!("Failed to insert account into trie: {e}"));
         }
 
-        let state_root = trie.hash().unwrap();
-        info!("Final state root after account range requests: {state_root}");
+        let computed_state_root = trie.hash().unwrap();
+        info!("Expected state root: {state_root}");
+        info!("Final state root after account range requests: {computed_state_root}");
         std::process::exit(0);
 
         // TODO: proof validation and should_continue aggregation
