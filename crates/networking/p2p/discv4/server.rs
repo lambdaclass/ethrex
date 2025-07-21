@@ -532,7 +532,7 @@ impl GenServer for ConnectionHandler {
                 }
                 let node_id = node_id(&sender_public_key);
 
-                let table = state.kademlia.table.lock().await;
+                let mut table = state.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
                     drop(table);
@@ -548,13 +548,7 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
-                state
-                    .kademlia
-                    .table
-                    .lock()
-                    .await
-                    .entry(node_id)
-                    .and_modify(|c| c.knows_us = true);
+                table.entry(node_id).and_modify(|c| c.knows_us = true);
             }
             Self::CastMsg::ENRResponse {
                 message: msg,
