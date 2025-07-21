@@ -12,7 +12,7 @@ use crate::{
     utils::RpcErr,
 };
 
-// -> https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#specification-3
+// -> https://github.com/ethereum/execution-apis/blob/d41fdf10fabbb73c4d126fb41809785d830acace/src/engine/cancun.md?plain=1#L186
 const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize = 128;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,15 +20,9 @@ pub struct BlobsV1Request {
     blob_versioned_hashes: Vec<H256>,
 }
 
-impl std::fmt::Display for BlobsV1Request {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Requested Blobs")
-    }
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BlobsV1ResponseItem {
+pub struct BlobAndProofV1 {
     #[serde(with = "serde_utils::blob::opt")]
     pub blob: Option<Blob>,
     #[serde(with = "serde_utils::bytes48::opt")]
@@ -49,13 +43,13 @@ impl RpcHandler for BlobsV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Received new engine request: {self}");
+        info!("Received new engine request: Requested Blobs");
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
         //TODO: spec https://ethereum.github.io/execution-apis/docs/reference/engine_getblobsv1/ says error should be thrown for unsupported fork.
-        let mut res: Vec<BlobsV1ResponseItem> = vec![
-            BlobsV1ResponseItem {
+        let mut res: Vec<BlobAndProofV1> = vec![
+            BlobAndProofV1 {
                 blob: None,
                 proof: None
             };
@@ -68,7 +62,7 @@ impl RpcHandler for BlobsV1Request {
             let commitments_in_bundle = blobs_bundle.commitments;
             let proofs_in_bundle = blobs_bundle.proofs;
 
-            // Go over all the commitments in each blobs bundle to get the blobs versioned hash.
+            // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
             for i in 0..commitments_in_bundle.len() {
                 let current_versioned_hash =
                     kzg_commitment_to_versioned_hash(&commitments_in_bundle[i]);
@@ -77,7 +71,7 @@ impl RpcHandler for BlobsV1Request {
                     .iter()
                     .position(|&hash| hash == current_versioned_hash)
                 {
-                    // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vectors storing them in the same position as the versioned hash was received.
+                    // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
                     res[index].blob = Some(blobs_in_bundle[i]);
                     res[index].proof = Some(proofs_in_bundle[i]);
                 }
