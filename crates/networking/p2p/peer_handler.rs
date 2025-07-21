@@ -849,6 +849,7 @@ impl PeerHandler {
                         tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                             .await
                             .ok();
+                        tracing::error!("Received empty account range");
                         return;
                     }
                     // Unzip & validate response
@@ -873,6 +874,7 @@ impl PeerHandler {
                         tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                             .await
                             .ok();
+                        tracing::error!("Received invalid account range");
                         return;
                     };
 
@@ -889,6 +891,7 @@ impl PeerHandler {
                     };
                     tx.send((accounts, free_peer_id, chunk_left)).await.ok();
                 } else {
+                    tracing::error!("Failed to get account range");
                     tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                         .await
                         .ok();
