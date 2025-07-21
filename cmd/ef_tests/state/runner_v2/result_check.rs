@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
-    types::{Account, AccountUpdate},
+    types::{Account, AccountInfo, AccountUpdate, Genesis},
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
@@ -17,7 +17,7 @@ use keccak_hash::{H256, keccak};
 
 use crate::runner_v2::{
     error::RunnerError,
-    types::{TestCase, TransactionExpectedException},
+    types::{AccountState, TestCase, TransactionExpectedException},
 };
 
 pub struct PostCheckResult {
@@ -59,6 +59,7 @@ pub async fn check_test_case_results(
     store: Store,
     test_case: &TestCase,
     execution_result: Result<ExecutionReport, VMError>,
+    genesis: Genesis,
 ) -> Result<PostCheckResult, RunnerError> {
     let mut checks_result = PostCheckResult::default();
 
@@ -77,10 +78,13 @@ pub async fn check_test_case_results(
             &execution_result.clone().unwrap(),
             &mut checks_result,
         );
+
         // Verify accounts' post state.
-        check_accounts_state(vm.db, test_case, &mut checks_result);
+        check_accounts_state(vm.db, test_case, &mut checks_result, genesis);
+
         // Verify expected root hash.
         check_root(vm, initial_block_hash, store, test_case, &mut checks_result).await?;
+
         Ok(checks_result)
     }
 }
@@ -93,7 +97,7 @@ pub async fn check_root(
     check_result: &mut PostCheckResult,
 ) -> Result<(), RunnerError> {
     let account_updates = backends::levm::LEVM::get_state_transitions(vm.db)
-        .map_err(|_| RunnerError::FailedToGetAccountsUpdates)?;
+        .map_err(|e| RunnerError::FailedToGetAccountsUpdates(e.to_string()))?;
     let post_state_root = post_state_root(&account_updates, initial_block_hash, store).await;
     if post_state_root != test_case.post.hash {
         check_result.passed = false;
@@ -210,58 +214,6 @@ fn exception_matches_expected(
     })
 }
 
-pub fn check_accounts_state(
-    db: &GeneralizedDatabase,
-    test_case: &TestCase,
-    check_result: &mut PostCheckResult,
-) {
-    let mut accounts_diff = Vec::new();
-    if test_case.post.state.is_some() {
-        let expected_accounts_state = test_case.post.state.clone().unwrap();
-        let current_accounts_state = db.current_accounts_state.clone();
-        for (addr, state) in expected_accounts_state {
-            let current_state = if current_accounts_state.contains_key(&addr) {
-                current_accounts_state.get(&addr).unwrap()
-            } else {
-                // This should make checks comparison fail
-                &Account::default()
-            };
-            let code_matches = current_state.code == state.code;
-            let balance_matches = current_state.info.balance == state.balance;
-            let nonce_matches = current_state.info.nonce == state.nonce;
-            let mut storage_matches = true;
-            for (storage_key, content) in &state.storage {
-                let key = &H256::from(storage_key.to_big_endian());
-                if current_state.storage.contains_key(key) {
-                    if current_state.storage.get(key).unwrap() != content {
-                        storage_matches = false;
-                    }
-                } else {
-                    storage_matches = false;
-                }
-            }
-            if !(code_matches && balance_matches && nonce_matches && storage_matches) {
-                let account_mismatch = AccountMismatch {
-                    address: addr,
-                    expected_balance: state.balance,
-                    actual_balance: current_state.info.balance,
-                    expected_nonce: state.nonce,
-                    actual_nonce: current_state.info.nonce,
-                    expected_code: state.code,
-                    actual_code: current_state.code.clone(),
-                    expected_storage: state.storage,
-                    actual_storage: current_state.storage.clone(),
-                };
-                accounts_diff.push(account_mismatch);
-            }
-        }
-    }
-    if !accounts_diff.is_empty() {
-        check_result.accounts_diff = Some(accounts_diff);
-        check_result.passed = false;
-    }
-}
-
 pub fn check_logs(
     test_case: &TestCase,
     execution_report: &ExecutionReport,
@@ -274,4 +226,95 @@ pub fn check_logs(
         checks_result.passed = false;
         checks_result.logs_diff = Some((test_case.post.logs, hashed_logs));
     }
+}
+
+pub fn check_accounts_state(
+    db: &mut GeneralizedDatabase,
+    test_case: &TestCase,
+    check_result: &mut PostCheckResult,
+    genesis: Genesis,
+) {
+    // In this case, the test in the .json file does not have post account details to verify.
+    if test_case.post.state.is_none() {
+        return;
+    }
+
+    let mut accounts_diff: Vec<AccountMismatch> = Vec::new();
+    let expected_accounts_state = test_case.post.state.clone().unwrap();
+
+    // For every account in the test case expected post state, compare it to the actual state.
+    for (addr, expected_account) in expected_accounts_state {
+        let acc_genesis_state = genesis.alloc.get(&addr);
+        // First we check if the address appears in the `current_accounts_state`, which stores accounts modified by the tx.
+        let account: &mut Account = if let Some(account) = db.current_accounts_state.get_mut(&addr)
+        {
+            if account.storage.is_empty() && acc_genesis_state.is_some() {
+                account.storage = acc_genesis_state
+                    .unwrap()
+                    .storage
+                    .iter()
+                    .map(|(k, v)| (H256::from(k.to_big_endian()), *v))
+                    .collect();
+            }
+            account
+        } else {
+            // Else, we take its info from the Genesis state, assuming it has not changed.
+            if let Some(account) = acc_genesis_state {
+                &mut Into::<Account>::into(account.clone())
+            } else {
+                // If we can't find it in any of the previous mappings, we provide a default account that will not pass
+                // the comparisons checks.
+                &mut Account::default()
+            }
+        };
+
+        // We verify if the account matches the expected post state.
+        let account_mismatch = verify_matching_accounts(addr, &account, &expected_account);
+        if account_mismatch.is_some() {
+            accounts_diff.push(account_mismatch.unwrap());
+        }
+    }
+
+    if !accounts_diff.is_empty() {
+        check_result.passed = false;
+        check_result.accounts_diff = Some(accounts_diff);
+    }
+}
+
+fn verify_matching_accounts(
+    addr: Address,
+    actual_account: &Account,
+    expected_account: &AccountState,
+) -> Option<AccountMismatch> {
+    let code_matches = actual_account.code == expected_account.code;
+    let balance_matches = actual_account.info.balance == expected_account.balance;
+    let nonce_matches = actual_account.info.nonce == expected_account.nonce;
+    let mut storage_matches = true;
+
+    for (storage_key, content) in &expected_account.storage {
+        let key = &H256::from(storage_key.to_big_endian());
+        if actual_account.storage.contains_key(key) {
+            if actual_account.storage.get(key).unwrap() != content {
+                storage_matches = false;
+            }
+        } else {
+            storage_matches = false;
+        }
+    }
+
+    if !(code_matches && balance_matches && nonce_matches && storage_matches) {
+        let account_mismatch = AccountMismatch {
+            address: addr,
+            expected_balance: expected_account.balance,
+            actual_balance: actual_account.info.balance,
+            expected_nonce: expected_account.nonce,
+            actual_nonce: actual_account.info.nonce,
+            expected_code: expected_account.code.clone(),
+            actual_code: actual_account.code.clone(),
+            expected_storage: expected_account.storage.clone(),
+            actual_storage: actual_account.storage.clone(),
+        };
+        return Some(account_mismatch);
+    }
+    return None;
 }

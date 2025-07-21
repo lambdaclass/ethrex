@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum RunnerError {
-    FailedToGetAccountsUpdates,
+    FailedToGetAccountsUpdates(String),
     CurrentBaseFeeMissing,
     MaxPriorityFeePerGasMissing,
     MaxFeePerGasMissing,
