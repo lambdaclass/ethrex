@@ -35,7 +35,7 @@ use crate::{
     },
     snap::encodable_to_proof,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
@@ -227,7 +227,7 @@ impl PeerHandler {
                 task_receiver.try_recv()
             {
                 if headers.is_empty() {
-                    warn!("Failed to download chunk from peer {peer_id}");
+                    trace!("Failed to download chunk from peer {peer_id}");
 
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true; // mark the downloader as free
@@ -706,7 +706,7 @@ impl PeerHandler {
         loop {
             if let Ok((accounts, peer_id, chunk_start, chunk_end)) = task_receiver.try_recv() {
                 if accounts.is_empty() {
-                    warn!("Failed to download chunk from peer {peer_id}");
+                    trace!("Failed to download chunk from peer {peer_id}");
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true;
                     });

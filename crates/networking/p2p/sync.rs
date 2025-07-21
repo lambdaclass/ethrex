@@ -298,9 +298,12 @@ impl Syncer {
                         pivot_header.state_root,
                         H256::zero(),
                         // TODO: download the full range
-                        H256::repeat_byte(0x01),
+                        H256::repeat_byte(0xff),
                     )
                     .await;
+
+                std::process::exit(0);
+
                 // let store_bodies_handle = tokio::spawn(store_block_bodies(
                 //     all_block_hashes[pivot_idx + 1..].to_vec(),
                 //     self.peers.clone(),
