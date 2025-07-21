@@ -297,8 +297,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(beacon_root.as_bytes()),
             db,
-            *BEACON_ROOTS_ADDRESS,
-            *SYSTEM_ADDRESS,
+            BEACON_ROOTS_ADDRESS,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -319,8 +319,8 @@ impl LEVM {
             block_header,
             Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
             db,
-            *HISTORY_STORAGE_ADDRESS,
-            *SYSTEM_ADDRESS,
+            HISTORY_STORAGE_ADDRESS,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
         Ok(())
@@ -340,15 +340,15 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
         // has any code after being deployed. If not, the whole block becomes invalid.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
-        let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
+        let account = db.get_account(WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
         if !account.has_code() {
             return Err(EvmError::SystemContractEmpty(
                 "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
@@ -379,15 +379,15 @@ impl LEVM {
             block_header,
             Bytes::new(),
             db,
-            *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-            *SYSTEM_ADDRESS,
+            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+            SYSTEM_ADDRESS,
             vm_type,
         )?;
 
         // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
         // has any code after being deployed. If not, the whole block becomes invalid.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
-        let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
+        let acc = db.get_account(CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
         if !acc.has_code() {
             return Err(EvmError::SystemContractEmpty(
                 "CONSOLIDATION_REQUEST_PREDEPLOY".to_string(),

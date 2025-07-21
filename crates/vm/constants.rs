@@ -1,23 +1,26 @@
-use ethrex_common::Address;
-use std::{str::FromStr, sync::LazyLock};
+use ethrex_common::H160;
 
-pub static SYSTEM_ADDRESS: LazyLock<Address> = LazyLock::new(|| {
-    Address::from_str("fffffffffffffffffffffffffffffffffffffffe")
-        .expect("Failed to get address from string")
-});
-pub static BEACON_ROOTS_ADDRESS: LazyLock<Address> = LazyLock::new(|| {
-    Address::from_str("000F3df6D732807Ef1319fB7B8bB8522d0Beac02")
-        .expect("Failed to get address from string")
-});
-pub static HISTORY_STORAGE_ADDRESS: LazyLock<Address> = LazyLock::new(|| {
-    Address::from_str("0000F90827F1C53a10cb7A02335B175320002935")
-        .expect("Failed to get address from string")
-});
-pub static WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS: LazyLock<Address> = LazyLock::new(|| {
-    Address::from_str("00000961Ef480Eb55e80D19ad83579A64c007002")
-        .expect("Failed to get address from string")
-});
-pub static CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS: LazyLock<Address> = LazyLock::new(|| {
-    Address::from_str("0000BBdDc7CE488642fb579F8B00f3a590007251")
-        .expect("Failed to get address from string")
-});
+pub const SYSTEM_ADDRESS: H160 = H160([
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xfe,
+]); // 0xfffffffffffffffffffffffffffffffffffffffffffffffe
+
+pub const BEACON_ROOTS_ADDRESS: H160 = H160([
+    0x00, 0x0F, 0x3d, 0xf6, 0xd7, 0x32, 0x80, 0x7e, 0xf1, 0x31, 0x9f, 0xb7, 0xb8, 0xbb, 0x85, 0x22,
+    0xd0, 0xbe, 0xac, 0x02,
+]); // 0x000f3df6d732807ef1319fb7b8bb8522d0beac02
+
+pub const HISTORY_STORAGE_ADDRESS: H160 = H160([
+    0x00, 0x00, 0xf9, 0x08, 0x27, 0xf1, 0xc5, 0x3a, 0x10, 0xcb, 0x7a, 0x02, 0x33, 0x5b, 0x17, 0x53,
+    0x20, 0x00, 0x29, 0x35,
+]); // 0x0000f90827f1c53a10cb7a02335b175320002935
+
+pub const WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x09, 0x61, 0xef, 0x48, 0x0e, 0xb5, 0x5e, 0x80, 0xd1, 0x9a, 0xd8, 0x35, 0x79, 0xa6,
+    0x4c, 0x00, 0x70, 0x02,
+]); // 0x00000961ef480eb55e80d19ad83579a64c007002
+
+pub const CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS: H160 = H160([
+    0x00, 0x00, 0xbb, 0xdd, 0xc7, 0xce, 0x48, 0x86, 0x42, 0xfb, 0x57, 0x9f, 0x8b, 0x00, 0xf3, 0xa5,
+    0x90, 0x00, 0x72, 0x51,
+]); // 0x0000bbddc7ce488642fb579f8b00f3a590007251
