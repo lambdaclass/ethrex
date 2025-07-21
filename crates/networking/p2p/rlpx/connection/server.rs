@@ -709,6 +709,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
             if state.blockchain.is_synced() {
+                // TODO(#3745): disconnect from peers that send invalid blob sidecars
                 if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
                     if let Err(error) = msg.validate_requested(requested).await {
                         log_peer_warn(

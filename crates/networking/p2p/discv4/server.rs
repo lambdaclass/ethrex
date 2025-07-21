@@ -501,6 +501,8 @@ impl GenServer for ConnectionHandler {
                     return CastResponse::Stop;
                 }
 
+                // TODO(#3746): check that we requested neighbors from the node
+
                 let mut contacts = state.kademlia.table.lock().await;
                 let discarded_contacts = state.kademlia.discarded_contacts.lock().await;
 
