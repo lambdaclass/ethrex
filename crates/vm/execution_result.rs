@@ -105,10 +105,19 @@ impl From<LevmExecutionReport> for ExecutionResult {
                 logs: val.logs,
                 output: val.output,
             },
-            TxResult::Revert(_error) => ExecutionResult::Revert {
-                gas_used: val.gas_used,
-                output: val.output,
-            },
+            TxResult::Revert(error) => {
+                if error.is_revert_opcode() {
+                    ExecutionResult::Revert {
+                        gas_used: val.gas_used,
+                        output: val.output,
+                    }
+                } else {
+                    ExecutionResult::Halt {
+                        reason: error.to_string(),
+                        gas_used: val.gas_used,
+                    }
+                }
+            }
         }
     }
 }
