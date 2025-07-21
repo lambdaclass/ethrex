@@ -134,17 +134,23 @@ impl Kademlia {
 
     pub async fn get_peer_channels(
         &self,
-        _capabilities: &[Capability],
+        capabilities: &[Capability],
     ) -> Vec<(H256, PeerChannels)> {
         self.peers
             .lock()
             .await
             .iter()
             .filter_map(|(peer_id, peer_data)| {
-                peer_data
-                    .channels
-                    .clone()
-                    .map(|peer_channels| (*peer_id, peer_channels))
+                capabilities
+                    .iter()
+                    .all(|cap| peer_data.supported_capabilities.contains(cap))
+                    .then(|| {
+                        peer_data
+                            .channels
+                            .clone()
+                            .map(|peer_channels| (*peer_id, peer_channels))
+                    })
+                    .flatten()
             })
             .collect()
     }
