@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753140613870,
+  "lastUpdate": 1753141158724,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10630,6 +10630,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001334732,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "93a885595f00e092fd597e03270b214da85114a2",
+          "message": "fix(levm): preemptively resize memory before executing call (#3592)\n\n**Motivation**\nWhen executing a `CALL` opcode, a transfer might take place. In this\ncase the instruction does contain a return data offset and a return data\nsize but as we don't have return data to write into memory we don't\nexpand the memory.\nThis can cause problems with other opcodes later on (such as MSTORE,\nMLOAD, etc) which calculate their gas cost based on the difference\nbetween the current size of the memory and the new size, making them\nmore expensive as the memory will be smaller due to return data from\ntransfers not being accounted for.\nThis PR aims to solve this by preemptively resizing the memory before\nexecuting the call, so that the memory gets expanded even if no return\ndata is written to it.\nThis bug was found on Sepolia transaction:\nhttps://sepolia.etherscan.io/tx/0xa1765d420522a40d59d15f8dee1bf095499be687d6e1a7c978fc87eb85bce948\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Preemptively resize memory before executing a call in opcode `CALL`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n**Questions**\nShould this behaviour also apply to other call types?\nCloses #issue_number",
+          "timestamp": "2025-07-21T21:12:15Z",
+          "tree_id": "4e31ff7d7cf6aea3a6a0e6f216926845008e439f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/93a885595f00e092fd597e03270b214da85114a2"
+        },
+        "date": 1753141158295,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007670873563218391,
             "unit": "Mgas/s"
           }
         ]
