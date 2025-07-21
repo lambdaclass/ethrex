@@ -127,6 +127,11 @@ impl PeerHandler {
         table.get_all_peer_channels(capabilities)
     }
 
+    pub async fn get_max_score_peer_id(&self) -> Option<H256> {
+        let table = self.peer_table.lock().await;
+        table.get_max_score_peer_id()
+    }
+
     pub async fn request_block_headers_2(
         &self,
         start: H256,
@@ -299,6 +304,8 @@ impl PeerHandler {
                 debug!("{peer_id} added as downloader");
             }
 
+            // gather the free downloaders
+            // TODO: check if this is ordered
             let free_downloaders = downloaders
                 .clone()
                 .into_iter()
@@ -311,19 +318,25 @@ impl PeerHandler {
 
             // Pick the first free downloader
             // The free downloaders vector should be sorted by score.
-            let Some(free_peer_id) = free_downloaders
-                .first()
-                .map(|(peer_id, _)| *peer_id)
-            else {
+            let Some(free_peer_id) = free_downloaders.first().map(|(peer_id, _)| *peer_id) else {
                 debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
 
-            let Some(mut free_downloader_channels) =
-                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
+            let channels = {
+                let max_score_peer_id = self.get_max_score_peer_id().await;
+                let chan = peer_channels.iter().find_map(|(peer_id, peer_channels)| {
                     peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
-                })
-            else {
+                });
+
+                if max_score_peer_id.is_some() {
+                    assert!(max_score_peer_id.unwrap() == free_peer_id);
+                }
+
+                chan
+            };
+
+            let Some(mut free_downloader_channels) = channels else {
                 // The free downloader is not a peer of us anymore.
                 debug!(
                     "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"

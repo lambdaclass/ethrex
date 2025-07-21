@@ -236,6 +236,18 @@ impl KademliaTable {
         self.iter_peers().filter(|peer| filter(peer))
     }
 
+    pub fn get_max_score_peer_id(&self) -> Option<H256> {
+        let filtered_peers: Vec<&PeerData> = self.filter_peers(&|peer| peer.is_connected).collect();
+
+        if filtered_peers.is_empty() {
+            return None;
+        }
+
+        let max_score_peer = filtered_peers.iter().max_by_key(|peer| peer.score.calculate());
+
+        max_score_peer.map(|peer| peer.node.node_id())
+    }
+
     /// Select a peer with simple weighted selection based on scores
     fn get_peer_with_score_filter<'a>(
         &'a self,
