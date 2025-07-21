@@ -38,6 +38,7 @@ where
                 peers.clone(),
                 store.clone(),
                 batch_size,
+                MAX_PARALLEL_FETCHES,
             )
             .await?;
         }
@@ -71,6 +72,7 @@ pub(crate) async fn spawn_fetch_tasks<T, F, Fut>(
     peers: PeerHandler,
     store: Store,
     batch_size: usize,
+    max_parallel_fetches: usize,
 ) -> Result<bool, SyncError>
 where
     T: Send + 'static,
@@ -81,7 +83,7 @@ where
     if queue.len() >= batch_size || (!full_batches && !queue.is_empty()) {
         // Spawn fetch tasks
         let mut tasks = tokio::task::JoinSet::new();
-        for _ in 0..MAX_PARALLEL_FETCHES {
+        for _ in 0..max_parallel_fetches {
             let next_batch = queue
                 .drain(..batch_size.min(queue.len()))
                 .collect::<Vec<_>>();

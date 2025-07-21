@@ -7,7 +7,7 @@
 use std::time::Instant;
 
 use ethrex_common::H256;
-use ethrex_storage::Store;
+use ethrex_storage::{Store, STATE_TRIE_SEGMENTS};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -15,8 +15,7 @@ use tracing::{debug, info};
 use crate::peer_handler::PeerHandler;
 
 use super::{
-    BYTECODE_BATCH_SIZE, MAX_CHANNEL_MESSAGES, SHOW_PROGRESS_INTERVAL_DURATION, SyncError,
-    fetcher_queue::{read_incoming_requests, spawn_fetch_tasks},
+    fetcher_queue::{read_incoming_requests, spawn_fetch_tasks}, SyncError, BYTECODE_BATCH_SIZE, MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES, SHOW_PROGRESS_INTERVAL_DURATION
 };
 
 /// Represents the permanently ongoing background trie rebuild process
@@ -103,6 +102,7 @@ async fn bytecode_fetcher(
             peers.clone(),
             store.clone(),
             BYTECODE_BATCH_SIZE,
+            STATE_TRIE_SEGMENTS* MAX_PARALLEL_FETCHES,
         )
         .await?;
     }
