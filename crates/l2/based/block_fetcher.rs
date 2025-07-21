@@ -116,6 +116,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct BlockFetcher;
 
 impl BlockFetcher {

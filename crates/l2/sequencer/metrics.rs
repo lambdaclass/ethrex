@@ -51,6 +51,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct MetricsGatherer;
 
 impl MetricsGatherer {

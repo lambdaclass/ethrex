@@ -80,6 +80,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct BlockProducer;
 
 impl BlockProducer {

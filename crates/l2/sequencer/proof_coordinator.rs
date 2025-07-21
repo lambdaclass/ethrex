@@ -224,6 +224,7 @@ pub enum ProofCordOutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct ProofCoordinator;
 
 impl ProofCoordinator {

@@ -86,6 +86,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct StateUpdater;
 
 impl StateUpdater {
