@@ -118,22 +118,6 @@ impl Syncer {
         }
     }
 
-    /// Creates a dummy Syncer for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
-        Self {
-            snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy(),
-            last_snap_pivot: 0,
-            trie_rebuilder: None,
-            // This won't be used
-            cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
-            )),
-        }
-    }
-
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
     /// Will perforn either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
@@ -183,12 +167,14 @@ impl Syncer {
             Err(e) => return Err(e.into()),
         };
 
+        // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
+        let mut search_head = current_head;
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            info!("Requesting Block Headers from {search_head}");
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head, sync_head, BlockRequestOrder::OldToNew)
+                .request_block_headers_2(search_head, sync_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -276,53 +262,57 @@ impl Syncer {
                 break;
             };
         }
+        info!("Finished downloading and storing block headers");
+
+        // This turns on full sync from wherever you left
+        // self.snap_enabled.store(false, Ordering::Relaxed);
         match sync_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
                 // - Fetch each block's body and its receipt via eth p2p requests
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
-                let all_block_hashes = block_sync_state.into_snap_block_hashes();
-                let pivot_idx = all_block_hashes.len().saturating_sub(MIN_FULL_BLOCKS);
-                let pivot_header = store
-                    .get_block_header_by_hash(all_block_hashes[pivot_idx])?
-                    .ok_or(SyncError::CorruptDB)?;
-                debug!(
-                    "Selected block {} as pivot for snap sync",
-                    pivot_header.number
-                );
-                let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes[pivot_idx + 1..].to_vec(),
-                    self.peers.clone(),
-                    store.clone(),
-                ));
-                // Perform snap sync
-                if !self
-                    .snap_sync(pivot_header.state_root, store.clone())
-                    .await?
-                {
-                    // Snap sync was not completed, abort and resume it on the next cycle
-                    return Ok(());
-                }
+                // let pivot_idx = all_block_hashes.len().saturating_sub(MIN_FULL_BLOCKS);
+                // let pivot_header = store
+                //     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
+                //     .ok_or(SyncError::CorruptDB)?;
+                // debug!(
+                //     "Selected block {} as pivot for snap sync",
+                //     pivot_header.number
+                // );
+                // info!("Spawning store block bodies");
+                // let store_bodies_handle = tokio::spawn(store_block_bodies(
+                //     all_block_hashes[pivot_idx..].to_vec(),
+                //     self.peers.clone(),
+                //     store.clone(),
+                // ));
+                // // Perform snap sync
+                // if !self
+                //     .snap_sync(pivot_header.state_root, store.clone())
+                //     .await?
+                // {
+                //     // Snap sync was not completed, abort and resume it on the next cycle
+                //     return Ok(());
+                // }
                 // Wait for all bodies to be downloaded
-                store_bodies_handle.await??;
+                // store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
-                for hash in &all_block_hashes[pivot_idx + 1..] {
-                    let block = store
-                        .get_block_by_hash(*hash)
-                        .await?
-                        .ok_or(SyncError::CorruptDB)?;
-                    let block_number = block.header.number;
-                    self.blockchain.add_block(&block).await?;
-                    store.set_canonical_block(block_number, *hash).await?;
-                    store.update_latest_block_number(block_number).await?;
-                }
-                self.last_snap_pivot = pivot_header.number;
-                // Finished a sync cycle without aborting halfway, clear current checkpoint
-                store.clear_snap_state().await?;
-                // Next sync will be full-sync
-                self.snap_enabled.store(false, Ordering::Relaxed);
+                // for hash in &all_block_hashes[pivot_idx + 1..] {
+                //     let block = store
+                //         .get_block_by_hash(*hash)
+                //         .await?
+                //         .ok_or(SyncError::CorruptDB)?;
+                //     let block_number = block.header.number;
+                //     self.blockchain.add_block(&block).await?;
+                //     store.set_canonical_block(block_number, *hash).await?;
+                //     store.update_latest_block_number(block_number).await?;
+                // }
+                // self.last_snap_pivot = pivot_header.number;
+                // // Finished a sync cycle without aborting halfway, clear current checkpoint
+                // store.clear_snap_state().await?;
+                // // Next sync will be full-sync
+                // self.snap_enabled.store(false, Ordering::Relaxed);
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
@@ -686,29 +676,30 @@ impl Syncer {
     // new blocks can be executed on top of it, if false then the state is still inconsistent and
     // snap sync must be resumed on the next sync cycle
     async fn snap_sync(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
+        info!("Starting snap sync proper");
         // Begin the background trie rebuild process if it is not active yet or if it crashed
-        if !self
-            .trie_rebuilder
-            .as_ref()
-            .is_some_and(|rebuilder| rebuilder.alive())
-        {
-            self.trie_rebuilder = Some(TrieRebuilder::startup(
-                self.cancel_token.clone(),
-                store.clone(),
-            ));
-        };
+        // if !self
+        //     .trie_rebuilder
+        //     .as_ref()
+        //     .is_some_and(|rebuilder| rebuilder.alive())
+        // {
+        //     self.trie_rebuilder = Some(TrieRebuilder::startup(
+        //         self.cancel_token.clone(),
+        //         store.clone(),
+        //     ));
+        // };
         // Spawn storage healer earlier so we can start healing stale storages
         // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
-        let storage_healer_cancell_token = self.cancel_token.child_token();
+        // let storage_healer_cancell_token = self.cancel_token.child_token();
         // Create an AtomicBool to signal to the storage healer whether state healing has ended
-        let state_healing_ended = Arc::new(AtomicBool::new(false));
-        let storage_healer_handler = tokio::spawn(storage_healer(
-            state_root,
-            self.peers.clone(),
-            store.clone(),
-            storage_healer_cancell_token.clone(),
-            state_healing_ended.clone(),
-        ));
+        // let state_healing_ended = Arc::new(AtomicBool::new(false));
+        // let storage_healer_handler = tokio::spawn(storage_healer(
+        //     state_root,
+        //     self.peers.clone(),
+        //     store.clone(),
+        //     storage_healer_cancell_token.clone(),
+        //     state_healing_ended.clone(),
+        // ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
         let key_checkpoints = store.get_state_trie_key_checkpoint().await?;
@@ -737,8 +728,8 @@ impl Syncer {
             .await?;
             if stale_pivot {
                 warn!("Stale Pivot, aborting state sync");
-                storage_healer_cancell_token.cancel();
-                storage_healer_handler.await??;
+                // storage_healer_cancell_token.cancel();
+                // storage_healer_handler.await??;
                 return Ok(false);
             }
         }
@@ -759,19 +750,20 @@ impl Syncer {
         store.clear_snapshot().await?;
 
         // Perform Healing
-        let state_heal_complete =
-            heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
-        // Wait for storage healer to end
-        if state_heal_complete {
-            state_healing_ended.store(true, Ordering::Relaxed);
-        } else {
-            storage_healer_cancell_token.cancel();
-        }
-        let storage_heal_complete = storage_healer_handler.await??;
-        if !(state_heal_complete && storage_heal_complete) {
-            warn!("Stale pivot, aborting healing");
-        }
-        Ok(state_heal_complete && storage_heal_complete)
+        // let state_heal_complete =
+        //     heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+        // // Wait for storage healer to end
+        // if state_heal_complete {
+        //     state_healing_ended.store(true, Ordering::Relaxed);
+        // } else {
+        //     storage_healer_cancell_token.cancel();
+        // }
+        // let storage_heal_complete = storage_healer_handler.await??;
+        // if !(state_heal_complete && storage_heal_complete) {
+        //     warn!("Stale pivot, aborting healing");
+        // }
+        // Ok(state_heal_complete && storage_heal_complete)
+        Ok(false)
     }
 }
 

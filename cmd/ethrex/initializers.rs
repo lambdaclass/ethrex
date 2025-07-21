@@ -232,7 +232,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
             bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
         }
         Network::PublicNetwork(PublicNetwork::Hoodi) => {
-            info!("Addig hoodi preset bootnodes");
+            info!("Adding hoodi preset bootnodes");
             bootnodes.extend(networks::HOODI_BOOTNODES.clone());
         }
         Network::PublicNetwork(PublicNetwork::Mainnet) => {

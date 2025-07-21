@@ -385,6 +385,27 @@ impl Genesis {
             .is_prague_activated(self.timestamp)
             .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
 
+        let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
+            self.config
+                .is_london_activated(0)
+                .then_some(INITIAL_BASE_FEE)
+        });
+
+        let withdrawals_root = self
+            .config
+            .is_shanghai_activated(self.timestamp)
+            .then_some(compute_withdrawals_root(&[]));
+
+        let parent_beacon_block_root = self
+            .config
+            .is_cancun_activated(self.timestamp)
+            .then_some(H256::zero());
+
+        let requests_hash = self
+            .config
+            .is_prague_activated(self.timestamp)
+            .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
+
         BlockHeader {
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,

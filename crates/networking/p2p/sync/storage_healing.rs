@@ -6,7 +6,7 @@
 //! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -16,6 +16,7 @@ use std::{
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash};
+use indexmap::IndexMap;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -44,13 +45,22 @@ pub(crate) async fn storage_healer(
     let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
     let mut stale = false;
     let mut last_update = Instant::now();
+    let healing_start = Instant::now();
+    let mut total_healed = 0;
     while !(stale || cancel_token.is_cancelled()) {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
-            info!(
-                "Storage Healing in Progress, storages queued: {}",
-                pending_paths.len()
-            );
+            let speed = healing_start
+                .elapsed()
+                .as_millis()
+                .checked_div((total_healed / 100) as u128);
+            if let Some(speed) = speed {
+                info!(
+                    "Storage Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
+                    pending_paths.len(),
+                    speed
+                );
+            }
         }
         // If we have few storages in queue, fetch more from the store
         // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
@@ -72,7 +82,7 @@ pub(crate) async fn storage_healer(
         let mut storage_tasks = tokio::task::JoinSet::new();
         let mut task_num = 0;
         while !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
-            let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
+            let mut next_batch: IndexMap<H256, Vec<Nibbles>> = IndexMap::new();
             // Fill batch
             let mut batch_size = 0;
             while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
@@ -90,7 +100,8 @@ pub(crate) async fn storage_healer(
         }
         // Add unfetched paths to queue and handle stale signal
         for res in storage_tasks.join_all().await {
-            let (remaining, is_stale) = res?;
+            let (remaining, is_stale, nodes_healed) = res?;
+            total_healed += nodes_healed;
             pending_paths.extend(remaining);
             stale |= is_stale;
         }
@@ -108,47 +119,55 @@ pub(crate) async fn storage_healer(
 /// Also returns a boolean indicating if the pivot became stale during the request
 async fn heal_storage_batch(
     state_root: H256,
-    mut batch: BTreeMap<H256, Vec<Nibbles>>,
+    mut batch: IndexMap<H256, Vec<Nibbles>>,
     peers: PeerHandler,
     store: Store,
-) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool), SyncError> {
+) -> Result<(IndexMap<H256, Vec<Nibbles>>, bool, usize), SyncError> {
     if let Some(mut nodes) = peers
         .request_storage_trienodes(state_root, batch.clone())
         .await
     {
+        let nodes_received = nodes.len();
         debug!("Received {} storage nodes", nodes.len());
-        // Process the nodes for each account path
+        // Sort nodes by trie & update current batch
+        let mut nodes_to_commit = HashMap::new();
         for (acc_path, paths) in batch.iter_mut() {
             let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
-            // Get the corresponding nodes
-            let trie_nodes: Vec<ethrex_trie::Node> =
-                nodes.drain(..paths.len().min(nodes.len())).collect();
-            // Update batch: remove fetched paths & add children
-            let children = trie_nodes
+            // Collect fetched nodes for that particular trie
+            let trie_nodes = nodes
+                .drain(..paths.len().min(nodes.len()))
+                .collect::<Vec<_>>();
+            // Collect missing children paths for the fetched nodes (And also remove the fetched paths from the batch)
+            let missing_children = trie_nodes
                 .iter()
                 .zip(paths.drain(..trie_nodes.len()))
                 .map(|(node, path)| node_missing_children(node, &path, trie.db()))
                 .collect::<Result<Vec<_>, _>>()?;
-            paths.extend(children.into_iter().flatten());
-            // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .iter()
-                    .filter_map(|node| match node.compute_hash() {
+            // Add the missing children paths of the nodes we fetched to the batch
+            paths.extend(missing_children.into_iter().flatten());
+            // Push nodes to commit list
+            let trie_nodes = trie_nodes
+                .into_iter()
+                .filter_map(|node| {
+                    match node.compute_hash() {
                         hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                        // Filter out inline nodes
                         NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+                    }
+                })
+                .collect();
+            nodes_to_commit.insert(*acc_path, trie_nodes);
+
             if nodes.is_empty() {
                 break;
             }
         }
+        store.commit_storage_nodes(nodes_to_commit).await?;
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
         batch.retain(|_, v| !v.is_empty());
-        return Ok((batch, false));
+        return Ok((batch, false, nodes_received));
     }
     // Pivot became stale, lets inform the fetcher
-    Ok((batch, true))
+    Ok((batch, true, 0))
 }
