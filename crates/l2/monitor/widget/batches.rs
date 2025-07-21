@@ -96,6 +96,9 @@ impl BatchesTable {
             .await
             .map_err(|_| MonitorError::GetLatestBatch)?;
 
+        *last_l2_batch_fetched =
+            (*last_l2_batch_fetched).max(last_l2_batch_number.saturating_sub(50));
+
         let new_batches =
             Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
 
