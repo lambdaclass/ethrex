@@ -13,7 +13,7 @@ use ethrex_rlp::{
 pub struct NewBlockMessage {
     pub block: Block,
     pub signature: [u8; 64],
-    pub recovery_id: [u8; 4],
+    pub recovery_id: u8,
 }
 
 impl RLPxMessage for NewBlockMessage {
@@ -50,7 +50,7 @@ impl RLPxMessage for NewBlockMessage {
 pub struct BatchSealedMessage {
     pub batch: Batch,
     pub signature: [u8; 64],
-    pub recovery_id: [u8; 4],
+    pub recovery_id: u8,
 }
 impl RLPxMessage for BatchSealedMessage {
     const CODE: u8 = 0x1;
