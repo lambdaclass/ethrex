@@ -249,28 +249,28 @@ impl KademliaTable {
 
         // Simple weighted selection: convert scores to weights
         // Score -5 -> weight 1, Score 0 -> weight 6, Score 2 -> weight 8, etc.
-        let weights: Vec<u32> = filtered_peers
-            .iter()
-            .map(|peer| (peer.score + 6).max(1) as u32)
-            .collect();
+        // let weights: Vec<u32> = filtered_peers
+        //     .iter()
+        //     .map(|peer| (peer.score + 6).max(1) as u32)
+        //     .collect();
 
-        let total_weight: u32 = weights.iter().sum();
-        if total_weight == 0 {
-            // Fallback to random selection if somehow all weights are 0
-            let peer_idx = random::<usize>() % filtered_peers.len();
-            return filtered_peers.get(peer_idx).cloned();
-        }
+        // let total_weight: u32 = weights.iter().sum();
+        // if total_weight == 0 {
+        //     // Fallback to random selection if somehow all weights are 0
+        //     let peer_idx = random::<usize>() % filtered_peers.len();
+        //     return filtered_peers.get(peer_idx).cloned();
+        // }
 
-        // Weighted random selection using cumulative weights
-        let random_value = random::<u32>() % total_weight;
-        let mut cumulative_weight = 0u32;
+        // // Weighted random selection using cumulative weights
+        // let random_value = random::<u32>() % total_weight;
+        // let mut cumulative_weight = 0u32;
 
-        for (i, &weight) in weights.iter().enumerate() {
-            cumulative_weight += weight;
-            if random_value < cumulative_weight {
-                return filtered_peers.get(i).cloned();
-            }
-        }
+        // for (i, &weight) in weights.iter().enumerate() {
+        //     cumulative_weight += weight;
+        //     if random_value < cumulative_weight {
+        //         return filtered_peers.get(i).cloned();
+        //     }
+        // }
 
         // Fallback (should not reach here due to the total_weight check above)
         filtered_peers.last().cloned()
@@ -395,7 +395,7 @@ impl KademliaTable {
         let mut filtered_peers: Vec<&PeerData> = self.filter_peers(&filter).collect();
 
         // order the peers by scoring criteria
-        filtered_peers.sort_by_key(|peer| peer.score);
+        filtered_peers.sort_by_key(|peer| peer.score.calculate());
 
         filtered_peers
             .iter()
@@ -441,7 +441,28 @@ pub struct PeerData {
     /// It is only valid as long as is_connected is true
     pub is_connection_inbound: bool,
     /// Simple peer score: +1 for success, -1 for failure
-    pub score: i32,
+    pub score: PeerScore,
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+struct PeerScore {
+    successes: i32,
+    failures: i32
+}
+
+impl  PeerScore {
+    pub fn calculate(&self) -> i32 {
+        self.successes - self.failures
+    }
+
+    pub fn add_success(&mut self) {
+        self.successes += 1;
+    }
+
+    pub fn add_failure(&mut self) {
+        self.failures += 1;
+    }
+
 }
 
 impl PeerData {
@@ -461,10 +482,10 @@ impl PeerData {
             supported_capabilities: vec![],
             is_connected: false,
             is_connection_inbound: false,
-            score: 0,
+            score: PeerScore::default(),
         }
     }
-
+    
     #[allow(unused)]
     pub fn new_find_node_request(&mut self) {
         self.find_node_request = Some(FindNodeRequest::default());
@@ -484,27 +505,27 @@ impl PeerData {
 
     /// Simple scoring: +1 for success
     pub fn reward_peer(&mut self) {
-        self.score += 1;
+        self.score.add_success();
 
         debug!(
             "[PEERS] Rewarding peer with node_id {:?}, new score: {}",
             self.node.node_id(),
-            self.score,
+            self.score.calculate(),
         );
     }
 
     /// Simple scoring: -5 for critical failure, -1 for non-critical
     pub fn penalize_peer(&mut self, critical: bool) {
         if critical {
-            self.score -= 5;
+            self.score.add_failure();
         } else {
-            self.score -= 1;
+            self.score.add_failure();
         };
 
         debug!(
             "[PEERS] Penalizing peer with node_id {:?}, new score: {}",
             self.node.node_id(),
-            self.score,
+            self.score.calculate(),
         );
     }
 }
