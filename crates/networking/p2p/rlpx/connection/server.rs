@@ -158,7 +158,7 @@ pub enum OutMessage {
     Error,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RLPxConnection {}
 
 impl RLPxConnection {

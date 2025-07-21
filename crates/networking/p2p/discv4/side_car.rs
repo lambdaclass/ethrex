@@ -170,6 +170,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Debug, Default)]
 pub struct DiscoverySideCar;
 
 impl DiscoverySideCar {

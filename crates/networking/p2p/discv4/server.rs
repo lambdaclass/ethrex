@@ -232,6 +232,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Debug, Default)]
 pub struct DiscoveryServer;
 
 impl DiscoveryServer {
@@ -385,6 +386,7 @@ pub enum ConnectionHandlerOutMessage {
     Done,
 }
 
+#[derive(Debug, Default)]
 pub struct ConnectionHandler;
 
 impl ConnectionHandler {

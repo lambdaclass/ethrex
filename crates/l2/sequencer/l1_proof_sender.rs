@@ -107,6 +107,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Debug, Default)]
 pub struct L1ProofSender;
 
 impl L1ProofSender {
