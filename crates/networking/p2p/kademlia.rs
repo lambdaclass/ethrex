@@ -445,12 +445,14 @@ pub struct PeerData {
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
-struct PeerScore {
+pub struct PeerScore {
     successes: i32,
     failures: i32
 }
 
 impl  PeerScore {
+    /// simple scoring: +1 for success, -1 for failure
+    /// Used as benchmark.
     pub fn calculate(&self) -> i32 {
         self.successes - self.failures
     }
@@ -463,6 +465,14 @@ impl  PeerScore {
         self.failures += 1;
     }
 
+
+    // TODO: check for rounding issues.
+    pub fn laplace_smoothing(&self) -> i32 {
+        const ALPHA: i32 = 1;
+        let successes = self.successes.max(0);
+        let failures = self.failures.max(0);
+        (successes + ALPHA) / (successes + failures + 2 * ALPHA)
+    }
 }
 
 impl PeerData {
@@ -485,7 +495,7 @@ impl PeerData {
             score: PeerScore::default(),
         }
     }
-    
+
     #[allow(unused)]
     pub fn new_find_node_request(&mut self) {
         self.find_node_request = Some(FindNodeRequest::default());
