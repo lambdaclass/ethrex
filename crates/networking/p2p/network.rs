@@ -163,25 +163,93 @@ pub async fn periodically_show_peer_stats() {
     let start = std::time::Instant::now();
     loop {
         let rlpx_connection_failures = METRICS.connection_attempt_failures.lock().await;
+
         let rlpx_connection_client_types = METRICS.peers_by_client_type.lock().await;
 
         let rlpx_disconnections = METRICS.disconnections_by_client_type.lock().await;
 
+        /* Snap Sync */
+
+        // Headers
+        let total_headers_downloaders = METRICS.total_header_downloaders.lock().await;
+        let free_headers_downloaders = METRICS.free_header_downloaders.lock().await;
+        let busy_headers_downloaders =
+            total_headers_downloaders.saturating_sub(*free_headers_downloaders);
+
+        let total_headers_to_download = METRICS.headers_to_download.lock().await;
+        let downloaded_headers = METRICS.downloaded_headers.lock().await;
+        let remaining_headers = total_headers_to_download.saturating_sub(*downloaded_headers);
+
+        let current_headers_download_progress = if *total_headers_to_download == 0 {
+            0.0
+        } else {
+            (*downloaded_headers as f64 / *total_headers_to_download as f64) * 100.0
+        };
+
+        let maybe_headers_download_time =
+            METRICS.headers_download_start_time.lock().await.map(|t| {
+                t.elapsed()
+                    .expect("Failed to get current headers download time")
+            });
+
+        // Account Tries
+        let total_account_tries_downloaders = METRICS.total_accounts_downloaders.lock().await;
+        let free_account_tries_downloaders = METRICS.free_accounts_downloaders.lock().await;
+        let busy_account_tries_downloaders =
+            total_account_tries_downloaders.saturating_sub(*free_account_tries_downloaders);
+
+        let maybe_account_tries_download_time = METRICS
+            .account_tries_download_start_time
+            .lock()
+            .await
+            .map(|t| {
+                t.elapsed()
+                    .expect("Failed to get current headers download time")
+            });
+
         info!(
             r#"
-        elapsed: {elapsed}
-        {current_contacts} current contacts ({new_contacts_rate} contacts/m)
-        {discarded_nodes} discarded nodes
-        {discovered_nodes} total discovered nodes over time
-        {sent_pings} pings sent ({sent_pings_rate} new pings sent/m)
-        {peers} peers ({new_peers_rate} new peers/m)
-        {lost_peers} lost peers
-        {rlpx_connections} total peers made over time
-        {rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
-        {rlpx_failed_connection_attempts} failed connection attempts
-        Clients Diversity: {peers_by_client:#?}
-        RLPx disconnections: {rlpx_disconnections:#?}
-        RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reason:#?}"#,
+elapsed: {elapsed}
+
+P2P:
+====
+{current_contacts} current contacts ({new_contacts_rate} contacts/m)
+{discarded_nodes} discarded nodes
+{discovered_nodes} total discovered nodes over time
+{sent_pings} pings sent ({sent_pings_rate} new pings sent/m)
+{peers} peers ({new_peers_rate} new peers/m)
+{lost_peers} lost peers
+{rlpx_connections} total peers made over time
+{rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
+{rlpx_failed_connection_attempts} failed connection attempts
+Clients diversity: {peers_by_client:#?}
+
+Snap Sync:
+==========
+
+Overview:
+---------
+time to receive sync head block: {time_to_retrieve_sync_head_block}
+sync head hash: {sync_head_hash:#x}
+sync head block: {sync_head_block}
+
+Headers:
+--------
+download time: {headers_download_time}
+progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {downloaded_headers}, remaining: {remaining_headers})
+total downloaders: {total_headers_downloaders}
+busy downloaders: {busy_headers_downloaders}
+free downloaders: {free_headers_downloaders}
+download tasks queued: {header_downloads_tasks_queued}
+
+Account Tries:
+--------------
+download time: {account_tries_download_time}
+downloaded: {downloaded_account_tries}
+total downloaders: {total_account_tries_downloaders}
+busy downloaders: {busy_account_tries_downloaders}
+free downloaders: {free_account_tries_downloaders}
+download tasks queued: {account_tries_tasks_queued}"#,
             elapsed = format_duration(start.elapsed()),
             current_contacts = METRICS.contacts.lock().await,
             new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
@@ -191,7 +259,6 @@ pub async fn periodically_show_peer_stats() {
             sent_pings_rate = METRICS.pings_sent_rate.get().floor(),
             peers = METRICS.peers.lock().await,
             new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
-            peers_by_client = rlpx_connection_client_types,
             lost_peers = rlpx_disconnections
                 .values()
                 .flat_map(|x| x.values())
@@ -200,9 +267,38 @@ pub async fn periodically_show_peer_stats() {
             rlpx_connection_attempts = METRICS.connection_attempts.get(),
             new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
             rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
-            rlpx_disconnections = rlpx_disconnections,
-            rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
+            time_to_retrieve_sync_head_block = METRICS
+                .time_to_retrieve_sync_head_block
+                .lock()
+                .await
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_owned()),
+            sync_head_hash = *METRICS.sync_head_hash.lock().await,
+            sync_head_block = METRICS.sync_head_block.lock().await,
+            headers_download_time = maybe_headers_download_time
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_owned()),
+            headers_download_progress = format!("{current_headers_download_progress:.2}%"),
+            headers_to_download = total_headers_to_download,
+            downloaded_headers = downloaded_headers,
+            remaining_headers = remaining_headers,
+            total_headers_downloaders = total_headers_downloaders,
+            busy_headers_downloaders = busy_headers_downloaders,
+            free_headers_downloaders = free_headers_downloaders,
+            header_downloads_tasks_queued = METRICS.header_downloads_tasks_queued.lock().await,
+            peers_by_client = rlpx_connection_client_types,
+            account_tries_download_time = maybe_account_tries_download_time
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_owned()),
+            downloaded_account_tries = *METRICS.downloaded_account_tries.lock().await,
+            total_account_tries_downloaders = total_account_tries_downloaders,
+            busy_account_tries_downloaders = busy_account_tries_downloaders,
+            free_account_tries_downloaders = free_account_tries_downloaders,
+            account_tries_tasks_queued = METRICS.accounts_downloads_tasks_queued.lock().await,
+            // rlpx_disconnections = rlpx_disconnections,
+            // rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
         );
+
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
@@ -212,6 +308,7 @@ fn format_duration(duration: Duration) -> String {
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
+    let milliseconds = total_seconds / 1000;
 
-    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    format!("{hours:02}h {minutes:02}m {seconds:02}s {milliseconds:02}ms")
 }
