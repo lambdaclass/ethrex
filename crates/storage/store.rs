@@ -1371,7 +1371,7 @@ mod tests {
             panic
                 .downcast_ref::<String>()
                 .expect("Failed to downcast panic message"),
-            &GENESIS_DIFF_PANIC_MESSAGE
+            &GENESIS_DIFF_ERROR_MESSAGE
         );
     }
 

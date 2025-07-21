@@ -23,7 +23,7 @@ fn block_import() {
         .expect("Failed to generate genesis from file");
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
-        Path::new("../../fixtures/blockchain/l2-1k-erc20.rlp"), // Assuming import_blocks also takes Path
+        Path::new("../../fixtures/blockchain/l2-1k-erc20.rlp"),
         &data_dir,
         genesis,
         evm_engine,

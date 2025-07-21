@@ -278,13 +278,14 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
-        if !matches!(self, Self::L2(_)) {
-            init_tracing(opts);
+        match self {
+            Self::L2(_) => {}
+            _ => init_tracing(opts),
         }
         match self {
             Subcommand::RemoveDB => {
                 let network = get_network(opts);
-                let datadir = init_datadir(opts.datadir.clone(), None, Some(&network));
+                let datadir = init_datadir(opts.datadir.clone(), Some(&network));
                 remove_db(&datadir, opts.force);
             }
             Subcommand::Import { path, removedb, l2 } => {
@@ -294,7 +295,7 @@ impl Subcommand {
 
                 let network = get_network(opts);
                 let genesis = network.get_genesis()?;
-                let datadir = init_datadir(opts.datadir.clone(), None, Some(&network));
+                let datadir = init_datadir(opts.datadir.clone(), Some(&network));
                 let blockchain_type = if l2 {
                     BlockchainType::L2
                 } else {
@@ -311,7 +312,7 @@ impl Subcommand {
             }
             Subcommand::Export { path, first, last } => {
                 let network = get_network(opts);
-                let datadir = init_datadir(opts.datadir.clone(), None, Some(&network));
+                let datadir = init_datadir(opts.datadir.clone(), Some(&network));
                 export_blocks(Path::new(&path), &datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {

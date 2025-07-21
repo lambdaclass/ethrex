@@ -130,7 +130,6 @@ impl Command {
                 let network = get_network(&opts.node_opts);
                 let data_dir = init_datadir(
                     opts.node_opts.datadir.clone(),
-                    None,
                     Some(&network),
                 );
                 let rollup_store_dir = data_dir.join("rollup_store");
@@ -251,9 +250,11 @@ impl Command {
                 force,
             } => {
                 Box::pin(async {
-                    let mut opts = NodeOptions::default();
-                    opts.datadir = datadir;
-                    opts.force = force;
+                    let opts = NodeOptions {
+                        datadir,
+                        force,
+                        ..Default::default()
+                    };
                     ethrex_cli::Subcommand::RemoveDB.run(&opts).await
                 })
                 .await?
@@ -496,7 +497,7 @@ impl Command {
                 datadir,
                 network,
             } => {
-                let data_dir = init_datadir(datadir, None, Some(&network));
+                let data_dir = init_datadir(datadir, Some(&network));
                 let rollup_store_dir = data_dir.join("rollup_store");
 
                 let client = EthClient::new(rpc_url.as_str())?;

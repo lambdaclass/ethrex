@@ -9,10 +9,10 @@ use ethrex::utils::init_datadir;
 use ethrex_common::types::BlockHash;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
-use ethrex_common::{
+use ethrex_common({
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},
-};
+});
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
@@ -231,7 +231,7 @@ impl DumpAccount {
     fn get_account_state(&self) -> AccountState {
         AccountState {
             nonce: self.nonce,
-            balance: self.balance,
+            balance: self.b alance,
             storage_root: self.storage_root,
             code_hash: self.code_hash,
         }
@@ -316,7 +316,7 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = init_datadir(args.datadir.map(PathBuf::from), None, None);
+    let data_dir = init_datadir(args.datadir.map(PathBuf::from), None);
     let store = open_store(&data_dir);
     archive_sync(&args.archive_node_ipc, args.block_number, store).await
 }
