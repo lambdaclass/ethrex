@@ -1,17 +1,17 @@
 participants:
   - el_type: ethrex
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.0-beta.0
+    cl_image: sigp/lighthouse:v7.1.0
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
     cl_type: teku
-    cl_image: consensys/teku:latest
+    cl_image: consensys/teku:25.6.0
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
   - el_type: ethrex
     cl_type: prysm
-    cl_image: gcr.io/prysmaticlabs/prysm/beacon-chain:latest
+    cl_image: gcr.io/offchainlabs/prysm/beacon-chain:v6.0.4
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
 
