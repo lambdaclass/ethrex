@@ -131,7 +131,7 @@ Running a based stack locally is essentially the same as running an ethrex stack
 In a console with `crates/l2` as the current directory, run the following command to deploy the L1 contracts for a based L2:
 
 ```bash
-COMPILE_CONTRACTS=true \ 
+COMPILE_CONTRACTS=true \
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
