@@ -108,7 +108,7 @@ make init-prover PROVER=<sp1/risc0> # optional: GPU=true
 ## How to run (local devnet)
 
 > [!IMPORTANT]
-> This guide asumes you have already generated the SP1 ELF Program and Verification Key. See: [Generate the SP1 ELF Program and Verification Key](#1-generate-the-sp1-elf-program-and-verification-key)
+> This guide assumes you have already generated the prover ELF/VK. See: [Generate the prover ELF/VK](#1-generate-the-prover-elfvk)
 
 
 ### Set Up the Aligned Environment
