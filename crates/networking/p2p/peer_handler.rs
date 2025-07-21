@@ -310,10 +310,10 @@ impl PeerHandler {
                 continue;
             }
 
-            // pick a random free downloader
-            // TODO: remove this and use scoring
+            // Pick the first free downloader
+            // The free downloaders vector should be sorted by score.
             let Some(free_peer_id) = free_downloaders
-                .get(random::<usize>() % free_downloaders.len())
+                .first()
                 .map(|(peer_id, _)| *peer_id)
             else {
                 debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
