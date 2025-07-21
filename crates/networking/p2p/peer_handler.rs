@@ -662,117 +662,203 @@ impl PeerHandler {
         let limit_u256 = U256::from_big_endian(&limit.0);
 
         let chunk_count = 800;
-
         let chunk_size = (limit_u256 - start_u256) / chunk_count;
 
         // list of tasks to be executed
         let mut tasks_queue_not_started = VecDeque::<(H256, H256)>::new();
-
         for i in 0..(chunk_count as u64) {
             let chunk_start_u256 = chunk_size * i + start_u256;
             // We subtract one because ranges are inclusive
-            let chunk_end_u256 = start_u256 + chunk_size - 1;
-
+            let chunk_end_u256 = chunk_start_u256 + chunk_size - 1u64;
             let chunk_start = H256::from_uint(&(chunk_start_u256));
             let chunk_end = H256::from_uint(&(chunk_end_u256));
-
             tasks_queue_not_started.push_back((chunk_start, chunk_end));
         }
-
         // Modify the last chunk to include the limit
         let last_task = tasks_queue_not_started
             .back_mut()
             .expect("we just inserted some elements");
-
         last_task.1 = limit;
 
         // 2) request the chunks from peers
         let peers_table = self
             .peer_table
-            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
             .await;
 
         let mut downloaded_count = 0_u64;
+        let mut all_account_hashes = Vec::new();
+        let mut all_accounts = Vec::new();
+        let should_continue_any = false;
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, H256, H256)>(1000);
 
         let mut current_show = 0;
-
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
                 .iter()
                 .map(|(peer_id, _peer_data)| (*peer_id, true)),
         );
 
-        std::process::exit(0);
-        // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-        // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetAccountRange(GetAccountRange {
-                id: request_id,
-                root_hash: state_root,
-                starting_hash: start,
-                limit_hash: limit,
-                response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                debug!("Failed to send message to peer: {err:?}");
+        info!("Starting to download account ranges from peers");
+        loop {
+            if let Ok((accounts, peer_id, chunk_start, chunk_end)) = task_receiver.try_recv() {
+                if accounts.is_empty() {
+                    warn!("Failed to download chunk from peer {peer_id}");
+                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                        *downloader_is_free = true;
+                    });
+                    tasks_queue_not_started.push_back((chunk_start, chunk_end));
+                    continue;
+                }
+
+                downloaded_count += accounts.len() as u64;
+                let batch_show = downloaded_count / 10_000;
+                if current_show < batch_show {
+                    info!(
+                        "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
+                        accounts.len(),
+                        peer_id
+                    );
+                    current_show += 1;
+                }
+                // store accounts
+                all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
+                all_accounts.extend(
+                    accounts
+                        .iter()
+                        .map(|unit| AccountState::from(unit.account.clone())),
+                );
+
+                // TODO: handle should_continue for each chunk if needed
+
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
+            }
+
+            let peer_channels = self
+                .peer_table
+                .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
+                .await;
+
+            for (peer_id, _peer_channels) in &peer_channels {
+                if downloaders.contains_key(peer_id) {
+                    continue;
+                }
+                downloaders.insert(*peer_id, true);
+                debug!("{peer_id} added as downloader");
+            }
+
+            let free_downloaders = downloaders
+                .clone()
+                .into_iter()
+                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+                .collect::<Vec<_>>();
+
+            if free_downloaders.is_empty() {
                 continue;
             }
-            if let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::AccountRange(AccountRange {
-                            id,
-                            accounts,
-                            proof,
-                        })) if id == request_id => return Some((accounts, proof)),
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
+
+            let Some(free_peer_id) = free_downloaders
+                .get(random::<usize>() % free_downloaders.len())
+                .map(|(peer_id, _)| *peer_id)
+            else {
+                debug!("No free downloaders available, waiting for a peer to finish, retrying");
+                continue;
+            };
+
+            let Some(free_downloader_channels) =
+                peer_channels.iter().find_map(|(peer_id, peer_channels)| {
+                    peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
+                })
+            else {
+                debug!(
+                    "Downloader {free_peer_id} is not a peer anymore, removing it from the downloaders list"
+                );
+                downloaders.remove(&free_peer_id);
+                continue;
+            };
+
+            let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
+                if tasks_queue_not_started.is_empty() && downloaded_count > 0 {
+                    info!("All account ranges downloaded successfully");
+                    break;
                 }
-            })
-            .await
-            .ok()
-            .flatten()
-            {
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
-                    .into_iter()
-                    .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                    .unzip();
-                let encoded_accounts = accounts
-                    .iter()
-                    .map(|acc| acc.encode_to_vec())
-                    .collect::<Vec<_>>();
-                if let Ok(should_continue) = verify_range(
-                    state_root,
-                    &start,
-                    &account_hashes,
-                    &encoded_accounts,
-                    &proof,
-                ) {
-                    self.record_snap_peer_success(peer_id, peer_ids).await;
-                    return Some((account_hashes, accounts, should_continue));
+                continue;
+            };
+
+            let tx = task_sender.clone();
+            downloaders
+                .entry(free_peer_id)
+                .and_modify(|downloader_is_free| {
+                    *downloader_is_free = false;
+                });
+            debug!("Downloader {free_peer_id} is now busy");
+
+            let state_root = state_root.clone();
+            let mut free_downloader_channels_clone = free_downloader_channels.clone();
+            tokio::spawn(async move {
+                debug!(
+                    "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
+                );
+                let request_id = rand::random();
+                let request = RLPxMessage::GetAccountRange(GetAccountRange {
+                    id: request_id,
+                    root_hash: state_root,
+                    starting_hash: chunk_start,
+                    limit_hash: chunk_end,
+                    response_bytes: MAX_RESPONSE_BYTES,
+                });
+                let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                    .cast(CastMessage::BackendMessage(request))
+                    .await
+                {
+                    error!("Failed to send message to peer: {err:?}");
+                    tx.send((Vec::new(), free_peer_id, chunk_start, chunk_end))
+                        .await
+                        .ok();
+                    return;
                 }
-            }
+                if let Some((accounts, _proof)) =
+                    tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                        loop {
+                            match receiver.recv().await {
+                                Some(RLPxMessage::AccountRange(AccountRange {
+                                    id,
+                                    accounts,
+                                    proof,
+                                })) if id == request_id => return Some((accounts, proof)),
+                                Some(_) => continue,
+                                None => return None,
+                            }
+                        }
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                {
+                    // TODO: validate proof if needed
+                    tx.send((accounts, free_peer_id, chunk_start, chunk_end))
+                        .await
+                        .ok();
+                } else {
+                    tx.send((Vec::new(), free_peer_id, chunk_start, chunk_end))
+                        .await
+                        .ok();
+                }
+            });
         }
-        None
+
+        // TODO: proof validation and should_continue aggregation
+        // For now, just return the collected accounts
+        if all_account_hashes.is_empty() || all_accounts.is_empty() {
+            return None;
+        }
+        Some((all_account_hashes, all_accounts, should_continue_any))
     }
 
     /// Requests bytecodes for the given code hashes
