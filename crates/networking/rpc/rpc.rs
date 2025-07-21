@@ -59,6 +59,7 @@ use ethrex_p2p::types::NodeRecord;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::runtime;
 use std::{
     collections::HashMap,
     future::IntoFuture,
@@ -190,17 +191,22 @@ pub async fn start_api(
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
-    let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
-
     if let Some(header_hash) = header_hash {
         let fork_choice_state = ForkChoiceState {
             head_block_hash: header_hash,
             safe_block_hash: header_hash,
             finalized_block_hash: header_hash,
         };
-        handle_forkchoice(&fork_choice_state, service_context, 1).await;
+        tokio::spawn(
+            async move {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                handle_forkchoice(&fork_choice_state, service_context, 1).await;
+            }
+        );
     }
+
+    let _ = tokio::try_join!(authrpc_server, http_server)
+        .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
 
     Ok(())
 }
