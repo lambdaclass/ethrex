@@ -689,7 +689,6 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
         let mut all_account_hashes = Vec::new();
         let mut all_accounts_state = Vec::new();
-        let should_continue_any = false;
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
@@ -718,16 +717,16 @@ impl PeerHandler {
                     continue;
                 }
 
-                downloaded_count += accounts.len() as u64;
-                let batch_show = downloaded_count / 10_000;
-                if current_show < batch_show {
-                    info!(
-                        "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
-                        accounts.len(),
-                        peer_id
-                    );
-                    current_show += 1;
-                }
+                // downloaded_count += accounts.len() as u64;
+                // let batch_show = downloaded_count / 10_000;
+                // if current_show < batch_show {
+                info!(
+                    "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
+                    accounts.len(),
+                    peer_id
+                );
+                //     current_show += 1;
+                // }
                 // store accounts
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
                 all_accounts_state.extend(
