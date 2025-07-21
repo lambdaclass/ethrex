@@ -657,6 +657,30 @@ impl PeerHandler {
         start: H256,
         limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
+        // 1) split the range in chunks of same length
+        let start_u256 = U256::from_big_endian(&start.0);
+        let limit_u256 = U256::from_big_endian(&limit.0);
+        let chunk_size = limit_u256 - start_u256;
+
+        // INIT
+        // list of tasks to be executed
+        let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
+
+        for i in 0..(chunk_count as u64) {
+            tasks_queue_not_started.push_back((i * chunk_limit, chunk_limit));
+        }
+
+        // Push the reminder
+        if block_count % chunk_count as u64 != 0 {
+            tasks_queue_not_started.push_back((
+                chunk_count as u64 * chunk_limit,
+                block_count % chunk_count as u64,
+            ));
+        }
+        // END
+
+        // 2) request the chunks from peers
+
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
         let mut peer_ids = HashSet::new();
