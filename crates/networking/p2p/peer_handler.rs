@@ -22,10 +22,7 @@ use crate::{
     rlpx::{
         connection::server::CastMessage,
         eth::{
-            blocks::{
-                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-                HashOrNumber,
-            },
+            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
@@ -124,7 +121,9 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
     ) -> Vec<(H256, PeerChannels)> {
-        self.peer_table.get_peer_channels_sorted_by_score(capabilities).await
+        self.peer_table
+            .get_peer_channels_sorted_by_score(capabilities)
+            .await
     }
 
     pub async fn get_max_score_peer_id(&self) -> Option<H256> {
@@ -244,7 +243,7 @@ impl PeerHandler {
                             warn!("Failed to download chunk from peer {peer_id}");
 
                             info!("Penalizing peer {peer_id}");
-                            self.peer_table.penalize_peer(peer_id);
+                            self.peer_table.penalize_peer(peer_id).await;
 
                             downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                                 *downloader_is_free = true; // mark the downloader as free
@@ -257,7 +256,7 @@ impl PeerHandler {
 
                             continue; // Retry with the next peer
                         }
-                        self.peer_table.reward_peer(peer_id);
+                        self.peer_table.reward_peer(peer_id).await;
                         downloaded_count += headers.len() as u64;
 
                         let batch_show = downloaded_count / 10_000;
@@ -298,13 +297,13 @@ impl PeerHandler {
                         match err {
                             BlockHeaderDownloadError::InvalidBlockHeaders => {
                                 info!("Critically penalizing peer {peer_id}");
-                                self.peer_table.critically_penalize_peer(peer_id);
+                                self.peer_table.critically_penalize_peer(peer_id).await;
                             }
                             // TODO: check if the peer should be penalized on GenServerError
                             BlockHeaderDownloadError::GenServerError(_) => {}
                             _ => {
                                 info!("Penalizing peer {peer_id}");
-                                self.peer_table.penalize_peer(peer_id);
+                                self.peer_table.penalize_peer(peer_id).await;
                             }
                         }
                         warn!("Failed to download chunk from peer {peer_id}");
