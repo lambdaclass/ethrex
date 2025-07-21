@@ -1366,12 +1366,11 @@ mod tests {
         // The task panic will still be shown via stderr, but rest assured that it will also be caught and read by the test assertion
         let add_initial_state_handle =
             tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
-        let panic = add_initial_state_handle.await.unwrap_err().into_panic();
+        let result = add_initial_state_handle.await.unwrap();
+        assert!(result.is_err());
         assert_eq!(
-            panic
-                .downcast_ref::<String>()
-                .expect("Failed to downcast panic message"),
-            &GENESIS_DIFF_ERROR_MESSAGE
+            result.unwrap_err().to_string(),
+            GENESIS_DIFF_ERROR_MESSAGE
         );
     }
 
