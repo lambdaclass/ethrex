@@ -35,6 +35,12 @@ pub(crate) async fn heal_state_trie(
     peers: PeerHandler,
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
+    debug!(
+        "Starting state healing, pre-existing paths: {}",
+        paths.len()
+    );
+    let healing_start = Instant::now();
+    let mut total_healed: usize = 0;
     // Spawn a bytecode fetcher for this block
     let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
     let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
@@ -48,7 +54,17 @@ pub(crate) async fn heal_state_trie(
     while !paths.is_empty() {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
-            info!("State Healing in Progress, pending paths: {}", paths.len());
+            let speed = healing_start
+                .elapsed()
+                .as_millis()
+                .checked_div((total_healed / 100) as u128);
+            if let Some(speed) = speed {
+                info!(
+                    "State Healing in Progress, pending paths: {}, healing speed: {}ms/100nodes",
+                    paths.len(),
+                    speed
+                );
+            }
         }
         // Spawn multiple parallel requests
         let mut state_tasks = tokio::task::JoinSet::new();
@@ -70,7 +86,8 @@ pub(crate) async fn heal_state_trie(
         // Process the results of each batch
         let mut stale = false;
         for res in state_tasks.join_all().await {
-            let (return_paths, is_stale) = res?;
+            let (return_paths, is_stale, nodes_healed) = res?;
+            total_healed += nodes_healed;
             stale |= is_stale;
             paths.extend(return_paths);
         }
@@ -99,11 +116,12 @@ async fn heal_state_batch(
     peers: PeerHandler,
     store: Store,
     bytecode_sender: Sender<Vec<H256>>,
-) -> Result<(Vec<Nibbles>, bool), SyncError> {
+) -> Result<(Vec<Nibbles>, bool, usize), SyncError> {
     if let Some(nodes) = peers
         .request_state_trienodes(state_root, batch.clone())
         .await
     {
+        let nodes_received = nodes.len();
         debug!("Received {} state nodes", nodes.len());
         let mut hashed_addresses = vec![];
         let mut code_hashes = vec![];
@@ -139,15 +157,17 @@ async fn heal_state_batch(
                 }
             }
             // Write nodes to trie
-            trie.db().put_batch(
-                nodes
-                    .into_iter()
-                    .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
-                        NodeHash::Inline(_) => None,
-                    })
-                    .collect(),
-            )?;
+            trie.db()
+                .put_batch_async(
+                    nodes
+                        .into_iter()
+                        .filter_map(|node| match node.compute_hash() {
+                            hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                            NodeHash::Inline(_) => None,
+                        })
+                        .collect(),
+                )
+                .await?;
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {
@@ -163,8 +183,8 @@ async fn heal_state_batch(
         if !code_hashes.is_empty() {
             bytecode_sender.send(code_hashes).await?;
         }
-        Ok((batch, false))
+        Ok((batch, false, nodes_received))
     } else {
-        Ok((batch, true))
+        Ok((batch, true, 0))
     }
 }
