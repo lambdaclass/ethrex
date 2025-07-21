@@ -8,8 +8,8 @@ pub async fn main() -> Result<(), RunnerError> {
     let path = &args[1];
     println!("Parsing test files...");
     let tests = parse_dir(path.into())?;
-    println!("Finalized parsing. Executing tests...");
+    println!("Finished parsing. Executing tests...");
     run_tests(tests).await?;
-    println!("Tests finalized running. Find the report at: './runner_v2/runner_report.txt'");
+    println!("Tests finished running. Find the report at: './runner_v2/runner_report.txt'");
     Ok(())
 }
