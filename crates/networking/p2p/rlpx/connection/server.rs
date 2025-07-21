@@ -186,10 +186,6 @@ impl GenServer for RLPxConnection {
     type State = RLPxConnectionState;
     type Error = RLPxError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn init(
         &mut self,
         handle: &GenServerHandle<Self>,

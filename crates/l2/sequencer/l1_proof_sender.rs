@@ -143,10 +143,6 @@ impl GenServer for L1ProofSender {
 
     type Error = ProofSenderError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,

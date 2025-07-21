@@ -146,10 +146,6 @@ impl GenServer for L1Committer {
 
     type Error = CommitterError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,

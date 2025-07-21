@@ -115,10 +115,6 @@ impl GenServer for BlockProducer {
 
     type Error = BlockProducerError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,

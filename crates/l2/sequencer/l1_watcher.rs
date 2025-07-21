@@ -101,10 +101,6 @@ impl GenServer for L1Watcher {
     type State = L1WatcherState;
     type Error = L1WatcherError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn init(
         &mut self,
         handle: &GenServerHandle<Self>,

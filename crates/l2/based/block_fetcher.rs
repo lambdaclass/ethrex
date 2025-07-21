@@ -144,10 +144,6 @@ impl GenServer for BlockFetcher {
     type State = BlockFetcherState;
     type Error = BlockFetcherError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
         &mut self,
         _message: Self::CastMsg,

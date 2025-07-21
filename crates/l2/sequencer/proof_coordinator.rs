@@ -348,10 +348,6 @@ impl GenServer for ConnectionHandler {
     type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,

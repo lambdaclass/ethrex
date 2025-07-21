@@ -79,10 +79,6 @@ impl GenServer for MetricsGatherer {
 
     type Error = MetricsGathererError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_call(
         &mut self,
         _message: Self::CallMsg,
