@@ -134,7 +134,7 @@ impl L1ProofVerifier {
     }
 
     /// Checks that all consecutive batches starting from `first_batch_number` have been
-    /// verified and aggregated in Aligned Layer.
+    /// verified and aggregated in Aligned Layer. This advances the OnChainProposer.
     async fn verify_proofs_aggregation(
         &self,
         first_batch_number: u64,
