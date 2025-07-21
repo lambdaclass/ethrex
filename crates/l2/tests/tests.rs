@@ -7,7 +7,7 @@ use ethrex_common::types::BlockNumber;
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
-    clients::{deploy, send_eip1559_transaction},
+    clients::{deploy, send_wrapped_transaction},
     signer::{LocalSigner, Signer},
 };
 use ethrex_l2_sdk::calldata::{self, encode_calldata};
@@ -724,7 +724,7 @@ async fn test_send(
         )
         .await
         .unwrap();
-    let tx_hash = send_eip1559_transaction(client, &tx, &signer)
+    let tx_hash = send_wrapped_transaction(client, &tx.into(), &signer)
         .await
         .unwrap();
     ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, client, 10)

@@ -48,7 +48,7 @@ pub async fn deploy(
             deploy_overrides,
         )
         .await?;
-    let deploy_tx_hash = send_eip1559_transaction(client, &deploy_tx, deployer).await?;
+    let deploy_tx_hash = send_wrapped_transaction(client, &deploy_tx.into(), deployer).await?;
 
     let nonce = client
         .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))

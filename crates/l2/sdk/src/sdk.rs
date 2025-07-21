@@ -6,8 +6,9 @@ use calldata::encode_calldata;
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::clients::send_wrapped_transaction;
 use ethrex_l2_rpc::{
-    clients::{send_eip1559_transaction, send_tx_bump_gas_exponential_backoff},
+    clients::send_tx_bump_gas_exponential_backoff,
     signer::{LocalSigner, Signer},
 };
 use ethrex_rpc::clients::eth::L1MessageProof;
@@ -137,7 +138,7 @@ pub async fn transfer(
     let gas_limit = client.estimate_gas(tx_generic).await?;
     tx.gas_limit = gas_limit;
     let signer = LocalSigner::new(*private_key).into();
-    send_eip1559_transaction(client, &tx, &signer).await
+    send_wrapped_transaction(client, &tx.into(), &signer).await
 }
 
 pub async fn deposit_through_transfer(
@@ -180,7 +181,7 @@ pub async fn withdraw(
 
     let signer = LocalSigner::new(from_pk).into();
 
-    send_eip1559_transaction(proposer_client, &withdraw_transaction, &signer).await
+    send_wrapped_transaction(proposer_client, &withdraw_transaction.into(), &signer).await
 }
 
 pub async fn claim_withdraw(
@@ -228,7 +229,7 @@ pub async fn claim_withdraw(
 
     let signer = LocalSigner::new(from_pk).into();
 
-    send_eip1559_transaction(eth_client, &claim_tx, &signer).await
+    send_wrapped_transaction(eth_client, &claim_tx.into(), &signer).await
 }
 
 pub async fn claim_erc20withdraw(
@@ -278,7 +279,7 @@ pub async fn claim_erc20withdraw(
         )
         .await?;
 
-    send_eip1559_transaction(eth_client, &claim_tx, from_signer).await
+    send_wrapped_transaction(eth_client, &claim_tx.into(), from_signer).await
 }
 
 pub async fn deposit_erc20(
@@ -314,7 +315,7 @@ pub async fn deposit_erc20(
         )
         .await?;
 
-    send_eip1559_transaction(eth_client, &deposit_tx, from_signer).await
+    send_wrapped_transaction(eth_client, &deposit_tx.into(), from_signer).await
 }
 
 pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
@@ -555,7 +556,7 @@ pub async fn call_contract(
         .build_eip1559_transaction(to, from, calldata, Default::default())
         .await?;
 
-    let tx_hash = send_eip1559_transaction(client, &tx, &signer).await?;
+    let tx_hash = send_wrapped_transaction(client, &tx.into(), &signer).await?;
 
     wait_for_transaction_receipt(tx_hash, client, 100).await?;
     Ok(tx_hash)

@@ -121,6 +121,22 @@ impl WrappedTransaction {
     }
 }
 
+impl From<EIP1559Transaction> for WrappedTransaction {
+    fn from(tx: EIP1559Transaction) -> Self {
+        WrappedTransaction::EIP1559(tx)
+    }
+}
+impl From<WrappedEIP4844Transaction> for WrappedTransaction {
+    fn from(tx: WrappedEIP4844Transaction) -> Self {
+        WrappedTransaction::EIP4844(tx)
+    }
+}
+impl From<PrivilegedL2Transaction> for WrappedTransaction {
+    fn from(tx: PrivilegedL2Transaction) -> Self {
+        WrappedTransaction::L2(tx)
+    }
+}
+
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
 pub const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.

@@ -2,7 +2,7 @@ use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::clients::{deploy, send_eip1559_transaction};
+use ethrex_l2_rpc::clients::{deploy, send_wrapped_transaction};
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
@@ -133,7 +133,7 @@ async fn claim_erc20_balances(
                 )
                 .await
                 .unwrap();
-            let tx_hash = send_eip1559_transaction(&client, &claim_tx, &account)
+            let tx_hash = send_wrapped_transaction(&client, &claim_tx.into(), &account)
                 .await
                 .unwrap();
             client.wait_for_transaction_receipt(tx_hash, RETRIES).await
@@ -237,7 +237,7 @@ async fn load_test(
                     .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = send_eip1559_transaction(&client, &tx, &account).await?;
+                let _sent = send_wrapped_transaction(&client, &tx.into(), &account).await?;
             }
             println!("{tx_amount} transactions have been sent for {encoded_src}",);
             Ok::<(), EthClientError>(())

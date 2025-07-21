@@ -2,7 +2,7 @@ use crate::calldata::{self};
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::calldata::Value;
-use ethrex_l2_rpc::{clients::send_eip1559_transaction, signer::LocalSigner};
+use ethrex_l2_rpc::{clients::send_wrapped_transaction, signer::LocalSigner};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
@@ -84,5 +84,5 @@ pub async fn send_l1_to_l2_tx(
 
     let signer = LocalSigner::new(*sender_private_key).into();
 
-    send_eip1559_transaction(eth_client, &l1_to_l2_tx, &signer).await
+    send_wrapped_transaction(eth_client, &l1_to_l2_tx.into(), &signer).await
 }
