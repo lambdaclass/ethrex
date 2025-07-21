@@ -297,6 +297,7 @@ impl Syncer {
                     .request_account_range(
                         pivot_header.state_root,
                         H256::zero(),
+                        // TODO: download the full range
                         H256::repeat_byte(0x01),
                     )
                     .await;
