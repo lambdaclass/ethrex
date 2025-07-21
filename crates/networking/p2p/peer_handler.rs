@@ -717,7 +717,7 @@ impl PeerHandler {
                     continue;
                 }
 
-                // downloaded_count += accounts.len() as u64;
+                downloaded_count += accounts.len() as u64;
                 // let batch_show = downloaded_count / 10_000;
                 // if current_show < batch_show {
                 info!(
