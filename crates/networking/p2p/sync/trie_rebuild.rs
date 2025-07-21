@@ -8,10 +8,11 @@
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie};
-use std::{array, collections::HashMap};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
+use std::array;
 use tokio::{
     sync::mpsc::{Receiver, Sender, channel},
+    task::JoinSet,
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -29,10 +30,9 @@ use super::{
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 
 /// Max storages to rebuild in parallel
-const MAX_PARALLEL_REBUILDS: usize = 10;
+const MAX_PARALLEL_REBUILDS: usize = 15;
 
-const MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
-const MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 10;
+const MAX_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
@@ -188,10 +188,9 @@ async fn rebuild_state_trie_segment(
         for (hash, account) in batch.iter() {
             state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
         }
-        if snapshot_reads_since_last_commit > MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT {
+        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
-            // Trie is left in unusable after commiting, we must create a new one
-            state_trie = store.open_state_trie(state_trie.hash_async().await?)?;
+            state_trie.hash()?;
         }
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
@@ -206,7 +205,7 @@ async fn rebuild_state_trie_segment(
             break;
         }
     }
-    root = state_trie.hash_async().await?;
+    root = state_trie.hash()?;
     Ok((root, start))
 }
 
@@ -261,8 +260,15 @@ async fn rebuild_storage_trie_in_background(
             let (account_hash, expected_root) = pending_storages
                 .pop()
                 .expect("Unreachable code, pending_storages can't be empty in this point");
-            account_hashes.push(account_hash);
-            expected_roots.push(expected_root);
+            let store = store.clone();
+            rebuild_tasks.spawn(rebuild_storage_trie(
+                account_hash,
+                expected_root,
+                store.clone(),
+            ));
+        }
+        for res in rebuild_tasks.join_all().await {
+            res?;
         }
         total_rebuild_time += rebuild_start.elapsed().as_millis();
     }
@@ -275,96 +281,43 @@ async fn rebuild_storage_trie_in_background(
 /// Rebuilds a storage trie by reading from the storage snapshot
 /// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
 /// If the expected_root is `REBUILDER_INCOMPLETE_STORAGE_ROOT` then this validation will be skipped, the sender should make sure to queue said storage for healing
-async fn rebuild_storage_tries(
-    account_hashes: Vec<H256>,
-    expected_roots: Vec<H256>,
+async fn rebuild_storage_trie(
+    account_hash: H256,
+    expected_root: H256,
     store: Store,
 ) -> Result<(), SyncError> {
-    debug_assert_eq!(account_hashes.len(), expected_roots.len());
-    struct TrieTracker {
-        account_hash: H256,
-        expected_root: H256,
-        trie: Trie,
-        start: H256,
-        complete: bool,
-    }
-
-    let mut trie_trackers = Vec::new();
-    for (account_hash, expected_root) in account_hashes.into_iter().zip(expected_roots.into_iter())
-    {
-        let tracker = TrieTracker {
-            account_hash,
-            expected_root,
-            trie: store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?,
-            start: H256::zero(),
-            complete: false,
-        };
-        trie_trackers.push(tracker);
-    }
-    let mut nodes = HashMap::new();
+    let mut start = H256::zero();
+    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     let mut snapshot_reads_since_last_commit = 0;
-    while trie_trackers.iter().any(|t| !t.complete) {
+    loop {
         snapshot_reads_since_last_commit += 1;
-        for tracker in trie_trackers.iter_mut() {
-            if tracker.complete {
-                continue;
-            }
-            let batch = store
-                .read_storage_snapshot(tracker.account_hash, tracker.start)
-                .await?;
-            let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
-            // Update start
-            if let Some(last) = batch.last() {
-                tracker.start = next_hash(last.0);
-            }
-            // Process batch
-            for (key, val) in batch {
-                tracker.trie.insert(key.0.to_vec(), val.encode_to_vec())?;
-            }
+        let batch = store.read_storage_snapshot(account_hash, start).await?;
 
-            // Commit nodes if needed
-            if unfilled_batch
-                || snapshot_reads_since_last_commit > MAX_STORAGE_SNAPSHOT_READS_WITHOUT_COMMIT
-            {
-                nodes
-                    .entry(tracker.account_hash)
-                    .or_insert(Vec::new())
-                    .extend(tracker.trie.commit_without_storing());
-
-                // If this is the last batch, check the root and mark it as complete
-                if unfilled_batch {
-                    if tracker.trie.hash_no_commit() != tracker.expected_root {
-                        warn!(
-                            "Mismatched storage root for account {}",
-                            tracker.account_hash
-                        );
-                        store
-                            .set_storage_heal_paths(vec![(
-                                tracker.account_hash,
-                                vec![Nibbles::default()],
-                            )])
-                            .await?;
-                    }
-                    // Mark as complete
-                    tracker.complete = true;
-                } else {
-                    // Trie is left in unusable after commiting, we must create a new one
-                    tracker.trie = store
-                        .open_storage_trie(tracker.account_hash, tracker.trie.hash_no_commit())?;
-                }
-                // Mark as complete
-                tracker.complete = true;
-            }
+        let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
+        // Update start
+        if let Some(last) = batch.last() {
+            start = next_hash(last.0);
         }
         // Process batch
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
-        if snapshot_reads_since_last_commit > MAX_ACCOUNT_SNAPSHOT_READS_WITHOUT_COMMIT {
+        if snapshot_reads_since_last_commit > MAX_SNAPSHOT_READS_WITHOUT_COMMIT {
             snapshot_reads_since_last_commit = 0;
+            storage_trie.hash()?;
+        }
+
+        // Return if we have no more snapshot values to process for this storage
+        if unfilled_batch {
+            break;
         }
     }
-    store.commit_storage_nodes(nodes).await?;
+    if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
+        warn!("Mismatched storage root for account {account_hash}");
+        store
+            .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
+            .await?;
+    }
     Ok(())
 }
 
