@@ -21,6 +21,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
+const DEFAULT_FORKS: [&str; 4] = ["Merge", "Shanghai", "Cancun", "Prague"];
+
 /// `Tests` structure is the result of parsing a whole `.json` file from the EF tests. This file includes at
 /// least one general test enviroment and different test cases inside each enviroment.
 #[derive(Debug)]
@@ -76,6 +78,9 @@ impl<'de> Deserialize<'de> for Tests {
             // One fork can be used to execute more than one transaction, that will be given by the
             // different combinations of data, value and gas limit.
             for fork in post.forks.keys() {
+                if !DEFAULT_FORKS.contains(&(*fork).into()) {
+                    continue;
+                }
                 let fork_test_cases = post.forks.get(fork).ok_or(serde::de::Error::custom(
                     "Failed to find fork in test post value",
                 ))?;
