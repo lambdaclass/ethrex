@@ -149,7 +149,6 @@ pub enum CastMessage {
 }
 
 #[derive(Clone)]
-#[allow(private_interfaces)]
 pub enum OutMessage {
     InitResponse {
         node: Node,
