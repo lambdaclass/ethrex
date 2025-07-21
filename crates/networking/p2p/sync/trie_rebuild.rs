@@ -15,7 +15,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::sync::seconds_to_readable;
 
@@ -421,7 +421,7 @@ async fn show_storage_tries_rebuild_progress(
             false
         };
     // Show current speed only as debug data
-    info!(
+    debug!(
         "Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
         storage_rebuild_time, current_storages_in_queue,
     );
