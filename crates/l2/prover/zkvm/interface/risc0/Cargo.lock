@@ -935,22 +935,21 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/lambdaclass/zkcrypto-bls12_381?branch=expose-fp-struct#80c5568d3a68cecd30f1cc300875732f2a05b2f6"
+source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
 dependencies = [
- "bytemuck",
- "digest 0.9.0",
+ "digest 0.10.7",
  "ff",
  "group",
  "pairing",
  "rand_core 0.6.4",
- "risc0-bigint2",
  "subtle",
 ]
 
 [[package]]
 name = "blst"
-version = "0.3.14"
-source = "git+https://github.com/risc0/blst?tag=blst%2Fv0.3.14-risczero.0#4bb7133be362fce47525dc0c877e058e5a6db5ac"
+version = "0.3.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fd49896f12ac9b6dcd7a5998466b9b58263a695a3dd1ecc1aaca2e12a90b080"
 dependencies = [
  "cc",
  "glob",
@@ -2385,14 +2384,12 @@ dependencies = [
 [[package]]
 name = "k256"
 version = "0.13.4"
-source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=k256%2Fv0.13.4-risczero.1#7d4a8d6477e258ce4169ee4669cf92aee0582c39"
+source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=k256%2Fv0.13.4-risczero.0#f913b0aa4646e85d4a2095742ce86abf25bb1354"
 dependencies = [
- "bytemuck",
  "cfg-if",
  "ecdsa",
  "elliptic-curve",
  "once_cell",
- "risc0-bigint2",
  "sha2",
 ]
 
@@ -2737,7 +2734,7 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 [[package]]
 name = "p256"
 version = "0.13.2"
-source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=p256%2Fv0.13.2-risczero.1#bb0f51ad3ba81585f36ea8a1ea81093d8664b195"
+source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=p256%2Fv0.13.2-risczero.0#cdbf06d8834da2f3581d02e05d042295106176da"
 dependencies = [
  "bytemuck",
  "ecdsa",
@@ -2989,7 +2986,7 @@ dependencies = [
 [[package]]
 name = "primeorder"
 version = "0.13.1"
-source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=p256%2Fv0.13.2-risczero.1#bb0f51ad3ba81585f36ea8a1ea81093d8664b195"
+source = "git+https://github.com/risc0/RustCrypto-elliptic-curves?tag=p256%2Fv0.13.2-risczero.0#cdbf06d8834da2f3581d02e05d042295106176da"
 dependencies = [
  "bytemuck",
  "elliptic-curve",
