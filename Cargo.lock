@@ -4016,6 +4016,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "hmac",
+ "indexmap 2.10.0",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "rand 0.8.5",
