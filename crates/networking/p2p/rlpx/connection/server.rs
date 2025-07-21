@@ -67,7 +67,7 @@ type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
 #[derive(Clone)]
-pub struct RLPxConnectionState(pub InnerState);
+pub struct RLPxConnectionState(InnerState);
 
 #[derive(Clone)]
 pub struct Initiator {
@@ -192,9 +192,9 @@ impl GenServer for RLPxConnection {
     async fn init(
         &mut self,
         handle: &GenServerHandle<Self>,
-        mut state: Self::State,
+        RLPxConnectionState(state): Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = match handshake::perform(state.0.clone()).await {
+        let (mut established_state, stream) = match handshake::perform(state).await {
             Ok(result) => result,
             Err(reason) => {
                 METRICS.record_new_rlpx_conn_failure(reason).await;
@@ -218,7 +218,7 @@ impl GenServer for RLPxConnection {
             Err(RLPxError::Disconnected())
         } else {
             // New state
-            state.0 = InnerState::Established(established_state.clone());
+            let state = InnerState::Established(established_state.clone());
 
             METRICS
                 .record_new_rlpx_conn_established(
@@ -230,7 +230,7 @@ impl GenServer for RLPxConnection {
                 )
                 .await;
 
-            Ok(state)
+            Ok(RLPxConnectionState(state))
         }
     }
 
