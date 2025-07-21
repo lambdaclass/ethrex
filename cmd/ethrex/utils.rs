@@ -55,7 +55,10 @@ pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
 }
 
 pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
-    info!("JWT secret not found, generating JWT secret at {:?}", jwt_secret_path);
+    info!(
+        "JWT secret not found, generating JWT secret at {:?}",
+        jwt_secret_path
+    );
     let secret = generate_jwt_secret();
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
     hex::decode(secret)
@@ -108,10 +111,7 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn init_datadir(
-    datadir_path_opt: Option<PathBuf>,
-    network: Option<&Network>,
-) -> PathBuf {
+pub fn init_datadir(datadir_path_opt: Option<PathBuf>, network: Option<&Network>) -> PathBuf {
     let data_dir_path = if let Some(datadir_path) = datadir_path_opt {
         datadir_path
     } else {
@@ -127,7 +127,10 @@ pub fn init_datadir(
     if !path_with_chain.exists() {
         info!("Creating data directory: {:?}", path_with_chain);
         if let Err(e) = std::fs::create_dir_all(&path_with_chain) {
-            panic!("Failed to create data directory {:?}: {}", path_with_chain, e);
+            panic!(
+                "Failed to create data directory {:?}: {}",
+                path_with_chain, e
+            );
         }
     } else if !path_with_chain.is_dir() {
         panic!(

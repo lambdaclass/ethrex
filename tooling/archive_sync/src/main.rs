@@ -7,7 +7,7 @@ use clap::Parser;
 use ethrex::initializers::open_store;
 use ethrex::utils::init_datadir;
 use ethrex_common::types::BlockHash;
-use ethrex_common::{Address, serde_utils, BigEndianHash, Bytes, H256, U256, types::BlockNumber};
+use ethrex_common::{Address, BigEndianHash, Bytes, H256, U256, serde_utils, types::BlockNumber};
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},

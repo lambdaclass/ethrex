@@ -6,7 +6,7 @@ use crate::{
     },
     l2::{self, options::Options},
     networks::Network,
-    utils::{init_datadir, NodeConfigFile, parse_private_key, store_node_config_file},
+    utils::{NodeConfigFile, init_datadir, parse_private_key, store_node_config_file},
 };
 use clap::Subcommand;
 use ethrex_blockchain::BlockchainType;
@@ -128,10 +128,7 @@ impl Command {
                 l2::initializers::init_tracing(&opts);
 
                 let network = get_network(&opts.node_opts);
-                let data_dir = init_datadir(
-                    opts.node_opts.datadir.clone(),
-                    Some(&network),
-                );
+                let data_dir = init_datadir(opts.node_opts.datadir.clone(), Some(&network));
                 let rollup_store_dir = data_dir.join("rollup_store");
 
                 let genesis = network.get_genesis()?;
@@ -245,10 +242,7 @@ impl Command {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 info!("Server shutting down!");
             }
-            Self::RemoveDB {
-                datadir,
-                force,
-            } => {
+            Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
                     let opts = NodeOptions {
                         datadir,

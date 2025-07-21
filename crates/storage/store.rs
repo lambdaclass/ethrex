@@ -1368,10 +1368,7 @@ mod tests {
             tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
         let result = add_initial_state_handle.await.unwrap();
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            GENESIS_DIFF_ERROR_MESSAGE
-        );
+        assert_eq!(result.unwrap_err().to_string(), GENESIS_DIFF_ERROR_MESSAGE);
     }
 
     fn remove_test_dbs(path: &str) {

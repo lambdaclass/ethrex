@@ -301,14 +301,7 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(
-                    &path,
-                    &datadir,
-                    genesis,
-                    opts.evm,
-                    blockchain_type,
-                )
-                .await?;
+                import_blocks(&path, &datadir, genesis, opts.evm, blockchain_type).await?;
             }
             Subcommand::Export { path, first, last } => {
                 let network = get_network(opts);
