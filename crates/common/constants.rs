@@ -35,15 +35,13 @@ pub static EMPTY_KECCACK_HASH: LazyLock<H256> = LazyLock::new(|| {
     )
 });
 
-// TODO: unify
 pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| {
-    // H256::from_slice(
-    //     Keccak256::new()
-    //         .chain_update([RLP_NULL])
-    //         .finalize()
-    //         .as_slice(),
-    // )
-    *EMPTY_KECCACK_HASH
+    H256::from_slice(
+        Keccak256::new()
+            .chain_update([RLP_NULL])
+            .finalize()
+            .as_slice(),
+    )
 });
 
 // Request related
