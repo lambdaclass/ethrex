@@ -59,7 +59,7 @@ impl L1ProofVerifier {
             eth_cfg,
             aligned_cfg,
             rollup_store,
-            needed_proof_types
+            needed_proof_types,
         )
         .await?;
         let mut handle = L1ProofVerifier::start(state);
