@@ -186,11 +186,22 @@ pub async fn periodically_show_peer_stats() {
             (*downloaded_headers as f64 / *total_headers_to_download as f64) * 100.0
         };
 
-        let maybe_headers_download_time =
+        let mut maybe_headers_download_time =
             METRICS.headers_download_start_time.lock().await.map(|t| {
                 t.elapsed()
                     .expect("Failed to get current headers download time")
             });
+
+        let mut maybe_time_taken_to_download_headers =
+            METRICS.time_taken_to_download_headers.lock().await;
+
+        if remaining_headers == 0 {
+            if maybe_time_taken_to_download_headers.is_none() {
+                *maybe_time_taken_to_download_headers = maybe_headers_download_time;
+            } else {
+                maybe_headers_download_time = *maybe_time_taken_to_download_headers;
+            }
+        }
 
         // Account Tries
         let total_account_tries_downloaders = METRICS.total_accounts_downloaders.lock().await;

@@ -199,7 +199,7 @@ impl PeerHandler {
         *METRICS.time_to_retrieve_sync_head_block.lock().await =
             Some(sync_head_number_retrieval_elapsed);
         *METRICS.sync_head_block.lock().await = *sync_head_number.lock().await;
-        *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await;
+        *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await + 1;
         *METRICS.sync_head_hash.lock().await = sync_head;
 
         // 1) get the number of total headers in the chain (e.g. 800.000)
