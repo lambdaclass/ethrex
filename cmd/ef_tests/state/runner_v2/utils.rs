@@ -34,7 +34,7 @@ pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256,
     }
 }
 
-pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Store) {
+pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Store, Genesis) {
     let genesis = Genesis::from(test);
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
@@ -47,5 +47,6 @@ pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Stor
         GeneralizedDatabase::new(Arc::new(store), CacheDB::new()),
         block_hash,
         storage,
+        genesis,
     )
 }

@@ -30,7 +30,7 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
     let mut failing_test_cases = Vec::new();
     for test_case in &test.test_cases {
         // Setup VM for transaction.
-        let (mut db, initial_block_hash, storage) = load_initial_state(test).await;
+        let (mut db, initial_block_hash, storage, genesis) = load_initial_state(test).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case)?;
         let tracer = LevmCallTracer::disabled();
@@ -47,6 +47,7 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
             storage,
             test_case,
             execution_result,
+            genesis,
         )
         .await?;
 
