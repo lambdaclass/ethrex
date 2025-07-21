@@ -661,7 +661,7 @@ impl PeerHandler {
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
 
-        let chunk_count = 10000;
+        let chunk_count = 800;
         let chunk_size = (limit_u256 - start_u256) / chunk_count;
 
         // list of tasks to be executed
@@ -848,7 +848,8 @@ impl PeerHandler {
                         tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                             .await
                             .ok();
-                        tracing::error!("Received empty account range");
+                        // Too spammy
+                        // tracing::error!("Received empty account range");
                         return;
                     }
                     // Unzip & validate response
