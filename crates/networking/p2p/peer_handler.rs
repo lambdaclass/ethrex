@@ -368,7 +368,12 @@ impl PeerHandler {
                 });
 
                 if max_score_peer_id.is_some() {
-                    assert!(max_score_peer_id.unwrap() == free_peer_id);
+                    assert!(
+                        max_score_peer_id.unwrap() == free_peer_id,
+                        "max_score_peer_id: {}, free_peer_id: {}",
+                        max_score_peer_id.unwrap(),
+                        free_peer_id
+                    );
                 }
 
                 chan
