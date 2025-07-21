@@ -60,6 +60,42 @@ impl From<Node> for Contact {
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct PeerScore {
+    successes: i32,
+    failures: i32,
+}
+
+impl PeerScore {
+    /// simple scoring: +1 for success, -1 for failure
+
+    /// Used as benchmark.
+
+    pub fn calculate(&self) -> i32 {
+        self.successes - self.failures
+    }
+
+    pub fn add_success(&mut self) {
+        self.successes += 1;
+    }
+
+    pub fn add_failure(&mut self) {
+        self.failures += 1;
+    }
+
+    // TODO: check for rounding issues.
+
+    pub fn laplace_smoothing(&self) -> i32 {
+        const ALPHA: i32 = 1;
+
+        let successes = self.successes.max(0);
+
+        let failures = self.failures.max(0);
+
+        (successes + ALPHA) / (successes + failures + 2 * ALPHA)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PeerData {
     pub node: Node,
@@ -70,6 +106,7 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
+    pub score: PeerScore,
 }
 
 impl PeerData {
@@ -80,6 +117,7 @@ impl PeerData {
             supported_capabilities: Vec::new(),
             is_connection_inbound: false,
             channels: Some(channels),
+            score: PeerScore::default(),
         }
     }
 }
@@ -120,6 +158,28 @@ pub struct Kademlia {
 impl Kademlia {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn get_max_score_peer_id(&self) -> Option<H256> {
+        let filtered_peers: Vec<&PeerData> = self.filter_peers(&|peer| peer.is_connected).collect();
+
+        if filtered_peers.is_empty() {
+            return None;
+        }
+
+        let max_score_peer = filtered_peers
+            .iter()
+            .max_by_key(|peer| peer.score.calculate());
+
+        max_score_peer.map(|peer| peer.node.node_id())
+    }
+
+    pub async fn get_peer_score(&self, peer_id: H256) -> Option<i32> {
+        let Some(peer) = self.peers.lock().await.get(&peer_id) else {
+            return None;
+        };
+
+        Some(peer.score.calculate())
     }
 
     pub async fn set_connected_peer(&mut self, node: Node, channels: PeerChannels) {

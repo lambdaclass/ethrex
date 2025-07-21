@@ -13,14 +13,8 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use indexmap::IndexMap;
-use rand::random;
 use rand::{random, seq::SliceRandom};
 use spawned_concurrency::error::GenServerError;
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -29,7 +23,7 @@ use crate::{
         connection::server::CastMessage,
         eth::{
             blocks::{
-                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
                 HashOrNumber,
             },
             receipts::GetReceipts,
@@ -130,13 +124,11 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
     ) -> Vec<(H256, PeerChannels)> {
-        let table = self.peer_table.lock().await;
-        table.get_all_peer_channels(capabilities)
+        self.peer_table.get_all_peer_channels(capabilities)
     }
 
     pub async fn get_max_score_peer_id(&self) -> Option<H256> {
-        let table = self.peer_table.lock().await;
-        table.get_max_score_peer_id()
+        self.peer_table.get_max_score_peer_id()
     }
 
     pub async fn request_block_headers_2(
@@ -251,7 +243,7 @@ impl PeerHandler {
                         if headers.is_empty() {
                             warn!("Failed to download chunk from peer {peer_id}");
 
-                            let mut peer_table = self.peer_table.lock().await;
+                            let mut peer_table = self.peer_table;
                             info!("Penalizing peer {peer_id}");
                             peer_table.penalize_peer(peer_id);
 
@@ -515,7 +507,7 @@ impl PeerHandler {
     }
 
     async fn get_peer_score(&self, peer_id: H256) -> Option<i32> {
-        self.peer_table.lock().await.get_peer_score(peer_id)
+        self.peer_table.get_peer_score(peer_id)
     }
 
     /// TODO: update docs
