@@ -457,7 +457,7 @@ impl PeerHandler {
             .await
             .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
 
-        let block_headers = tokio::time::timeout(Duration::from_secs(5), async move {
+        let block_headers = tokio::time::timeout(Duration::from_secs(2), async move {
             loop {
                 match receiver.recv().await {
                     Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
