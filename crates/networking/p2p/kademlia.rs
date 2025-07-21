@@ -160,22 +160,22 @@ impl Kademlia {
         Self::default()
     }
 
-    pub fn get_max_score_peer_id(&self) -> Option<H256> {
-        let filtered_peers: Vec<&PeerData> = self.filter_peers(&|peer| peer.is_connected).collect();
-
-        if filtered_peers.is_empty() {
+    pub async fn get_max_score_peer_id(&self) -> Option<H256> {
+        let locked_peers = self.peers.lock().await;
+        if locked_peers.is_empty() {
             return None;
         }
 
-        let max_score_peer = filtered_peers
+        let max_score_peer = locked_peers
             .iter()
-            .max_by_key(|peer| peer.score.calculate());
+            .max_by_key(|peer| peer.1.score.calculate());
 
-        max_score_peer.map(|peer| peer.node.node_id())
+        max_score_peer.map(|peer| peer.0.clone())
     }
 
     pub async fn get_peer_score(&self, peer_id: H256) -> Option<i32> {
-        let Some(peer) = self.peers.lock().await.get(&peer_id) else {
+        let locked_table = self.peers.lock().await;
+        let Some(peer) = locked_table.get(&peer_id) else {
             return None;
         };
 
