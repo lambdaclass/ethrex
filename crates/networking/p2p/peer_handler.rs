@@ -29,8 +29,8 @@ use crate::{
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
-            AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
-            StorageRanges, TrieNodes,
+            AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
+            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
     snap::encodable_to_proof,
@@ -687,6 +687,24 @@ impl PeerHandler {
         last_task.1 = limit;
 
         // 2) request the chunks from peers
+        let peers_table = self
+            .peer_table
+            .get_peer_channels(&SUPPORTED_ETH_CAPABILITIES)
+            .await;
+
+        let mut downloaded_count = 0_u64;
+
+        // channel to send the tasks to the peers
+        let (task_sender, mut task_receiver) =
+            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, u64)>(1000);
+
+        let mut current_show = 0;
+
+        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+            peers_table
+                .iter()
+                .map(|(peer_id, _peer_data)| (*peer_id, true)),
+        );
 
         std::process::exit(0);
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
