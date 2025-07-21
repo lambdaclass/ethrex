@@ -202,7 +202,7 @@ cargo run deposit-to-batcher \
 --amount 1ether
 ```
 
-3. Start our l2 node, set `--l1.bridge-address` and `--l1.on-chain-proposer-address`:
+3. Start our l2 node:
 
 ```
 cd ethrex/crates/l2
