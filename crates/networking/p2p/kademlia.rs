@@ -391,7 +391,12 @@ impl KademliaTable {
                     .iter()
                     .any(|cap| peer.supported_capabilities.contains(cap))
         };
-        let filtered_peers: Vec<&PeerData> = self.filter_peers(&filter).collect();
+
+        let mut filtered_peers: Vec<&PeerData> = self.filter_peers(&filter).collect();
+
+        // order the peers by scoring criteria
+        filtered_peers.sort_by_key(|peer| peer.score);
+
         filtered_peers
             .iter()
             .filter_map(|peer| {

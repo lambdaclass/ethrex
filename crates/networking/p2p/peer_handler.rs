@@ -310,6 +310,8 @@ impl PeerHandler {
                 continue;
             }
 
+            // pick a random free downloader
+            // TODO: remove this and use scoring
             let Some(free_peer_id) = free_downloaders
                 .get(random::<usize>() % free_downloaders.len())
                 .map(|(peer_id, _)| *peer_id)
