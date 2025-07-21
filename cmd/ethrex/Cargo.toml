@@ -24,7 +24,6 @@ bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-k256.workspace = true
 clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 eyre.workspace = true
@@ -38,15 +37,18 @@ local-ip-address = "0.6"
 tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
-secp256k1 = { workspace = true }
+secp256k1.workspace = true
 keccak-hash.workspace = true
 reqwest.workspace = true
+thiserror.workspace = true
 itertools = "0.14.0"
+tui-logger.workspace = true
 
 cfg-if = "1.0.0"
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+url.workspace = true
 
 [[bin]]
 name = "ethrex"
@@ -82,7 +84,6 @@ criterion = { version = "0.5.1", features = [
 ] }
 ethrex-sdk.workspace = true
 secp256k1.workspace = true
-k256.workspace = true
 tempdir = { version = "0.3.7" }
 
 [[bench]]

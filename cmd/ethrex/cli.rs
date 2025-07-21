@@ -16,9 +16,9 @@ use tracing::{Level, info, warn};
 
 use crate::{
     DEFAULT_DATADIR,
-    initializers::{init_blockchain, init_store, open_store},
+    initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2,
-    networks::{Network, PublicNetwork},
+    networks::Network,
     utils::{self, get_client_version, set_datadir},
 };
 
@@ -36,15 +36,14 @@ pub struct CLI {
 pub struct Options {
     #[arg(
         long = "network",
-        default_value_t = Network::default(),
         value_name = "GENESIS_FILE_PATH",
-        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `fixtures/genesis/*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
+        help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
     )]
-    pub network: Network,
+    pub network: Option<Network>,
     #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
     #[arg(
@@ -101,7 +100,7 @@ pub struct Options {
         long = "dev",
         action = ArgAction::SetTrue,
         help = "Used to create blocks without requiring a Consensus Client",
-        long_help = "If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.",
+        long_help = "If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.",
         help_heading = "Node options"
     )]
     pub dev: bool,
@@ -212,7 +211,7 @@ impl Default for Options {
             p2p_port: Default::default(),
             discovery_addr: Default::default(),
             discovery_port: Default::default(),
-            network: Network::PublicNetwork(PublicNetwork::Mainnet),
+            network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
             syncmode: Default::default(),
@@ -293,24 +292,21 @@ pub enum Subcommand {
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
+        // L2 has its own init_tracing because of the ethrex monitor
+        match self {
+            Self::L2(_) => {}
+            _ => init_tracing(opts),
+        }
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    Box::pin(async {
-                        Self::RemoveDB {
-                            datadir: opts.datadir.clone(),
-                            force: opts.force,
-                        }
-                        .run(opts)
-                        .await
-                    })
-                    .await?;
+                    remove_db(&opts.datadir.clone(), opts.force);
                 }
 
-                let network = &opts.network;
+                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
                     BlockchainType::L2
@@ -398,6 +394,10 @@ pub async fn import_blocks(
 
     for blocks in chains {
         let size = blocks.len();
+        let numbers_and_hashes = blocks
+            .iter()
+            .map(|b| (b.header.number, b.hash()))
+            .collect::<Vec<_>>();
         // Execute block by block
         for block in &blocks {
             let hash = block.hash();
@@ -422,7 +422,7 @@ pub async fn import_blocks(
         }
 
         _ = store
-            .mark_chain_as_canonical(&blocks)
+            .mark_chain_as_canonical(&numbers_and_hashes)
             .await
             .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 

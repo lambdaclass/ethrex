@@ -1,4 +1,4 @@
-FROM rust:1.88 AS chef
+FROM rust:1.87 AS chef
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -14,6 +14,7 @@ WORKDIR /ethrex
 FROM chef AS planner
 COPY crates ./crates
 COPY tooling ./tooling
+COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
 # Determine the crates that need to be built from dependencies
@@ -28,6 +29,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 ARG BUILD_FLAGS=""
 COPY crates ./crates
 COPY cmd ./cmd
+COPY metrics ./metrics
 COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 

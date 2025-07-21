@@ -63,18 +63,18 @@ async fn server_shutdown(
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
-    init_tracing(&opts);
-
-    // TODO: Check every module starts properly.
-    let tracker = TaskTracker::new();
-
     if opts.metrics_enabled {
         init_metrics(&opts, tracker.clone());
     }
 
+    // TODO: Check every module starts properly.
+    let tracker = TaskTracker::new();
+
     if let Some(subcommand) = command {
         return subcommand.run(&opts).await;
     }
+
+    init_tracing(&opts);
 
     let data_dir = set_datadir(&opts.datadir);
 

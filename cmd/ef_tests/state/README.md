@@ -35,6 +35,7 @@ make refresh-evm-ef-tests
 - `skip`: For skipping tests
 - `verbose`: For more info while running, like tests names being run.
 - `revm`: For running EFTests ONLY with REVM.
+- `path`: For running particular tests that have their specified paths listed with the tests flag.
 
 
 **Example usage**: 
@@ -42,6 +43,12 @@ make refresh-evm-ef-tests
 cargo test --package ef_tests-state --test all --release -- --forks Prague,Cancun --summary --tests push0.json,invalidAddr.json
 ```
 This runs 2 specific tests with LEVM just for Prague and Cancun. If they fail they are not re-run with REVM.
+
+```bash
+cargo test --package ef_tests-state --test all --release -- --forks Prague,Cancun --summary --paths --tests LegacyTests/Cancun/GeneralStateTests/Shanghai/stEIP3855-push0/push0.json,GeneralStateTests/Shanghai/stEIP3855-push0/push0.json,GeneralStateTests/stBadOpcode/invalidAddr.json,LegacyTests/Cancun/GeneralStateTests/stBadOpcode/invalidAddr.json
+```
+This runs the same 2 tests with LEVM as before, but by specifying the files you want to run. If they fail they are not re-run with REVM.
+
 
 Most of the tests that we run are from [this repository](https://github.com/ethereum/tests). We run the `GeneralStateTests` from that repo and also from `LegacyTests`, which is another repository that has snapshots of tests from previous forks. 
 

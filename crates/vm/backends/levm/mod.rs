@@ -28,7 +28,7 @@ use ethrex_levm::{
     vm::{Substate, VM},
 };
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -214,7 +214,7 @@ impl LEVM {
             };
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = HashMap::new();
+            let mut added_storage = BTreeMap::new();
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
@@ -289,14 +289,9 @@ impl LEVM {
             ));
         }
 
-        let beacon_root = match block_header.parent_beacon_block_root {
-            None => {
-                return Err(EvmError::Header(
-                    "parent_beacon_block_root field is missing".to_string(),
-                ));
-            }
-            Some(beacon_root) => beacon_root,
-        };
+        let beacon_root = block_header.parent_beacon_block_root.ok_or_else(|| {
+            EvmError::Header("parent_beacon_block_root field is missing".to_string())
+        })?;
 
         generic_system_contract_levm(
             block_header,

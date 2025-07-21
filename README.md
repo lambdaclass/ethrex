@@ -16,17 +16,15 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 curl -sSL https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/install.sh | sh
 ```
 
-This installs the `ethrex` binary with some additional artifacts needed for this guide.
+This installs the `ethrex` binary.
 
 ### Starting the L1
 
 After running the install script, you can start the L1 by running:
 
 ```sh
-ethrex --network genesis-l1-dev.json --dev
+ethrex --dev
 ```
-
-This uses the file `genesis-l1-dev.json` that was also downloaded by the script, so make sure to be in the directory where the installation script was executed from.
 
 > [!TIP]
 > In case you want to start a new L1, you can remove the data of the old one by executing:

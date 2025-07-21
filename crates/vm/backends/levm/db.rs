@@ -6,7 +6,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::VmDatabase;
 use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::result::Result;
 use std::sync::{Arc, Mutex};
 
@@ -121,7 +121,7 @@ impl LevmDatabase for DynVmDatabase {
             acc_info.balance,
             acc_code,
             acc_info.nonce,
-            HashMap::new(),
+            BTreeMap::new(),
         ))
     }
 

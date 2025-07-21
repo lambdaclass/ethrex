@@ -150,12 +150,9 @@ impl Store {
 
     pub async fn add_block_headers(
         &self,
-        block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        self.engine
-            .add_block_headers(block_hashes, block_headers)
-            .await
+        self.engine.add_block_headers(block_headers).await
     }
 
     pub fn get_block_header(
@@ -551,8 +548,13 @@ impl Store {
         self.engine.add_blocks(blocks).await
     }
 
-    pub async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.mark_chain_as_canonical(blocks).await
+    pub async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(BlockNumber, BlockHash)],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .mark_chain_as_canonical(numbers_and_hashes)
+            .await
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -563,6 +565,9 @@ impl Store {
         let genesis_block_number = genesis_block.header.number;
 
         let genesis_hash = genesis_block.hash();
+
+        // Set chain config
+        self.set_chain_config(&genesis.config).await?;
 
         if let Some(header) = self.get_block_header(genesis_block_number)? {
             if header.hash() == genesis_hash {
@@ -589,10 +594,7 @@ impl Store {
         self.update_latest_block_number(genesis_block_number)
             .await?;
         self.set_canonical_block(genesis_block_number, genesis_hash)
-            .await?;
-
-        // Set chain config
-        self.set_chain_config(&genesis.config).await
+            .await
     }
 
     pub async fn get_transaction_by_hash(
