@@ -12,11 +12,9 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
-use k256::elliptic_curve::rand_core::le;
-use rand::{Rng, random, seq::SliceRandom};
-use spawned_rt::tasks::oneshot;
+use rand::random;
+use spawned_concurrency::error::GenServerError;
 use tokio::sync::Mutex;
-use tokio_stream::iter;
 
 use crate::{
     kademlia::{KademliaTable, PeerChannels, PeerData},
@@ -261,6 +259,7 @@ impl PeerHandler {
                     );
                     current_show += 1;
                 }
+
                 // store headers!!!!
                 ret.extend_from_slice(&headers);
 
@@ -439,6 +438,7 @@ impl PeerHandler {
         std::process::exit(0);
     }
 
+    /// TODO: update docs
     /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
     ///
     /// If it fails, returns an error message.
@@ -447,7 +447,7 @@ impl PeerHandler {
         peer_channel: &mut PeerChannels,
         startblock: u64,
         chunk_limit: u64,
-    ) -> Result<Vec<BlockHeader>, String> {
+    ) -> Result<Vec<BlockHeader>, BlockHeaderDownloadError> {
         debug!("Requesting block headers from peer {peer_id}");
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
@@ -464,7 +464,7 @@ impl PeerHandler {
             .connection
             .cast(CastMessage::BackendMessage(request))
             .await
-            .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))?;
+            .map_err(BlockHeaderDownloadError::GenServerError)?;
 
         let block_headers = tokio::time::timeout(Duration::from_secs(5), async move {
             loop {
@@ -472,23 +472,22 @@ impl PeerHandler {
                     Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
                         if id == request_id =>
                     {
-                        return Some(block_headers);
+                        return Ok(block_headers);
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
                     Some(_) => continue,
-                    None => return None, // EOF
+                    None => return Err(BlockHeaderDownloadError::PeerChannelClosed), // EOF
                 }
             }
         })
         .await
-        .map_err(|_| "Failed to receive block headers")?
-        .ok_or("Block no received".to_owned())?;
+        .map_err(|_| BlockHeaderDownloadError::PeerTimedOut)??;
 
         if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
             Ok(block_headers)
         } else {
             warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
-            Err("Invalid block headers".into())
+            Err(BlockHeaderDownloadError::InvalidBlockHeaders)
         }
     }
 
@@ -1235,4 +1234,17 @@ fn format_duration(duration: Duration) -> String {
     let seconds = total_seconds % 60;
 
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+}
+
+#[derive(thiserror::Error, Debug)]
+enum BlockHeaderDownloadError {
+    // TODO: improve error messages
+    #[error("Failed to send message. Error: {0}")]
+    GenServerError(GenServerError),
+    #[error("Received invalid block headers from peer.")]
+    InvalidBlockHeaders,
+    #[error("Peer channel is closed")]
+    PeerChannelClosed,
+    #[error("Peer timed out")]
+    PeerTimedOut,
 }
