@@ -356,7 +356,7 @@ impl PeerHandler {
 
             // Pick the first free downloader
             // The free downloaders vector should be sorted by score.
-            let Some(free_peer_id) = free_downloaders.first().map(|(peer_id, _)| *peer_id) else {
+            let Some(free_peer_id) = free_downloaders.last().map(|(peer_id, _)| *peer_id) else {
                 debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
                 continue;
             };
