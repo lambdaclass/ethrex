@@ -330,6 +330,7 @@ impl PeerHandler {
                 .await;
 
 
+            info!("#################");
             let mut scores = vec![];
             for (peer_id, _peer_channels) in &peer_channels {
                 let score = self.get_peer_score(*peer_id).await.unwrap();
@@ -338,8 +339,6 @@ impl PeerHandler {
             }
             
 
-
-            exit(2);
             for (peer_id, _peer_channels) in &peer_channels {
                 if downloaders.contains_key(peer_id) {
                     // Peer is already in the downloaders list, skip it
