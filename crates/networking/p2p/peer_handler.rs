@@ -368,11 +368,18 @@ impl PeerHandler {
                 });
 
                 if max_score_peer_id.is_some() {
+                    // TODO: remove these logs
+                    let peer_table = self.peer_table.lock().await;
+
                     assert!(
                         max_score_peer_id.unwrap() == free_peer_id,
-                        "max_score_peer_id: {}, free_peer_id: {}",
+                        "left peer id: {}, left peer score: {}\nright peer id: {}, right peer score: {}",
                         max_score_peer_id.unwrap(),
-                        free_peer_id
+                        peer_table
+                            .get_peer_score(max_score_peer_id.unwrap())
+                            .unwrap(),
+                        free_peer_id,
+                        peer_table.get_peer_score(free_peer_id).unwrap()
                     );
                 }
 
