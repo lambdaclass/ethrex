@@ -88,10 +88,6 @@ async fn bytecode_fetcher(
                     speed
                 );
             }
-            info!(
-                "Bytecode Fetching in Progress, queuded: {}",
-                pending_bytecodes.len(),
-            );
         }
         if cancel_token.is_cancelled() {
             break;
