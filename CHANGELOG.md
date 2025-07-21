@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-21
+
+- Use `rayon` to recover the sender address from transactions [#3709](https://github.com/lambdaclass/ethrex/pull/3709)
+
 ### 2025-07-18
 
 - Add specialized push1 and pop1 to stack [#3705](https://github.com/lambdaclass/ethrex/pull/3705)
