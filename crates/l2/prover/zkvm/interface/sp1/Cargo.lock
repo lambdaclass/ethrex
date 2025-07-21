@@ -1282,7 +1282,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "secp256k1",
  "sha3",
  "thiserror",
@@ -1301,7 +1300,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "kzg-rs",
  "lazy_static",
@@ -1310,6 +1308,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "sha2",
  "sha3",
  "thiserror",
  "tinyvec",
@@ -1351,7 +1350,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "keccak-hash",
  "lambdaworks-math",
  "lazy_static",
@@ -1987,7 +1985,6 @@ dependencies = [
  "elliptic-curve",
  "once_cell",
  "sha2",
- "signature",
 ]
 
 [[package]]

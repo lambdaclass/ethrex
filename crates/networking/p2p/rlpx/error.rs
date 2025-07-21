@@ -79,14 +79,8 @@ impl From<tokio::sync::mpsc::error::SendError<Message>> for RLPxError {
 
 // Grouping all cryptographic related errors in a single CryptographicError variant
 // We can improve this to individual errors if required
-impl From<k256::ecdsa::Error> for RLPxError {
-    fn from(e: k256::ecdsa::Error) -> Self {
-        RLPxError::CryptographyError(e.to_string())
-    }
-}
-
-impl From<k256::elliptic_curve::Error> for RLPxError {
-    fn from(e: k256::elliptic_curve::Error) -> Self {
+impl From<secp256k1::Error> for RLPxError {
+    fn from(e: secp256k1::Error) -> Self {
         RLPxError::CryptographyError(e.to_string())
     }
 }
