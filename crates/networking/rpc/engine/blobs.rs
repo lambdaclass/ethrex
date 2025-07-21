@@ -23,10 +23,10 @@ pub struct BlobsV1Request {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobAndProofV1 {
-    #[serde(with = "serde_utils::blob::opt")]
-    pub blob: Option<Blob>,
-    #[serde(with = "serde_utils::bytes48::opt")]
-    pub proof: Option<Proof>,
+    #[serde(with = "serde_utils::blob")]
+    pub blob: Blob,
+    #[serde(with = "serde_utils::bytes48")]
+    pub proof: Proof,
 }
 
 impl RpcHandler for BlobsV1Request {
@@ -48,13 +48,7 @@ impl RpcHandler for BlobsV1Request {
             return Err(RpcErr::TooLargeRequest);
         }
         //TODO: spec https://ethereum.github.io/execution-apis/docs/reference/engine_getblobsv1/ says error should be thrown for unsupported fork.
-        let mut res: Vec<BlobAndProofV1> = vec![
-            BlobAndProofV1 {
-                blob: None,
-                proof: None
-            };
-            self.blob_versioned_hashes.len()
-        ];
+        let mut res: Vec<Option<BlobAndProofV1>> = vec![None; self.blob_versioned_hashes.len()];
 
         for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
             // Go over all blobs bundles from the blobs bundle pool.
@@ -72,8 +66,10 @@ impl RpcHandler for BlobsV1Request {
                     .position(|&hash| hash == current_versioned_hash)
                 {
                     // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
-                    res[index].blob = Some(blobs_in_bundle[i]);
-                    res[index].proof = Some(proofs_in_bundle[i]);
+                    res[index] = Some(BlobAndProofV1 {
+                        blob: blobs_in_bundle[i],
+                        proof: proofs_in_bundle[i],
+                    });
                 }
             }
         }
