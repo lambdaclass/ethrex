@@ -1,9 +1,9 @@
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     sync::Arc,
     time::{Duration, SystemTime},
 };
-
+use indexmap::IndexMap;
 use bytes::Bytes;
 use ethrex_common::{
     H256, U256,
@@ -230,7 +230,7 @@ impl PeerHandler {
         >(1000);
 
         let mut current_show = 0;
-        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+        let mut downloaders: IndexMap<H256, bool> = IndexMap::from_iter(
             peers_table
                 .iter()
                 .map(|(peer_id, _peer_data)| (*peer_id, true)),
@@ -1097,7 +1097,7 @@ impl PeerHandler {
     pub async fn request_storage_trienodes(
         &self,
         state_root: H256,
-        paths: BTreeMap<H256, Vec<Nibbles>>,
+        paths: IndexMap<H256, Vec<Nibbles>>,
     ) -> Option<Vec<Node>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
