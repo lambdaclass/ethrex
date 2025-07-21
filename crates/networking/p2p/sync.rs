@@ -147,12 +147,12 @@ impl Syncer {
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
                 info!(
-                    "Sync cycle finished, time elapsed: {} secs",
+                    "[SYNCING] Sync cycle finished, time elapsed: {} secs",
                     start_time.elapsed().as_secs()
                 );
             }
             Err(error) => warn!(
-                "Sync cycle failed due to {error}, time elapsed: {} secs ",
+                "[SYNCING] Sync cycle failed due to {error}, time elapsed: {} secs ",
                 start_time.elapsed().as_secs()
             ),
         }

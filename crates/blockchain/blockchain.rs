@@ -949,7 +949,7 @@ pub fn validate_gas_used(
     if let Some(last) = receipts.last() {
         if last.cumulative_gas_used != block_header.gas_used {
             return Err(ChainError::InvalidBlock(
-                InvalidBlockError::GasUsedMismatch(last.cumulative_gas_used, block_header.gas_used),
+                InvalidBlockError::GasUsedMismatch(block_header.number, last.cumulative_gas_used, block_header.gas_used),
             ));
         }
     }
