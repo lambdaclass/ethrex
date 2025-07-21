@@ -15,15 +15,9 @@ use crate::runner_v2::{
 pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256, RunnerError> {
     match test_case.gas_price {
         None => {
-            let current_base_fee = test_env
-                .current_base_fee
-                .ok_or(RunnerError::CurrentBaseFeeMissing)?;
-            let priority_fee = test_case
-                .max_priority_fee_per_gas
-                .ok_or(RunnerError::MaxPriorityFeePerGasMissing)?;
-            let max_fee_per_gas = test_case
-                .max_fee_per_gas
-                .ok_or(RunnerError::MaxFeePerGasMissing)?;
+            let current_base_fee = test_env.current_base_fee.unwrap();
+            let priority_fee = test_case.max_priority_fee_per_gas.unwrap();
+            let max_fee_per_gas = test_case.max_fee_per_gas.unwrap();
 
             Ok(std::cmp::min(
                 max_fee_per_gas,
