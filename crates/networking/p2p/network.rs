@@ -188,8 +188,6 @@ pub async fn periodically_show_peer_stats() {
                     .expect("Failed to get current headers download time")
             });
 
-        *METRICS._last_progress.lock().await = current_headers_download_progress;
-
         info!(
             r#"
 elapsed: {elapsed}
