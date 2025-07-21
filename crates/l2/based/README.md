@@ -197,6 +197,12 @@ After running this command, the node will start syncing with the L1 and will be 
 
 > [!NOTE]
 >
+> The private key <SEQUENCER_PRIVATE_KEY> can be sourced from the file fixtures/keys/private_keys_l1.txt. 
+> An example key is:
+> 0xeaba42282ad33c8ef2524f07277c03a776d98ae19f581990ce75becb7cfa1c23
+
+> [!NOTE]
+>
 > If you want to run multiple nodes in the same machine, ensure that the following values are different for each node:
 >
 > - `--proof-coordinator.port`
@@ -214,7 +220,7 @@ For nodes to become lead Sequencers they need to register themselves in the `Seq
 To register a node as a Sequencer, you can use the following command using `rex`:
 
 ```bash
-rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> // registers REGISTRANT_ADDRESS as a Sequencer supplying 1 ETH as collateral (the minimum).
+rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> // registers SEQUENCER_ADDRESS as a Sequencer supplying 1 ETH as collateral (the minimum).
 ```
 
 > [!IMPORTANT]
