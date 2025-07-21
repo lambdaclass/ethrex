@@ -222,7 +222,7 @@ When running the integration test, consider increasing the `--committer.commit-t
 4. Start prover(s) in different terminals:
 ```bash
 cd ethrex/crates/l2
-make init-prover PROVER=<sp1/risc0> # optional: GPU=true
+make init-prover-<sp1/risc0> # optional: GPU=true
 ```
 
 ### Aggregate proofs:
