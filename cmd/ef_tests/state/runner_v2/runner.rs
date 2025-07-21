@@ -13,6 +13,7 @@ use crate::runner_v2::{
     utils::{effective_gas_price, load_initial_state},
 };
 
+/// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     // Remove previous report if it exists.
     let _ = fs::remove_file("./runner_v2/runner_report.txt").await;
@@ -23,6 +24,7 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     Ok(())
 }
 
+/// Runs each individual test case (combination of <fork, transaction, post-state>) of a specific test.
 pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
     println!("Running test: {:?}", test.name);
     for test_case in &test.test_cases {
@@ -47,6 +49,7 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
     Ok(())
 }
 
+/// Gets the enviroment needed to prepare the VM for a transaction.
 pub fn get_vm_env_for_test(
     test_env: Env,
     test_case: &TestCase,
@@ -78,6 +81,7 @@ pub fn get_vm_env_for_test(
     })
 }
 
+/// Constructs the transaction that will be executed in a specific test case.
 pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, RunnerError> {
     let value = test_case.value;
     let data = test_case.data.clone();

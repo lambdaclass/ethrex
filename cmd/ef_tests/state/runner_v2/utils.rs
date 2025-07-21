@@ -12,6 +12,9 @@ use crate::runner_v2::{
     types::{Env, Test, TestCase},
 };
 
+/// Calculates the price of the gas based on the fields the test case has. For transaction types
+/// previous to EIP1559, the gas_price is explicit in the test. For later transaction types, it requires
+/// to be calculated based on `current_base_fee`, `priority_fee` and `max_fee_per_gas` values.
 pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256, RunnerError> {
     match test_case.gas_price {
         None => {
@@ -28,6 +31,7 @@ pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256,
     }
 }
 
+/// Loads the pre state of the test (the initial state of specific accounts) into the Genesis.
 pub async fn load_initial_state(test: &Test) -> (GeneralizedDatabase, H256, Store) {
     let genesis = Genesis::from(test);
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");

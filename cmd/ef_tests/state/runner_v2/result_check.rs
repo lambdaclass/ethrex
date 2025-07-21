@@ -14,6 +14,7 @@ use crate::runner_v2::{
     types::{Test, TestCase, TransactionExpectedException},
 };
 
+/// Creates a basic `.txt` report that informs the result of executing each test (if it passed or failed).
 pub fn create_report(
     res: Result<(), RunnerError>,
     test_case: &TestCase,
@@ -59,6 +60,8 @@ pub async fn check_test_case_results(
     Ok(())
 }
 
+/// Verifies that the root of the state after executing the tests is the one expected
+/// (the one that appears in the `.json` file).
 pub async fn check_root(
     vm: &mut VM<'_>,
     initial_block_hash: H256,
@@ -74,6 +77,8 @@ pub async fn check_root(
     Ok(())
 }
 
+/// Calculates the post state root applying the changes (the account updates) that are a
+/// result of running the transaction to the storage.
 pub async fn post_state_root(
     account_updates: &[AccountUpdate],
     initial_block_hash: H256,
@@ -87,6 +92,8 @@ pub async fn post_state_root(
     ret_account_updates_batch.state_trie_hash
 }
 
+/// Used when the test case expected an exception. Verifies first if it, indeed, failed
+/// and if it did if it failed with the corresponding error.
 pub fn check_exception(
     expected_exceptions: Vec<TransactionExpectedException>,
     execution_result: Result<ExecutionReport, VMError>,
@@ -99,6 +106,8 @@ pub fn check_exception(
     Ok(())
 }
 
+/// Verifies whether a transaction execution error is contained in a vector of
+/// expected exceptions.
 fn exception_matches_expected(
     expected_exceptions: Vec<TransactionExpectedException>,
     returned_error: VMError,
