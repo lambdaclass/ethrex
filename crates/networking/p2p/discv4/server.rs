@@ -457,7 +457,6 @@ impl GenServer for ConnectionHandler {
                 let table = state.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
-                    drop(table);
                     return CastResponse::Stop;
                 };
                 if !contact.was_validated() {
@@ -533,7 +532,6 @@ impl GenServer for ConnectionHandler {
                 let mut table = state.kademlia.table.lock().await;
 
                 let Some(contact) = table.get(&node_id) else {
-                    drop(table);
                     return CastResponse::Stop;
                 };
                 if !contact.was_validated() {
