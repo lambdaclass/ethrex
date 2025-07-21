@@ -10,7 +10,7 @@ use std::{
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=COMPILE_CONTRACTS");
-    watch_solidity_files(Path::new("src"));
+    println!("cargo:rerun-if-changed=src");
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let output_contracts_path = Path::new(&out_dir).join("contracts");
@@ -97,18 +97,6 @@ fn main() {
     let file_path = output_contracts_path.join("solc_out/OnChainProposer.bin");
     let output_file_path = output_contracts_path.join("solc_out/OnChainProposerBased.bytecode");
     decode_to_bytecode(&file_path, &output_file_path);
-}
-
-fn watch_solidity_files(dir: &Path) {
-    for entry in fs::read_dir(dir).expect("Failed to read directory") {
-        let entry = entry.expect("Failed to get entry");
-        let path = entry.path();
-        if path.is_dir() {
-            watch_solidity_files(&path);
-        } else if path.extension().is_some_and(|ext| ext == "sol") {
-            println!("cargo::rerun-if-changed={}", path.display());
-        }
-    }
 }
 
 fn write_empty_bytecode_files(output_contracts_path: &Path) {
