@@ -197,9 +197,9 @@ After running this command, the node will start syncing with the L1 and will be 
 
 > [!NOTE]
 >
-> The private key <SEQUENCER_PRIVATE_KEY> can be sourced from the file fixtures/keys/private_keys_l1.txt. 
+> The private key `<SEQUENCER_PRIVATE_KEY>` can be sourced from the file `fixtures/keys/private_keys_l1.txt`.
 > An example key is:
-> 0xeaba42282ad33c8ef2524f07277c03a776d98ae19f581990ce75becb7cfa1c23
+> `0xeaba42282ad33c8ef2524f07277c03a776d98ae19f581990ce75becb7cfa1c23`
 
 > [!NOTE]
 >
