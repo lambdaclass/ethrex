@@ -222,8 +222,12 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerChannels, u64, u64)>(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<
+            Result<
+                (Vec<BlockHeader>, H256, PeerChannels, u64, u64),
+                (H256, u64, u64, BlockHeaderDownloadError),
+            >,
+        >(1000);
 
         let mut current_show = 0;
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
@@ -234,59 +238,93 @@ impl PeerHandler {
         // 3) create tasks that will request a chunk of headers from a peer
         info!("Starting to download block headers from peers");
         loop {
-            if let Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) =
-                task_receiver.try_recv()
-            {
-                if headers.is_empty() {
-                    warn!("Failed to download chunk from peer {peer_id}");
+            if let Ok(response) = task_receiver.try_recv() {
+                match response {
+                    Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) => {
+                        if headers.is_empty() {
+                            warn!("Failed to download chunk from peer {peer_id}");
 
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true; // mark the downloader as free
-                    });
+                            let mut peer_table = self.peer_table.lock().await;
+                            info!("Penalizing peer {peer_id}");
+                            peer_table.penalize_peer(peer_id);
 
-                    debug!("Downloader {peer_id} freed");
+                            downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                                *downloader_is_free = true; // mark the downloader as free
+                            });
 
-                    // reinsert the task to the queue
-                    tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
+                            debug!("Downloader {peer_id} freed");
 
-                    continue; // Retry with the next peer
+                            // reinsert the task to the queue
+                            tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
+
+                            continue; // Retry with the next peer
+                        }
+                        let mut peer_table = self.peer_table.lock().await;
+                        peer_table.reward_peer(peer_id);
+                        downloaded_count += headers.len() as u64;
+
+                        let batch_show = downloaded_count / 10_000;
+
+                        if current_show < batch_show {
+                            info!(
+                                "Downloaded {} headers from peer {} (current count: {downloaded_count})",
+                                headers.len(),
+                                peer_id
+                            );
+                            current_show += 1;
+                        }
+
+                        // store headers!!!!
+                        ret.extend_from_slice(&headers);
+
+                        let downloaded_headers = headers.len() as u64;
+
+                        // reinsert the task to the queue if it was not completed
+                        if downloaded_headers < previous_chunk_limit {
+                            let new_start = startblock + headers.len() as u64;
+
+                            let new_chunk_limit = previous_chunk_limit - headers.len() as u64;
+
+                            debug!(
+                                "Task for ({startblock}, {new_chunk_limit}) was not completed, re-adding to the queue, {new_chunk_limit} remaining headers"
+                            );
+
+                            tasks_queue_not_started.push_back((new_start, new_chunk_limit));
+                        }
+
+                        downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                            *downloader_is_free = true; // mark the downloader as free
+                        });
+                        debug!("Downloader {peer_id} freed");
+                    }
+                    Err((peer_id, startblock, previous_chunk_limit, err)) => {
+                        let mut peer_table = self.peer_table.lock().await;
+                        match err {
+                            BlockHeaderDownloadError::InvalidBlockHeaders => {
+                                info!("Critically penalizing peer {peer_id}");
+                                peer_table.critically_penalize_peer(peer_id);
+                            }
+                            // TODO: check if the peer should be penalized on GenServerError
+                            BlockHeaderDownloadError::GenServerError(_) => {}
+                            _ => {
+                                info!("Penalizing peer {peer_id}");
+                                peer_table.penalize_peer(peer_id);
+                            }
+                        }
+                        warn!("Failed to download chunk from peer {peer_id}");
+
+                        downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                            *downloader_is_free = true; // mark the downloader as free
+                        });
+
+                        debug!("Downloader {peer_id} freed");
+
+                        // reinsert the task to the queue
+                        tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
+
+                        continue; // Retry with the next peer
+                    }
                 }
-
-                downloaded_count += headers.len() as u64;
-
-                let batch_show = downloaded_count / 10_000;
-
-                if current_show < batch_show {
-                    info!(
-                        "Downloaded {} headers from peer {} (current count: {downloaded_count})",
-                        headers.len(),
-                        peer_id
-                    );
-                    current_show += 1;
-                }
-
-                // store headers!!!!
-                ret.extend_from_slice(&headers);
-
-                let downloaded_headers = headers.len() as u64;
-
-                // reinsert the task to the queue if it was not completed
-                if downloaded_headers < previous_chunk_limit {
-                    let new_start = startblock + headers.len() as u64;
-
-                    let new_chunk_limit = previous_chunk_limit - headers.len() as u64;
-
-                    debug!(
-                        "Task for ({startblock}, {new_chunk_limit}) was not completed, re-adding to the queue, {new_chunk_limit} remaining headers"
-                    );
-
-                    tasks_queue_not_started.push_back((new_start, new_chunk_limit));
-                }
-
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true; // mark the downloader as free
-                });
-                debug!("Downloader {peer_id} freed");
             }
 
             let peer_channels = self
@@ -376,31 +414,34 @@ impl PeerHandler {
                     "Requesting block headers from peer {free_peer_id}, chunk_limit: {chunk_limit}"
                 );
 
-                let headers = Self::download_chunk_from_peer(
+                let download_result = Self::download_chunk_from_peer(
                     free_peer_id,
                     &mut free_downloader_channels,
                     startblock,
                     chunk_limit,
                 )
-                .await
-                .inspect_err(|err| error!("{free_peer_id} failed to download chunk: {err}"))
-                .unwrap_or_default();
+                .await;
 
-                tx.send((
-                    headers,
-                    free_peer_id,
-                    free_downloader_channels,
-                    startblock,
-                    chunk_limit,
-                ))
-                .await
-                .unwrap();
+                match download_result {
+                    Ok(headers) => {
+                        tx.send(Ok((
+                            headers,
+                            free_peer_id,
+                            free_downloader_channels,
+                            startblock,
+                            chunk_limit,
+                        )))
+                        .await
+                        .unwrap(); // TODO: handle unwrap
+                    }
+                    Err(err) => {
+                        error!("Failed to download chunk from peer {free_peer_id}: {err}");
+                        tx.send(Err((free_peer_id, startblock, chunk_limit, err)))
+                            .await
+                            .unwrap(); // TODO: handle unwrap
+                    }
+                }
             });
-
-            // 4) assign the tasks to the peers
-            //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-
-            // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
         }
 
         let elapsed = start.elapsed().expect("Failed to get elapsed time");
