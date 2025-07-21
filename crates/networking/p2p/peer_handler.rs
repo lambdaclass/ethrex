@@ -12,6 +12,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::seq::SliceRandom;
+use spawned_concurrency::tasks::GenServerHandle;
 
 use crate::{
     kademlia::{Kademlia, PeerChannels, PeerData},
@@ -31,8 +32,9 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
+    snap_sync::coordinator::{self, DownloadCoordinator},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
@@ -51,6 +53,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     peer_table: Kademlia,
+    coordinator_handle: GenServerHandle<DownloadCoordinator>,
 }
 
 pub enum BlockRequestOrder {
@@ -59,15 +62,18 @@ pub enum BlockRequestOrder {
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: Kademlia) -> PeerHandler {
-        Self { peer_table }
+    pub async fn new(peer_table: Kademlia) -> PeerHandler {
+        Self {
+            peer_table: peer_table.clone(),
+            coordinator_handle: DownloadCoordinator::spawn(peer_table).await,
+        }
     }
 
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
     /// This should only be used in tests as it won't be able to interact with the node's connected peers
-    pub fn dummy() -> PeerHandler {
+    pub async fn dummy() -> PeerHandler {
         let dummy_peer_table = Kademlia::new();
-        PeerHandler::new(dummy_peer_table)
+        PeerHandler::new(dummy_peer_table).await
     }
 
     /// Helper method to record a succesful peer response as well as record previous failed responses from other peers
@@ -117,66 +123,74 @@ impl PeerHandler {
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_block_headers(
-        &self,
-        start: H256,
-        order: BlockRequestOrder,
-    ) -> Option<Vec<BlockHeader>> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                id: request_id,
-                startblock: start.into(),
-                limit: BLOCK_HEADER_LIMIT,
-                skip: 0,
-                reverse: matches!(order, BlockRequestOrder::NewToOld),
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-                .await?;
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                self.record_peer_failure(peer_id).await;
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                            if id == request_id =>
-                        {
-                            return Some(block_headers);
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None, // Retry request
-                    }
-                }
+    pub async fn request_block_headers(&self, sync_head: H256, order: BlockRequestOrder) -> u64 {
+        let coordinator::OutMessage::DownloadingBlockHeaders {
+            amount: block_headers_to_download,
+        } = self
+            .coordinator_handle
+            .clone()
+            .call(coordinator::CallMessage::DownloadHeaders {
+                sync_head_hash: sync_head,
             })
             .await
-            .ok()
-            .flatten()
-            .and_then(|headers| (!headers.is_empty()).then_some(headers))
-            {
-                if are_block_headers_chained(&block_headers, &order) {
-                    self.record_peer_success(peer_id).await;
-                    return Some(block_headers);
-                } else {
-                    warn!(
-                        "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
-                    );
-                    self.record_peer_critical_failure(peer_id).await;
-                }
-            }
-            warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
-        }
-        None
+            .expect("Failed to start coordinator");
+
+        block_headers_to_download
+        // for _ in 0..REQUEST_RETRY_ATTEMPTS {
+        //     let request_id = rand::random();
+        //     let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+        //         id: request_id,
+        //         startblock: start.into(),
+        //         limit: BLOCK_HEADER_LIMIT,
+        //         skip: 0,
+        //         reverse: matches!(order, BlockRequestOrder::NewToOld),
+        //     });
+        //     let (peer_id, mut peer_channel) = self
+        //         .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+        //         .await?;
+        //     let mut receiver = peer_channel.receiver.lock().await;
+        //     if let Err(err) = peer_channel
+        //         .connection
+        //         .cast(CastMessage::BackendMessage(request))
+        //         .await
+        //     {
+        //         self.record_peer_failure(peer_id).await;
+        //         debug!("Failed to send message to peer: {err:?}");
+        //         continue;
+        //     }
+        //     if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+        //         loop {
+        //             match receiver.recv().await {
+        //                 Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
+        //                     if id == request_id =>
+        //                 {
+        //                     return Some(block_headers);
+        //                 }
+        //                 // Ignore replies that don't match the expected id (such as late responses)
+        //                 Some(_) => continue,
+        //                 None => return None, // Retry request
+        //             }
+        //         }
+        //     })
+        //     .await
+        //     .ok()
+        //     .flatten()
+        //     .and_then(|headers| (!headers.is_empty()).then_some(headers))
+        //     {
+        //         if are_block_headers_chained(&block_headers, &order) {
+        //             self.record_peer_success(peer_id).await;
+        //             return Some(block_headers);
+        //         } else {
+        //             warn!(
+        //                 "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+        //             );
+        //             self.record_peer_critical_failure(peer_id).await;
+        //         }
+        //     }
+        //     warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
+        //     self.record_peer_failure(peer_id).await;
+        // }
+        // None
     }
 
     /// Internal method to request block bodies from any suitable peer given their block hashes

@@ -34,7 +34,7 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
+    let peer_handler = PeerHandler::new(peer_table).await;
 
     // Create SyncManager
     let syncer = SyncManager::new(

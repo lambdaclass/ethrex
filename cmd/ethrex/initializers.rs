@@ -110,7 +110,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
 ) {
-    let peer_handler = PeerHandler::new(peer_table);
+    let peer_handler = PeerHandler::new(peer_table).await;
 
     // Create SyncManager
     let syncer = SyncManager::new(

@@ -4,6 +4,7 @@ use std::{
 };
 
 use ethrex_common::H256;
+use rand::Rng;
 use spawned_concurrency::tasks::GenServerHandle;
 use spawned_rt::tasks::mpsc;
 use tokio::sync::Mutex;
@@ -105,6 +106,7 @@ pub struct Kademlia {
     pub already_tried_peers: Arc<Mutex<HashSet<H256>>>,
     pub discarded_contacts: Arc<Mutex<HashSet<H256>>>,
     pub discovered_mainnet_peers: Arc<Mutex<HashSet<H256>>>,
+    pub rng: rand::rngs::OsRng,
 }
 
 impl Kademlia {
@@ -120,6 +122,23 @@ impl Kademlia {
         let new_peer = PeerData::new(node, None, channels);
 
         self.peers.lock().await.insert(new_peer_id, new_peer);
+    }
+
+    pub async fn get_random_peer(&mut self) -> Option<PeerData> {
+        let peers = self.peers.lock().await;
+
+        let peer_list: Vec<&PeerData> = peers.values().collect();
+
+        if peer_list.is_empty() {
+            return None;
+        }
+
+        let random_index = self.rng.gen_range(0..peer_list.len());
+
+        peer_list
+            .get(random_index)
+            .cloned()
+            .map(|peer_data| peer_data.clone())
     }
 
     pub async fn get_peer_channels(
@@ -148,6 +167,7 @@ impl Default for Kademlia {
             already_tried_peers: Arc::new(Mutex::new(HashSet::new())),
             discarded_contacts: Arc::new(Mutex::new(HashSet::new())),
             discovered_mainnet_peers: Arc::new(Mutex::new(HashSet::new())),
+            rng: rand::rngs::OsRng,
         }
     }
 }

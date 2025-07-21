@@ -120,10 +120,10 @@ impl Syncer {
 
     /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
+    pub async fn dummy() -> Self {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::dummy(),
+            peers: PeerHandler::dummy().await,
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used
@@ -186,14 +186,22 @@ impl Syncer {
         loop {
             debug!("Requesting Block Headers from {current_head}");
 
-            let Some(mut block_headers) = self
+            let blocks_to_download = self
                 .peers
-                .request_block_headers(current_head, BlockRequestOrder::OldToNew)
-                .await
-            else {
-                warn!("Sync failed to find target block header, aborting");
-                return Ok(());
-            };
+                .request_block_headers(sync_head, BlockRequestOrder::OldToNew)
+                .await;
+
+            // TODO: Wait for all headers to be downloaded.
+            let mut block_headers: Vec<BlockHeader> = vec![];
+
+            // let Some(mut block_headers) = self
+            //     .peers
+            //     .request_block_headers(sync_head, BlockRequestOrder::OldToNew)
+            //     .await
+            // else {
+            //     warn!("Sync failed to find target block header, aborting");
+            //     return Ok(());
+            // };
 
             let (first_block_hash, first_block_number, first_block_parent_hash) =
                 match block_headers.first() {

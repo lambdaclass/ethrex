@@ -166,6 +166,14 @@ pub async fn periodically_show_peer_stats() {
 
         let rlpx_disconnections = METRICS.disconnections.lock().await;
 
+        let total_downloaders = METRICS.total_downloaders.lock().await;
+        let free_downloaders = METRICS.free_downloaders.lock().await;
+        let busy_downloaders = total_downloaders.saturating_sub(*free_downloaders);
+
+        let total_headers_to_download = METRICS.headers_to_download.lock().await;
+        let downloaded_headers = METRICS.downloaded_headers.lock().await;
+        let remaining_headers = total_headers_to_download.saturating_sub(*downloaded_headers);
+
         info!(
             r#"
 elapsed: {elapsed}
@@ -177,6 +185,15 @@ elapsed: {elapsed}
 {rlpx_connections} total peers made over time
 {rlpx_connection_attempts} connection attempts ({new_rlpx_connection_attempts_rate} new connection attempts/m)
 {rlpx_failed_connection_attempts} failed connection attempts
+Sync head hash: {sync_head_hash:#x}
+Sync head block: {sync_head_block}
+Headers to download: {headers_to_download}
+Downloaded headers: {downloaded_headers}
+Remaining headers: {remaining_headers}
+Total downloaders: {total_downloaders}
+Busy downloaders: {busy_downloaders}
+Free downloaders: {free_downloaders}
+Tasks queued: {tasks_queued}
 RLPx disconnections: {rlpx_disconnections:#?}
 RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reason:#?}"#,
             elapsed = format_duration(start.elapsed()),
@@ -191,6 +208,15 @@ RLPx connection failures: {rlpx_connection_failures_grouped_and_counted_by_reaso
             rlpx_connection_attempts = METRICS.connection_attempts.get(),
             new_rlpx_connection_attempts_rate = METRICS.new_connection_attempts_rate.get().floor(),
             rlpx_failed_connection_attempts = rlpx_connection_failures.values().sum::<u64>(),
+            sync_head_hash = *METRICS.sync_head_hash.lock().await,
+            sync_head_block = METRICS.sync_head_block.lock().await,
+            headers_to_download = total_headers_to_download,
+            downloaded_headers = downloaded_headers,
+            remaining_headers = remaining_headers,
+            total_downloaders = total_downloaders,
+            busy_downloaders = busy_downloaders,
+            free_downloaders = free_downloaders,
+            tasks_queued = METRICS.tasks_queued.lock().await,
             rlpx_disconnections = rlpx_disconnections,
             rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
         );
