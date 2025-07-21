@@ -208,6 +208,32 @@ impl Kademlia {
             })
             .collect()
     }
+
+    pub async fn get_peer_channels_sorted_by_score(
+        &self,
+        _capabilities: &[Capability],
+    ) -> Vec<(H256, PeerChannels)> {
+        let mut filtered_peers: Vec<(H256, PeerData)> = self
+            .peers
+            .lock()
+            .await
+            .iter()
+            .map(|(peer_id, peer_data)| (*peer_id, peer_data.clone()))
+            .collect();
+
+        // order the peers by scoring criteria
+        filtered_peers.sort_by_key(|(_, peer)| peer.score.calculate());
+
+        filtered_peers
+            .iter()
+            .filter_map(|(peer_id, peer_data)| {
+                peer_data
+                    .channels
+                    .clone()
+                    .map(|peer_channels| (*peer_id, peer_channels))
+            })
+            .collect()
+    }
 }
 
 impl Default for Kademlia {
