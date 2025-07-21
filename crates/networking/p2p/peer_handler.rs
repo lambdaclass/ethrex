@@ -368,7 +368,20 @@ impl PeerHandler {
                 });
 
                 if max_score_peer_id.is_some() {
-                    assert!(max_score_peer_id.unwrap() == free_peer_id);
+                    // TODO: remove these logs
+                    let max_score = self
+                        .get_peer_score(max_score_peer_id.unwrap())
+                        .await
+                        .unwrap();
+                    let free_peer_score = self.get_peer_score(free_peer_id).await.unwrap();
+                    assert!(
+                        max_score_peer_id.unwrap() == free_peer_id || max_score == free_peer_score,
+                        "left peer id: {}, left peer score: {}\nright peer id: {}, right peer score: {}",
+                        max_score_peer_id.unwrap(),
+                        max_score,
+                        free_peer_id,
+                        free_peer_score
+                    );
                 }
 
                 chan
@@ -490,6 +503,10 @@ impl PeerHandler {
         info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret);
         std::process::exit(0);
+    }
+
+    async fn get_peer_score(&self, peer_id: H256) -> Option<i32> {
+        self.peer_table.lock().await.get_peer_score(peer_id)
     }
 
     /// TODO: update docs

@@ -243,9 +243,18 @@ impl KademliaTable {
             return None;
         }
 
-        let max_score_peer = filtered_peers.iter().max_by_key(|peer| peer.score.calculate());
+        let max_score_peer = filtered_peers
+            .iter()
+            .max_by_key(|peer| peer.score.calculate());
 
         max_score_peer.map(|peer| peer.node.node_id())
+    }
+
+    pub fn get_peer_score(&self, peer_id: H256) -> Option<i32> {
+        let Some(peer) = self.get_by_node_id(peer_id) else {
+            return None;
+        };
+        Some(peer.score.calculate())
     }
 
     /// Select a peer with simple weighted selection based on scores
@@ -459,10 +468,10 @@ pub struct PeerData {
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct PeerScore {
     successes: i32,
-    failures: i32
+    failures: i32,
 }
 
-impl  PeerScore {
+impl PeerScore {
     /// simple scoring: +1 for success, -1 for failure
     /// Used as benchmark.
     pub fn calculate(&self) -> i32 {
@@ -476,7 +485,6 @@ impl  PeerScore {
     pub fn add_failure(&mut self) {
         self.failures += 1;
     }
-
 
     // TODO: check for rounding issues.
     pub fn laplace_smoothing(&self) -> i32 {
