@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    H256, U256,
+    BigEndianHash, H256, U256,
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -660,24 +660,31 @@ impl PeerHandler {
         // 1) split the range in chunks of same length
         let start_u256 = U256::from_big_endian(&start.0);
         let limit_u256 = U256::from_big_endian(&limit.0);
-        let chunk_size = limit_u256 - start_u256;
 
-        // INIT
+        let chunk_count = 800;
+
+        let chunk_size = (limit_u256 - start_u256) / chunk_count;
+
         // list of tasks to be executed
-        let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
+        let mut tasks_queue_not_started = VecDeque::<(H256, H256)>::new();
 
         for i in 0..(chunk_count as u64) {
-            tasks_queue_not_started.push_back((i * chunk_limit, chunk_limit));
+            let chunk_start_u256 = chunk_size * i + start_u256;
+            // We subtract one because ranges are inclusive
+            let chunk_end_u256 = start_u256 + chunk_size - 1;
+
+            let chunk_start = H256::from_uint(&(chunk_start_u256));
+            let chunk_end = H256::from_uint(&(chunk_end_u256));
+
+            tasks_queue_not_started.push_back((chunk_start, chunk_end));
         }
 
-        // Push the reminder
-        if block_count % chunk_count as u64 != 0 {
-            tasks_queue_not_started.push_back((
-                chunk_count as u64 * chunk_limit,
-                block_count % chunk_count as u64,
-            ));
-        }
-        // END
+        // Modify the last chunk to include the limit
+        let last_task = tasks_queue_not_started
+            .back_mut()
+            .expect("we just inserted some elements");
+
+        last_task.1 = limit;
 
         // 2) request the chunks from peers
 
