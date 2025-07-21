@@ -86,6 +86,7 @@ pub enum OutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct StateUpdater;
 
 impl StateUpdater {
@@ -110,10 +111,6 @@ impl GenServer for StateUpdater {
     type OutMsg = OutMessage;
     type State = StateUpdaterState;
     type Error = StateUpdaterError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,

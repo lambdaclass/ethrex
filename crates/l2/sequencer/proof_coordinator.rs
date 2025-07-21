@@ -224,6 +224,7 @@ pub enum ProofCordOutMessage {
     Done,
 }
 
+#[derive(Default)]
 pub struct ProofCoordinator;
 
 impl ProofCoordinator {
@@ -261,10 +262,6 @@ impl GenServer for ProofCoordinator {
     type OutMsg = ProofCordOutMessage;
     type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,
@@ -307,6 +304,7 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: Arc<TcpListener
     }
 }
 
+#[derive(Default)]
 struct ConnectionHandler;
 
 impl ConnectionHandler {
@@ -345,10 +343,6 @@ impl GenServer for ConnectionHandler {
     type OutMsg = ConnOutMessage;
     type State = ProofCoordinatorState;
     type Error = ProofCoordinatorError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn handle_cast(
         &mut self,

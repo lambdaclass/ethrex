@@ -72,6 +72,7 @@ pub enum OutMessage {
     Error,
 }
 
+#[derive(Default)]
 pub struct L1Watcher;
 
 impl L1Watcher {
@@ -99,10 +100,6 @@ impl GenServer for L1Watcher {
     type OutMsg = OutMessage;
     type State = L1WatcherState;
     type Error = L1WatcherError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn init(
         &mut self,

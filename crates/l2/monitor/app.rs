@@ -81,7 +81,7 @@ pub enum OutMessage {
 }
 
 #[derive(Default)]
-pub struct EthrexMonitor {}
+pub struct EthrexMonitor;
 
 impl EthrexMonitor {
     pub async fn spawn(
@@ -107,10 +107,6 @@ impl GenServer for EthrexMonitor {
     type OutMsg = OutMessage;
     type State = EthrexMonitorState;
     type Error = MonitorError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn init(
         &mut self,

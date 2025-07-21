@@ -160,8 +160,8 @@ pub enum OutMessage {
     Error,
 }
 
-#[derive(Debug)]
-pub struct RLPxConnection {}
+#[derive(Debug, Default)]
+pub struct RLPxConnection;
 
 impl RLPxConnection {
     pub async fn spawn_as_receiver(
@@ -185,10 +185,6 @@ impl GenServer for RLPxConnection {
     type OutMsg = MsgResult;
     type State = RLPxConnectionState;
     type Error = RLPxError;
-
-    fn new() -> Self {
-        Self {}
-    }
 
     async fn init(
         &mut self,
