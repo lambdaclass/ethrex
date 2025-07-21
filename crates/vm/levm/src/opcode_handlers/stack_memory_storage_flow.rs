@@ -351,6 +351,9 @@ impl<'a> VM<'a> {
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         if let Some(target_addr) = Self::target_address_is_valid(call_frame, jump_address_usize) {
+            #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+            call_frame
+                .increase_consumed_gas((target_addr - call_frame.pc) as u64 * gas_cost::JUMPDEST)?;
             call_frame.pc = target_addr;
             Ok(())
         } else {
@@ -377,9 +380,21 @@ impl<'a> VM<'a> {
 
     // JUMPDEST operation
     pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        let call_frame = self.current_call_frame_mut()?;
+
+        #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+        let pc_delta = call_frame
+            .jumpdest_mappings
+            .binary_search_by_key(&call_frame.pc, |&(addr, _)| addr)
+            .ok()
+            .map(|index| call_frame.jumpdest_mappings[index].1 - call_frame.pc)
+            .unwrap_or(1);
+        #[expect(clippy::as_conversions)]
+        call_frame.increase_consumed_gas(pc_delta as u64 * gas_cost::JUMPDEST)?;
+
+        Ok(OpcodeResult::Continue {
+            pc_increment: pc_delta,
+        })
     }
 
     // PC operation
