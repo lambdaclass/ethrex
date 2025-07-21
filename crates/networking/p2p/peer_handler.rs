@@ -693,7 +693,7 @@ impl PeerHandler {
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, H256, H256)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
         let mut current_show = 0;
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
@@ -704,13 +704,17 @@ impl PeerHandler {
 
         info!("Starting to download account ranges from peers");
         loop {
-            if let Ok((accounts, peer_id, chunk_start, chunk_end)) = task_receiver.try_recv() {
+            if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+                if let Some((chunk_start, chunk_end)) = chunk_start_end {
+                    if chunk_start <= chunk_end {
+                        trace!("Failed to download chunk from peer {peer_id}");
+                        downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                            *downloader_is_free = true;
+                        });
+                        tasks_queue_not_started.push_back((chunk_start, chunk_end));
+                    }
+                }
                 if accounts.is_empty() {
-                    trace!("Failed to download chunk from peer {peer_id}");
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true;
-                    });
-                    tasks_queue_not_started.push_back((chunk_start, chunk_end));
                     continue;
                 }
 
@@ -818,12 +822,12 @@ impl PeerHandler {
                     .await
                 {
                     error!("Failed to send message to peer: {err:?}");
-                    tx.send((Vec::new(), free_peer_id, chunk_start, chunk_end))
+                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                         .await
                         .ok();
                     return;
                 }
-                if let Some((accounts, _proof)) =
+                if let Some((accounts, proof)) =
                     tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                         loop {
                             match receiver.recv().await {
@@ -841,12 +845,51 @@ impl PeerHandler {
                     .ok()
                     .flatten()
                 {
-                    // TODO: validate proof if needed
-                    tx.send((accounts, free_peer_id, chunk_start, chunk_end))
-                        .await
-                        .ok();
+                    if accounts.is_empty() {
+                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                            .await
+                            .ok();
+                        return;
+                    }
+                    // Unzip & validate response
+                    let proof = encodable_to_proof(&proof);
+                    let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
+                        .clone()
+                        .into_iter()
+                        .map(|unit| (unit.hash, AccountState::from(unit.account)))
+                        .unzip();
+                    let encoded_accounts = account_states
+                        .iter()
+                        .map(|acc| acc.encode_to_vec())
+                        .collect::<Vec<_>>();
+
+                    let Ok(should_continue) = verify_range(
+                        state_root,
+                        &start,
+                        &account_hashes,
+                        &encoded_accounts,
+                        &proof,
+                    ) else {
+                        tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
+                            .await
+                            .ok();
+                        return;
+                    };
+
+                    // If the range has more accounts to fetch, we send the new chunk
+                    let chunk_left = if should_continue {
+                        let last_hash = account_hashes
+                            .last()
+                            .expect("we already checked this isn't empty");
+                        let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                        let new_start = H256::from_uint(&new_start_u256);
+                        Some((new_start, chunk_end))
+                    } else {
+                        None
+                    };
+                    tx.send((accounts, free_peer_id, chunk_left)).await.ok();
                 } else {
-                    tx.send((Vec::new(), free_peer_id, chunk_start, chunk_end))
+                    tx.send((Vec::new(), free_peer_id, Some((chunk_start, chunk_end))))
                         .await
                         .ok();
                 }
