@@ -989,7 +989,7 @@ impl PeerHandler {
                 .clone()
                 .into_iter()
                 .zip(all_accounts_state.clone())
-                .map(|(account_hash, account)| (account_hash.0.into(), account.encode_to_vec())),
+                .map(|(account_hash, account)| (account_hash.0.to_vec(), account.encode_to_vec())),
         );
 
         info!("Expected state root: {state_root}");
