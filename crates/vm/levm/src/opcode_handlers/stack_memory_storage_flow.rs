@@ -3,21 +3,27 @@ use crate::{
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
-    memory::{self, calculate_memory_size},
+    memory::calculate_memory_size,
     opcodes::Opcode,
     vm::VM,
 };
-use ethrex_common::{H256, U256, types::Fork};
+use ethrex_common::{
+    U256,
+    types::Fork,
+    utils::{u256_to_big_endian, u256_to_h256},
+};
 
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
+
+pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
 
 impl<'a> VM<'a> {
     // POP operation
     pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::POP)?;
-        current_call_frame.stack.pop::<1>()?;
+        current_call_frame.stack.pop1()?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -28,7 +34,7 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
-        let [key] = *self.current_call_frame_mut()?.stack.pop()?;
+        let key = self.current_call_frame_mut()?.stack.pop1()?;
         let to = self.current_call_frame()?.to;
         let value = self
             .substate
@@ -41,7 +47,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
 
-        current_call_frame.stack.push(&[value])?;
+        current_call_frame.stack.push1(value)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -71,7 +77,11 @@ impl<'a> VM<'a> {
     // MLOAD operation
     pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
-        let [offset] = *current_call_frame.stack.pop()?;
+        let offset = current_call_frame.stack.pop1()?;
+
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
@@ -82,7 +92,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[memory::load_word(&mut current_call_frame.memory, offset)?])?;
+            .push1(current_call_frame.memory.load_word(offset)?)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -96,6 +106,10 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
+
         let current_call_frame = self.current_call_frame_mut()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
@@ -105,11 +119,7 @@ impl<'a> VM<'a> {
             current_call_frame.memory.len(),
         )?)?;
 
-        memory::try_store_data(
-            &mut current_call_frame.memory,
-            offset,
-            &value.to_big_endian(),
-        )?;
+        current_call_frame.memory.store_word(offset, value)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -118,7 +128,11 @@ impl<'a> VM<'a> {
     pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
 
-        let [offset] = *current_call_frame.stack.pop()?;
+        let offset = current_call_frame.stack.pop1()?;
+
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
 
@@ -127,13 +141,11 @@ impl<'a> VM<'a> {
             current_call_frame.memory.len(),
         )?)?;
 
-        let [value] = current_call_frame.stack.pop()?;
+        let value = current_call_frame.stack.pop1()?;
 
-        memory::try_store_data(
-            &mut current_call_frame.memory,
-            offset,
-            &value.to_big_endian()[WORD_SIZE - 1..WORD_SIZE],
-        )?;
+        current_call_frame
+            .memory
+            .store_data(offset, &u256_to_big_endian(value)[WORD_SIZE - 1..WORD_SIZE])?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -142,12 +154,12 @@ impl<'a> VM<'a> {
     pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
         let (storage_slot_key, address) = {
             let current_call_frame = self.current_call_frame_mut()?;
-            let [storage_slot_key] = *current_call_frame.stack.pop()?;
+            let storage_slot_key = current_call_frame.stack.pop1()?;
             let address = current_call_frame.to;
             (storage_slot_key, address)
         };
 
-        let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
+        let storage_slot_key = u256_to_h256(storage_slot_key);
 
         let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
 
@@ -155,7 +167,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
-        current_call_frame.stack.push(&[value])?;
+        current_call_frame.stack.push1(value)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -179,7 +191,7 @@ impl<'a> VM<'a> {
         }
 
         // Get current and original (pre-tx) values.
-        let key = H256::from(storage_slot_key.to_big_endian());
+        let key = u256_to_h256(storage_slot_key);
         let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
         let original_value = self.get_original_storage(to, key)?;
 
@@ -234,7 +246,7 @@ impl<'a> VM<'a> {
             )?)?;
 
         if new_storage_slot_value != current_value {
-            self.update_account_storage(to, key, new_storage_slot_value)?;
+            self.update_account_storage(to, key, new_storage_slot_value, current_value)?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -246,7 +258,7 @@ impl<'a> VM<'a> {
         current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
         current_call_frame
             .stack
-            .push(&[current_call_frame.memory.len().into()])?;
+            .push1(current_call_frame.memory.len().into())?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -257,7 +269,7 @@ impl<'a> VM<'a> {
 
         let remaining_gas = current_call_frame.gas_remaining;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push(&[remaining_gas.into()])?;
+        current_call_frame.stack.push1(remaining_gas.into())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -270,9 +282,22 @@ impl<'a> VM<'a> {
         }
         let current_call_frame = self.current_call_frame_mut()?;
         let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
+
         let size: usize = size
             .try_into()
             .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
+
+        let dest_offset: usize = match dest_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
+
+        let src_offset: usize = match src_offset.try_into() {
+            Ok(x) => x,
+            Err(_) if size == 0 => 0,
+            Err(_) => return Err(ExceptionalHalt::VeryLargeNumber.into()),
+        };
 
         let new_memory_size_for_dest = calculate_memory_size(dest_offset, size)?;
 
@@ -284,12 +309,9 @@ impl<'a> VM<'a> {
             size,
         )?)?;
 
-        memory::try_copy_within(
-            &mut current_call_frame.memory,
-            src_offset,
-            dest_offset,
-            size,
-        )?;
+        current_call_frame
+            .memory
+            .copy_within(src_offset, dest_offset, size)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -299,7 +321,7 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
 
-        let [jump_address] = *current_call_frame.stack.pop()?;
+        let jump_address = current_call_frame.stack.pop1()?;
         Self::jump(current_call_frame, jump_address)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
@@ -370,7 +392,7 @@ impl<'a> VM<'a> {
 
         current_call_frame
             .stack
-            .push(&[U256::from(current_call_frame.pc)])?;
+            .push1(U256::from(current_call_frame.pc))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

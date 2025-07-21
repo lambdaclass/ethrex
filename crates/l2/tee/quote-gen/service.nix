@@ -1,3 +1,7 @@
+{ gitRev }:
+assert (builtins.stringLength gitRev == 7)
+  || throw "gitRev must be exactly 7 characters use (git rev-parse --short=7 HEAD)";
+
 let
   pkgs = import <nixpkgs> { };
   fenix = pkgs.callPackage (pkgs.fetchFromGitHub {
@@ -14,7 +18,7 @@ let
     cargo = toolchain;
     rustc = toolchain;
   };
-  gitignoreSrc = pkgs.fetchFromGitHub { 
+  gitignoreSrc = pkgs.fetchFromGitHub {
     owner = "hercules-ci";
     repo = "gitignore.nix";
     rev = "637db329424fd7e46cf4185293b9cc8c88c95394";
@@ -35,7 +39,6 @@ let
       lockFile = ./Cargo.lock;
       outputHashes = {
         "bls12_381-0.8.0" = "sha256-8/pXRA7hVAPeMKCZ+PRPfQfxqstw5Ob4MJNp85pv5WQ=";
-        "spawned-concurrency-0.1.0" = "sha256-63xBuGAlrHvIf8hboScUY4LZronPZJZzmfJBdAbUKTU=";
         "aligned-sdk-0.1.0" = "sha256-Az97VtggdN4gsYds3myezNJ+mNeSaIDbF0Pq5kq2M3M=";
         "lambdaworks-crypto-0.12.0" = "sha256-4vgW/O85zVLhhFrcZUwcPjavy/rRWB8LGTabAkPNrDw=";
       };
@@ -47,7 +50,10 @@ let
       rustPlatform.cargoSetupHook
     ];
 
-    env.OPENSSL_NO_VENDOR = 1;
+    env = {
+      OPENSSL_NO_VENDOR = 1;
+      VERGEN_GIT_SHA = gitRev;
+    };
   };
 in
 {
