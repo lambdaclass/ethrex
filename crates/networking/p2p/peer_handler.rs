@@ -240,9 +240,6 @@ impl PeerHandler {
                 match response {
                     Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) => {
                         if headers.is_empty() {
-                            warn!("Failed to download chunk from peer {peer_id}");
-
-                            info!("Penalizing peer {peer_id}");
                             self.peer_table.penalize_peer(peer_id).await;
 
                             downloaders.entry(peer_id).and_modify(|downloader_is_free| {
@@ -302,7 +299,6 @@ impl PeerHandler {
                             // TODO: check if the peer should be penalized on GenServerError
                             BlockHeaderDownloadError::GenServerError(_) => {}
                             _ => {
-                                info!("Penalizing peer {peer_id}");
                                 self.peer_table.penalize_peer(peer_id).await;
                             }
                         }
