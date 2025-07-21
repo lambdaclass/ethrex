@@ -14,12 +14,12 @@ use ethrex_l2_common::{
     merkle_tree::compute_merkle_proof,
 };
 
-pub struct GetL1MessageProof {
+pub struct GetL1MessageProofRequest {
     pub transaction_hash: H256,
 }
 
-impl RpcHandler for GetL1MessageProof {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetL1MessageProof, RpcErr> {
+impl RpcHandler for GetL1MessageProofRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetL1MessageProofRequest, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -30,7 +30,7 @@ impl RpcHandler for GetL1MessageProof {
             ))
             .into());
         };
-        Ok(GetL1MessageProof {
+        Ok(GetL1MessageProofRequest {
             transaction_hash: serde_json::from_value(params[0].clone())?,
         })
     }

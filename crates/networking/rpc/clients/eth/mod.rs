@@ -103,6 +103,22 @@ impl WrappedTransaction {
 
         Ok(())
     }
+
+    pub fn encode_to_vec(&self) -> Vec<u8> {
+        match self {
+            Self::EIP1559(tx) => tx.encode_to_vec(),
+            Self::EIP4844(tx_wrapper) => tx_wrapper.tx.encode_to_vec(),
+            Self::L2(tx) => tx.encode_to_vec(),
+        }
+    }
+
+    pub fn tx_type(&self) -> TxType {
+        match self {
+            Self::EIP1559(_) => TxType::EIP1559,
+            Self::EIP4844(_) => TxType::EIP4844,
+            Self::L2(_) => TxType::Privileged,
+        }
+    }
 }
 
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
@@ -278,16 +294,6 @@ impl EthClient {
     pub fn bump_privileged_l2(&self, tx: &mut PrivilegedL2Transaction, percentage: u64) {
         tx.max_fee_per_gas = (tx.max_fee_per_gas * (100 + percentage)) / 100;
         tx.max_priority_fee_per_gas += (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
-    }
-
-    pub async fn send_privileged_l2_transaction(
-        &self,
-        tx: &PrivilegedL2Transaction,
-    ) -> Result<H256, EthClientError> {
-        let mut encoded_tx = tx.encode_to_vec();
-        encoded_tx.insert(0, TxType::Privileged.into());
-
-        self.send_raw_transaction(encoded_tx.as_slice()).await
     }
 
     pub async fn estimate_gas(

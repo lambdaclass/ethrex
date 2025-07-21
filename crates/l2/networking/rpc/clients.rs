@@ -1,9 +1,6 @@
 use crate::signer::{Signable, Signer};
 use bytes::Bytes;
-use ethrex_common::{
-    Address, H256, U256,
-    types::{EIP1559Transaction, TxKind, TxType, WrappedEIP4844Transaction},
-};
+use ethrex_common::{Address, H256, U256, types::TxKind};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::{
@@ -17,58 +14,21 @@ use tracing::warn;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
-pub async fn send_eip1559_transaction(
-    client: &EthClient,
-    tx: &EIP1559Transaction,
-    signer: &Signer,
-) -> Result<H256, EthClientError> {
-    let signed_tx = tx
-        .sign(signer)
-        .await
-        .map_err(|err| EthClientError::Custom(err.to_string()))?;
-
-    let mut encoded_tx = signed_tx.encode_to_vec();
-    encoded_tx.insert(0, TxType::EIP1559.into());
-
-    client.send_raw_transaction(encoded_tx.as_slice()).await
-}
-
-pub async fn send_eip4844_transaction(
-    client: &EthClient,
-    wrapped_tx: &WrappedEIP4844Transaction,
-    signer: &Signer,
-) -> Result<H256, EthClientError> {
-    let mut wrapped_tx = wrapped_tx.clone();
-    wrapped_tx
-        .tx
-        .sign_inplace(signer)
-        .await
-        .map_err(|err| EthClientError::Custom(err.to_string()))?;
-
-    let mut encoded_tx = wrapped_tx.encode_to_vec();
-    encoded_tx.insert(0, TxType::EIP4844.into());
-
-    client.send_raw_transaction(encoded_tx.as_slice()).await
-}
-
 pub async fn send_wrapped_transaction(
     client: &EthClient,
     wrapped_tx: &WrappedTransaction,
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
-    match wrapped_tx {
-        WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-            send_eip4844_transaction(client, wrapped_eip4844_transaction, signer).await
-        }
-        WrappedTransaction::EIP1559(eip1559_transaction) => {
-            send_eip1559_transaction(client, eip1559_transaction, signer).await
-        }
-        WrappedTransaction::L2(privileged_l2_transaction) => {
-            client
-                .send_privileged_l2_transaction(privileged_l2_transaction)
-                .await
-        }
-    }
+    let mut wrapped_tx = wrapped_tx.clone();
+    wrapped_tx
+        .sign_inplace(signer)
+        .await
+        .map_err(|err| EthClientError::Custom(err.to_string()))?;
+
+    let mut encoded_tx = wrapped_tx.encode_to_vec();
+    encoded_tx.insert(0, wrapped_tx.tx_type().into());
+
+    client.send_raw_transaction(encoded_tx.as_slice()).await
 }
 
 pub async fn deploy(

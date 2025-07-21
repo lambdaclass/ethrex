@@ -8,6 +8,7 @@ use ethrex_common::{
     },
 };
 use ethrex_rlp::encode::PayloadRLPEncode;
+use ethrex_rpc::clients::eth::WrappedTransaction;
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use rustc_hex::FromHexError;
@@ -224,5 +225,15 @@ impl Signable for EIP7702Transaction {
         (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
 
         Ok(())
+    }
+}
+
+impl Signable for WrappedTransaction {
+    async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
+        match self {
+            WrappedTransaction::EIP4844(tx) => tx.tx.sign_inplace(signer).await,
+            WrappedTransaction::EIP1559(tx) => tx.sign_inplace(signer).await,
+            WrappedTransaction::L2(_tx) => Ok(()),
+        }
     }
 }

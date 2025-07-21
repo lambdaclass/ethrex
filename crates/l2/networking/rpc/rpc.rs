@@ -1,5 +1,5 @@
 use crate::l2::batch::GetBatchByBatchNumberRequest;
-use crate::l2::l1_message::GetL1MessageProof;
+use crate::l2::l1_message::GetL1MessageProofRequest;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
@@ -29,7 +29,7 @@ use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
 
-use crate::l2::transaction::SponsoredTx;
+use crate::l2::transaction::SponsoredTxRequest;
 use ethrex_common::Address;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
@@ -184,8 +184,8 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
 pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_sendRawTransaction" => {
-            let tx = SendRawTransactionRequest::parse(&req.params)?;
-            if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
+            let request = SendRawTransactionRequest::parse(&req.params)?;
+            if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = request {
                 debug!(
                     "EIP-4844 transaction are not supported in the L2: {:#x}",
                     Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).compute_hash()
@@ -194,7 +194,8 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
                     "EIP-4844 transactions are not supported in the L2".to_string(),
                 ));
             }
-            SendRawTransactionRequest::call(req, context.l1_ctx)
+            request
+                .handle(context.l1_ctx)
                 .await
                 .map_err(RpcErr::L1RpcErr)
         }
@@ -206,8 +207,8 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
 
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
-        "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
+        "ethrex_sendTransaction" => SponsoredTxRequest::call(req, context).await,
+        "ethrex_getMessageProof" => GetL1MessageProofRequest::call(req, context).await,
         "ethrex_getBatchByNumber" => GetBatchByBatchNumberRequest::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
