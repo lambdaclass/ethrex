@@ -67,6 +67,8 @@ async fn bytecode_fetcher(
             .await
             .map(|res| (res, false))
     };
+    let fetching_start = Instant::now();
+    let mut historical_pending = pending_bytecodes.len();
     let mut last_update = Instant::now();
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose incoming messages
@@ -74,6 +76,18 @@ async fn bytecode_fetcher(
     while incoming || !pending_bytecodes.is_empty() {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
+            let total_fetched = historical_pending - pending_bytecodes.len();
+            let speed = fetching_start
+                .elapsed()
+                .as_millis()
+                .checked_div(total_fetched as u128);
+            if let Some(speed) = speed {
+                info!(
+                    "Bytecode Fetching in Progress, queuded: {}, speed: {}ms/bytecode",
+                    pending_bytecodes.len(),
+                    speed
+                );
+            }
             info!(
                 "Bytecode Fetching in Progress, queuded: {}",
                 pending_bytecodes.len(),
@@ -83,7 +97,9 @@ async fn bytecode_fetcher(
             break;
         }
         // Read incoming messages and add them to the queue
+        let total_before_reading = pending_bytecodes.len();
         incoming = read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
+        historical_pending += pending_bytecodes.len() - total_before_reading;
         spawn_fetch_tasks(
             &mut pending_bytecodes,
             incoming,
