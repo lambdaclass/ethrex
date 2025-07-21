@@ -688,7 +688,7 @@ impl PeerHandler {
 
         let mut downloaded_count = 0_u64;
         let mut all_account_hashes = Vec::new();
-        let mut all_accounts = Vec::new();
+        let mut all_accounts_state = Vec::new();
         let should_continue_any = false;
 
         // channel to send the tasks to the peers
@@ -726,7 +726,7 @@ impl PeerHandler {
                 }
                 // store accounts
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
-                all_accounts.extend(
+                all_accounts_state.extend(
                     accounts
                         .iter()
                         .map(|unit| AccountState::from(unit.account.clone())),
@@ -859,7 +859,7 @@ impl PeerHandler {
         for (account_hash, account) in all_account_hashes
             .clone()
             .into_iter()
-            .zip(all_accounts.clone())
+            .zip(all_accounts_state.clone())
         {
             trie.insert(account_hash.0.into(), account.encode_to_vec())
                 .inspect_err(|e| error!("Failed to insert account into trie: {e}"));
@@ -871,10 +871,10 @@ impl PeerHandler {
 
         // TODO: proof validation and should_continue aggregation
         // For now, just return the collected accounts
-        if all_account_hashes.is_empty() || all_accounts.is_empty() {
+        if all_account_hashes.is_empty() || all_accounts_state.is_empty() {
             return None;
         }
-        Some((all_account_hashes, all_accounts, should_continue_any))
+        Some((all_account_hashes, all_accounts_state, should_continue_any))
     }
 
     /// Requests bytecodes for the given code hashes
