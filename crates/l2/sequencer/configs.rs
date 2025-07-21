@@ -95,7 +95,6 @@ pub struct AlignedConfig {
 
 #[derive(Clone, Debug)]
 pub struct MonitorConfig {
-    pub enabled: bool,
     /// time in ms between two ticks.
     pub tick_rate: u64,
 }
