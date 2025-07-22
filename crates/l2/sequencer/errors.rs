@@ -173,7 +173,7 @@ pub enum BlockProducerError {
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Block Producer failed to produce block: {0}")]
     FailedToProduceBlock(String),
-    #[error("Block Producer failed to prepare PayloadAttributes timestamp: {0}")]
+    #[error("Block Producer failed to prepare fake change PayloadAttributes timestamp: {0}")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
     #[error("Block Producer failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
