@@ -1301,8 +1301,8 @@ impl PeerHandler {
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
         const MAX_STORAGE_REQUEST_SIZE: usize = 200;
         // 1) split the range in chunks of same length
-        let chunk_count = 8000;
-        let chunk_size = account_storage_roots.len() / chunk_count;
+        let chunk_size = 300;
+        let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1310,7 +1310,7 @@ impl PeerHandler {
         let mut tasks_queue_not_started = VecDeque::<(usize, usize, H256)>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
-            let chunk_end = chunk_start + chunk_size;
+            let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
             tasks_queue_not_started.push_back((chunk_start, chunk_end, H256::zero()));
         }
         // Modify the last chunk to go up to the last element
