@@ -218,6 +218,21 @@ pub async fn periodically_show_peer_stats() {
                     .expect("Failed to get current headers download time")
             });
 
+        // Storage Tries
+        let total_storage_tries_downloaders = METRICS.total_storages_downloaders.lock().await;
+        let free_storage_tries_downloaders = METRICS.free_storages_downloaders.lock().await;
+        let busy_storage_tries_downloaders =
+            total_storage_tries_downloaders.saturating_sub(*free_storage_tries_downloaders);
+
+        let maybe_storage_tries_download_time = METRICS
+            .storage_tries_download_start_time
+            .lock()
+            .await
+            .map(|t| {
+                t.elapsed()
+                    .expect("Failed to get current headers download time")
+            });
+
         info!(
             r#"
 elapsed: {elapsed}
@@ -260,7 +275,16 @@ downloaded: {downloaded_account_tries}
 total downloaders: {total_account_tries_downloaders}
 busy downloaders: {busy_account_tries_downloaders}
 free downloaders: {free_account_tries_downloaders}
-download tasks queued: {account_tries_tasks_queued}"#,
+download tasks queued: {account_tries_tasks_queued}
+
+Storage Tries:
+--------------
+download time: {storage_tries_download_time}
+downloaded: {downloaded_storage_tries}
+total downloaders: {total_storage_tries_downloaders}
+busy downloaders: {busy_storage_tries_downloaders}
+free downloaders: {free_storage_tries_downloaders}
+download tasks queued: {storage_tries_tasks_queued}"#,
             elapsed = format_duration(start.elapsed()),
             current_contacts = METRICS.contacts.lock().await,
             new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
@@ -306,6 +330,14 @@ download tasks queued: {account_tries_tasks_queued}"#,
             busy_account_tries_downloaders = busy_account_tries_downloaders,
             free_account_tries_downloaders = free_account_tries_downloaders,
             account_tries_tasks_queued = METRICS.accounts_downloads_tasks_queued.lock().await,
+            storage_tries_download_time = maybe_storage_tries_download_time
+                .map(format_duration)
+                .unwrap_or_else(|| "-".to_owned()),
+            downloaded_storage_tries = *METRICS.downloaded_storage_tries.lock().await,
+            total_storage_tries_downloaders = total_storage_tries_downloaders,
+            busy_storage_tries_downloaders = busy_storage_tries_downloaders,
+            free_storage_tries_downloaders = free_storage_tries_downloaders,
+            storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
             // rlpx_disconnections = rlpx_disconnections,
             // rlpx_connection_failures_grouped_and_counted_by_reason = rlpx_connection_failures,
         );

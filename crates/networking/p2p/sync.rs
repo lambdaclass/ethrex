@@ -11,18 +11,17 @@ use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     BigEndianHash, H256, U256, U512,
-    constants::EMPTY_TRIE_HASH,
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, Trie, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
     array,
     cmp::min,
-    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -293,6 +292,7 @@ impl Syncer {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
+
                 let state_root = pivot_header.state_root;
 
                 let (account_hashes, account_states, continues) = self
@@ -308,7 +308,7 @@ impl Syncer {
 
                 let empty = *EMPTY_TRIE_HASH;
 
-                let account_storage_roots = account_hashes
+                let account_storage_roots: Vec<(H256, H256)> = account_hashes
                     .iter()
                     .zip(account_states.iter())
                     .filter_map(|(hash, state)| {
@@ -316,9 +316,35 @@ impl Syncer {
                     })
                     .collect();
 
-                let (_storages_key_value_pairs, should_continue) = self
+                // // deposit contract
+                // let wanted1_hex = "00000000219ab540356cBB839Cbe05303d7705Fa";
+                // let wanted1 = keccak_hash::keccak(hex::decode(wanted1_hex).unwrap());
+
+                // println!("Account 1 address: 0x{wanted1_hex}");
+
+                // // smart contract
+                // let wanted2_hex = "6f47561Be156E185572B0eaDd1D11Bc66758E44e";
+                // let wanted2 = keccak_hash::keccak(hex::decode(wanted2_hex).unwrap());
+
+                // println!("Account 2 address: 0x{wanted2_hex}");
+
+                // let account1 = account_storage_roots
+                //     .iter()
+                //     .enumerate()
+                //     .find(|(_i, (hash, _root))| hash == &wanted1)
+                //     .map(|(i, (hash, root))| (i, *hash, *root))
+                //     .unwrap();
+
+                // let account2 = account_storage_roots
+                //     .iter()
+                //     .enumerate()
+                //     .find(|(_i, (hash, _root))| hash == &wanted2)
+                //     .map(|(i, (hash, root))| (i, *hash, *root))
+                //     .unwrap();
+
+                let (storages_key_value_pairs, should_continue) = self
                     .peers
-                    .request_storage_ranges(state_root, account_storage_roots)
+                    .request_storage_ranges(state_root, account_storage_roots.clone())
                     .await
                     .unwrap();
 
@@ -326,33 +352,154 @@ impl Syncer {
                     !should_continue,
                     "since we downloaded the whole trie, the storage ranges should not continue"
                 );
-
+                // {
+                //     let (i, account_hash, account_storage_root) = account1;
+                //     println!("Account 1 hash: {account_hash:?}");
+                //     let storage_slots = storages_key_value_pairs[i].clone();
+                //     let storage_root =
+                //         Trie::compute_hash_from_unsorted_iter(storage_slots.into_iter().map(
+                //             |(hashed_key, value)| (hashed_key.0.to_vec(), value.encode_to_vec()),
+                //         ));
+                //     println!("Expected storage root: {account_storage_root:?}");
+                //     println!("Storage root: {storage_root:?}");
+                // }
+                // {
+                //     let (i, account_hash, account_storage_root) = account2;
+                //     println!("Account 2 hash: {account_hash:?}");
+                //     let storage_slots = storages_key_value_pairs[i].clone();
+                //     let storage_root =
+                //         Trie::compute_hash_from_unsorted_iter(storage_slots.into_iter().map(
+                //             |(hashed_key, value)| (hashed_key.0.to_vec(), value.encode_to_vec()),
+                //         ));
+                //     println!("Expected storage root: {account_storage_root:?}");
+                //     println!("Storage root: {storage_root:?}");
+                // }
                 info!("Starting to compute the state root...");
 
-                let computed_state_root = tokio::task::spawn_blocking(move || {
-                    Trie::compute_hash_from_unsorted_iter(
-                        account_hashes
-                            .clone()
-                            .into_iter()
-                            .zip(account_states.clone())
-                            .map(|(account_hash, account)| {
-                                (account_hash.0.to_vec(), account.encode_to_vec())
-                            }),
-                    )
-                })
-                .await
-                .unwrap();
+                // let computed_state_root = tokio::task::spawn_blocking(move || {
+                //     Trie::compute_hash_from_unsorted_iter(
+                //         account_hashes
+                //             .clone()
+                //             .into_iter()
+                //             .zip(account_states.clone())
+                //             .map(|(account_hash, account)| {
+                //                 (account_hash.0.to_vec(), account.encode_to_vec())
+                //             }),
+                //     )
+                // })
+                // .await
+                // .unwrap();
+
+                let account_store_start = Instant::now();
+                let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+
+                let (computed_state_root, bytecode_hashes) =
+                    tokio::task::spawn_blocking(move || {
+                        let mut bytecode_hashes = vec![];
+                        let mut trie = trie;
+
+                        for (account_hash, account) in
+                            account_hashes.into_iter().zip(account_states)
+                        {
+                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                                bytecode_hashes.push(account.code_hash);
+                            }
+                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                                .unwrap();
+                        }
+                        let computed_state_root = trie.hash().unwrap();
+                        bytecode_hashes.sort();
+                        bytecode_hashes.dedup();
+                        (computed_state_root, bytecode_hashes)
+                    })
+                    .await
+                    .unwrap();
+
+                let account_store_time =
+                    Instant::now().saturating_duration_since(account_store_start);
 
                 info!("Expected state root: {state_root:?}");
-                info!("Final state root after account range requests: {computed_state_root:?}");
+                info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
-                std::process::exit(0);
+                let storages_store_start = Instant::now();
 
-                // let store_bodies_handle = tokio::spawn(store_block_bodies(
-                //     all_block_hashes[pivot_idx + 1..].to_vec(),
-                //     self.peers.clone(),
-                //     store.clone(),
-                // ));
+                let store_clone = store.clone();
+                tokio::task::spawn_blocking(move || {
+                    let store = store_clone;
+                    // Store trie in storage
+                    for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
+                        .into_iter()
+                        .zip(storages_key_value_pairs)
+                    {
+                        let mut storage_trie = store
+                            .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                            .unwrap();
+
+                        for (hashed_key, value) in key_value_pairs {
+                            storage_trie
+                                .insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                                .unwrap();
+                            if let Err(err) =
+                                storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                            {
+                                error!(
+                                    "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                                );
+                                continue;
+                            };
+                        }
+                        let Ok(computed_state_root) = storage_trie.hash() else {
+                            error!(
+                                "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
+                            );
+                            continue;
+                        };
+                        if computed_state_root != storage_root {
+                            error!(
+                                "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
+                            );
+                        }
+                    }
+                }).await.unwrap();
+
+                let storages_store_time =
+                    Instant::now().saturating_duration_since(storages_store_start);
+                info!("Finished storing storage tries in: {storages_store_time:?}");
+
+                // Download bytecodes
+                info!(
+                    "Starting bytecode download of {} hashes",
+                    bytecode_hashes.len()
+                );
+                let bytecodes = self
+                    .peers
+                    .request_bytecodes(&bytecode_hashes)
+                    .await
+                    .unwrap();
+
+                for (code_hash, bytecode) in bytecode_hashes.into_iter().zip(bytecodes) {
+                    let _ = store
+                        .add_account_code(code_hash, bytecode)
+                        .await
+                        .inspect_err(|e| {
+                            error!(
+                                "Failed to store bytecode for code hash {code_hash:?}, err={e:?}"
+                            )
+                        });
+                }
+
+                // - Switch to full sync
+
+                // std::process::exit(0);
+
+                tokio::spawn(store_block_bodies(
+                    vec![all_block_hashes[pivot_idx]],
+                    self.peers.clone(),
+                    store.clone(),
+                ))
+                .await
+                .unwrap()
+                .unwrap();
                 // // Perform snap sync
                 // if !self
                 //     .snap_sync(pivot_header.state_root, store.clone())
@@ -378,8 +525,9 @@ impl Syncer {
                 // self.last_snap_pivot = pivot_header.number;
                 // // Finished a sync cycle without aborting halfway, clear current checkpoint
                 // store.clear_snap_state().await?;
-                // // Next sync will be full-sync
-                // self.snap_enabled.store(false, Ordering::Relaxed);
+
+                // Next sync will be full-sync
+                self.snap_enabled.store(false, Ordering::Relaxed);
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
