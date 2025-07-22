@@ -488,7 +488,7 @@ impl Command {
                 network,
             } => {
                 let datadir = init_datadir(datadir);
-                let rollup_store_dir = std::path::Path::new(&datadir).join("rollup_store");
+                let rollup_store_dir = Path::new(&datadir).join("rollup_store");
 
                 let client = EthClient::new(rpc_url.as_str())?;
                 if let Some(private_key) = private_key {
@@ -517,7 +517,7 @@ impl Command {
                     .unwrap_or(0);
 
                 let genesis = network.get_genesis()?;
-                let store = init_store(std::path::Path::new(&datadir), genesis).await;
+                let store = init_store(Path::new(&datadir), genesis).await;
 
                 rollup_store.revert_to_batch(batch).await?;
                 store.update_latest_block_number(last_kept_block).await?;

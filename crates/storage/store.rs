@@ -1293,7 +1293,7 @@ mod tests {
         types::{Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, str::FromStr};
+    use std::{fs, path::Path, str::FromStr};
 
     use super::*;
 
@@ -1377,7 +1377,7 @@ mod tests {
 
     fn remove_test_dbs(path: &str) {
         // Removes all test databases from filesystem
-        if std::path::Path::new(path).exists() {
+        if Path::new(path).exists() {
             fs::remove_dir_all(path).expect("Failed to clean test db dir");
         }
     }
