@@ -98,17 +98,16 @@ fn main() {
         let file_content =
             fs::read_to_string(&code_file_path).expect("Failed to read bytecode file");
 
-        // Simple rule, if it starts with number it is bytecode, otherwise it is mnemonics
-        let bytecode = if file_content.starts_with(|c: char| c.is_digit(10)) {
+        // If it starts with "0x" or it's a valid hex number we interpret it as bytecode, otherwise as mnemonic.
+        // First check is just for "performance" reasons
+        let trimmed = file_content.trim();
+        let bytecode = if trimmed.starts_with("0x") || is_valid_hex(trimmed) {
             debug!("Decoding raw bytecode");
-            let trimmed_content = file_content.trim_start_matches("0x").trim();
+            let trimmed_content = trimmed.trim_start_matches("0x");
             Bytes::from(hex::decode(trimmed_content).expect("Failed to decode hex string"))
         } else {
             debug!("Parsing mnemonics");
-            let mnemonics = file_content
-                .split_ascii_whitespace()
-                .map(String::from)
-                .collect();
+            let mnemonics = trimmed.split_ascii_whitespace().map(String::from).collect();
             mnemonics_to_bytecode(mnemonics)
         };
 
@@ -197,6 +196,11 @@ fn main() {
         db.current_accounts_state,
         &runner_input.transaction,
     );
+}
+
+fn is_valid_hex(s: &str) -> bool {
+    let s = s.trim_start_matches("0x");
+    s.len() % 2 == 0 && s.chars().all(|c| c.is_digit(16))
 }
 
 /// Prints on screen difference between initial state and current one.
