@@ -773,8 +773,6 @@ impl PeerHandler {
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
-                        let peer_score = scores.entry(peer_id).or_default();
-                        *peer_score -= 1;
                     } else {
                         let peer_score = scores.entry(peer_id).or_default();
                         *peer_score += 1;
@@ -791,6 +789,8 @@ impl PeerHandler {
                     dbg!(&completed_tasks);
                 }
                 if accounts.is_empty() {
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score -= 1;
                     continue;
                 }
 
