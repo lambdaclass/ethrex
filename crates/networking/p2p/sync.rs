@@ -293,9 +293,6 @@ impl Syncer {
                     pivot_header.number
                 );
 
-                // TODO
-                drop(all_block_hashes);
-
                 let state_root = pivot_header.state_root;
 
                 let (account_hashes, account_states, continues) = self
@@ -493,13 +490,16 @@ impl Syncer {
 
                 // - Switch to full sync
 
-                std::process::exit(0);
+                // std::process::exit(0);
 
-                // let store_bodies_handle = tokio::spawn(store_block_bodies(
-                //     all_block_hashes[pivot_idx + 1..].to_vec(),
-                //     self.peers.clone(),
-                //     store.clone(),
-                // ));
+                tokio::spawn(store_block_bodies(
+                    vec![all_block_hashes[pivot_idx]],
+                    self.peers.clone(),
+                    store.clone(),
+                ))
+                .await
+                .unwrap()
+                .unwrap();
                 // // Perform snap sync
                 // if !self
                 //     .snap_sync(pivot_header.state_root, store.clone())
@@ -525,8 +525,9 @@ impl Syncer {
                 // self.last_snap_pivot = pivot_header.number;
                 // // Finished a sync cycle without aborting halfway, clear current checkpoint
                 // store.clear_snap_state().await?;
-                // // Next sync will be full-sync
-                // self.snap_enabled.store(false, Ordering::Relaxed);
+
+                // Next sync will be full-sync
+                self.snap_enabled.store(false, Ordering::Relaxed);
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
