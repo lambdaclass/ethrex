@@ -1,4 +1,5 @@
 use crate::cache::Cache;
+use crate::cache::L2Fields;
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
@@ -98,7 +99,12 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     #[cfg(feature = "l2")]
     {
-        let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
+        let l2_fields = l2_fields.unwrap_or(
+            L2Fields {
+                blob_commitment: [0; 48],
+                blob_proof: [0; 48],
+            }
+        );
 
         Ok(ProgramInput {
             blocks,
