@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753211796939,
+  "lastUpdate": 1753211896877,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10865,6 +10865,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013675532786885246,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "94380962+sofiazcoaga@users.noreply.github.com",
+            "name": "sofiazcoaga",
+            "username": "sofiazcoaga"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2ce46bf32443be74f0d2ee8b0d5759f9c04219cb",
+          "message": "refactor(levm): rewrite of state EF tests runner first iteration (#3642)\n\n**Motivation**\n\nRelated issue: #3496. \n\nThe idea is to incrementally develop a new EF Test runner (for state\ntests) that can eventually replace the current one. The main goal of the\nnew runner is to be easy to understand and as straightforward as\npossible, also making it possible to easily add any new requirement.\n\n**How to run** \nA target in the makefile was included. You can, then, from\n`ethrex/cmd/ef_tests/state/` run `make run-new-runner`. If no specific\npath is passed, it will parse anything in the `./vectors` folder.\nOtherwise you can do, for example:\n`make run-new-runner TESTS_PATH=./vectors/GeneralStateTests/Cancun` to\nspecify a path.\n\nThis command assumes you have the `vectors` directory downloaded, if not\nrun `make download-evm-ef-tests` previously.\n\n**Considerations**\n\nThe main changes are: \n- The new `Test` and `TestCase` structures in types. \n- The runner and parser simplified flows. \n\nFiles that should not be reviewed as they are full or partial copies of\nthe original files:\n- `runner_v2/deserialize.rs`\n- `runner_v2/utils.rs`\n\nThis iteration excludes report-related code, option flags and other\npossible test case errors to be considered that will be included later.\nChecks are performed only on exceptions and root hash.",
+          "timestamp": "2025-07-22T18:32:15Z",
+          "tree_id": "1364dd940e94383958d73b23545152bd053470bf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2ce46bf32443be74f0d2ee8b0d5759f9c04219cb"
+        },
+        "date": 1753211884362,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013215168316831683,
             "unit": "Mgas/s"
           }
         ]
