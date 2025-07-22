@@ -33,25 +33,47 @@ struct Cli {
     #[arg(long, help = "Path to the input JSON file")]
     input: Option<String>,
 
-    #[arg(long, help = "Path to the bytecode file")]
+    #[arg(long, help = "Path to the bytecode/mnemonics file")]
     code: Option<String>,
 
     #[arg(long, short, action = clap::ArgAction::SetTrue, help = "Enable verbose logging")]
     verbose: bool,
+
+    #[arg(long, help = "Converts mnemonics file into a bytecode file")]
+    emit_bytes: Option<String>,
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    if cli.input.is_none() && cli.code.is_none() {
-        error!("Error: Either --input or --code must be provided.");
-        return;
-    }
-
     let log_level = if cli.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level))
         .format(|buf, record| writeln!(buf, "{}", record.args()))
         .init();
+
+    // Subcommand for just converting mnemonics to bytecode without executing
+    if let Some(mnemonics_path) = cli.emit_bytes {
+        let file_content =
+            fs::read_to_string(&mnemonics_path).expect("Failed to read bytecode file");
+
+        let mnemonics = file_content
+            .split_ascii_whitespace()
+            .map(String::from)
+            .collect();
+        // We convert to Bytes and then to String just because of convenience
+        // We could change the logic so that it is Mnemonic -> String -> Bytes (and here skip the last step) but it's unimportant IMO
+        let bytecode = mnemonics_to_bytecode(mnemonics);
+        let hex_string = format!("0x{}", hex::encode(&bytecode));
+
+        let output_path = format!("{}_bytes.txt", mnemonics_path.trim_end_matches(".txt"));
+        let mut output_file = File::create(&output_path).expect("Failed to create output file");
+        output_file
+            .write_all(hex_string.as_bytes())
+            .expect("Failed to write bytecode to file");
+
+        info!("Bytecode emitted to file: {}", output_path);
+        return;
+    }
 
     // Parse input
     // Input is mutable just to assign bytecode to the transaction recipient if provided
@@ -66,20 +88,34 @@ fn main() {
         RunnerInput::default()
     };
 
-    let mnemonics: Vec<String> = if let Some(code_file_path) = cli.code {
-        debug!("Reading mnemonics file: {}", code_file_path);
-        fs::read_to_string(&code_file_path)
-            .expect("Failed to read bytecode file")
-            .split_ascii_whitespace()
-            .map(String::from)
-            .collect()
+    // Parse bytecode, either from raw bytecode or mnemonics.
+    let bytecode: Bytes = if let Some(code_file_path) = cli.code {
+        debug!("Reading file: {}", code_file_path);
+        let file_content =
+            fs::read_to_string(&code_file_path).expect("Failed to read bytecode file");
+
+        // Simple rule, if it starts with number it is bytecode, otherwise it is mnemonics
+        let bytecode = if file_content.starts_with(|c: char| c.is_digit(10)) {
+            debug!("Decoding raw bytecode");
+            let trimmed_content = file_content.trim_start_matches("0x").trim();
+            Bytes::from(hex::decode(trimmed_content).expect("Failed to decode hex string"))
+        } else {
+            debug!("Parsing mnemonics");
+            let mnemonics = file_content
+                .split_ascii_whitespace()
+                .map(String::from)
+                .collect();
+            mnemonics_to_bytecode(mnemonics)
+        };
+
+        debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
+
+        bytecode
     } else {
-        vec![]
+        debug!("No code file provided, using the bytecode set in the input pre-state.");
+        // If bytecode is empty bytes then it won't be assigned to the contract during the setup
+        Bytes::new()
     };
-
-    let bytecode = mnemonics_to_bytecode(mnemonics);
-
-    debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
 
     // Now we want to initialize the VM, so we set up the environment and database.
     // Env
