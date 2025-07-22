@@ -52,7 +52,7 @@ impl RpcHandler for BlobsV1Request {
             .storage
             .get_block_header(context.storage.get_latest_block_number().await?)?
         {
-            if !context
+            if context
                 .storage
                 .get_chain_config()?
                 .is_osaka_activated(current_block_header.timestamp)
