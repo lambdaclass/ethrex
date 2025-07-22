@@ -78,5 +78,12 @@ prove-batch-risc0:
 prove-batch-risc0-gpu:
 	cargo r -r --no-default-features --features "risc0,gpu,l2" -- prove batch ${REPLAY_BATCH_ARGS}
 
+## Create a samply for an l1 block
+profile-sp1:
+	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,profiling" -- execute block  ${REPLAY_BLOCK_ARGS}
+## Create a samply for an l2 batch
+profile-batch-sp1:
+	TRACE_FILE=output.json TRACE_SAMPLE_RATE=100 cargo run --release --features "sp1,l2,profiling" -- execute batch ${REPLAY_BATCH_ARGS}
+	
 help:
 	cargo r -r -- --help
