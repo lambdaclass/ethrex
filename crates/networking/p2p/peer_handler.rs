@@ -745,7 +745,6 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-        let mut current_show = 0;
         let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
             peers_table
                 .iter()
@@ -790,17 +789,11 @@ impl PeerHandler {
 
                 downloaded_count += accounts.len() as u64;
 
-                let batch_show = downloaded_count / 10_000;
-
-                // if current_show < batch_show {
                 info!(
                     "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
                     accounts.len(),
                     peer_id
                 );
-                current_show += 1;
-                // }
-                // store accounts
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
                 all_accounts_state.extend(
                     accounts
@@ -1005,8 +998,6 @@ impl PeerHandler {
         .unwrap();
         info!("Expected state root: {state_root}");
         info!("Final state root after account range requests: {computed_state_root}");
-
-        std::process::exit(0);
 
         // TODO: proof validation and should_continue aggregation
         // For now, just return the collected accounts
