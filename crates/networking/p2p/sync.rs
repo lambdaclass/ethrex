@@ -175,6 +175,7 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         let mut current_head = block_sync_state.get_current_head().await?;
+        let current_head_number = store.get_block_number(current_head).await.unwrap().unwrap();
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
@@ -189,7 +190,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head, sync_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(current_head_number, sync_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");

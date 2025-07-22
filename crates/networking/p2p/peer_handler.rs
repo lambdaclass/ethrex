@@ -124,11 +124,11 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_headers(
         &self,
-        start: H256,
+        start: u64,
         sync_head: H256,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
-        let start = SystemTime::now();
+        let start_time = SystemTime::now();
 
         let mut ret = Vec::<BlockHeader>::new();
 
@@ -207,7 +207,7 @@ impl PeerHandler {
         // let block_count = 800_000_u64;
         let chunk_count = 800_usize; // e.g. 8 tasks
 
-        let block_count = *sync_head_number.lock().await + 1;
+        let block_count = *sync_head_number.lock().await + 1 - start;
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count as u64;
@@ -216,13 +216,13 @@ impl PeerHandler {
         let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
 
         for i in 0..(chunk_count as u64) {
-            tasks_queue_not_started.push_back((i * chunk_limit, chunk_limit));
+            tasks_queue_not_started.push_back((i * chunk_limit + start, chunk_limit));
         }
 
         // Push the reminder
         if block_count % chunk_count as u64 != 0 {
             tasks_queue_not_started.push_back((
-                chunk_count as u64 * chunk_limit,
+                chunk_count as u64 * chunk_limit + start,
                 block_count % chunk_count as u64,
             ));
         }
@@ -434,7 +434,7 @@ impl PeerHandler {
         *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_headers.lock().await = downloaded_count;
 
-        let elapsed = start.elapsed().expect("Failed to get elapsed time");
+        let elapsed = start_time.elapsed().expect("Failed to get elapsed time");
 
         info!(
             "Downloaded {} headers in {} seconds",
