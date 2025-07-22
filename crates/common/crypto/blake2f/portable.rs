@@ -100,11 +100,6 @@ pub fn blake2f_compress_f(
     v = word_permutation(rounds, v, m);
 
     // XOR the two halves and return the result
-    #[expect(
-        clippy::indexing_slicing,
-        clippy::arithmetic_side_effects,
-        reason = "index is within constant bounds"
-    )]
     std::array::from_fn(|i| h[i] ^ v[i] ^ v[i + 8])
 }
 
