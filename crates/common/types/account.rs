@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -22,7 +22,7 @@ use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
 pub struct Account {
     pub info: AccountInfo,
     pub code: Bytes,
-    pub storage: HashMap<H256, U256>,
+    pub storage: BTreeMap<H256, U256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
@@ -158,7 +158,7 @@ impl From<&GenesisAccount> for AccountState {
 }
 
 impl Account {
-    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
+    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: BTreeMap<H256, U256>) -> Self {
         Self {
             info: AccountInfo {
                 balance,

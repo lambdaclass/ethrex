@@ -10,11 +10,11 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use reqwest::Url;
-use secp256k1::SecretKey;
 use tracing::{error, info};
 
 use crate::{
@@ -35,7 +35,7 @@ pub async fn start_l1_proof_verifier(
     rollup_store: StoreRollup,
 ) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
-        &cfg.proof_coordinator,
+        cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
         &cfg.aligned,
@@ -49,8 +49,7 @@ pub async fn start_l1_proof_verifier(
 struct L1ProofVerifier {
     eth_client: EthClient,
     beacon_urls: Vec<String>,
-    l1_address: Address,
-    l1_private_key: SecretKey,
+    l1_signer: Signer,
     on_chain_proposer_address: Address,
     proof_verify_interval_ms: u64,
     network: Network,
@@ -60,7 +59,7 @@ struct L1ProofVerifier {
 
 impl L1ProofVerifier {
     async fn new(
-        proof_coordinator_cfg: &ProofCoordinatorConfig,
+        proof_coordinator_cfg: ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
         aligned_cfg: &AlignedConfig,
@@ -77,8 +76,7 @@ impl L1ProofVerifier {
             eth_client,
             beacon_urls,
             network: aligned_cfg.network.clone(),
-            l1_address: proof_coordinator_cfg.l1_address,
-            l1_private_key: proof_coordinator_cfg.l1_private_key,
+            l1_signer: proof_coordinator_cfg.signer,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
             rollup_store,
@@ -180,8 +178,7 @@ impl L1ProofVerifier {
             calldata,
             &self.eth_client,
             self.on_chain_proposer_address,
-            self.l1_address,
-            &self.l1_private_key,
+            &self.l1_signer,
         )
         .await?;
 
