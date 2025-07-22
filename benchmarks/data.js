@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753141158724,
+  "lastUpdate": 1753176533747,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10659,6 +10659,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007670873563218391,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ec0a3eb6b536dda5668dff993369e9067f8709dd",
+          "message": "chore(levm): parallelize parsing ef state tests (#3722)\n\n**Motivation**\n\nEf test parsing is slow, this parallelizes it making it faster\n\n\nRan in 2m0.225s",
+          "timestamp": "2025-07-22T09:08:06Z",
+          "tree_id": "791d9a8fffafcc8a4268db6202ce229dac132476",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ec0a3eb6b536dda5668dff993369e9067f8709dd"
+        },
+        "date": 1753176533309,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007293617486338798,
             "unit": "Mgas/s"
           }
         ]
