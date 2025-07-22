@@ -745,10 +745,10 @@ impl PeerHandler {
         let (task_sender, mut task_receiver) =
             tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-        let mut downloaders: BTreeMap<H256, bool> = BTreeMap::from_iter(
+        let mut downloaders: BTreeMap<H256, u64> = BTreeMap::from_iter(
             peers_table
                 .iter()
-                .map(|(peer_id, _peer_data)| (*peer_id, true)),
+                .map(|(peer_id, _peer_data)| (*peer_id, 0)),
         );
 
         info!("Starting to download account ranges from peers");
@@ -807,8 +807,9 @@ impl PeerHandler {
                         .map(|unit| AccountState::from(unit.account.clone())),
                 );
 
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
+                // Decrement the current tasks for the peer
+                downloaders.entry(peer_id).and_modify(|tasks_in_progress| {
+                    *tasks_in_progress -= 1;
                 });
             }
 
@@ -821,14 +822,15 @@ impl PeerHandler {
                 if downloaders.contains_key(peer_id) {
                     continue;
                 }
-                downloaders.insert(*peer_id, true);
+                downloaders.insert(*peer_id, 0);
                 debug!("{peer_id} added as downloader");
             }
 
+            // each peer can have (at most) 5 tasks at the same time
             let free_downloaders = downloaders
                 .clone()
                 .into_iter()
-                .filter(|(_downloader_id, downloader_is_free)| *downloader_is_free)
+                .filter(|(_downloader_id, tasks_in_progress)| *tasks_in_progress < 5)
                 .collect::<Vec<_>>();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
@@ -891,8 +893,8 @@ impl PeerHandler {
             let tx = task_sender.clone();
             downloaders
                 .entry(free_peer_id)
-                .and_modify(|downloader_is_free| {
-                    *downloader_is_free = false;
+                .and_modify(|tasks_in_progress| {
+                    *tasks_in_progress += 1;
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
