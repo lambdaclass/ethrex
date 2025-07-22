@@ -1313,11 +1313,6 @@ impl PeerHandler {
             let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
             tasks_queue_not_started.push_back((chunk_start, chunk_end, H256::zero()));
         }
-        // Modify the last chunk to go up to the last element
-        let last_task = tasks_queue_not_started
-            .back_mut()
-            .expect("we just inserted some elements");
-        last_task.1 = account_storage_roots.len();
 
         // 2) request the chunks from peers
         let peers_table = self
@@ -1351,6 +1346,7 @@ impl PeerHandler {
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
+        let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
         let mut scores = self.peer_scores.lock().await;
@@ -1380,8 +1376,18 @@ impl PeerHandler {
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true;
                     });
-                    let task = (remaining_start, remaining_end, remaining_start_hash);
-                    tasks_queue_not_started.push_back(task);
+                    if remaining_start_hash.is_zero() {
+                        let task = (remaining_start, remaining_end, H256::zero());
+                        tasks_queue_not_started.push_back(task);
+                    } else {
+                        // If we got to a big storage account, we split the chunk in two:
+                        // one for the current storage, another for the rest
+                        let task1 = (remaining_start, remaining_start + 1, remaining_start_hash);
+                        tasks_queue_not_started.push_back(task1);
+                        let task2 = (remaining_start + 1, remaining_end, H256::zero());
+                        tasks_queue_not_started.push_back(task2);
+                        task_count += 1;
+                    }
                 } else {
                     completed_tasks += 1;
                 }
@@ -1476,7 +1482,7 @@ impl PeerHandler {
             };
 
             let Some((start, end, start_hash)) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= chunk_count {
+                if completed_tasks >= task_count {
                     info!("All account storages downloaded successfully");
                     break;
                 }
