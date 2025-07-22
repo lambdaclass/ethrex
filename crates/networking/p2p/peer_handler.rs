@@ -1056,7 +1056,7 @@ impl PeerHandler {
 
         info!("Starting to download bytecodes from peers");
 
-        // *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+        *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
@@ -1066,10 +1066,10 @@ impl PeerHandler {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
-                // *METRICS.bytecode_downloads_tasks_queued.lock().await =
-                //     tasks_queue_not_started.len() as u64;
-                // *METRICS.total_bytecode_downloaders.lock().await = downloaders.len() as u64;
-                // *METRICS.downloaded_bytecode_tries.lock().await = downloaded_count;
+                *METRICS.bytecode_downloads_tasks_queued.lock().await =
+                    tasks_queue_not_started.len() as u64;
+                *METRICS.total_bytecode_downloaders.lock().await = downloaders.len() as u64;
+                *METRICS.downloaded_bytecodes.lock().await = downloaded_count;
             }
 
             if let Ok(result) = task_receiver.try_recv() {
@@ -1129,7 +1129,7 @@ impl PeerHandler {
                 .collect::<Vec<_>>();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
-                // *METRICS.free_accounts_downloaders.lock().await = free_downloaders.len() as u64;
+                *METRICS.free_bytecode_downloaders.lock().await = free_downloaders.len() as u64;
             }
 
             if free_downloaders.is_empty() {
@@ -1272,11 +1272,11 @@ impl PeerHandler {
             }
         }
 
-        // *METRICS.accounts_downloads_tasks_queued.lock().await =
-        //     tasks_queue_not_started.len() as u64;
-        // *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
-        // *METRICS.downloaded_account_tries.lock().await = downloaded_count;
-        // *METRICS.free_accounts_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.bytecode_downloads_tasks_queued.lock().await =
+            tasks_queue_not_started.len() as u64;
+        *METRICS.total_bytecode_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.downloaded_bytecodes.lock().await = downloaded_count;
+        *METRICS.free_bytecode_downloaders.lock().await = downloaders.len() as u64;
 
         info!(
             "Finished downloading bytecodes, total bytecodes: {}",
