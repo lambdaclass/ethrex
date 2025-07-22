@@ -64,7 +64,7 @@ impl LEVM {
             tx,
             LevmCallTracer::new(only_top_call, with_log),
             vm_type,
-        );
+        )?;
 
         vm.execute()?;
 
