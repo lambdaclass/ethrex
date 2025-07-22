@@ -78,8 +78,7 @@ jobs:
           fi
 
       - name: Report exists
-        run:
-          echo "Report exists: ${{ steps.check_report.outputs.report_exists }}"
+        run: echo "Report exists ${{ steps.check_report.outputs.report_exists }}"
 
       - name: Find comment
         if: steps.check_report.outputs.report_exists == 'true'
