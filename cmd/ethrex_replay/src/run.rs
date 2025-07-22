@@ -1,4 +1,6 @@
-use crate::cache::{Cache, L2Fields};
+use crate::cache::Cache;
+#[cfg(feature = "l2")]
+use crate::cache::L2Fields;
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
