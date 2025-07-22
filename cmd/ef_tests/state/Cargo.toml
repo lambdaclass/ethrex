@@ -13,6 +13,8 @@ ethrex-levm.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
+# Since we do heavy parsing of ef tests, simd-json is more than 2x faster than serde_json
+simd-json = "0.15.1"
 bytes.workspace = true
 hex.workspace = true
 keccak-hash.workspace = true
@@ -31,6 +33,7 @@ revm = { version = "19.0.0", features = [
 ], default-features = false }
 alloy-rlp = "0.3.12"
 tokio = { workspace = true, features = ["full"] }
+rayon.workspace = true
 
 [dev-dependencies]
 hex = "0.4.3"
