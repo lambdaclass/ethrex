@@ -103,51 +103,53 @@ async fn fetch_storage_batch(
         batch_first.0, batch_last.0
     );
 
-    let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
-    if let Some((mut keys, mut values, incomplete)) = peers
-        .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
-        .await
-    {
-        debug!("Received {} storage ranges", keys.len(),);
-        // Handle incomplete ranges
-        if incomplete {
-            // An incomplete range cannot be empty
-            let last_keys = keys.pop().ok_or(SyncError::InvalidRangeReceived)?;
-            let last_values = values.pop().ok_or(SyncError::InvalidRangeReceived)?;
-            // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
-            // We will handle this large trie separately
-            if keys.is_empty() {
-                debug!("Large storage trie encountered, handling separately");
-                let (account_hash, storage_root) = batch.remove(0);
-                let lk = last_keys.last().ok_or(SyncError::InvalidRangeReceived)?;
-                let last_key = *lk;
-                // Store downloaded range
-                store
-                    .write_snapshot_storage_batch(account_hash, last_keys, last_values)
-                    .await?;
-                // Delegate the rest of the trie to the large trie fetcher
-                large_storage_sender
-                    .send(vec![LargeStorageRequest {
-                        account_hash,
-                        storage_root,
-                        last_key,
-                    }])
-                    .await?;
-                return Ok((batch, false));
-            }
-            // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
-        }
-        // Store the storage ranges & rebuild the storage trie for each account
-        let filled_storages: Vec<(H256, H256)> = batch.drain(..values.len()).collect();
-        let account_hashes: Vec<H256> = filled_storages.iter().map(|(hash, _)| *hash).collect();
-        store
-            .write_snapshot_storage_batches(account_hashes, keys, values)
-            .await?;
-        // Send complete storages to the rebuilder
-        storage_trie_rebuilder_sender.send(filled_storages).await?;
-        // Return remaining code hashes in the batch if we couldn't fetch all of them
-        return Ok((batch, false));
-    }
+    todo!();
+
+    // let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
+    // if let Some((mut keys, mut values, incomplete)) = peers
+    //     .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
+    //     .await
+    // {
+    //     debug!("Received {} storage ranges", keys.len(),);
+    //     // Handle incomplete ranges
+    //     if incomplete {
+    //         // An incomplete range cannot be empty
+    //         let last_keys = keys.pop().ok_or(SyncError::InvalidRangeReceived)?;
+    //         let last_values = values.pop().ok_or(SyncError::InvalidRangeReceived)?;
+    //         // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
+    //         // We will handle this large trie separately
+    //         if keys.is_empty() {
+    //             debug!("Large storage trie encountered, handling separately");
+    //             let (account_hash, storage_root) = batch.remove(0);
+    //             let lk = last_keys.last().ok_or(SyncError::InvalidRangeReceived)?;
+    //             let last_key = *lk;
+    //             // Store downloaded range
+    //             store
+    //                 .write_snapshot_storage_batch(account_hash, last_keys, last_values)
+    //                 .await?;
+    //             // Delegate the rest of the trie to the large trie fetcher
+    //             large_storage_sender
+    //                 .send(vec![LargeStorageRequest {
+    //                     account_hash,
+    //                     storage_root,
+    //                     last_key,
+    //                 }])
+    //                 .await?;
+    //             return Ok((batch, false));
+    //         }
+    //         // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
+    //     }
+    //     // Store the storage ranges & rebuild the storage trie for each account
+    //     let filled_storages: Vec<(H256, H256)> = batch.drain(..values.len()).collect();
+    //     let account_hashes: Vec<H256> = filled_storages.iter().map(|(hash, _)| *hash).collect();
+    //     store
+    //         .write_snapshot_storage_batches(account_hashes, keys, values)
+    //         .await?;
+    //     // Send complete storages to the rebuilder
+    //     storage_trie_rebuilder_sender.send(filled_storages).await?;
+    //     // Return remaining code hashes in the batch if we couldn't fetch all of them
+    //     return Ok((batch, false));
+    // }
     // Pivot became stale
     Ok((batch, true))
 }

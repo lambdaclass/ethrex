@@ -11,11 +11,12 @@ use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     BigEndianHash, H256, U256, U512,
+    constants::EMPTY_TRIE_HASH,
     types::{Block, BlockHash, BlockHeader},
 };
-use ethrex_rlp::error::RLPDecodeError;
+use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, Trie, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
@@ -292,15 +293,58 @@ impl Syncer {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
+                let state_root = pivot_header.state_root;
 
-                self.peers
-                    .request_account_range(
-                        pivot_header.state_root,
-                        H256::zero(),
-                        // TODO: download the full range
-                        H256::repeat_byte(0xff),
+                let (account_hashes, account_states, continues) = self
+                    .peers
+                    .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
+                    .await
+                    .unwrap();
+
+                assert!(
+                    !continues,
+                    "since we downloaded the whole trie, the range should not continue"
+                );
+
+                let empty = *EMPTY_TRIE_HASH;
+
+                let account_storage_roots = account_hashes
+                    .iter()
+                    .zip(account_states.iter())
+                    .filter_map(|(hash, state)| {
+                        (state.storage_root != empty).then_some((*hash, state.storage_root))
+                    })
+                    .collect();
+
+                let (_storages_key_value_pairs, should_continue) = self
+                    .peers
+                    .request_storage_ranges(state_root, account_storage_roots)
+                    .await
+                    .unwrap();
+
+                assert!(
+                    !should_continue,
+                    "since we downloaded the whole trie, the storage ranges should not continue"
+                );
+
+                info!("Starting to compute the state root...");
+
+                let computed_state_root = tokio::task::spawn_blocking(move || {
+                    Trie::compute_hash_from_unsorted_iter(
+                        account_hashes
+                            .clone()
+                            .into_iter()
+                            .zip(account_states.clone())
+                            .map(|(account_hash, account)| {
+                                (account_hash.0.to_vec(), account.encode_to_vec())
+                            }),
                     )
-                    .await;
+                })
+                .await
+                .unwrap();
+
+                info!("Expected state root: {state_root:?}");
+                info!("Final state root after account range requests: {computed_state_root:?}");
 
                 std::process::exit(0);
 

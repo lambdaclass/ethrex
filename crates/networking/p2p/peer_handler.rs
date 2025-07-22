@@ -981,23 +981,6 @@ impl PeerHandler {
             "Finished downloading account ranges, total accounts: {}",
             all_account_hashes.len()
         );
-        info!("Starting to compute the state root...");
-
-        let computed_state_root = tokio::task::spawn_blocking(move || {
-            Trie::compute_hash_from_unsorted_iter(
-                all_account_hashes
-                    .clone()
-                    .into_iter()
-                    .zip(all_accounts_state.clone())
-                    .map(|(account_hash, account)| {
-                        (account_hash.0.to_vec(), account.encode_to_vec())
-                    }),
-            )
-        })
-        .await
-        .unwrap();
-        info!("Expected state root: {state_root}");
-        info!("Final state root after account range requests: {computed_state_root}");
 
         // TODO: proof validation and should_continue aggregation
         // For now, just return the collected accounts
@@ -1070,105 +1053,104 @@ impl PeerHandler {
     pub async fn request_storage_ranges(
         &self,
         state_root: H256,
-        mut storage_roots: Vec<H256>,
-        account_hashes: Vec<H256>,
-        start: H256,
-    ) -> Option<(Vec<Vec<H256>>, Vec<Vec<U256>>, bool)> {
+        account_storage_roots: Vec<(H256, H256)>,
+    ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
+        std::process::exit(0);
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
-                id: request_id,
-                root_hash: state_root,
-                account_hashes: account_hashes.clone(),
-                starting_hash: start,
-                limit_hash: HASH_MAX,
-                response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                            if id == request_id =>
-                        {
-                            return Some((slots, proof));
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            {
-                // Check we got a reasonable amount of storage ranges
-                if slots.len() > storage_roots.len() || slots.is_empty() {
-                    return None;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let mut storage_keys = vec![];
-                let mut storage_values = vec![];
-                let mut should_continue = false;
-                // Validate each storage range
-                while !slots.is_empty() {
-                    let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
-                        .remove(0)
-                        .into_iter()
-                        .map(|slot| (slot.hash, slot.data))
-                        .unzip();
-                    // We won't accept empty storage ranges
-                    if hashed_keys.is_empty() {
-                        continue;
-                    }
-                    let encoded_values = values
-                        .iter()
-                        .map(|val| val.encode_to_vec())
-                        .collect::<Vec<_>>();
-                    let storage_root = storage_roots.remove(0);
+        // let mut peer_ids = HashSet::new();
+        // for _ in 0..REQUEST_RETRY_ATTEMPTS {
+        //     let request_id = rand::random();
+        //     let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+        //         id: request_id,
+        //         root_hash: state_root,
+        //         account_hashes: account_hashes.clone(),
+        //         starting_hash: start,
+        //         limit_hash: HASH_MAX,
+        //         response_bytes: MAX_RESPONSE_BYTES,
+        //     });
+        //     let (peer_id, mut peer_channel) = self
+        //         .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+        //         .await?;
+        //     peer_ids.insert(peer_id);
+        //     let mut receiver = peer_channel.receiver.lock().await;
+        //     if let Err(err) = peer_channel
+        //         .connection
+        //         .cast(CastMessage::BackendMessage(request))
+        //         .await
+        //     {
+        //         debug!("Failed to send message to peer: {err:?}");
+        //         continue;
+        //     }
+        //     if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+        //         loop {
+        //             match receiver.recv().await {
+        //                 Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
+        //                     if id == request_id =>
+        //                 {
+        //                     return Some((slots, proof));
+        //                 }
+        //                 // Ignore replies that don't match the expected id (such as late responses)
+        //                 Some(_) => continue,
+        //                 None => return None,
+        //             }
+        //         }
+        //     })
+        //     .await
+        //     .ok()
+        //     .flatten()
+        //     {
+        //         // Check we got a reasonable amount of storage ranges
+        //         if slots.len() > storage_roots.len() || slots.is_empty() {
+        //             return None;
+        //         }
+        //         // Unzip & validate response
+        //         let proof = encodable_to_proof(&proof);
+        //         let mut storage_keys = vec![];
+        //         let mut storage_values = vec![];
+        //         let mut should_continue = false;
+        //         // Validate each storage range
+        //         while !slots.is_empty() {
+        //             let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
+        //                 .remove(0)
+        //                 .into_iter()
+        //                 .map(|slot| (slot.hash, slot.data))
+        //                 .unzip();
+        //             // We won't accept empty storage ranges
+        //             if hashed_keys.is_empty() {
+        //                 continue;
+        //             }
+        //             let encoded_values = values
+        //                 .iter()
+        //                 .map(|val| val.encode_to_vec())
+        //                 .collect::<Vec<_>>();
+        //             let storage_root = storage_roots.remove(0);
 
-                    // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-                    if slots.is_empty() && !proof.is_empty() {
-                        let Ok(sc) = verify_range(
-                            storage_root,
-                            &start,
-                            &hashed_keys,
-                            &encoded_values,
-                            &proof,
-                        ) else {
-                            continue;
-                        };
-                        should_continue = sc;
-                    } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
-                        .is_err()
-                    {
-                        continue;
-                    }
+        //             // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+        //             if slots.is_empty() && !proof.is_empty() {
+        //                 let Ok(sc) = verify_range(
+        //                     storage_root,
+        //                     &start,
+        //                     &hashed_keys,
+        //                     &encoded_values,
+        //                     &proof,
+        //                 ) else {
+        //                     continue;
+        //                 };
+        //                 should_continue = sc;
+        //             } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
+        //                 .is_err()
+        //             {
+        //                 continue;
+        //             }
 
-                    storage_keys.push(hashed_keys);
-                    storage_values.push(values);
-                }
-                self.record_snap_peer_success(peer_id, peer_ids).await;
-                return Some((storage_keys, storage_values, should_continue));
-            }
-        }
+        //             storage_keys.push(hashed_keys);
+        //             storage_values.push(values);
+        //         }
+        //         self.record_snap_peer_success(peer_id, peer_ids).await;
+        //         return Some((storage_keys, storage_values, should_continue));
+        //     }
+        // }
         None
     }
 
