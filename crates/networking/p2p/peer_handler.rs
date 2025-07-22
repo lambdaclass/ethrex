@@ -227,6 +227,7 @@ impl PeerHandler {
         }
 
         let mut downloaded_count = 0_u64;
+        let mut scores: HashMap<H256, i64> = HashMap::new();
 
         // channel to send the tasks to the peers
         let (task_sender, mut task_receiver) =
@@ -262,7 +263,8 @@ impl PeerHandler {
             {
                 if headers.is_empty() {
                     trace!("Failed to download chunk from peer {peer_id}");
-
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score -= 1;
                     downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                         *downloader_is_free = true; // mark the downloader as free
                     });
@@ -274,6 +276,8 @@ impl PeerHandler {
 
                     continue; // Retry with the next peer
                 }
+                let peer_score = scores.entry(peer_id).or_default();
+                *peer_score += 1;
 
                 downloaded_count += headers.len() as u64;
 
@@ -345,13 +349,16 @@ impl PeerHandler {
                 continue;
             }
 
-            let Some(free_peer_id) = free_downloaders
-                .get(random::<usize>() % free_downloaders.len())
-                .map(|(peer_id, _)| *peer_id)
-            else {
-                debug!("(2) No free downloaders available, waiting for a peer to finish, retrying");
-                continue;
-            };
+            // free_peer_id is the free peer with the highest score
+            let (mut free_peer_id, _) = free_downloaders[0];
+
+            for (peer_id, _) in free_downloaders.iter() {
+                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                if peer_id_score >= max_peer_id_score {
+                    free_peer_id = *peer_id;
+                }
+            }
 
             let Some(mut free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
