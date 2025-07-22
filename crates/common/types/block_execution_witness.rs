@@ -1,17 +1,14 @@
 use core::fmt;
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, str::FromStr};
 
 use crate::{
     H160,
-    types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    constants::EMPTY_KECCACK_HASH,
+    types::{AccountInfo, AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::decode_hex,
 };
 use bytes::Bytes;
-use ethereum_types::Address;
+use ethereum_types::{Address, U256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use keccak_hash::H256;
@@ -28,7 +25,7 @@ type StorageTrieNodes = HashMap<H160, Vec<Vec<u8>>>;
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
     // Rlp encoded state trie nodes
@@ -53,11 +50,11 @@ pub struct ExecutionWitnessResult {
     pub codes: HashMap<H256, Bytes>,
     // Pruned state MPT
     #[serde(skip)]
-    pub state_trie: Option<Arc<Mutex<Trie>>>,
+    pub state_trie: Option<Trie>,
     // Indexed by account
     // Pruned storage MPT
     #[serde(skip)]
-    pub storage_tries: Option<Arc<Mutex<HashMap<Address, Trie>>>>,
+    pub storage_tries: Option<HashMap<Address, Trie>>,
     // Block headers needed for BLOCKHASH opcode
     pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
@@ -158,8 +155,8 @@ impl ExecutionWitnessResult {
             storage_tries.insert(*addr, storage_trie);
         }
 
-        self.state_trie = Some(Arc::new(Mutex::new(state_trie)));
-        self.storage_tries = Some(Arc::new(Mutex::new(storage_tries)));
+        self.state_trie = Some(state_trie);
+        self.storage_tries = Some(storage_tries);
         self.state_trie_nodes = None;
         self.storage_trie_nodes = None;
 
@@ -171,30 +168,24 @@ impl ExecutionWitnessResult {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ExecutionWitnessError> {
         let (Some(state_trie), Some(storage_tries_map)) =
-            (self.state_trie.as_ref(), self.storage_tries.as_ref())
+            (self.state_trie.as_mut(), self.storage_tries.as_mut())
         else {
             return Err(ExecutionWitnessError::ApplyAccountUpdates(
                 "Tried to apply account updates before rebuilding the tries".to_string(),
             ));
         };
 
-        let mut state_trie_lock = state_trie.lock().map_err(|_| {
-            ExecutionWitnessError::ApplyAccountUpdates("Failed to lock state trie".to_string())
-        })?;
-        let mut storage_tries_lock = storage_tries_map.lock().map_err(|_| {
-            ExecutionWitnessError::ApplyAccountUpdates("Failed to lock storage tries".to_string())
-        })?;
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie_lock
+                state_trie
                     .remove(hashed_address)
                     .expect("failed to remove from trie");
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match state_trie_lock
+                let mut account_state = match state_trie
                     .get(&hashed_address)
                     .expect("failed to get account state from trie")
                 {
@@ -214,7 +205,7 @@ impl ExecutionWitnessResult {
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
                     let storage_trie =
-                        storage_tries_lock.entry(update.address).or_insert_with(|| {
+                        storage_tries_map.entry(update.address).or_insert_with(|| {
                             Trie::from_nodes(None, &[]).expect("failed to create empty trie")
                         });
 
@@ -232,7 +223,7 @@ impl ExecutionWitnessResult {
                     }
                     account_state.storage_root = storage_trie.hash_no_commit();
                 }
-                state_trie_lock
+                state_trie
                     .insert(hashed_address, account_state.encode_to_vec())
                     .expect("failed to insert into storage");
             }
@@ -247,10 +238,8 @@ impl ExecutionWitnessResult {
             .ok_or(ExecutionWitnessError::RebuildTrie(
                 "Tried to get state trie root before rebuilding tries".to_string(),
             ))?;
-        let lock = state_trie.lock().map_err(|_| {
-            ExecutionWitnessError::Database("Failed to lock state trie".to_string())
-        })?;
-        Ok(lock.hash_no_commit())
+
+        Ok(state_trie.hash_no_commit())
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -296,6 +285,90 @@ impl ExecutionWitnessResult {
         self.block_headers
             .get(&block_number.saturating_sub(1))
             .ok_or(ExecutionWitnessError::NoBlockHeaders)
+    }
+
+    pub fn get_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, ExecutionWitnessError> {
+        let state_trie = self
+            .state_trie
+            .as_ref()
+            .ok_or(ExecutionWitnessError::Database(
+                "ExecutionWitness: Tried to get state trie before rebuilding tries".to_string(),
+            ))?;
+
+        let hashed_address = hash_address(&address);
+        let Ok(Some(encoded_state)) = state_trie.get(&hashed_address) else {
+            return Ok(None);
+        };
+        let state = AccountState::decode(&encoded_state).map_err(|_| {
+            ExecutionWitnessError::Database("Failed to get decode account from trie".to_string())
+        })?;
+
+        Ok(Some(AccountInfo {
+            balance: state.balance,
+            code_hash: state.code_hash,
+            nonce: state.nonce,
+        }))
+    }
+
+    pub fn get_block_hash(&self, block_number: u64) -> Result<H256, ExecutionWitnessError> {
+        self.block_headers
+            .get(&block_number)
+            .map(|header| header.hash())
+            .ok_or_else(|| {
+                ExecutionWitnessError::Database(format!(
+                    "Block hash not found for block number {block_number}"
+                ))
+            })
+    }
+
+    pub fn get_storage_slot(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<Option<U256>, ExecutionWitnessError> {
+        let storage_tries_map =
+            self.storage_tries
+                .as_ref()
+                .ok_or(ExecutionWitnessError::Database(
+                    "ExecutionWitness: Tried to get storage slot before rebuilding tries"
+                        .to_string(),
+                ))?;
+
+        let Some(storage_trie) = storage_tries_map.get(&address) else {
+            return Ok(None);
+        };
+        let hashed_key = hash_key(&key);
+        if let Some(encoded_key) = storage_trie
+            .get(&hashed_key)
+            .map_err(|e| ExecutionWitnessError::Database(e.to_string()))?
+        {
+            U256::decode(&encoded_key)
+                .map_err(|_| {
+                    ExecutionWitnessError::Database("failed to read storage from trie".to_string())
+                })
+                .map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_chain_config(&self) -> Result<ChainConfig, ExecutionWitnessError> {
+        Ok(self.chain_config)
+    }
+
+    pub fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, ExecutionWitnessError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
+        match self.codes.get(&code_hash) {
+            Some(code) => Ok(code.clone()),
+            None => Err(ExecutionWitnessError::Database(format!(
+                "Could not find code for hash {code_hash}"
+            ))),
+        }
     }
 }
 
