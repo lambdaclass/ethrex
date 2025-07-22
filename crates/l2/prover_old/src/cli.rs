@@ -1,7 +1,6 @@
 use clap::Parser;
+use ethrex_prover_lib::config::ProverConfig;
 use tracing::Level;
-
-use crate::prover_client::ProverConfig;
 
 #[derive(Parser)]
 pub struct ProverCLI {

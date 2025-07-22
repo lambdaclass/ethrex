@@ -17,11 +17,14 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
+use ethrex_prover_lib::{
+    backend::{ProverBackend, exec::ExecBackend},
+    guest_program::input::ProgramInput,
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
 use regex::Regex;
-use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(
     path: &Path,
@@ -419,7 +422,9 @@ async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &st
         ..Default::default()
     };
 
-    if let Err(e) = ethrex_prover_lib::execute(program_input) {
+    let backend = ExecBackend {};
+
+    if let Err(e) = backend.execute(program_input) {
         assert!(
             test_should_fail,
             "Expected test: {test_key} to succeed but failed with {e}"

@@ -7,20 +7,53 @@ use ethrex_levm::{
     db::{CacheDB, gen_db::GeneralizedDatabase},
     vm::VMType,
 };
+use ethrex_prover_lib::{backend::ProverBackend, guest_program::input::ProgramInput};
 use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, backends::levm::LEVM};
 use eyre::Ok;
 use std::sync::Arc;
-use zkvm_interface::io::ProgramInput;
+
+#[cfg(not(any(feature = "risc0", feature = "sp1")))]
+use ethrex_prover_lib::backend::exec::ExecBackend;
+#[cfg(feature = "risc0")]
+use ethrex_prover_lib::backend::risc0::RISC0Backend;
+#[cfg(feature = "sp1")]
+use ethrex_prover_lib::backend::sp1::SP1Backend;
 
 pub async fn exec(cache: Cache) -> eyre::Result<()> {
     let input = get_input(cache)?;
-    ethrex_prover_lib::execute(input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+
+    #[cfg(not(any(feature = "risc0", feature = "sp1")))]
+    let backend = ExecBackend {};
+
+    #[cfg(feature = "risc0")]
+    let backend = RISC0Backend {};
+
+    #[cfg(feature = "sp1")]
+    let backend = SP1Backend {};
+
+    backend
+        .execute(input)
+        .map_err(|e| eyre::Error::msg(e.to_string()))?;
+
     Ok(())
 }
 
 pub async fn prove(cache: Cache) -> eyre::Result<()> {
     let input = get_input(cache)?;
-    ethrex_prover_lib::prove(input, false).map_err(|e| eyre::Error::msg(e.to_string()))?;
+
+    #[cfg(not(any(feature = "risc0", feature = "sp1")))]
+    let backend = ExecBackend {};
+
+    #[cfg(feature = "risc0")]
+    let backend = RISC0Backend {};
+
+    #[cfg(feature = "sp1")]
+    let backend = SP1Backend {};
+
+    backend
+        .prove(input, false)
+        .map_err(|e| eyre::Error::msg(e.to_string()))?;
+
     Ok(())
 }
 
