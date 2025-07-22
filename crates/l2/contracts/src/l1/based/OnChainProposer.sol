@@ -46,7 +46,6 @@ contract OnChainProposer is
     /// @notice The addresses of the verified batches.
     /// @dev The key is the batch number, the value is the address of the prover.
     // TODO: consider replacing it with a Merkle tree or just capping the number of verified batches.
-    // TODO: Consider adding the amount of gasProven to the mapping, i.e. (uint256 => (address, uint256)).
     // TODO: Consider moving this mapping to a separate contract if needed.
     mapping(uint256 => (address, uint256)) public verifiedBatches;
 
@@ -312,15 +311,12 @@ contract OnChainProposer is
     function verifyBatch(
         uint256 batchNumber,
         //risc0
-        // TODO: add gasProven to the RISC0 public inputs
         bytes memory risc0BlockProof,
         bytes calldata risc0Journal,
         //sp1
-        // TODO: add gasProven to the SP1 public inputs
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
         //tdx
-        // TODO: add gasProven to the TDX public inputs
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external {
