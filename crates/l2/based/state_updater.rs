@@ -43,7 +43,17 @@ pub enum StateUpdaterError {
 }
 
 #[derive(Clone)]
-pub struct StateUpdaterState {
+pub enum InMessage {
+    UpdateState,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+}
+
+#[derive(Clone)]
+pub struct StateUpdater {
     on_chain_proposer_address: Address,
     sequencer_registry_address: Address,
     sequencer_address: Address,
@@ -54,8 +64,8 @@ pub struct StateUpdaterState {
     sequencer_state: SequencerState,
 }
 
-impl StateUpdaterState {
-    pub fn new(
+impl StateUpdater {
+    pub async fn new(
         sequencer_cfg: SequencerConfig,
         sequencer_state: SequencerState,
         store: Store,
@@ -74,33 +84,146 @@ impl StateUpdaterState {
             sequencer_state,
         })
     }
-}
 
-#[derive(Clone)]
-pub enum InMessage {
-    UpdateState,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum OutMessage {
-    Done,
-}
-
-pub struct StateUpdater;
-
-impl StateUpdater {
     pub async fn spawn(
         sequencer_cfg: SequencerConfig,
         sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
     ) -> Result<(), StateUpdaterError> {
-        let state = StateUpdaterState::new(sequencer_cfg, sequencer_state, store, rollup_store)?;
-        let mut state_updater = StateUpdater::start(state);
+        let state = Self::new(sequencer_cfg, sequencer_state, store, rollup_store).await?;
+        let mut state_updater = state.start();
         state_updater
             .cast(InMessage::UpdateState)
             .await
             .map_err(StateUpdaterError::GenServerError)
+    }
+
+    pub async fn update(&mut self) -> Result<(), StateUpdaterError> {
+        let calldata = encode_calldata("leaderSequencer()", &[])?;
+
+        let lead_sequencer = hash_to_address(
+            self.eth_client
+                .call(
+                    self.sequencer_registry_address,
+                    calldata.into(),
+                    Overrides::default(),
+                )
+                .await?
+                .parse()
+                .map_err(|_| {
+                    StateUpdaterError::CalldataParsingError(
+                        "Failed to parse leaderSequencer() return data".to_string(),
+                    )
+                })?,
+        );
+
+        let node_is_up_to_date = node_is_up_to_date::<StateUpdaterError>(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            &self.rollup_store,
+        )
+        .await?;
+
+        let new_status = if lead_sequencer == self.sequencer_address {
+            if node_is_up_to_date {
+                SequencerStatus::Sequencing
+            } else {
+                warn!(
+                    "Node should transition to sequencing but it is not up to date, continue syncing."
+                );
+                SequencerStatus::Following
+            }
+        } else {
+            SequencerStatus::Following
+        };
+
+        let current_state = self.sequencer_state.status().await;
+
+        match (current_state, new_status.clone()) {
+            (SequencerStatus::Sequencing, SequencerStatus::Sequencing)
+            | (SequencerStatus::Following, SequencerStatus::Following) => {}
+            (SequencerStatus::Sequencing, SequencerStatus::Following) => {
+                info!("Now the follower sequencer. Stopping sequencing.");
+                self.revert_uncommitted_state().await?;
+            }
+            (SequencerStatus::Following, SequencerStatus::Sequencing) => {
+                info!("Now the lead sequencer. Starting sequencing.");
+            }
+        };
+
+        self.sequencer_state.new_status(new_status).await;
+
+        Ok(())
+    }
+
+    /// Reverts state to the last committed batch if known.
+    async fn revert_uncommitted_state(&mut self) -> Result<(), StateUpdaterError> {
+        let last_l2_committed_batch = self
+            .eth_client
+            .get_last_committed_batch(self.on_chain_proposer_address)
+            .await?;
+
+        debug!("Last committed batch: {last_l2_committed_batch}");
+
+        let Some(last_l2_committed_batch_blocks) = self
+            .rollup_store
+            .get_block_numbers_by_batch(last_l2_committed_batch)
+            .await?
+        else {
+            // Node is not up to date. There is no uncommitted state to revert.
+            info!("No uncommitted state to revert. Node is not up to date.");
+            return Ok(());
+        };
+
+        debug!(
+            "Last committed batch blocks: {:?}",
+            last_l2_committed_batch_blocks
+        );
+
+        let Some(last_l2_committed_block_number) = last_l2_committed_batch_blocks.last() else {
+            return Err(StateUpdaterError::InternalError(format!(
+                "No blocks found for the last committed batch {last_l2_committed_batch}"
+            )));
+        };
+
+        debug!("Last committed batch block number: {last_l2_committed_block_number}");
+
+        let last_l2_committed_block_body = self
+            .store
+            .get_block_body(*last_l2_committed_block_number)
+            .await?
+            .ok_or(StateUpdaterError::InternalError(
+                "No block body found for the last committed batch block number".to_string(),
+            ))?;
+
+        let last_l2_committed_block_header = self
+            .store
+            .get_block_header(*last_l2_committed_block_number)?
+            .ok_or(StateUpdaterError::InternalError(
+                "No block header found for the last committed batch block number".to_string(),
+            ))?;
+
+        let last_l2_committed_batch_block =
+            Block::new(last_l2_committed_block_header, last_l2_committed_block_body);
+
+        let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
+
+        info!(
+            "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
+        );
+        self.store
+            .update_latest_block_number(*last_l2_committed_block_number)
+            .await?;
+        let _ = apply_fork_choice(
+            &self.store,
+            last_l2_committed_batch_block_hash,
+            last_l2_committed_batch_block_hash,
+            last_l2_committed_batch_block_hash,
+        )
+        .await
+        .map_err(StateUpdaterError::InvalidForkChoice)?;
+        Ok(())
     }
 }
 
@@ -108,156 +231,22 @@ impl GenServer for StateUpdater {
     type CallMsg = Unused;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
-    type State = StateUpdaterState;
     type Error = StateUpdaterError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
     async fn handle_cast(
-        &mut self,
+        mut self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        mut state: Self::State,
     ) -> CastResponse<Self> {
-        let _ = update_state(&mut state)
+        let _ = self
+            .update()
             .await
             .inspect_err(|err| error!("State Updater Error: {err}"));
         send_after(
-            Duration::from_millis(state.check_interval_ms),
+            Duration::from_millis(self.check_interval_ms),
             handle.clone(),
             Self::CastMsg::UpdateState,
         );
-        CastResponse::NoReply(state)
+        CastResponse::NoReply(self)
     }
-}
-
-pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpdaterError> {
-    let calldata = encode_calldata("leaderSequencer()", &[])?;
-
-    let lead_sequencer = hash_to_address(
-        state
-            .eth_client
-            .call(
-                state.sequencer_registry_address,
-                calldata.into(),
-                Overrides::default(),
-            )
-            .await?
-            .parse()
-            .map_err(|_| {
-                StateUpdaterError::CalldataParsingError(
-                    "Failed to parse leaderSequencer() return data".to_string(),
-                )
-            })?,
-    );
-
-    let node_is_up_to_date = node_is_up_to_date::<StateUpdaterError>(
-        &state.eth_client,
-        state.on_chain_proposer_address,
-        &state.rollup_store,
-    )
-    .await?;
-
-    let new_status = if lead_sequencer == state.sequencer_address {
-        if node_is_up_to_date {
-            SequencerStatus::Sequencing
-        } else {
-            warn!(
-                "Node should transition to sequencing but it is not up to date, continue syncing."
-            );
-            SequencerStatus::Following
-        }
-    } else {
-        SequencerStatus::Following
-    };
-
-    let current_state = state.sequencer_state.status().await;
-
-    match (current_state, new_status.clone()) {
-        (SequencerStatus::Sequencing, SequencerStatus::Sequencing)
-        | (SequencerStatus::Following, SequencerStatus::Following) => {}
-        (SequencerStatus::Sequencing, SequencerStatus::Following) => {
-            info!("Now the follower sequencer. Stopping sequencing.");
-            revert_uncommitted_state(state).await?;
-        }
-        (SequencerStatus::Following, SequencerStatus::Sequencing) => {
-            info!("Now the lead sequencer. Starting sequencing.");
-        }
-    };
-
-    state.sequencer_state.new_status(new_status).await;
-
-    Ok(())
-}
-
-/// Reverts state to the last committed batch if known.
-async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), StateUpdaterError> {
-    let last_l2_committed_batch = state
-        .eth_client
-        .get_last_committed_batch(state.on_chain_proposer_address)
-        .await?;
-
-    debug!("Last committed batch: {last_l2_committed_batch}");
-
-    let Some(last_l2_committed_batch_blocks) = state
-        .rollup_store
-        .get_block_numbers_by_batch(last_l2_committed_batch)
-        .await?
-    else {
-        // Node is not up to date. There is no uncommitted state to revert.
-        info!("No uncommitted state to revert. Node is not up to date.");
-        return Ok(());
-    };
-
-    debug!(
-        "Last committed batch blocks: {:?}",
-        last_l2_committed_batch_blocks
-    );
-
-    let Some(last_l2_committed_block_number) = last_l2_committed_batch_blocks.last() else {
-        return Err(StateUpdaterError::InternalError(format!(
-            "No blocks found for the last committed batch {last_l2_committed_batch}"
-        )));
-    };
-
-    debug!("Last committed batch block number: {last_l2_committed_block_number}");
-
-    let last_l2_committed_block_body = state
-        .store
-        .get_block_body(*last_l2_committed_block_number)
-        .await?
-        .ok_or(StateUpdaterError::InternalError(
-            "No block body found for the last committed batch block number".to_string(),
-        ))?;
-
-    let last_l2_committed_block_header = state
-        .store
-        .get_block_header(*last_l2_committed_block_number)?
-        .ok_or(StateUpdaterError::InternalError(
-            "No block header found for the last committed batch block number".to_string(),
-        ))?;
-
-    let last_l2_committed_batch_block =
-        Block::new(last_l2_committed_block_header, last_l2_committed_block_body);
-
-    let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
-
-    info!(
-        "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
-    );
-    state
-        .store
-        .update_latest_block_number(*last_l2_committed_block_number)
-        .await?;
-    let _ = apply_fork_choice(
-        &state.store,
-        last_l2_committed_batch_block_hash,
-        last_l2_committed_batch_block_hash,
-        last_l2_committed_batch_block_hash,
-    )
-    .await
-    .map_err(StateUpdaterError::InvalidForkChoice)?;
-    Ok(())
 }

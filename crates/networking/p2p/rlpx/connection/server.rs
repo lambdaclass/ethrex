@@ -69,20 +69,20 @@ type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 #[derive(Clone)]
 pub struct RLPxConnectionState(pub InnerState);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Initiator {
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Receiver {
     pub(crate) context: P2PContext,
     pub(crate) peer_addr: SocketAddr,
     pub(crate) stream: Arc<TcpStream>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Established {
     pub(crate) signer: SecretKey,
     // Sending part of the TcpStream to connect with the remote peer
@@ -114,7 +114,7 @@ pub struct Established {
     pub(crate) inbound: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum InnerState {
     Initiator(Initiator),
     Receiver(Receiver),
@@ -160,8 +160,10 @@ pub enum OutMessage {
     Error,
 }
 
-#[derive(Debug)]
-pub struct RLPxConnection {}
+#[derive(Clone, Debug)]
+pub struct RLPxConnection {
+    inner_state: InnerState,
+}
 
 impl RLPxConnection {
     pub async fn spawn_as_receiver(
@@ -169,13 +171,22 @@ impl RLPxConnection {
         peer_addr: SocketAddr,
         stream: TcpStream,
     ) -> RLPxConnectionHandle {
-        let state = RLPxConnectionState::new_as_receiver(context, peer_addr, stream);
-        RLPxConnection::start(state)
+        let inner_state = InnerState::Receiver(Receiver {
+            context,
+            peer_addr,
+            stream: Arc::new(stream),
+        });
+        let connection = RLPxConnection { inner_state };
+        connection.start()
     }
 
     pub async fn spawn_as_initiator(context: P2PContext, node: &Node) -> RLPxConnectionHandle {
-        let state = RLPxConnectionState::new_as_initiator(context, node);
-        RLPxConnection::start(state.clone())
+        let inner_state = InnerState::Initiator(Initiator {
+            context,
+            node: node.clone(),
+        });
+        let connection = RLPxConnection { inner_state };
+        connection.start()
     }
 }
 
@@ -183,19 +194,10 @@ impl GenServer for RLPxConnection {
     type CallMsg = Unused;
     type CastMsg = CastMessage;
     type OutMsg = MsgResult;
-    type State = RLPxConnectionState;
     type Error = RLPxError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
-    async fn init(
-        &mut self,
-        handle: &GenServerHandle<Self>,
-        mut state: Self::State,
-    ) -> Result<Self::State, Self::Error> {
-        let (mut established_state, stream) = handshake::perform(state.0).await?;
+    async fn init(mut self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
+        let (mut established_state, stream) = handshake::perform(self.inner_state).await?;
         log_peer_debug(&established_state.node, "Starting RLPx connection");
 
         if let Err(reason) = initialize_connection(handle, &mut established_state, stream).await {
@@ -208,18 +210,17 @@ impl GenServer for RLPxConnection {
             Err(RLPxError::Disconnected())
         } else {
             // New state
-            state.0 = InnerState::Established(established_state);
-            Ok(state)
+            self.inner_state = InnerState::Established(established_state);
+            Ok(self)
         }
     }
 
     async fn handle_cast(
-        &mut self,
+        mut self,
         message: Self::CastMsg,
         _handle: &RLPxConnectionHandle,
-        mut state: Self::State,
     ) -> CastResponse<Self> {
-        if let InnerState::Established(mut established_state) = state.0.clone() {
+        if let InnerState::Established(mut established_state) = self.inner_state.clone() {
             match message {
                 // TODO: handle all these "let _"
                 // See https://github.com/lambdaclass/ethrex/issues/3375
@@ -257,12 +258,12 @@ impl GenServer for RLPxConnection {
                 }
             }
             // Update the state
-            state.0 = InnerState::Established(established_state);
-            CastResponse::NoReply(state)
+            self.inner_state = InnerState::Established(established_state);
+            CastResponse::NoReply(self)
         } else {
             // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
             error!("Connection not yet established");
-            CastResponse::NoReply(state)
+            CastResponse::NoReply(self)
         }
     }
 }
