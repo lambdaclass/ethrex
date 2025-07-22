@@ -860,14 +860,6 @@ impl PeerHandler {
             //     continue;
             // }
 
-            let Some(free_peer_id) = free_downloaders
-                .get(random::<usize>() % free_downloaders.len())
-                .map(|(peer_id, _)| *peer_id)
-            else {
-                debug!("No free downloaders available, waiting for a peer to finish, retrying");
-                continue;
-            };
-
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
                     peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
