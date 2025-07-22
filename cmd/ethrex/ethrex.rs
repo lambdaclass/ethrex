@@ -69,7 +69,7 @@ async fn main() -> eyre::Result<()> {
 
     init_tracing(&opts);
 
-    let data_dir = PathBuf::from(init_datadir(opts.datadir.clone()));
+    let datadir = PathBuf::from(init_datadir(opts.datadir.clone()));
 
     let network = get_network(&opts);
 
@@ -80,19 +80,19 @@ async fn main() -> eyre::Result<()> {
             std::process::exit(1);
         }
     };
-    let store = init_store(&data_dir, genesis).await;
+    let store = init_store(&datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone(), BlockchainType::L1);
 
-    let signer = get_signer(&data_dir);
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
     let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-        &data_dir,
+        &datadir,
         &local_p2p_node,
         &signer,
     )));
@@ -113,7 +113,7 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
-        &data_dir,
+        &datadir,
     )
     .await;
 
@@ -133,7 +133,7 @@ async fn main() -> eyre::Result<()> {
                 init_network(
                     &opts,
                     &network,
-                    &data_dir,
+                    &datadir,
                     local_p2p_node,
                     local_node_record.clone(),
                     signer,
@@ -153,10 +153,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(datadir, &cancel_token, peer_table, local_node_record).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(data_dir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(datadir, &cancel_token, peer_table, local_node_record).await;
         }
     }
 

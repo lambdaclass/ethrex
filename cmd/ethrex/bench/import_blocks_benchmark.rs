@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 #[inline]
 fn block_import() {
-    let data_dir = init_datadir(PathBuf::from(DEFAULT_DATADIR));
-    remove_db(Path::new(&data_dir), true);
+    let datadir = init_datadir(PathBuf::from(DEFAULT_DATADIR));
+    remove_db(Path::new(&datadir), true);
 
     let evm_engine = EvmEngine::default();
 
@@ -25,7 +25,7 @@ fn block_import() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
         Path::new("../../fixtures/blockchain/l2-1k-erc20.rlp"),
-        Path::new(&data_dir),
+        Path::new(&datadir),
         genesis,
         evm_engine,
         blockchain_type,
