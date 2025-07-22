@@ -3,14 +3,14 @@ use std::{marker::PhantomData, sync::Arc};
 use super::utils::node_hash_to_fixed_size;
 use ethrex_trie::TrieDB;
 use ethrex_trie::{NodeHash, error::TrieError};
-use libmdbx::orm::{Database, DupSort, Encodable};
+use libmdbx::orm::{Database, Encodable, Table};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
 /// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
 /// A will be a fixed-size encoded key set by the user (of generic type SK), B will be a fixed-size encoded NodeHash and C will be an encoded Node
 pub struct LibmdbxDupsortTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     db: Arc<Database>,
@@ -20,7 +20,7 @@ where
 
 impl<T, SK> LibmdbxDupsortTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     pub fn new(db: Arc<Database>, fixed_key: T::SeekKey) -> Self {
@@ -34,18 +34,31 @@ where
 
 impl<T, SK> TrieDB for LibmdbxDupsortTrieDB<T, SK>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
+    T: Table<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        tracing::debug!(
+            hashed_address = hex::encode(self.fixed_key.clone().encode().as_ref()),
+            node_hash = hex::encode(node_hash_to_fixed_size(key)),
+            "[QUERYING STORAGE TRIE NODE]",
+        );
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
-            .map_err(TrieError::DbError)
+        let mut res = txn
+            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+            .map_err(TrieError::DbError)?;
+        if let Some(v) = &mut res {
+            // Remove the last 8 bytes that contain the block number
+            v.truncate(v.len() - 8);
+        }
+        Ok(res)
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        for (key, value) in key_values {
+        for (key, mut value) in key_values {
+            // Add 8 extra bytes to store the block number
+            value.extend_from_slice(&1u64.to_be_bytes());
             txn.upsert::<T>(
                 (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
                 value,
