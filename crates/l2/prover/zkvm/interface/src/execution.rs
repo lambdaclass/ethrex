@@ -3,11 +3,11 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
-use ethrex_common::Address;
 use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::{
     block_execution_witness::ExecutionWitnessError, block_execution_witness::ExecutionWitnessResult,
 };
+use ethrex_common::{Address, U256};
 use ethrex_common::{
     H256,
     types::{Block, BlockHeader, ChainConfig},
@@ -93,6 +93,7 @@ pub enum StatelessExecutionError {
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
+    let chain_id = input.db.chain_config.chain_id;
     let ProgramInput {
         blocks,
         mut db,
@@ -112,6 +113,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
+            chain_id,
         );
     }
     stateless_validation_l1(&blocks, &mut db, chain_config, elasticity_multiplier)
@@ -127,6 +129,7 @@ pub fn stateless_validation_l1(
         initial_state_hash,
         final_state_hash,
         last_block_hash,
+        non_privileged_count,
         ..
     } = execute_stateless(blocks, db, chain_config, elasticity_multiplier)?;
     Ok(ProgramOutput {
@@ -139,6 +142,8 @@ pub fn stateless_validation_l1(
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
         last_block_hash,
+        chain_id: chain_config.chain_id.into(),
+        non_privileged_count,
     })
 }
 
@@ -150,6 +155,7 @@ pub fn stateless_validation_l2(
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
+    chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let mut initial_db = db.clone();
 
@@ -160,6 +166,7 @@ pub fn stateless_validation_l2(
         account_updates,
         last_block_header,
         last_block_hash,
+        non_privileged_count,
     } = execute_stateless(blocks, db, chain_config, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
@@ -202,6 +209,8 @@ pub fn stateless_validation_l2(
         privileged_transactions_hash,
         blob_versioned_hash,
         last_block_hash,
+        chain_id: chain_id.into(),
+        non_privileged_count,
     })
 }
 
@@ -212,6 +221,7 @@ struct StatelessResult {
     account_updates: HashMap<Address, AccountUpdate>,
     last_block_header: BlockHeader,
     last_block_hash: H256,
+    non_privileged_count: U256,
 }
 
 fn execute_stateless(
@@ -266,6 +276,7 @@ fn execute_stateless(
     let mut parent_block_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
+    let mut non_privileged_count = 0;
     for block in blocks {
         // Validate the block
         validate_block(
@@ -303,6 +314,9 @@ fn execute_stateless(
             }
         }
 
+        non_privileged_count += block.body.transactions.len()
+            - get_block_privileged_transactions(&block.body.transactions).len();
+
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
         validate_receipts_root(&block.header, &receipts)
@@ -335,6 +349,7 @@ fn execute_stateless(
         account_updates: acc_account_updates,
         last_block_header: last_block.header.clone(),
         last_block_hash,
+        non_privileged_count: non_privileged_count.into(),
     })
 }
 
