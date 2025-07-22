@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -757,6 +757,7 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
+        let mut scores: HashMap<H256, i64> = HashMap::new();
 
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
@@ -772,12 +773,22 @@ impl PeerHandler {
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
+                        let peer_score = scores.entry(peer_id).or_default();
+                        *peer_score -= 1;
                     } else {
+                        let peer_score = scores.entry(peer_id).or_default();
+                        *peer_score += 1;
+
                         completed_tasks += 1;
+                        dbg!(&completed_tasks);
                     }
                 }
                 if chunk_start_end.is_none() {
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score += 1;
+
                     completed_tasks += 1;
+                    dbg!(&completed_tasks);
                 }
                 if accounts.is_empty() {
                     continue;
@@ -828,6 +839,27 @@ impl PeerHandler {
             if free_downloaders.is_empty() {
                 continue;
             }
+
+            let (mut free_peer_id, _) = free_downloaders[0];
+
+            for (peer_id, _) in free_downloaders.iter() {
+                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                if peer_id_score >= max_peer_id_score {
+                    free_peer_id = *peer_id;
+                }
+            }
+
+            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+
+            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
+            // score_values.sort();
+
+            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
+
+            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
+            //     continue;
+            // }
 
             let Some(free_peer_id) = free_downloaders
                 .get(random::<usize>() % free_downloaders.len())
@@ -891,7 +923,7 @@ impl PeerHandler {
                     return;
                 }
                 if let Some((accounts, proof)) =
-                    tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                    tokio::time::timeout(Duration::from_secs(2), async move {
                         loop {
                             match receiver.recv().await {
                                 Some(RLPxMessage::AccountRange(AccountRange {
