@@ -1055,6 +1055,25 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
+        // 1) split the range in chunks of same length
+        let chunk_count = 800;
+        let chunk_size = account_storage_roots.len() / chunk_count;
+
+        // list of tasks to be executed
+        // Types are (start_index, end_index, Some((starting_hash, limit_hash)))
+        // NOTE: end_index is NOT inclusive
+        let mut tasks_queue_not_started = VecDeque::<(usize, usize, Option<(H256, H256)>)>::new();
+        for i in 0..chunk_count {
+            let chunk_start = chunk_size * i;
+            let chunk_end = chunk_start + chunk_size;
+            tasks_queue_not_started.push_back((chunk_start, chunk_end, None));
+        }
+        // Modify the last chunk to go up to the last element
+        let last_task = tasks_queue_not_started
+            .back_mut()
+            .expect("we just inserted some elements");
+        last_task.1 = account_storage_roots.len();
+
         std::process::exit(0);
         // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
         // This is so we avoid penalizing peers due to requesting stale data
