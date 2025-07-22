@@ -1,14 +1,13 @@
+use std::path::PathBuf;
 lazy_static::lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
 use clap::Parser;
-use ethrex::DEFAULT_DATADIR;
 use ethrex::initializers::open_store;
-use ethrex::utils::set_datadir;
+use ethrex::utils::init_datadir;
 use ethrex_common::types::BlockHash;
-use ethrex_common::{Address, serde_utils};
-use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
+use ethrex_common::{Address, BigEndianHash, Bytes, H256, U256, serde_utils, types::BlockNumber};
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},
@@ -303,13 +302,12 @@ struct Args {
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value = DEFAULT_DATADIR,
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: Option<String>,
 }
 
 #[tokio::main]
@@ -317,7 +315,7 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = set_datadir(&args.datadir);
+    let data_dir = init_datadir(args.datadir.map(PathBuf::from), None);
     let store = open_store(&data_dir);
     archive_sync(&args.archive_node_ipc, args.block_number, store).await
 }

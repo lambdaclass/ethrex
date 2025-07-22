@@ -1,5 +1,4 @@
 use crate::{
-    DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
@@ -7,7 +6,7 @@ use crate::{
     },
     l2::{self, options::Options},
     networks::Network,
-    utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
+    utils::{NodeConfigFile, init_datadir, parse_private_key, store_node_config_file},
 };
 use clap::Subcommand;
 use ethrex_blockchain::BlockchainType;
@@ -53,8 +52,8 @@ pub enum Command {
     },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
-        datadir: String,
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", required = false)]
+        datadir: Option<PathBuf>,
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
@@ -111,16 +110,15 @@ pub enum Command {
         #[arg(
             long = "datadir",
             value_name = "DATABASE_DIRECTORY",
-            default_value = DEFAULT_L2_DATADIR,
             help = "Receives the name of the directory where the Database is located.",
             env = "ETHREX_DATADIR"
         )]
-        datadir: String,
+        datadir: Option<PathBuf>,
     },
 }
 
 impl Command {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self, _node_opts: &NodeOptions) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
                 if opts.node_opts.evm == EvmEngine::REVM {
@@ -129,14 +127,18 @@ impl Command {
 
                 l2::initializers::init_tracing(&opts);
 
-                let data_dir = set_datadir(&opts.node_opts.datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
-
                 let network = get_network(&opts.node_opts);
+                let data_dir = init_datadir(opts.node_opts.datadir.clone(), Some(&network));
+                let rollup_store_dir = data_dir.join("rollup_store");
 
                 let genesis = network.get_genesis()?;
                 let store = init_store(&data_dir, genesis).await;
-                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(
+                    rollup_store_dir
+                        .to_str()
+                        .expect("Failed to convert path to string"),
+                )
+                .await;
 
                 let blockchain =
                     init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
@@ -231,7 +233,7 @@ impl Command {
                     }
                 }
                 info!("Server shut down started...");
-                let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+                let node_config_path = data_dir.join("node_config.json");
                 info!("Storing config at {:?}...", node_config_path);
                 cancel_token.cancel();
                 let node_config =
@@ -242,9 +244,12 @@ impl Command {
             }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
-                    ethrex_cli::Subcommand::RemoveDB { datadir, force }
-                        .run(&NodeOptions::default()) // This is not used by the RemoveDB command.
-                        .await
+                    let opts = NodeOptions {
+                        datadir,
+                        force,
+                        ..Default::default()
+                    };
+                    ethrex_cli::Subcommand::RemoveDB.run(&opts).await
                 })
                 .await?
             }
@@ -486,8 +491,8 @@ impl Command {
                 datadir,
                 network,
             } => {
-                let data_dir = set_datadir(&datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
+                let data_dir = init_datadir(datadir, Some(&network));
+                let rollup_store_dir = data_dir.join("rollup_store");
 
                 let client = EthClient::new(rpc_url.as_str())?;
                 if let Some(private_key) = private_key {
@@ -507,7 +512,12 @@ impl Command {
                     info!("Private key not given, not updating contract.");
                 }
                 info!("Updating store...");
-                let rollup_store = l2::initializers::init_rollup_store(&rollup_store_dir).await;
+                let rollup_store = l2::initializers::init_rollup_store(
+                    rollup_store_dir
+                        .to_str()
+                        .expect("Failed to convert path to string"),
+                )
+                .await;
                 let last_kept_block = rollup_store
                     .get_block_numbers_by_batch(batch)
                     .await?
