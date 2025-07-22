@@ -111,7 +111,7 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn set_datadir(datadir: PathBuf) -> String {
+pub fn init_datadir(datadir: PathBuf) -> String {
     let project_dir = ProjectDirs::from("", "", datadir.to_str().expect("Invalid data directory"))
         .expect("Couldn't find home directory");
     project_dir

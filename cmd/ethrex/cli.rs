@@ -19,7 +19,7 @@ use crate::{
     initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2,
     networks::Network,
-    utils::{self, get_client_version, set_datadir},
+    utils::{self, get_client_version, init_datadir},
 };
 
 #[allow(clippy::upper_case_acronyms)]
@@ -285,11 +285,11 @@ impl Subcommand {
         }
         match self {
             Subcommand::RemoveDB => {
-                let datadir = set_datadir(opts.datadir.clone());
+                let datadir = init_datadir(opts.datadir.clone());
                 remove_db(Path::new(&datadir), opts.force);
             }
             Subcommand::Import { path, removedb, l2 } => {
-                let datadir = set_datadir(opts.datadir.clone());
+                let datadir = init_datadir(opts.datadir.clone());
 
                 if removedb {
                     remove_db(Path::new(&datadir), opts.force);
@@ -312,7 +312,7 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::Export { path, first, last } => {
-                let datadir = set_datadir(opts.datadir.clone());
+                let datadir = init_datadir(opts.datadir.clone());
                 export_blocks(Path::new(&path), Path::new(&datadir), first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {

@@ -3,7 +3,7 @@ use ethrex::{
     DEFAULT_DATADIR,
     cli::{import_blocks, remove_db},
     networks::Network,
-    utils::set_datadir,
+    utils::init_datadir,
 };
 use ethrex_blockchain::BlockchainType;
 use ethrex_vm::EvmEngine;
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 #[inline]
 fn block_import() {
-    let data_dir = set_datadir(PathBuf::from(DEFAULT_DATADIR));
+    let data_dir = init_datadir(PathBuf::from(DEFAULT_DATADIR));
     remove_db(Path::new(&data_dir), true);
 
     let evm_engine = EvmEngine::default();

@@ -5,7 +5,7 @@ lazy_static::lazy_static! {
 use clap::Parser;
 use ethrex::DEFAULT_DATADIR;
 use ethrex::initializers::open_store;
-use ethrex::utils::set_datadir;
+use ethrex::utils::init_datadir;
 use ethrex_common::types::BlockHash;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
@@ -317,7 +317,7 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = set_datadir(args.datadir);
+    let data_dir = init_datadir(args.datadir);
     let store = open_store(std::path::Path::new(&data_dir));
     archive_sync(&args.archive_node_ipc, args.block_number, store).await
 }

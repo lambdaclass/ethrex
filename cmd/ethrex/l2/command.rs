@@ -7,7 +7,7 @@ use crate::{
     },
     l2::{self, options::Options},
     networks::Network,
-    utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
+    utils::{NodeConfigFile, init_datadir, parse_private_key, store_node_config_file},
 };
 use clap::Subcommand;
 use ethrex_blockchain::BlockchainType;
@@ -129,7 +129,7 @@ impl Command {
 
                 l2::initializers::init_tracing(&opts);
 
-                let data_dir = set_datadir(opts.node_opts.datadir.clone());
+                let data_dir = init_datadir(opts.node_opts.datadir.clone());
                 let rollup_store_dir = std::path::Path::new(&data_dir).join("rollup_store");
 
                 let network = get_network(&opts.node_opts);
@@ -490,7 +490,7 @@ impl Command {
                 datadir,
                 network,
             } => {
-                let data_dir = set_datadir(datadir);
+                let data_dir = init_datadir(datadir);
                 let rollup_store_dir = std::path::Path::new(&data_dir).join("rollup_store");
 
                 let client = EthClient::new(rpc_url.as_str())?;
