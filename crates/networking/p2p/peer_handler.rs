@@ -485,8 +485,6 @@ impl PeerHandler {
                 self.record_peer_success(peer_id).await;
                 return Some(codes);
             }
-            warn!("[SYNCING] Didn't receive bytecodes from peer, penalizing peer {peer_id}...");
-            self.record_peer_failure(peer_id).await;
         }
         None
     }

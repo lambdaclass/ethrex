@@ -7,7 +7,7 @@
 use std::time::Instant;
 
 use ethrex_common::H256;
-use ethrex_storage::{Store, STATE_TRIE_SEGMENTS};
+use ethrex_storage::{STATE_TRIE_SEGMENTS, Store};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -15,7 +15,9 @@ use tracing::{debug, info};
 use crate::peer_handler::PeerHandler;
 
 use super::{
-    fetcher_queue::{read_incoming_requests, spawn_fetch_tasks}, SyncError, BYTECODE_BATCH_SIZE, MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES, SHOW_PROGRESS_INTERVAL_DURATION
+    BYTECODE_BATCH_SIZE, MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES,
+    SHOW_PROGRESS_INTERVAL_DURATION, SyncError,
+    fetcher_queue::{read_incoming_requests, spawn_fetch_tasks},
 };
 
 /// Represents the permanently ongoing background trie rebuild process
@@ -102,7 +104,7 @@ async fn bytecode_fetcher(
             peers.clone(),
             store.clone(),
             BYTECODE_BATCH_SIZE,
-            STATE_TRIE_SEGMENTS* MAX_PARALLEL_FETCHES,
+            STATE_TRIE_SEGMENTS * MAX_PARALLEL_FETCHES,
         )
         .await?;
     }
@@ -124,12 +126,16 @@ async fn fetch_bytecode_batch(
 ) -> Result<Vec<H256>, SyncError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
         debug!("Received {} bytecodes", bytecodes.len());
+        if bytecodes.len() != 0 {
+            // If no peer returned these bytecodes then they must have been removed
+            return Ok(vec![]);
+        }
         // Store the bytecodes
         for code in bytecodes.into_iter() {
             store.add_account_code(batch.remove(0), code).await?;
         }
     }
-    dbg!(&batch);
+
     // Return remaining code hashes in the batch if we couldn't fetch all of them
     Ok(batch)
 }
