@@ -73,6 +73,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(MessageHashesByBatch),
         table_info!(BlockNumbersByBatch),
         table_info!(OperationsCount),
+        table_info!(SignatureByBlockHash),
+        table_info!(SignatureByBatch),
         table_info!(BlobsBundles),
         table_info!(StateRoots),
         table_info!(PrivilegedTransactionsHash),
@@ -247,6 +249,47 @@ impl StoreEngineRollup for Store {
         }
     }
 
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        let key = block_hash.as_fixed_bytes();
+        let signature = signature.to_fixed_bytes();
+        self.write::<SignatureByBlockHash>(*key, signature).await
+    }
+
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        let key = block_hash.as_fixed_bytes();
+        Ok(self
+            .read::<SignatureByBlockHash>(*key)
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s)))
+    }
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        let signature = signature.to_fixed_bytes();
+        self.write::<SignatureByBatch>(batch_number, signature)
+            .await
+    }
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .read::<SignatureByBatch>(batch_number)
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s)))
+    }
+
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         self.read::<LastSentBatchProof>(0)
             .await
@@ -415,6 +458,16 @@ table!(
 table!(
     /// Transaction, privileged transaction, messages count
     ( OperationsCount ) u64 => OperationsCountRLP
+);
+
+table!(
+    /// Signature by block hash
+    ( SignatureByBlockHash ) [u8; 32] => [u8; 65]
+);
+
+table!(
+    /// Signature by batch number
+    ( SignatureByBatch ) u64 => [u8; 65]
 );
 
 table!(

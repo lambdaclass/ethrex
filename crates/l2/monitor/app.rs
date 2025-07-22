@@ -199,7 +199,7 @@ impl EthrexMonitorWidget {
             EthClient::new("http://localhost:1729").map_err(MonitorError::EthClientError)?;
 
         let mut monitor_widget = EthrexMonitorWidget {
-            title: if cfg.based.based {
+            title: if cfg.based.enabled {
                 "Based Ethrex Monitor".to_string()
             } else {
                 "Ethrex Monitor".to_string()

@@ -35,6 +35,12 @@ const PRIVILEGED_TRANSACTIONS_HASHES: TableDefinition<u64, Rlp<H256>> =
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
 
+const SIGNATURES_BY_BLOCK: TableDefinition<[u8; 32], [u8; 65]> =
+    TableDefinition::new("SignaturesByBlock");
+
+const SIGNATURES_BY_BATCH: TableDefinition<u64, [u8; 65]> =
+    TableDefinition::new("SignaturesByBatch");
+
 const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
     TableDefinition::new("AccountUpdatesByBlockNumber");
 
@@ -123,6 +129,8 @@ pub fn init_db() -> Result<Database, RollupStoreError> {
     table_creation_txn.open_table(PRIVILEGED_TRANSACTIONS_HASHES)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
+    table_creation_txn.open_table(SIGNATURES_BY_BLOCK)?;
+    table_creation_txn.open_table(SIGNATURES_BY_BATCH)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
     table_creation_txn.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
     table_creation_txn.open_table(COMMIT_TX_BY_BATCH)?;
@@ -293,6 +301,43 @@ impl StoreEngineRollup for RedBStoreRollup {
         batch_number: u64,
     ) -> Result<(), RollupStoreError> {
         self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
+    }
+
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        let signature = signature.to_fixed_bytes();
+        self.write(SIGNATURES_BY_BLOCK, block_hash.into(), signature)
+            .await
+    }
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .read(SIGNATURES_BY_BLOCK, block_hash.into())
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s.value())))
+    }
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: ethereum_types::Signature,
+    ) -> Result<(), RollupStoreError> {
+        let signature = signature.to_fixed_bytes();
+        self.write(SIGNATURES_BY_BATCH, batch_number, signature)
+            .await
+    }
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+        Ok(self
+            .read(SIGNATURES_BY_BATCH, batch_number)
+            .await?
+            .map(|s| ethereum_types::Signature::from_slice(&s.value())))
     }
 
     async fn get_account_updates_by_block_number(

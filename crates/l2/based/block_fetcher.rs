@@ -155,7 +155,7 @@ impl GenServer for BlockFetcher {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
-        if let SequencerStatus::Following = state.sequencer_state.status().await {
+        if let SequencerStatus::Syncing = state.sequencer_state.status().await {
             let _ = fetch(&mut state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
