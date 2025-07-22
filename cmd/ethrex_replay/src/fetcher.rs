@@ -104,9 +104,20 @@ pub async fn get_batchdata(
     )
     .await?;
 
+    // If the l2 node is in validium it does not return blobs to prove
     cache.l2_fields = Some(L2Fields {
-        blob_commitment: rpc_batch.batch.blobs_bundle.commitments[0],
-        blob_proof: rpc_batch.batch.blobs_bundle.proofs[0],
+        blob_commitment: *rpc_batch
+            .batch
+            .blobs_bundle
+            .commitments
+            .first()
+            .unwrap_or(&[0_u8; 48]),
+        blob_proof: *rpc_batch
+            .batch
+            .blobs_bundle
+            .proofs
+            .first()
+            .unwrap_or(&[0_u8; 48]),
     });
 
     write_cache(&cache, &file_name).expect("failed to write cache");
