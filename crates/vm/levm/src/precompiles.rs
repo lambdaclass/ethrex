@@ -36,7 +36,6 @@ use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 
-use num_bigint::BigUint;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
@@ -467,6 +466,14 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let second_point_x = calldata.get(64..96).ok_or(InternalError::Slicing)?;
     let second_point_y = calldata.get(96..128).ok_or(InternalError::Slicing)?;
 
+    if u256_from_big_endian(first_point_x) >= ALT_BN128_PRIME
+        || u256_from_big_endian(first_point_y) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_x) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y) >= ALT_BN128_PRIME
+    {
+        return Err(PrecompileError::InvalidPoint.into());
+    }
+
     let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(first_point_x);
     let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(first_point_y);
     let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(second_point_x);
@@ -530,6 +537,12 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let point_x = calldata.get(0..32).ok_or(InternalError::Slicing)?;
     let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
     let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
+
+    if u256_from_big_endian(point_x) >= ALT_BN128_PRIME
+        || u256_from_big_endian(point_y) >= ALT_BN128_PRIME
+    {
+        return Err(PrecompileError::InvalidPoint.into());
+    }
 
     let x = ark_bn254::Fq::from_be_bytes_mod_order(point_x);
     let y = ark_bn254::Fq::from_be_bytes_mod_order(point_y);
