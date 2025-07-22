@@ -10,7 +10,7 @@ use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
+use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
 use tokio::sync::Mutex;
@@ -52,6 +52,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     peer_table: Kademlia,
+    peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
 }
 
 pub enum BlockRequestOrder {
@@ -61,7 +62,10 @@ pub enum BlockRequestOrder {
 
 impl PeerHandler {
     pub fn new(peer_table: Kademlia) -> PeerHandler {
-        Self { peer_table }
+        Self {
+            peer_table,
+            peer_scores: Default::default(),
+        }
     }
 
     /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
@@ -754,7 +758,7 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores: HashMap<H256, i64> = HashMap::new();
+        let mut scores = self.peer_scores.lock().await;
 
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
@@ -1057,7 +1061,7 @@ impl PeerHandler {
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
-        let mut scores: HashMap<H256, i64> = HashMap::new();
+        let mut scores = self.peer_scores.lock().await;
 
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
@@ -1349,7 +1353,7 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
 
-        let mut scores: HashMap<H256, i64> = HashMap::new();
+        let mut scores = self.peer_scores.lock().await;
 
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
