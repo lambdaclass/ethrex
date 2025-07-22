@@ -390,52 +390,61 @@ impl Syncer {
                 // .await
                 // .unwrap();
 
-                let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
+                let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-                for (account_hash, account) in account_hashes.into_iter().zip(account_states) {
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                        .unwrap();
-                }
-                let computed_state_root = trie.hash().unwrap();
+                let computed_state_root = tokio::task::spawn_blocking(move || {
+                    let mut trie = trie;
+                    for (account_hash, account) in account_hashes.into_iter().zip(account_states) {
+                        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                            .unwrap();
+                    }
+                    let computed_state_root = trie.hash().unwrap();
+                    computed_state_root
+                })
+                .await
+                .unwrap();
 
                 info!("Expected state root: {state_root:?}");
                 info!("Final state root after account range requests: {computed_state_root:?}");
 
                 let store_start = Instant::now();
 
-                tokio::task::spawn_blocking(move ||
-                // Store trie in storage
-                for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
-                    .into_iter()
-                    .zip(storages_key_value_pairs)
-                {
-                    let mut storage_trie = store
-                        .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                        .unwrap();
-
-                    for (hashed_key, value) in key_value_pairs {
-                        storage_trie
-                            .insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                let store_clone = store.clone();
+                tokio::task::spawn_blocking(move || {
+                    let store = store_clone;
+                    // Store trie in storage
+                    for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
+                        .into_iter()
+                        .zip(storages_key_value_pairs)
+                    {
+                        let mut storage_trie = store
+                            .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
                             .unwrap();
-                        if let Err(err) =
-                            storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                        {
+
+                        for (hashed_key, value) in key_value_pairs {
+                            storage_trie
+                                .insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                                .unwrap();
+                            if let Err(err) =
+                                storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                            {
+                                error!(
+                                    "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                                );
+                                continue;
+                            };
+                        }
+                        let Ok(computed_state_root) = storage_trie.hash() else {
                             error!(
-                                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                                "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
                             );
                             continue;
                         };
-                    }
-                    let Ok(computed_state_root) = storage_trie.hash() else {
-                        error!(
-                            "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
-                        );
-                        continue;
-                    };
-                    if computed_state_root != storage_root {
-                        error!(
-                            "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
-                        );
+                        if computed_state_root != storage_root {
+                            error!(
+                                "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
+                            );
+                        }
                     }
                 }).await.unwrap();
 
