@@ -410,6 +410,13 @@ impl<'a> VM<'a> {
     }
 
     /// Find the offset (starting from `address`) of the next non-JUMPDEST opcode.
+    ///
+    /// If there are no more non-JUMPDEST opcodes, the offset returned will point to the right bound
+    /// (aka. `address + offset = code.len()`).
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `address` is out of bounds.
     fn find_address_nop_slide(address: usize, code: &[u8]) -> usize {
         #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
         code[address..]
