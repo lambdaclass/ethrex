@@ -129,6 +129,7 @@ async fn fetch_bytecode_batch(
             store.add_account_code(batch.remove(0), code).await?;
         }
     }
+    dbg!(&batch);
     // Return remaining code hashes in the batch if we couldn't fetch all of them
     Ok(batch)
 }
