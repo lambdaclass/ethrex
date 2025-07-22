@@ -299,6 +299,13 @@ pub async fn send_proof_to_contract(
         ?batch_number,
         "Sending batch verification transaction to L1"
     );
+    dbg!(
+        proofs
+            .get(&ProverType::SP1)
+            .map(|proof| proof.calldata())
+            .unwrap_or(ProverType::SP1.empty_calldata())
+            .as_slice()
+    );
 
     let calldata_values = [
         &[Value::Uint(U256::from(batch_number))],
