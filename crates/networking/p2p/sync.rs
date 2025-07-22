@@ -293,6 +293,10 @@ impl Syncer {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
+
+                // TODO
+                drop(all_block_hashes);
+
                 let state_root = pivot_header.state_root;
 
                 let (account_hashes, account_states, continues) = self
