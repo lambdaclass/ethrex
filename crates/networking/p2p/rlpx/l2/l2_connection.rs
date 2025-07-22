@@ -382,24 +382,39 @@ async fn process_batch_sealed(
         "Sealed batch {} with blocks from {} to {}",
         msg.batch.number, msg.batch.first_block, msg.batch.last_block
     );
-    for block_number in msg.batch.first_block..=msg.batch.last_block {
-        let block_hash =
+    // Since we a peer cannot know in which block a batch was sealed, we have to keep the blocks
+    // in the queue until the batch is sealed
+    let latest_hash_on_batch = {
+        // Remove the priors blocks from the queue
+        for block_number in msg.batch.first_block..msg.batch.last_block {
             l2_state
                 .blocks_on_queue
                 .remove(&block_number)
                 .ok_or(RLPxError::MessageNotHandled(format!(
                     "Tried to seal a batch but block {block_number} was not found in the queue or received by a peer."
-                )))?.hash();
-
-        apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
-            .await
-            .map_err(|e| {
-                RLPxError::BlockchainError(ChainError::Custom(format!(
-                    "Error adding new block {} with hash {:?}, error: {e}",
-                    block_number, block_hash
-                )))
-            })?;
-    }
+                )))?;
+        }
+        // Remove the last block from the queue and retrieve its hash
+        l2_state.blocks_on_queue.remove(&msg.batch.last_block)
+            .ok_or(RLPxError::MessageNotHandled(format!(
+                "Tried to seal a batch but last block {} was not found in the queue or received by a peer.",
+                msg.batch.last_block
+            )))?
+            .hash()
+    };
+    apply_fork_choice(
+        &established.storage,
+        latest_hash_on_batch,
+        latest_hash_on_batch,
+        latest_hash_on_batch,
+    )
+    .await
+    .map_err(|e| {
+        RLPxError::BlockchainError(ChainError::Custom(format!(
+            "Error adding new block {} with hash {:?}, error: {e}",
+            msg.batch.last_block, latest_hash_on_batch
+        )))
+    })?;
     Ok(())
 }
 
