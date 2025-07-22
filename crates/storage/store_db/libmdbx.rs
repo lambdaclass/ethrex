@@ -326,6 +326,18 @@ impl StoreEngine for Store {
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
+        // TODO: use a separate read transaction for selecting nodes to delete to minimize write lock congestions.
+        // Check if that's actually useful, given we still need to delete the entries.
+        // TODO: coalesce operations to reduce write amplification:
+        // 1. Iterate the whole span of blocks once keeping count of how many times a node should be erased;
+        // 2. Decrease the reference count once for that amount;
+        // 3. Iterate in order to help the cursor.
+        // ACTUALLY this is not needed *just* for write amplification but also might be necessary for correctness
+        // I think.
+        // TODO: invert order in values: refcnt first as it's fixed size, it works with no-dup tables as they are
+        // now, as it's always a single value.
+        // FIXME: include a sign bit or similar in the logs, so we can revert creations from side-chains while
+        // also reverting its destructions.
 
         let stats_pre_state_log = tx
             .table_stat::<StateTriePruningLog>()
