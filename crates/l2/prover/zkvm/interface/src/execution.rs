@@ -313,7 +313,6 @@ fn execute_stateless(
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
-        // TODO: Verify if this is correct
         total_gas_used += block.header.gas_used;
         validate_receipts_root(&block.header, &receipts)
             .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
