@@ -757,6 +757,7 @@ impl PeerHandler {
         *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
+        let mut completed_tasks = 0;
 
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
@@ -776,7 +777,12 @@ impl PeerHandler {
                             *downloader_is_free = true;
                         });
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
+                    } else {
+                        completed_tasks += 1;
                     }
+                }
+                if chunk_start_end.is_none() {
+                    completed_tasks += 1;
                 }
                 if accounts.is_empty() {
                     continue;
@@ -786,14 +792,14 @@ impl PeerHandler {
 
                 let batch_show = downloaded_count / 10_000;
 
-                if current_show < batch_show {
-                    info!(
-                        "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
-                        accounts.len(),
-                        peer_id
-                    );
-                    current_show += 1;
-                }
+                // if current_show < batch_show {
+                info!(
+                    "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
+                    accounts.len(),
+                    peer_id
+                );
+                current_show += 1;
+                // }
                 // store accounts
                 all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
                 all_accounts_state.extend(
@@ -855,7 +861,7 @@ impl PeerHandler {
             };
 
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
-                if tasks_queue_not_started.is_empty() && downloaded_count > 0 {
+                if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
                     break;
                 }
@@ -984,16 +990,33 @@ impl PeerHandler {
         );
         info!("Starting to compute the state root...");
 
-        let computed_state_root = Trie::compute_hash_from_unsorted_iter(
-            all_account_hashes
-                .clone()
-                .into_iter()
-                .zip(all_accounts_state.clone())
-                .map(|(account_hash, account)| (account_hash.0.to_vec(), account.encode_to_vec())),
-        );
+        let _ = tokio::task::spawn_blocking(move || {
+            let computed_state_root = Trie::compute_hash_from_unsorted_iter(
+                all_account_hashes
+                    .clone()
+                    .into_iter()
+                    .zip(all_accounts_state.clone())
+                    .map(|(account_hash, account)| {
+                        (account_hash.0.to_vec(), account.encode_to_vec())
+                    }),
+            );
 
-        info!("Expected state root: {state_root}");
-        info!("Final state root after account range requests: {computed_state_root}");
+            info!("Expected state root: {state_root}");
+            info!("Final state root after account range requests: {computed_state_root}");
+        })
+        .await
+        .unwrap();
+
+        // let computed_state_root = Trie::compute_hash_from_unsorted_iter(
+        //     all_account_hashes
+        //         .clone()
+        //         .into_iter()
+        //         .zip(all_accounts_state.clone())
+        //         .map(|(account_hash, account)| (account_hash.0.to_vec(), account.encode_to_vec())),
+        // );
+
+        // info!("Expected state root: {state_root}");
+        // info!("Final state root after account range requests: {computed_state_root}");
         std::process::exit(0);
 
         // TODO: proof validation and should_continue aggregation
