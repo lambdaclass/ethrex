@@ -110,6 +110,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    // this test should go before the withdrawal ones
+    // it's failure case is making a batch invalid due to invalid privileged transactions
+    test_privileged_spammer(&eth_client).await?;
+
     test_transfer(
         &rich_wallet_private_key,
         &transfer_return_private_key,
@@ -838,6 +842,25 @@ async fn test_deposit(
         "Fee vault balance should not change after deposit"
     );
 
+    Ok(())
+}
+
+async fn test_privileged_spammer(l1_client: &EthClient) -> Result<(), Box<dyn std::error::Error>> {
+    let rich_wallet_private_key = l1_rich_wallet_private_key();
+    let init_code_l1 = hex::decode(std::fs::read(
+        "../../fixtures/contracts/deposit_spammer/DepositSpammer.bin",
+    )?)?;
+    let caller_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
+    for _ in 0..10 {
+        test_send(
+            l1_client,
+            &rich_wallet_private_key,
+            caller_l1,
+            "spam(address,uint256)",
+            &[Value::Address(bridge_address()?), Value::Uint(15.into())],
+        )
+        .await;
+    }
     Ok(())
 }
 

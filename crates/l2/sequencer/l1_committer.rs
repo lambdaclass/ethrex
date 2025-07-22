@@ -239,6 +239,8 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
         batch.number,
     );
 
+    state.rollup_store.update_precommit_privileged(None).await?;
+
     match send_commitment(state, &batch).await {
         Ok(commit_tx_hash) => {
             metrics!(

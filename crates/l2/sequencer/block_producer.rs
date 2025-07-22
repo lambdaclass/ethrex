@@ -171,8 +171,13 @@ pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProduc
     let payload = create_payload(&args, &state.store)?;
 
     // Blockchain builds the payload from mempool txs and executes them
-    let payload_build_result =
-        build_payload(state.blockchain.clone(), payload, &state.store).await?;
+    let payload_build_result = build_payload(
+        state.blockchain.clone(),
+        payload,
+        &state.store,
+        &state.rollup_store,
+    )
+    .await?;
     info!(
         "Built payload for new block {}",
         payload_build_result.payload.header.number
