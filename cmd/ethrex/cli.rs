@@ -8,7 +8,8 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{BlockchainType, error::ChainError};
 use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::{sync::SyncMode, types::Node};
+use ethrex_p2p::sync::SyncMode;
+use ethrex_p2p::types::Node;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;

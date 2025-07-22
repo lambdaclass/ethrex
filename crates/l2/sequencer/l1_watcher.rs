@@ -72,6 +72,7 @@ pub enum OutMessage {
     Error,
 }
 
+#[derive(Debug, Default)]
 pub struct L1Watcher;
 
 impl L1Watcher {

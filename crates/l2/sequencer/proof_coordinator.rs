@@ -224,6 +224,7 @@ pub enum ProofCordOutMessage {
     Done,
 }
 
+#[derive(Debug, Default)]
 pub struct ProofCoordinator;
 
 impl ProofCoordinator {
@@ -307,6 +308,7 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: Arc<TcpListener
     }
 }
 
+#[derive(Debug, Default)]
 struct ConnectionHandler;
 
 impl ConnectionHandler {
