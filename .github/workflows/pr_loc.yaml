@@ -22,6 +22,7 @@ jobs:
       - name: Find merge base
         id: find_merge_base
         run: |
+          git fetch origin ${{ github.event.pull_request.head.ref }}
           git fetch origin ${{ github.event.pull_request.base.ref }}
           git merge-base HEAD origin/${{ github.event.pull_request.base.ref }}
       
