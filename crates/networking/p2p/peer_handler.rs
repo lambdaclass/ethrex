@@ -771,15 +771,14 @@ impl PeerHandler {
             if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
                 if let Some((chunk_start, chunk_end)) = chunk_start_end {
                     if chunk_start <= chunk_end {
-                        trace!("Failed to download chunk from peer {peer_id}");
-                        downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                            *downloader_is_free = true;
-                        });
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
                     } else {
                         completed_tasks += 1;
                     }
                 }
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
                 if chunk_start_end.is_none() {
                     completed_tasks += 1;
                 }
