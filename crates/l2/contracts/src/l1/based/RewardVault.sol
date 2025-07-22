@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./interfaces/IOnChainProposer.sol";
+
 contract RewardVault {
     address public onChainProposer;
     address public rewardToken;
+
+    // TODO: we should replace this value with a mechanism that changes over time.
+    uint public tokensUnlockedPerDay;
 
     constructor(address _onChainProposer, address _rewardToken) {
         onChainProposer = _onChainProposer;
@@ -19,15 +25,19 @@ contract RewardVault {
 
         uint256 numberOfBatches = _batchNumbers.length;
         IOnChainProposer prover = IOnChainProposer(onChainProposer);
-        uint256 totalGasProven = 0;
+        uint256 gasProvenByClaimer = 0;
         for (uint256 i = 0; i < numberOfBatches; i++) {
             uint256 batchNumber = _batchNumbers[i];
             (address proverAddress, uint256 gasProven) = prover.verifiedBatches(batchNumber);
             require(proverAddress == sender, "Sender is not the prover");
-            totalGasProven += gasProven;
+            gasProvenByClaimer += gasProven;
         }
 
-        // TODO: calculate the rewards for the prover
-        // TODO: transfer the rewards to the prover
+        // calculate the rewards for the prover and transfer them
+        uint256 totalGasProven = prover.getTotalGasProven();
+        uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** IERC20(rewardToken).decimals();
+        uint256 totalRewards = dailyRewardPool * gasProvenByClaimer / totalGasProven;
+
+        IERC20(rewardToken).transfer(sender, totalRewards);
     }
 }

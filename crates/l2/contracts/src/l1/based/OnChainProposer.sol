@@ -47,6 +47,7 @@ contract OnChainProposer is
     /// @dev The key is the batch number, the value is the address of the prover.
     // TODO: consider replacing it with a Merkle tree or just capping the number of verified batches.
     // TODO: Consider adding the amount of gasProven to the mapping, i.e. (uint256 => (address, uint256)).
+    // TODO: Consider moving this mapping to a separate contract if needed.
     mapping(uint256 => (address, uint256)) public verifiedBatches;
 
     /// @notice The latest verified batch number.
@@ -465,6 +466,16 @@ contract OnChainProposer is
         }
 
         emit BatchVerified(lastVerifiedBatch);
+    }
+
+    function getTotalGasProven() public view returns (uint256) {
+        uint256 totalGasProven = 0;
+        // TODO: we should only iterate through recent batches (i.e batches proven in the last day)
+        for (uint256 i = 0; i <= lastVerifiedBatch; i++) {
+            (_, uint256 gasProven) = verifiedBatches[i];
+            totalGasProven += gasProven;
+        }
+        return totalGasProven;
     }
 
     function _verifyPublicData(
