@@ -1301,7 +1301,7 @@ impl PeerHandler {
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
         const MAX_STORAGE_REQUEST_SIZE: usize = 200;
         // 1) split the range in chunks of same length
-        let chunk_count = 800;
+        let chunk_count = 8000;
         let chunk_size = account_storage_roots.len() / chunk_count;
 
         // list of tasks to be executed
