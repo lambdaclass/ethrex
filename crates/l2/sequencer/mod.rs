@@ -58,7 +58,7 @@ pub async fn start_l2(
         cfg.l1_committer.on_chain_proposer_address,
     )
     .await
-    .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
+    .inspect_err(|e| error!("Error starting Sequencer: {e}")) else {
         return Ok(());
     };
 
@@ -179,7 +179,7 @@ pub async fn start_l2(
         match res {
             Ok(Ok(_)) => {}
             Ok(Err(err)) => {
-                error!("Error starting Proposer: {err}");
+                error!("Error starting Sequencer: {err}");
             }
             Err(err) => {
                 error!("JoinSet error: {err}");
