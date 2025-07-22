@@ -774,24 +774,19 @@ impl PeerHandler {
                     if chunk_start <= chunk_end {
                         tasks_queue_not_started.push_back((chunk_start, chunk_end));
                     } else {
-                        let peer_score = scores.entry(peer_id).or_default();
-                        *peer_score += 1;
-
                         completed_tasks += 1;
                     }
                 }
                 if chunk_start_end.is_none() {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score += 1;
-
                     completed_tasks += 1;
-                    dbg!(&completed_tasks);
                 }
                 if accounts.is_empty() {
                     let peer_score = scores.entry(peer_id).or_default();
                     *peer_score -= 1;
                     continue;
                 }
+                let peer_score = scores.entry(peer_id).or_default();
+                *peer_score += 1;
 
                 downloaded_count += accounts.len() as u64;
 
