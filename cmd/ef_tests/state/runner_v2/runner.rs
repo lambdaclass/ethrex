@@ -33,7 +33,7 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
         let tx = get_tx_from_test_case(test_case)?;
         let tracer = LevmCallTracer::disabled();
         let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1)
-            .map_err(|err| RunnerError::VMExecutionError(err))?;
+            .map_err(RunnerError::VMExecutionError)?;
 
         let execution_report = vm.execute();
         let res = check_test_case_results(
