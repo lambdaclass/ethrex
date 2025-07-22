@@ -1128,6 +1128,8 @@ impl PeerHandler {
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
 
+        let mut scores: HashMap<H256, i64> = HashMap::new();
+
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
@@ -1156,9 +1158,14 @@ impl PeerHandler {
                     let task = (remaining_start, remaining_end, remaining_start_hash);
                     tasks_queue_not_started.push_back(task);
                 } else {
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score += 1;
                     completed_tasks += 1;
                 }
+
                 if account_storages.is_empty() {
+                    let peer_score = scores.entry(peer_id).or_default();
+                    *peer_score -= 1;
                     continue;
                 }
 
@@ -1208,13 +1215,23 @@ impl PeerHandler {
                 continue;
             }
 
-            let Some(free_peer_id) = free_downloaders
-                .get(random::<usize>() % free_downloaders.len())
-                .map(|(peer_id, _)| *peer_id)
-            else {
-                debug!("No free downloaders available, waiting for a peer to finish, retrying");
-                continue;
-            };
+            // let Some(free_peer_id) = free_downloaders
+            //     .get(random::<usize>() % free_downloaders.len())
+            //     .map(|(peer_id, _)| *peer_id)
+            // else {
+            //     debug!("No free downloaders available, waiting for a peer to finish, retrying");
+            //     continue;
+            // };
+
+            let (mut free_peer_id, _) = free_downloaders[0];
+
+            for (peer_id, _) in free_downloaders.iter() {
+                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+                if peer_id_score >= max_peer_id_score {
+                    free_peer_id = *peer_id;
+                }
+            }
 
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
@@ -1245,7 +1262,11 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            let size = if start_hash.is_zero() { end - start } else { 1 };
+            let size = if !start_hash.is_zero() {
+                1
+            } else {
+                end - start
+            };
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
                     .iter()
@@ -1284,7 +1305,7 @@ impl PeerHandler {
                     tx.send(empty_task_result).await.ok();
                     return;
                 }
-                let request_result = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::StorageRanges(StorageRanges {
