@@ -16,7 +16,7 @@ use std::{
     fs::File,
     io,
     net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -46,13 +46,19 @@ impl NodeConfigFile {
 
 pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     match File::open(jwt_secret_path) {
-        Ok(mut file) => decode::jwtsecret_file(&mut file),
+        Ok(mut file) => {
+            info!("Opening jwt secret from {:?}", jwt_secret_path);
+            decode::jwtsecret_file(&mut file)
+        }
         Err(_) => write_jwtsecret_file(jwt_secret_path),
     }
 }
 
 pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
-    info!("JWT secret not found in the provided path, generating JWT secret");
+    info!(
+        "JWT secret not found, generating JWT secret at {:?}",
+        jwt_secret_path
+    );
     let secret = generate_jwt_secret();
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
     hex::decode(secret)
@@ -68,16 +74,16 @@ pub fn generate_jwt_secret() -> String {
     hex::encode(secret)
 }
 
-pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
+pub fn read_chain_file(chain_rlp_path: &Path) -> Vec<Block> {
     let chain_file = std::fs::File::open(chain_rlp_path).expect("Failed to open chain rlp file");
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
 }
 
-pub fn read_block_file(block_file_path: &str) -> Block {
+pub fn read_block_file(block_file_path: &Path) -> Block {
     let encoded_block = std::fs::read(block_file_path)
-        .unwrap_or_else(|_| panic!("Failed to read block file with path {block_file_path}"));
+        .unwrap_or_else(|_| panic!("Failed to read block file with path {:?}", block_file_path));
     Block::decode(&encoded_block)
-        .unwrap_or_else(|_| panic!("Failed to decode block file {block_file_path}"))
+        .unwrap_or_else(|_| panic!("Failed to decode block file {:?}", block_file_path))
 }
 
 pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
@@ -105,8 +111,9 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn set_datadir(datadir: &str) -> String {
-    let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
+pub fn set_datadir(datadir: PathBuf) -> String {
+    let project_dir = ProjectDirs::from("", "", datadir.to_str().expect("Invalid data directory"))
+        .expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
         .to_str()

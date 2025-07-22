@@ -60,7 +60,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 /// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
-pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
+pub async fn init_store(data_dir: &Path, genesis: Genesis) -> Store {
     let store = open_store(data_dir);
     store
         .add_initial_state(genesis)
@@ -70,10 +70,13 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
 }
 
 /// Opens a Pre-exsisting Store or creates a new one
-pub fn open_store(data_dir: &str) -> Store {
-    let path = PathBuf::from(data_dir);
-    if path.ends_with("memory") {
-        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+pub fn open_store(data_dir: &Path) -> Store {
+    if data_dir.ends_with("memory") {
+        Store::new(
+            data_dir.to_str().expect("Invalid data directory path"),
+            EngineType::InMemory,
+        )
+        .expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "libmdbx")] {
@@ -85,7 +88,12 @@ pub fn open_store(data_dir: &str) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
-        Store::new(data_dir, engine_type).expect("Failed to create Store")
+        info!("Opening store at path: {:?}", data_dir);
+        Store::new(
+            data_dir.to_str().expect("Invalid data directory path"),
+            engine_type,
+        )
+        .expect("Failed to create Store")
     }
 }
 
@@ -108,6 +116,7 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    data_dir: &Path,
 ) {
     let peer_handler = PeerHandler::new(peer_table);
 
@@ -121,12 +130,19 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let jwt_secret_path = PathBuf::from(&opts.authrpc_jwtsecret);
+    let jwt_secret = if jwt_secret_path.is_relative() {
+        read_jwtsecret_file(data_dir.join(jwt_secret_path).to_str().unwrap())
+    } else {
+        read_jwtsecret_file(&opts.authrpc_jwtsecret)
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        jwt_secret,
         local_p2p_node,
         local_node_record,
         syncer,
@@ -142,7 +158,7 @@ pub async fn init_rpc_api(
 pub async fn init_network(
     opts: &Options,
     network: &Network,
-    data_dir: &str,
+    data_dir: &Path,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SecretKey,
@@ -223,7 +239,7 @@ pub fn get_network(opts: &Options) -> Network {
 }
 
 #[allow(dead_code)]
-pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &Path) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
     match network {
@@ -250,7 +266,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
+    let config_file = data_dir.join("node_config.json");
 
     info!("Reading known peers from config file {:?}", config_file);
 
@@ -262,11 +278,14 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
     bootnodes
 }
 
-pub fn get_signer(data_dir: &str) -> SecretKey {
+pub fn get_signer(data_dir: &Path) -> SecretKey {
     // Get the signer from the default directory, create one if the key file is not present.
-    let key_path = Path::new(data_dir).join("node.key");
+    let key_path = data_dir.join("node.key");
     match fs::read(key_path.clone()) {
-        Ok(content) => SecretKey::from_slice(&content).expect("Signing key could not be created."),
+        Ok(content) => {
+            info!("Opening signer key from {:?}", key_path);
+            SecretKey::from_slice(&content).expect("Signing key could not be created.")
+        }
         Err(_) => {
             info!(
                 "Key file not found, creating a new key and saving to {:?}",
@@ -315,11 +334,11 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
 }
 
 pub fn get_local_node_record(
-    data_dir: &str,
+    data_dir: &Path,
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
+    let config_file = data_dir.join("node_config.json");
 
     match read_node_config_file(config_file) {
         Ok(ref mut config) => {

@@ -21,6 +21,7 @@ use keccak_hash::keccak;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -302,14 +303,13 @@ struct Args {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = DEFAULT_DATADIR,
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
-    pub datadir: String,
+    pub datadir: PathBuf,
 }
 
 #[tokio::main]
@@ -317,7 +317,7 @@ pub async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
-    let data_dir = set_datadir(&args.datadir);
-    let store = open_store(&data_dir);
+    let data_dir = set_datadir(args.datadir);
+    let store = open_store(std::path::Path::new(&data_dir));
     archive_sync(&args.archive_node_ipc, args.block_number, store).await
 }

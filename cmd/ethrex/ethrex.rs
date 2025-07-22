@@ -19,7 +19,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::info;
+use tracing::{error, info};
 
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
@@ -44,13 +44,13 @@ async fn set_sync_block(store: &Store) {
 }
 
 async fn server_shutdown(
-    data_dir: String,
+    data_dir: PathBuf,
     cancel_token: &CancellationToken,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
-    let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+    let node_config_path = data_dir.join("node_config.json");
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
@@ -69,11 +69,17 @@ async fn main() -> eyre::Result<()> {
 
     init_tracing(&opts);
 
-    let data_dir = set_datadir(&opts.datadir);
+    let data_dir = PathBuf::from(set_datadir(opts.datadir.clone()));
 
     let network = get_network(&opts);
 
-    let genesis = network.get_genesis()?;
+    let genesis = match network.get_genesis() {
+        Ok(genesis) => genesis,
+        Err(err) => {
+            error!("{}", err.to_string());
+            std::process::exit(1);
+        }
+    };
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
@@ -107,6 +113,7 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        &data_dir,
     )
     .await;
 
