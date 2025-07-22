@@ -1497,6 +1497,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more 2.0.1",
  "document-features",
+ "futures-core",
  "mio",
  "parking_lot",
  "rustix 1.0.8",
@@ -1860,7 +1861,6 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
- "hkdf",
  "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
@@ -2169,7 +2169,7 @@ dependencies = [
  "rlp 0.5.2",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.26.3",
  "syn 2.0.104",
  "tempfile",
  "thiserror 1.0.69",
@@ -2320,7 +2320,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
- "k256",
  "secp256k1",
  "sha3",
  "thiserror 2.0.12",
@@ -2340,7 +2339,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "hex",
- "k256",
  "keccak-hash",
  "kzg-rs",
  "lazy_static",
@@ -2349,6 +2347,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "sha2",
  "sha3",
  "thiserror 2.0.12",
  "tinyvec",
@@ -2495,7 +2494,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256",
  "keccak-hash",
  "lambdaworks-math 0.11.0",
  "lazy_static",
@@ -2507,6 +2505,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "walkdir",
 ]
@@ -2538,11 +2537,12 @@ dependencies = [
  "futures",
  "hex",
  "hmac",
- "k256",
  "lazy_static",
  "rand 0.8.5",
+ "secp256k1",
  "serde",
  "serde_json",
+ "sha2",
  "sha3",
  "snap",
  "spawned-concurrency",
@@ -2585,7 +2585,6 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "jsonwebtoken 9.3.1",
- "k256",
  "keccak-hash",
  "rand 0.8.5",
  "reqwest 0.12.22",
@@ -3207,15 +3206,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "hkdf"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
-dependencies = [
- "hmac",
 ]
 
 [[package]]
@@ -4994,7 +4984,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "vergen-git2",
  "zerocopy",
  "zkvm_interface",
 ]
@@ -5095,7 +5084,7 @@ dependencies = [
  "itertools 0.13.0",
  "lru",
  "paste",
- "strum",
+ "strum 0.26.3",
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.2.0",
@@ -6276,7 +6265,16 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -6289,6 +6287,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
  "syn 2.0.104",
 ]
 

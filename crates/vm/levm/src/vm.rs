@@ -73,10 +73,10 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
-    ) -> Self {
+    ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        Self {
+        let mut vm = Self {
             call_frames: vec![],
             env,
             substate: Substate::default(),
@@ -89,7 +89,11 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
-        }
+        };
+
+        vm.setup_vm()?;
+
+        Ok(vm)
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
@@ -147,8 +151,6 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        self.setup_vm()?;
-
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
