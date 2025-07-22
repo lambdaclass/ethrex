@@ -990,8 +990,8 @@ impl PeerHandler {
         );
         info!("Starting to compute the state root...");
 
-        let _ = tokio::task::spawn_blocking(move || {
-            let computed_state_root = Trie::compute_hash_from_unsorted_iter(
+        let computed_state_root = tokio::task::spawn_blocking(move || {
+            Trie::compute_hash_from_unsorted_iter(
                 all_account_hashes
                     .clone()
                     .into_iter()
@@ -999,24 +999,13 @@ impl PeerHandler {
                     .map(|(account_hash, account)| {
                         (account_hash.0.to_vec(), account.encode_to_vec())
                     }),
-            );
-
-            info!("Expected state root: {state_root}");
-            info!("Final state root after account range requests: {computed_state_root}");
+            )
         })
         .await
         .unwrap();
+        info!("Expected state root: {state_root}");
+        info!("Final state root after account range requests: {computed_state_root}");
 
-        // let computed_state_root = Trie::compute_hash_from_unsorted_iter(
-        //     all_account_hashes
-        //         .clone()
-        //         .into_iter()
-        //         .zip(all_accounts_state.clone())
-        //         .map(|(account_hash, account)| (account_hash.0.to_vec(), account.encode_to_vec())),
-        // );
-
-        // info!("Expected state root: {state_root}");
-        // info!("Final state root after account range requests: {computed_state_root}");
         std::process::exit(0);
 
         // TODO: proof validation and should_continue aggregation
