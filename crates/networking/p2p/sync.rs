@@ -390,6 +390,7 @@ impl Syncer {
                 // .await
                 // .unwrap();
 
+                let account_store_start = Instant::now();
                 let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
                 let computed_state_root = tokio::task::spawn_blocking(move || {
@@ -404,10 +405,13 @@ impl Syncer {
                 .await
                 .unwrap();
 
-                info!("Expected state root: {state_root:?}");
-                info!("Final state root after account range requests: {computed_state_root:?}");
+                let account_store_time =
+                    Instant::now().saturating_duration_since(account_store_start);
 
-                let store_start = Instant::now();
+                info!("Expected state root: {state_root:?}");
+                info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+
+                let storages_store_start = Instant::now();
 
                 let store_clone = store.clone();
                 tokio::task::spawn_blocking(move || {
@@ -448,8 +452,9 @@ impl Syncer {
                     }
                 }).await.unwrap();
 
-                let store_time = Instant::now().saturating_duration_since(store_start);
-                info!("Finished storing trie in: {store_time:?}");
+                let storages_store_time =
+                    Instant::now().saturating_duration_since(storages_store_start);
+                info!("Finished storing storage tries in: {storages_store_time:?}");
 
                 // - Descargar bytecodes
                 // - Switchear a full sync
