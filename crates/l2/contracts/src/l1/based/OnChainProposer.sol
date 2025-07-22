@@ -47,7 +47,7 @@ contract OnChainProposer is
     /// @dev The key is the batch number, the value is the address of the prover.
     // TODO: consider replacing it with a Merkle tree or just capping the number of verified batches.
     // TODO: Consider adding the amount of gasProven to the mapping, i.e. (uint256 => (address, uint256)).
-    mapping(uint256 => address) public verifiedBatches;
+    mapping(uint256 => (address, uint256)) public verifiedBatches;
 
     /// @notice The latest verified batch number.
     /// @dev This variable holds the batch number of the most recently verified batch.
