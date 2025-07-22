@@ -14,6 +14,14 @@ jobs:
     # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
     if: github.event.pull_request.head.repo.fork == false
     steps:
+      - name: Checkout PR Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      
+      - name: Fetch base branch
+        run: git fetch origin main
+
       - name: Find merge base
         id: find_merge_base
         run: |
