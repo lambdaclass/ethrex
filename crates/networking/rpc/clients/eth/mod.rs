@@ -105,30 +105,6 @@ impl WrappedTransaction {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum BlockByNumber {
-    Number(u64),
-    Latest,
-    Earliest,
-    Pending,
-}
-
-impl From<BlockByNumber> for Value {
-    fn from(value: BlockByNumber) -> Self {
-        match value {
-            BlockByNumber::Number(n) => json!(format!("{n:#x}")),
-            BlockByNumber::Latest => json!("latest"),
-            BlockByNumber::Earliest => json!("earliest"),
-            BlockByNumber::Pending => json!("pending"),
-        }
-    }
-}
-
-impl From<u64> for BlockByNumber {
-    fn from(value: u64) -> Self {
-        BlockByNumber::Number(value)
-    }
-}
 pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
 pub const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.
