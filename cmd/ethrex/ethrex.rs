@@ -19,7 +19,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{error, info};
+use tracing::info;
 
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
@@ -73,13 +73,7 @@ async fn main() -> eyre::Result<()> {
 
     let network = get_network(&opts);
 
-    let genesis = match network.get_genesis() {
-        Ok(genesis) => genesis,
-        Err(err) => {
-            error!("{}", err.to_string());
-            std::process::exit(1);
-        }
-    };
+    let genesis = network.get_genesis()?;
     let store = init_store(&datadir, genesis).await;
 
     #[cfg(feature = "sync-test")]

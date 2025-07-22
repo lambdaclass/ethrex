@@ -35,7 +35,7 @@ use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
     future::IntoFuture,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -120,7 +120,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub async fn run(self, _node_opts: &NodeOptions) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
                 if opts.node_opts.evm == EvmEngine::REVM {
@@ -130,24 +130,24 @@ impl Command {
                 l2::initializers::init_tracing(&opts);
 
                 let datadir = init_datadir(opts.node_opts.datadir.clone());
-                let rollup_store_dir = std::path::Path::new(&datadir).join("rollup_store");
+                let rollup_store_dir = Path::new(&datadir).join("rollup_store");
 
                 let network = get_network(&opts.node_opts);
 
                 let genesis = network.get_genesis()?;
-                let store = init_store(std::path::Path::new(&datadir), genesis).await;
+                let store = init_store(Path::new(&datadir), genesis).await;
                 let rollup_store =
                     l2::initializers::init_rollup_store(rollup_store_dir.to_str().unwrap()).await;
 
                 let blockchain =
                     init_blockchain(opts.node_opts.evm, store.clone(), BlockchainType::L2);
 
-                let signer = get_signer(std::path::Path::new(&datadir));
+                let signer = get_signer(Path::new(&datadir));
 
                 let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
                 let local_node_record = Arc::new(Mutex::new(get_local_node_record(
-                    std::path::Path::new(&datadir),
+                    Path::new(&datadir),
                     &local_p2p_node,
                     &signer,
                 )));
@@ -187,7 +187,7 @@ impl Command {
                     init_network(
                         &opts.node_opts,
                         &network,
-                        std::path::Path::new(&datadir),
+                        Path::new(&datadir),
                         local_p2p_node,
                         local_node_record.clone(),
                         signer,
@@ -232,7 +232,7 @@ impl Command {
                     }
                 }
                 info!("Server shut down started...");
-                let node_config_path = std::path::Path::new(&datadir).join("node_config.json");
+                let node_config_path = Path::new(&datadir).join("node_config.json");
                 info!("Storing config at {:?}...", node_config_path);
                 cancel_token.cancel();
                 let node_config =
@@ -243,12 +243,9 @@ impl Command {
             }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
-                    let opts = NodeOptions {
-                        datadir,
-                        force,
-                        ..Default::default()
-                    };
-                    ethrex_cli::Subcommand::RemoveDB.run(&opts).await
+                    ethrex_cli::Subcommand::RemoveDB { datadir, force }
+                        .run(&NodeOptions::default()) // This is not used by the RemoveDB command.
+                        .await
                 })
                 .await?
             }

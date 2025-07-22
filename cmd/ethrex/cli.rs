@@ -221,7 +221,12 @@ impl Default for Options {
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
-    RemoveDB,
+    RemoveDB {
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
+        datadir: PathBuf,
+        #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
+        force: bool,
+    },
     #[command(name = "import", about = "Import blocks to the database")]
     Import {
         #[arg(
@@ -284,9 +289,9 @@ impl Subcommand {
             _ => init_tracing(opts),
         }
         match self {
-            Subcommand::RemoveDB => {
-                let datadir = init_datadir(opts.datadir.clone());
-                remove_db(Path::new(&datadir), opts.force);
+            Subcommand::RemoveDB { datadir, force } => {
+                let datadir = init_datadir(datadir.clone());
+                remove_db(Path::new(&datadir), force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 let datadir = init_datadir(opts.datadir.clone());
@@ -320,7 +325,7 @@ impl Subcommand {
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
             }
-            Subcommand::L2(command) => command.run(opts).await?,
+            Subcommand::L2(command) => command.run().await?,
         }
         Ok(())
     }
