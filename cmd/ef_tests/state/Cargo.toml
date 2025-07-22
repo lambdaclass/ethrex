@@ -13,6 +13,8 @@ ethrex-levm.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
+# Since we do heavy parsing of ef tests, simd-json is more than 2x faster than serde_json
+simd-json = "0.15.1"
 bytes.workspace = true
 hex.workspace = true
 keccak-hash.workspace = true

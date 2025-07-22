@@ -5,6 +5,7 @@ use crate::{
 };
 use colored::Colorize;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use simd_json;
 use std::{fs::DirEntry, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
@@ -183,7 +184,7 @@ pub fn parse_ef_test_dir(
                 let test_file = std::fs::File::open(test.path()).map_err(|err| {
                     EFTestParseError::FailedToReadFile(format!("{:?}: {err}", test.path()))
                 })?;
-                let mut tests: EFTests = serde_json::from_reader(test_file).map_err(|err| {
+                let mut tests: EFTests = simd_json::from_reader(test_file).map_err(|err| {
                     EFTestParseError::FailedToParseTestFile(format!(
                         "{:?} parse error: {err}",
                         test.path()
@@ -272,7 +273,7 @@ fn parse_ef_test_file(
 ) -> Result<Vec<EFTest>, EFTestParseError> {
     let test_file = std::fs::File::open(&full_path)
         .map_err(|err| EFTestParseError::FailedToReadFile(format!("{:?}: {err}", full_path)))?;
-    let mut tests_in_file: EFTests = serde_json::from_reader(test_file).map_err(|err| {
+    let mut tests_in_file: EFTests = simd_json::from_reader(test_file).map_err(|err| {
         EFTestParseError::FailedToParseTestFile(format!("{:?} parse error: {err}", full_path))
     })?;
     for test in tests_in_file.0.iter_mut() {
