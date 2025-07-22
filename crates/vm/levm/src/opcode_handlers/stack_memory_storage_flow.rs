@@ -353,8 +353,13 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
+        #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
         if Self::target_address_is_valid(call_frame, jump_address_usize) {
-            call_frame.pc = jump_address_usize;
+            let pc_delta =
+                1 + Self::find_address_nop_slide(jump_address_usize + 1, &call_frame.bytecode);
+            call_frame.increase_consumed_gas(pc_delta as u64 * gas_cost::JUMPDEST)?;
+
+            call_frame.pc = jump_address_usize + pc_delta;
             Ok(())
         } else {
             Err(ExceptionalHalt::InvalidJump.into())
@@ -380,9 +385,16 @@ impl<'a> VM<'a> {
 
     // JUMPDEST operation
     pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
-        Ok(OpcodeResult::Continue { pc_increment: 1 })
+        let call_frame = self.current_call_frame_mut()?;
+
+        #[expect(clippy::arithmetic_side_effects)]
+        let pc_delta = 1 + Self::find_address_nop_slide(call_frame.pc + 1, &call_frame.bytecode);
+        #[expect(clippy::as_conversions)]
+        call_frame.increase_consumed_gas(pc_delta as u64 * gas_cost::JUMPDEST)?;
+
+        Ok(OpcodeResult::Continue {
+            pc_increment: pc_delta,
+        })
     }
 
     // PC operation
@@ -395,5 +407,14 @@ impl<'a> VM<'a> {
             .push1(U256::from(current_call_frame.pc))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
+    }
+
+    /// Find the offset (starting from `address`) of the next non-JUMPDEST opcode.
+    fn find_address_nop_slide(address: usize, code: &[u8]) -> usize {
+        #[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+        code[address..]
+            .iter()
+            .position(|&value| Opcode::from(value) != Opcode::JUMPDEST)
+            .unwrap_or(code.len() - address)
     }
 }
