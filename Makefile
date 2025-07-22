@@ -60,7 +60,7 @@ localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Sta
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet-only-ethrex: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with only ethrex
-	cp crates/blockchain/metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
+	cp metrics/provisioning/grafana_provisioning/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_only_ethrex.yaml
 	docker logs -f $$(docker ps -q --filter name=spamoor)
 
