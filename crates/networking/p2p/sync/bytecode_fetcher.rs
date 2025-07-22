@@ -4,9 +4,9 @@
 //! Bytecodes are not tied to a block so this process will not be affected by pivot staleness
 //! The fetcher will remain active and listening until a termination signal (an empty batch) is received
 
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
-use ethrex_common::H256;
+use ethrex_common::{types::code_hash, H256};
 use ethrex_storage::{STATE_TRIE_SEGMENTS, Store};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::CancellationToken;
@@ -120,22 +120,22 @@ async fn bytecode_fetcher(
 
 /// Receives a batch of code hahses, fetches their respective bytecodes via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
 async fn fetch_bytecode_batch(
-    mut batch: Vec<H256>,
+    batch: Vec<H256>,
     peers: PeerHandler,
     store: Store,
 ) -> Result<Vec<H256>, SyncError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
         debug!("Received {} bytecodes", bytecodes.len());
-        if bytecodes.len() != 0 {
-            // If no peer returned these bytecodes then they must have been removed
-            return Ok(vec![]);
-        }
+        let mut batch_set: HashSet<H256> = HashSet::from_iter(batch.into_iter());
         // Store the bytecodes
         for code in bytecodes.into_iter() {
-            store.add_account_code(batch.remove(0), code).await?;
+            let code_hash = code_hash(&code);
+            batch_set.remove(&code_hash);
+            store.add_account_code(code_hash, code).await?;
         }
+        Ok(batch_set.into_iter().collect())
+    } else {
+        // If no peer returned these bytecodes then they must have been removed
+        Ok(vec![])
     }
-
-    // Return remaining code hashes in the batch if we couldn't fetch all of them
-    Ok(batch)
 }
