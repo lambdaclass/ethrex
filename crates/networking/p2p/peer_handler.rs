@@ -1245,7 +1245,7 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            let size = if start_hash.is_zero() { 1 } else { end - start };
+            let size = if start_hash.is_zero() { end - start } else { 1 };
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
                     .iter()
