@@ -183,7 +183,7 @@ impl Memory {
     /// Stores the given data at the given offset.
     #[inline(always)]
     pub fn store_data(&mut self, offset: usize, data: &[u8]) -> Result<(), VMError> {
-        if data.len() == 0 {
+        if data.is_empty() {
             return Ok(());
         }
         let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
