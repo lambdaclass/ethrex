@@ -271,7 +271,6 @@ impl L1ProofVerifier {
         &self,
         verification_data: &AggregationModeVerificationData,
     ) -> Result<ProofStatus, ProofVerifierError> {
-        let fake_var = 1;
         for rpc_url in &self.eth_client.urls {
             for beacon_url in &self.beacon_urls {
                 match aligned_check_proof_verification(
