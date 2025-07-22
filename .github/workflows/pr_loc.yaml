@@ -25,8 +25,8 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git fetch --unshallow origin $HEAD_REF
-          git fetch --unshallow origin $BASE_REF
+          git fetch --depth=100000 origin $HEAD_REF
+          git fetch --depth=100000 origin $BASE_REF
           MERGE_BASE=$(git merge-base origin/$HEAD_REF origin/$BASE_REF)
           echo "merge_base=$MERGE_BASE" >> $GITHUB_OUTPUT
       
