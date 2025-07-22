@@ -36,6 +36,7 @@ use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
 
+use num_bigint::BigUint;
 use secp256k1::{
     Message,
     ecdsa::{RecoverableSignature, RecoveryId},
