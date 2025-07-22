@@ -16,13 +16,12 @@ use ethrex_common::{
 };
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, Trie, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
     array,
     cmp::min,
-    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -477,9 +476,10 @@ impl Syncer {
                 );
                 let bytecodes = self
                     .peers
-                    .request_bytecodes(bytecode_hashes.clone())
+                    .request_bytecodes(&bytecode_hashes)
                     .await
                     .unwrap();
+
                 for (code_hash, bytecode) in bytecode_hashes.into_iter().zip(bytecodes) {
                     let _ = store
                         .add_account_code(code_hash, bytecode)
