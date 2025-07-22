@@ -1325,7 +1325,7 @@ impl PeerHandler {
                 .await
                 .ok()
                 .flatten();
-                let Some((mut slots, proof)) = request_result else {
+                let Some((slots, proof)) = request_result else {
                     tracing::error!("Failed to get account range");
                     tx.send(empty_task_result).await.ok();
                     return;

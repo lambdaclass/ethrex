@@ -308,7 +308,7 @@ impl Syncer {
 
                 let empty = *EMPTY_TRIE_HASH;
 
-                let account_storage_roots = account_hashes
+                let account_storage_roots: Vec<(H256, H256)> = account_hashes
                     .iter()
                     .zip(account_states.iter())
                     .filter_map(|(hash, state)| {
@@ -316,7 +316,33 @@ impl Syncer {
                     })
                     .collect();
 
-                let (_storages_key_value_pairs, should_continue) = self
+                // deposit contract
+                let wanted1_hex = "0x00000000219ab540356cBB839Cbe05303d7705Fa";
+                let wanted1 = keccak_hash::keccak(hex::decode(wanted1_hex).unwrap());
+
+                println!("Account 1 address: {wanted1_hex}");
+
+                // smart contract
+                let wanted2_hex = "0x6f47561Be156E185572B0eaDd1D11Bc66758E44e";
+                let wanted2 = keccak_hash::keccak(hex::decode(wanted2_hex).unwrap());
+
+                println!("Account 2 address: {wanted2_hex}");
+
+                let account1 = account_storage_roots
+                    .iter()
+                    .enumerate()
+                    .find(|(_i, (hash, _root))| hash == &wanted1)
+                    .map(|(i, (hash, root))| (i, *hash, *root))
+                    .unwrap();
+
+                let account2 = account_storage_roots
+                    .iter()
+                    .enumerate()
+                    .find(|(_i, (hash, _root))| hash == &wanted2)
+                    .map(|(i, (hash, root))| (i, *hash, *root))
+                    .unwrap();
+
+                let (storages_key_value_pairs, should_continue) = self
                     .peers
                     .request_storage_ranges(state_root, account_storage_roots)
                     .await
@@ -326,7 +352,28 @@ impl Syncer {
                     !should_continue,
                     "since we downloaded the whole trie, the storage ranges should not continue"
                 );
-
+                {
+                    let (i, account_hash, account_storage_root) = account1;
+                    println!("Account 1 hash: {account_hash:?}");
+                    let storage_slots = storages_key_value_pairs[i].clone();
+                    let storage_root =
+                        Trie::compute_hash_from_unsorted_iter(storage_slots.into_iter().map(
+                            |(hashed_key, value)| (hashed_key.0.to_vec(), value.encode_to_vec()),
+                        ));
+                    println!("Expected storage root: {account_storage_root:?}");
+                    println!("Storage root: {storage_root:?}");
+                }
+                {
+                    let (i, account_hash, account_storage_root) = account2;
+                    println!("Account 2 hash: {account_hash:?}");
+                    let storage_slots = storages_key_value_pairs[i].clone();
+                    let storage_root =
+                        Trie::compute_hash_from_unsorted_iter(storage_slots.into_iter().map(
+                            |(hashed_key, value)| (hashed_key.0.to_vec(), value.encode_to_vec()),
+                        ));
+                    println!("Expected storage root: {account_storage_root:?}");
+                    println!("Storage root: {storage_root:?}");
+                }
                 info!("Starting to compute the state root...");
 
                 let computed_state_root = tokio::task::spawn_blocking(move || {
