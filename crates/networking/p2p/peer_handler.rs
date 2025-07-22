@@ -1150,7 +1150,7 @@ impl PeerHandler {
             if let Ok(result) = task_receiver.try_recv() {
                 let TaskResult {
                     start_index,
-                    account_storages,
+                    mut account_storages,
                     peer_id,
                     remaining_start,
                     remaining_end,
@@ -1182,7 +1182,7 @@ impl PeerHandler {
                 });
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
-                    all_account_storages[start_index].extend(account_storages[0]);
+                    all_account_storages[start_index].extend(account_storages.remove(0));
                 } else {
                     for (i, storage) in account_storages.into_iter().enumerate() {
                         all_account_storages[start_index + i] = storage;
@@ -1330,8 +1330,9 @@ impl PeerHandler {
                 let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
                 let mut should_continue = false;
                 // Validate each storage range
-                let storage_roots = chunk_storage_roots.into_iter();
-                for next_account_slots in slots {
+                let mut storage_roots = chunk_storage_roots.into_iter();
+                let last_slot_index = slots.len() - 1;
+                for (i, next_account_slots) in slots.into_iter().enumerate() {
                     // We won't accept empty storage ranges
                     if next_account_slots.is_empty() {
                         // This shouldn't happen
@@ -1349,7 +1350,7 @@ impl PeerHandler {
                     let storage_root = storage_roots.next().unwrap();
 
                     // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-                    if slots.is_empty() && !proof.is_empty() {
+                    if i == last_slot_index && !proof.is_empty() {
                         let Ok(sc) = verify_range(
                             storage_root,
                             &start_hash,
