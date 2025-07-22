@@ -30,16 +30,20 @@ const COINBASE: H160 = H160([0x77; 20]);
 
 #[derive(Parser)]
 struct Cli {
-    #[arg(long, help = "Path to the input JSON file")]
+    #[arg(long, short, help = "Path to the input JSON file")]
     input: Option<String>,
 
-    #[arg(long, help = "Path to the bytecode/mnemonics file")]
+    #[arg(long, short, help = "Path to the bytecode/mnemonics file to execute")]
     code: Option<String>,
 
     #[arg(long, short, action = clap::ArgAction::SetTrue, help = "Enable verbose logging")]
     verbose: bool,
 
-    #[arg(long, help = "Converts mnemonics file into a bytecode file")]
+    #[arg(
+        long,
+        short = 'b',
+        help = "Converts mnemonics file into a bytecode file"
+    )]
     emit_bytes: Option<String>,
 }
 
