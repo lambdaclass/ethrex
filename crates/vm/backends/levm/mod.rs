@@ -134,7 +134,7 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -492,7 +492,8 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+    let mut vm =
+        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -664,5 +665,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type))
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
 }
