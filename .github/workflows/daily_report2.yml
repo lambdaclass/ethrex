@@ -154,7 +154,7 @@ jobs:
 
       - name: Check if any job failed
         run: |
-          if [ "${{ needs.sdk-integration-test.result }}" == "success" && "${{ needs.cli-integration-test.result }}" == "success"]; then
+          if [ "${{ needs.sdk-integration-test.result }}" == "success" && "${{ needs.cli-integration-test.result }}" == "success" ]; then
             sh .github/scripts/publish_report.sh ${{ secrets.TEST_CHANNEL_SLACK }} "Rex is up to date."
           fi
           if [ "${{ needs.sdk-integration-test.result }}" != "success" ]; then
