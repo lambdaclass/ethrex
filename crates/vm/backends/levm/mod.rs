@@ -28,7 +28,7 @@ use ethrex_levm::{
     vm::{Substate, VM},
 };
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -134,7 +134,7 @@ impl LEVM {
         vm_type: VMType,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -214,7 +214,7 @@ impl LEVM {
             };
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = HashMap::new();
+            let mut added_storage = BTreeMap::new();
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
@@ -492,7 +492,8 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type);
+    let mut vm =
+        VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -664,5 +665,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type))
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
 }
