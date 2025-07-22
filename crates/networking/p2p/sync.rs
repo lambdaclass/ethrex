@@ -508,20 +508,17 @@ impl Syncer {
                 //     // Snap sync was not completed, abort and resume it on the next cycle
                 //     return Ok(());
                 // }
-                // // Wait for all bodies to be downloaded
-                // store_bodies_handle.await??;
-                // // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
-                // // For all blocks after the pivot: Process them fully
-                // for hash in &all_block_hashes[pivot_idx + 1..] {
-                //     let block = store
-                //         .get_block_by_hash(*hash)
-                //         .await?
-                //         .ok_or(SyncError::CorruptDB)?;
-                //     let block_number = block.header.number;
-                //     self.blockchain.add_block(&block).await?;
-                //     store.set_canonical_block(block_number, *hash).await?;
-                //     store.update_latest_block_number(block_number).await?;
-                // }
+                // Wait for all bodies to be downloaded
+                let block = store
+                    .get_block_by_hash(all_block_hashes[pivot_idx])
+                    .await?
+                    .ok_or(SyncError::CorruptDB)?;
+                let block_number = block.header.number;
+                self.blockchain.add_block(&block).await?;
+                store
+                    .set_canonical_block(block_number, all_block_hashes[pivot_idx])
+                    .await?;
+                store.update_latest_block_number(block_number).await?;
                 // self.last_snap_pivot = pivot_header.number;
                 // // Finished a sync cycle without aborting halfway, clear current checkpoint
                 // store.clear_snap_state().await?;
