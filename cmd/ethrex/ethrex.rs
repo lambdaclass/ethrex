@@ -44,13 +44,13 @@ async fn set_sync_block(store: &Store) {
 }
 
 async fn server_shutdown(
-    data_dir: PathBuf,
+    datadir: PathBuf,
     cancel_token: &CancellationToken,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_node_record: Arc<Mutex<NodeRecord>>,
 ) {
     info!("Server shut down started...");
-    let node_config_path = data_dir.join("node_config.json");
+    let node_config_path = datadir.join("node_config.json");
     info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
     let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;

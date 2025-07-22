@@ -44,7 +44,7 @@ impl NodeConfigFile {
     }
 }
 
-pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
+pub fn read_jwtsecret_file(jwt_secret_path: &Path) -> Bytes {
     match File::open(jwt_secret_path) {
         Ok(mut file) => {
             info!("Opening jwt secret from {:?}", jwt_secret_path);
@@ -54,7 +54,7 @@ pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     }
 }
 
-pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
+pub fn write_jwtsecret_file(jwt_secret_path: &Path) -> Bytes {
     info!(
         "JWT secret not found, generating JWT secret at {:?}",
         jwt_secret_path

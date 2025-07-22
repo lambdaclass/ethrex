@@ -154,7 +154,7 @@ pub struct Options {
         help = "Receives the jwt secret used for authenticated rpc requests.",
         help_heading = "RPC options"
     )]
-    pub authrpc_jwtsecret: String,
+    pub authrpc_jwtsecret: PathBuf,
     #[arg(long = "p2p.enabled", default_value = "true", value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_enabled: bool,
     #[arg(

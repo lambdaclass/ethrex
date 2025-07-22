@@ -132,7 +132,7 @@ pub async fn init_rpc_api(
 
     let jwt_secret_path = PathBuf::from(&opts.authrpc_jwtsecret);
     let jwt_secret = if jwt_secret_path.is_relative() {
-        read_jwtsecret_file(data_dir.join(jwt_secret_path).to_str().unwrap())
+        read_jwtsecret_file(&data_dir.join(jwt_secret_path))
     } else {
         read_jwtsecret_file(&opts.authrpc_jwtsecret)
     };
