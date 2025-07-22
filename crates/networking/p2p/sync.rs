@@ -11,7 +11,7 @@ use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     BigEndianHash, H256, U256, U512,
-    constants::EMPTY_TRIE_HASH,
+    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
@@ -393,17 +393,27 @@ impl Syncer {
                 let account_store_start = Instant::now();
                 let trie = store.open_state_trie(*EMPTY_TRIE_HASH).unwrap();
 
-                let computed_state_root = tokio::task::spawn_blocking(move || {
-                    let mut trie = trie;
-                    for (account_hash, account) in account_hashes.into_iter().zip(account_states) {
-                        trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
-                            .unwrap();
-                    }
-                    let computed_state_root = trie.hash().unwrap();
-                    computed_state_root
-                })
-                .await
-                .unwrap();
+                let (computed_state_root, bytecode_hashes) =
+                    tokio::task::spawn_blocking(move || {
+                        let mut bytecode_hashes = vec![];
+                        let mut trie = trie;
+
+                        for (account_hash, account) in
+                            account_hashes.into_iter().zip(account_states)
+                        {
+                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                                bytecode_hashes.push(account.code_hash);
+                            }
+                            trie.insert(account_hash.0.to_vec(), account.encode_to_vec())
+                                .unwrap();
+                        }
+                        let computed_state_root = trie.hash().unwrap();
+                        bytecode_hashes.sort();
+                        bytecode_hashes.dedup();
+                        (computed_state_root, bytecode_hashes)
+                    })
+                    .await
+                    .unwrap();
 
                 let account_store_time =
                     Instant::now().saturating_duration_since(account_store_start);
@@ -456,8 +466,28 @@ impl Syncer {
                     Instant::now().saturating_duration_since(storages_store_start);
                 info!("Finished storing storage tries in: {storages_store_time:?}");
 
-                // - Descargar bytecodes
-                // - Switchear a full sync
+                // Download bytecodes
+                info!(
+                    "Starting bytecode download of {} hashes",
+                    bytecode_hashes.len()
+                );
+                let bytecodes = self
+                    .peers
+                    .request_bytecodes(bytecode_hashes.clone())
+                    .await
+                    .unwrap();
+                for (code_hash, bytecode) in bytecode_hashes.into_iter().zip(bytecodes) {
+                    let _ = store
+                        .add_account_code(code_hash, bytecode)
+                        .await
+                        .inspect_err(|e| {
+                            error!(
+                                "Failed to store bytecode for code hash {code_hash:?}, err={e:?}"
+                            )
+                        });
+                }
+
+                // - Switch to full sync
 
                 std::process::exit(0);
 

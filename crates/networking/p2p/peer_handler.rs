@@ -1014,6 +1014,7 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_bytecodes(&self, hashes: Vec<H256>) -> Option<Vec<Bytes>> {
+        std::process::exit(0);
         let hashes_len = hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
