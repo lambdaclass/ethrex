@@ -232,7 +232,7 @@ impl Blockchain {
             let mut used_storage_tries = HashMap::new();
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
-            for (account, keys) in logger
+            for (account, account_keys) in logger
                 .state_accessed
                 .lock()
                 .map_err(|_e| {
@@ -245,13 +245,13 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to access account from trie".to_string())
                 })?;
                 // Get storage trie at before updates
-                if !keys.is_empty() {
+                if !account_keys.is_empty() {
                     if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
                     {
                         let (storage_trie_witness, storage_trie) =
                             TrieLogger::open_trie(storage_trie);
-                        // Access all the keys
-                        for storage_key in keys {
+                        // Access all the keys in the account
+                        for storage_key in account_keys {
                             let hashed_key = hash_key(storage_key);
                             storage_trie.get(&hashed_key).map_err(|_e| {
                                 ChainError::WitnessGeneration(
@@ -294,13 +294,14 @@ impl Blockchain {
                     used_storage_tries,
                 )
                 .await?;
-            for (_address, (witness, _storage_trie)) in storage_tries_after_update {
+            for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
                     ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
                 })?;
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
+                keys.push(address);
             }
             trie = updated_trie;
         }
