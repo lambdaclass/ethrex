@@ -515,7 +515,7 @@ impl Syncer {
                     .await?
                     .ok_or(SyncError::CorruptDB)?;
                 let block_number = block.header.number;
-                self.blockchain.add_block(&block).await?;
+                // self.blockchain.add_block(&block).await?;
                 store
                     .set_canonical_block(block_number, all_block_hashes[pivot_idx])
                     .await?;
