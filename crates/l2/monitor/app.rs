@@ -28,7 +28,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
-use crate::based::sequencer_state::SequencerState;
 use crate::monitor::widget::{ETHREX_LOGO, LATEST_BLOCK_STATUS_TABLE_LENGTH_IN_DIGITS};
 use crate::{
     SequencerConfig,
@@ -38,19 +37,20 @@ use crate::{
     },
     sequencer::errors::MonitorError,
 };
+use crate::{based::sequencer_state::SequencerState, sequencer::configs::MonitorConfig};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 const SCROLL_DEBOUNCE_DURATION_LOGS: Duration = Duration::from_millis(700); // 700ms
 const SCROLL_DEBOUNCE_DURATION_OVERVIEW: Duration = Duration::from_millis(50); // 50ms
 
-const DEFAULT_TOTAL_HEIGHT: u16 = 104; // Default height for the terminal
+const DEFAULT_TOTAL_HEIGHT: u16 = 11; // Default height for the terminal
 #[derive(Clone)]
 pub struct EthrexMonitorWidget {
     pub title: String,
     pub should_quit: bool,
     pub tabs: TabsState,
-    pub tick_rate: u64,
+    pub cfg: MonitorConfig,
 
     pub logger: Arc<TuiWidgetState>,
     pub node_status: NodeStatusTable,
@@ -128,7 +128,7 @@ impl GenServer for EthrexMonitor {
     ) -> Result<Self::State, Self::Error> {
         // Tick handling
         send_interval(
-            Duration::from_millis(state.widget.tick_rate),
+            Duration::from_millis(state.widget.cfg.tick_rate),
             handle.clone(),
             Self::CastMsg::Tick,
         );
@@ -215,7 +215,7 @@ impl EthrexMonitorWidget {
             },
             should_quit: false,
             tabs: TabsState::default(),
-            tick_rate: cfg.monitor.tick_rate,
+            cfg: cfg.monitor.clone(),
             global_chain_status: GlobalChainStatusTable::new(cfg),
             logger: Arc::new(
                 TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
@@ -233,7 +233,12 @@ impl EthrexMonitorWidget {
             last_scroll: Instant::now(),
             vertical_scroll: 0,
             vertical_scroll_state: ScrollbarState::default(),
-            total_height: DEFAULT_TOTAL_HEIGHT,
+            total_height: DEFAULT_TOTAL_HEIGHT
+                + cfg.monitor.batch_widget_height
+                + cfg.monitor.block_widget_height
+                + cfg.monitor.mempool_widget_height
+                + cfg.monitor.l1_l2_messages_widget_height
+                + cfg.monitor.l2_l1_messages_widget_height,
         };
         monitor_widget.on_tick().await?;
         Ok(monitor_widget)
@@ -377,11 +382,11 @@ impl EthrexMonitorWidget {
 
                 let chunks = Layout::vertical([
                     Constraint::Length(10),
-                    Constraint::Length(20),
-                    Constraint::Length(20),
-                    Constraint::Length(20),
-                    Constraint::Length(20),
-                    Constraint::Length(10),
+                    Constraint::Length(self.cfg.batch_widget_height),
+                    Constraint::Length(self.cfg.block_widget_height),
+                    Constraint::Length(self.cfg.mempool_widget_height),
+                    Constraint::Length(self.cfg.l1_l2_messages_widget_height),
+                    Constraint::Length(self.cfg.l2_l1_messages_widget_height),
                     Constraint::Length(1),
                 ])
                 .split(*chunks.get(1).ok_or(MonitorError::Chunks)?);
