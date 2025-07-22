@@ -301,7 +301,7 @@ impl Blockchain {
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 used_trie_nodes.extend_from_slice(&witness);
-                keys.push(address);
+                keys.push(address.0.to_vec());
             }
             trie = updated_trie;
         }
