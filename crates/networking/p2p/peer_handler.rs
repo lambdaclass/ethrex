@@ -1857,24 +1857,27 @@ impl PeerHandler {
                 debug!("Failed to send message to peer: {err:?}");
                 continue;
             }
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                            if id == request_id =>
-                        {
-                            self.record_peer_success(peer_id).await;
-                            return Some((slots, proof));
+            if let Some((mut slots, proof)) =
+                tokio::time::timeout(Duration::from_secs(2), async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::StorageRanges(StorageRanges {
+                                id,
+                                slots,
+                                proof,
+                            })) if id == request_id => {
+                                self.record_peer_success(peer_id).await;
+                                return Some((slots, proof));
+                            }
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None,
                         }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
                     }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
+                })
+                .await
+                .ok()
+                .flatten()
             {
                 // Check we got a reasonable amount of storage ranges
                 if slots.len() != 1 {
