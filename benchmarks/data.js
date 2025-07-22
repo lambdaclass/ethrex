@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753192892841,
+  "lastUpdate": 1753194341776,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10806,6 +10806,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00771521387283237,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e283db20a41622318fda4869992e08591911625e",
+          "message": "feat(levm): execute arbitrary bytecode (#3626)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nHave a runner for LEVM that expects some **inputs** like Transaction,\nFork, etc. in an `json` file and **bytecode in mnemonics** in another\nfile. Stack and memory can be preloaded within the `json`.\nMore info in the `README.md`\n\nSidenote: I had to do a refactor in LEVM setup because for me to be able\nto alter the stack and memory before executing these have to be\ninitialized in the `new()`, thing that we weren't doing. So we now\ninitialize the first callframe there and not in `execute()`.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3583\n\n---------\n\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>\nCo-authored-by: Edgar <git@edgl.dev>",
+          "timestamp": "2025-07-22T13:16:10Z",
+          "tree_id": "f5786f587ea0b2b549d9262913b775de1a103a34",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e283db20a41622318fda4869992e08591911625e"
+        },
+        "date": 1753194329463,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013675532786885246,
             "unit": "Mgas/s"
           }
         ]
