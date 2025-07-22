@@ -40,6 +40,7 @@ extract_function() {
     END {
         if (!found) {
             print "// ⚠️ Function not found: " funcname > "/dev/stderr"
+            exit 1
         }
     }
     ' "$1"
