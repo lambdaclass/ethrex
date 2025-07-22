@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753215457409,
+  "lastUpdate": 1753216491300,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5395,6 +5395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169428522229,
             "range": "± 322104276",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cfe00d33bd3464bd5cd625978d92a0f1f8068f63",
+          "message": "fix(l2): enable bls12_381,k256 & ecdsa sp1 precompiles (#3691)\n\n**Motivation**\n\nThe patch for bls12_381 precompile is not being applied because we are\nimporting the crate from our fork.\nAlso two other patches that were previously not compiling after #3689 is\nmerged can now be reenabled\n\n**Description**\n\n-\n[Forked](https://github.com/lambdaclass/bls12_381-patch/tree/expose-fp-struct)\nthe patch from sp1 and updated it with the same changes we have on the\nmain crate fork\n- Uncommented the previously commented patches\n\n**How to check**\n\n```\ncd crates/l2/prover/zkvm/interface/sp1\n```\nbls12_381\n```\ncargo tree -p bls12_381\n```\nreturns `bls12_381 v0.8.0\n(https://github.com/lambdaclass/bls12_381-patch/?branch=expose-fp-struct#f2242f78)`\n\necdsa\n```\ncargo tree -p ecdsa\n```\nreturns `ecdsa v0.16.9\n(https://github.com/sp1-patches/signatures?tag=patch-16.9-sp1-4.1.0#1880299a)`\n\nk256\n```\ncargo tree -p k256\n```\nreturns `k256 v0.13.4\n(https://github.com/sp1-patches/elliptic-curves?tag=patch-k256-13.4-sp1-5.0.0#f7d8998e)`\n\nComparing this to main that it either returns no patch or errors out",
+          "timestamp": "2025-07-22T19:50:33Z",
+          "tree_id": "556520e376bd9a93a8bfb4cc139da53a6e4531d0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cfe00d33bd3464bd5cd625978d92a0f1f8068f63"
+        },
+        "date": 1753216479511,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 170390827733,
+            "range": "± 1386689472",
             "unit": "ns/iter"
           }
         ]
