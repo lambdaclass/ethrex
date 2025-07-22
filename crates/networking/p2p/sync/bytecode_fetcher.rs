@@ -120,20 +120,24 @@ async fn bytecode_fetcher(
 
 /// Receives a batch of code hahses, fetches their respective bytecodes via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
 async fn fetch_bytecode_batch(
-    batch: Vec<H256>,
+    mut batch: Vec<H256>,
     peers: PeerHandler,
     store: Store,
 ) -> Result<Vec<H256>, SyncError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
-        debug!("Received {} bytecodes", bytecodes.len());
-        let mut batch_set: HashSet<H256> = HashSet::from_iter(batch.into_iter());
-        // Store the bytecodes
         for code in bytecodes.into_iter() {
             let code_hash = code_hash(&code);
-            batch_set.remove(&code_hash);
+            // Remove the code hahs from the batch and all code hashes before it
+            // If the peer did not return a bytecode for a given hash before it then it must no longer exist in the latest state
+            while !batch.is_empty() {
+                let hash = batch.remove(0);
+                if hash == code_hash {
+                    break;
+                }
+            };
             store.add_account_code(code_hash, code).await?;
         }
-        Ok(batch_set.into_iter().collect())
+        Ok(batch)
     } else {
         // If no peer returned these bytecodes then they must have been removed
         Ok(vec![])
