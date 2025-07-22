@@ -377,6 +377,11 @@ async fn process_batch_sealed(
     msg: &BatchSealed,
 ) -> Result<(), RLPxError> {
     let l2_state = established.l2_state.connection_state_mut()?;
+    l2_state.store_rollup.seal_batch(*msg.batch.clone()).await?;
+    info!(
+        "Sealed batch {} with blocks from {} to {}",
+        msg.batch.number, msg.batch.first_block, msg.batch.last_block
+    );
     for block_number in msg.batch.first_block..=msg.batch.last_block {
         let block_hash =
             l2_state
@@ -395,11 +400,6 @@ async fn process_batch_sealed(
                 )))
             })?;
     }
-    l2_state.store_rollup.seal_batch(*msg.batch.clone()).await?;
-    info!(
-        "Sealed batch {} with blocks from {} to {}",
-        msg.batch.number, msg.batch.first_block, msg.batch.last_block
-    );
     Ok(())
 }
 
