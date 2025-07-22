@@ -64,6 +64,7 @@ contract OnChainProposer is
     //     public authorizedSequencerAddresses;
 
     address public BRIDGE;
+    /// @dev Deprecated variable.
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
@@ -409,7 +410,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 224,
+            publicData.length == 256,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -447,13 +448,13 @@ contract OnChainProposer is
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
         );
-        uint256 chainId = uint256(bytes32(publicData[160:192]));
+        uint256 chainId = uint256(bytes32(publicData[192:224]));
         require(
             chainId == CHAIN_ID,
             "OnChainProposer: given chain id does not correspond to this network"
         );
         uint256 nonPrivilegedTransactions = uint256(
-            bytes32(publicData[192:224])
+            bytes32(publicData[224:256])
         );
         require(
             !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
