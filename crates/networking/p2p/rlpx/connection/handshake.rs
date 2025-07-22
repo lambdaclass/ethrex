@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
 };
 
 use crate::{
@@ -46,6 +47,8 @@ type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
 pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
+pub const PEER_INITIAL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(2);
+
 
 pub(crate) struct RemoteState {
     pub(crate) public_key: H512,
@@ -66,7 +69,14 @@ pub(crate) async fn perform(
     let (context, node, framed, _inbound) = match state {
         InnerState::Initiator(Initiator { context, node, .. }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
-            let mut stream = match tcp_stream(addr).await {
+            let stream = match tokio::time::timeout(PEER_INITIAL_CONNECTION_TIMEOUT, tcp_stream(addr)).await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    log_peer_debug(&node, &format!("Error creating tcp connection - Timeout"));
+                    return Err(RLPxError::HandshakeError("Timeout in initial connection".to_owned()));
+                }
+            };
+            let mut stream = match stream {
                 Ok(result) => result,
                 Err(error) => {
                     log_peer_debug(&node, &format!("Error creating tcp connection {error}"));
