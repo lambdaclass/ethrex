@@ -98,12 +98,10 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     #[cfg(feature = "l2")]
     {
-        let l2_fields = l2_fields.unwrap_or(
-            L2Fields {
-                blob_commitment: [0; 48],
-                blob_proof: [0; 48],
-            }
-        );
+        let l2_fields = l2_fields.unwrap_or(L2Fields {
+            blob_commitment: [0; 48],
+            blob_proof: [0; 48],
+        });
 
         Ok(ProgramInput {
             blocks,
