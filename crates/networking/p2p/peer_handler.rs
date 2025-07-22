@@ -776,9 +776,6 @@ impl PeerHandler {
                         completed_tasks += 1;
                     }
                 }
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
                 if chunk_start_end.is_none() {
                     completed_tasks += 1;
                 }
