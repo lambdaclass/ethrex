@@ -826,12 +826,6 @@ impl PeerHandler {
                 debug!("{peer_id} added as downloader");
             }
 
-            info!("===============================");
-            for (peer_id, tasks_in_progress) in &downloaders {
-                info!("Peer {}, tasks in progress: {}", peer_id, tasks_in_progress);
-            }
-            info!("===============================");
-
             // each peer can have (at most) 5 tasks at the same time
             let free_downloaders = downloaders
                 .clone()
