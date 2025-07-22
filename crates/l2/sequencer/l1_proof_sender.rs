@@ -5,6 +5,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -29,7 +30,7 @@ use aligned_sdk::{
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
-use ethers::signers::{Signer, Wallet};
+use ethers::signers::{Signer as EthersSigner, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
@@ -252,7 +253,13 @@ async fn send_proof_to_aligned(
             ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
         })?;
 
-    let wallet = Wallet::from_bytes(&state.signer.address().0)
+    let Signer::Local(local_signer) = &state.signer else {
+        return Err(ProofSenderError::InternalError(
+            "Aligned mode only supports local signer".to_string(),
+        ));
+    };
+
+    let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
         .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
 
     let wallet = wallet.with_chain_id(state.l1_chain_id);
