@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -48,7 +48,7 @@ pub struct AccountMismatch {
     pub expected_code: Bytes,
     pub actual_code: Bytes,
     pub expected_storage: HashMap<U256, U256>,
-    pub actual_storage: HashMap<H256, U256>,
+    pub actual_storage: BTreeMap<H256, U256>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding

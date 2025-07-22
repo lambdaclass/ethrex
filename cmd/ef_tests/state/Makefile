@@ -164,4 +164,3 @@ samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
 TESTS_PATH := ./vectors
 run-new-runner:
 	cargo test --package ef_tests-state --test new_runner --release -- $(TESTS_PATH)
-

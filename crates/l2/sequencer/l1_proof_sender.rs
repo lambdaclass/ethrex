@@ -5,10 +5,10 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
-use secp256k1::SecretKey;
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, send_after},
@@ -30,16 +30,14 @@ use aligned_sdk::{
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
-// TODO: Remove this import once it's no longer required by the SDK.
-use ethers::signers::{Signer, Wallet};
+use ethers::signers::{Signer as EthersSigner, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
     eth_client: EthClient,
-    l1_address: Address,
-    l1_private_key: SecretKey,
+    signer: ethrex_l2_rpc::signer::Signer,
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
@@ -71,8 +69,7 @@ impl L1ProofSenderState {
         if cfg.dev_mode {
             return Ok(Self {
                 eth_client,
-                l1_address: cfg.l1_address,
-                l1_private_key: cfg.l1_private_key,
+                signer: cfg.signer.clone(),
                 on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
@@ -87,8 +84,7 @@ impl L1ProofSenderState {
 
         Ok(Self {
             eth_client,
-            l1_address: cfg.l1_address,
-            l1_private_key: cfg.l1_private_key,
+            signer: cfg.signer.clone(),
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
@@ -243,7 +239,7 @@ async fn send_proof_to_aligned(
     let verification_data = VerificationData {
         proving_system: ProvingSystemId::SP1,
         proof: aligned_proof.proof(),
-        proof_generator_addr: state.l1_address.0.into(),
+        proof_generator_addr: state.signer.address().0.into(),
         vm_program_code: Some(elf),
         verification_key: None,
         pub_input: None,
@@ -251,13 +247,19 @@ async fn send_proof_to_aligned(
 
     let fee_estimation = estimate_fee(state).await?;
 
-    let nonce = get_nonce_from_batcher(state.network.clone(), state.l1_address.0.into())
+    let nonce = get_nonce_from_batcher(state.network.clone(), state.signer.address().0.into())
         .await
         .map_err(|err| {
             ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
         })?;
 
-    let wallet = Wallet::from_bytes(state.l1_private_key.as_ref())
+    let Signer::Local(local_signer) = &state.signer else {
+        return Err(ProofSenderError::InternalError(
+            "Aligned mode only supports local signer".to_string(),
+        ));
+    };
+
+    let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
         .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
 
     let wallet = wallet.with_chain_id(state.l1_chain_id);
@@ -331,8 +333,7 @@ pub async fn send_proof_to_contract(
         calldata,
         &state.eth_client,
         state.on_chain_proposer_address,
-        state.l1_address,
-        &state.l1_private_key,
+        &state.signer,
     )
     .await?;
 
