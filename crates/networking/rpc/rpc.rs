@@ -507,6 +507,7 @@ mod tests {
                         "cancunTime": 0,
                         "pragueTime": 1718232101,
                         "verkleTime": null,
+                        "osakaTime": null,
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
