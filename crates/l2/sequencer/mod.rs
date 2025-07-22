@@ -15,7 +15,6 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -130,13 +129,13 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
         });
+    let mut verifier_handle = None;
 
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
+        verifier_handle = Some(tokio::spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
             rollup_store.clone(),
-        ));
+        )));
     }
     if cfg.based.based {
         let _ = StateUpdater::spawn(
@@ -174,23 +173,16 @@ pub async fn start_l2(
         .await?;
     }
 
-    if let Some(res) = task_set.join_next().await {
-        // If a task finishes, the whole sequencer should stop
-        match res {
+    if let Some(handle) = verifier_handle {
+        match handle.await {
             Ok(Ok(_)) => {}
             Ok(Err(err)) => {
-                error!("Error starting Sequencer: {err}");
+                error!("Error running verifier: {err}");
             }
             Err(err) => {
-                error!("JoinSet error: {err}");
+                error!("Task error: {err}");
             }
         };
-        task_set.abort_all();
-    } else {
-        // If no tasks were spawned, we let the sequencer run until it is cancelled
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
     }
 
     Ok(())
