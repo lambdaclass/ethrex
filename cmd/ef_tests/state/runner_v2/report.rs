@@ -22,15 +22,12 @@ pub fn write_passing_tests_to_report(test: &Test) {
         .append(true)
         .create(true)
         .open(successful_report_path)
-        .map_err(|err| RunnerError::FailedToCreateReportFile(err.to_string()))
         .unwrap();
     let content = format!(
         "Test {:?} in path {:?} was SUCCESSFUL for all forks.\n",
         test.name, test.path
     );
-    let _ = report
-        .write_all(content.as_bytes())
-        .map_err(|err| RunnerError::FailedToWriteReport(err.to_string()));
+    report.write_all(content.as_bytes()).unwrap()
 }
 pub fn write_failed_tests_to_report(test: &Test, failing_test_cases: Vec<(Fork, PostCheckResult)>) {
     let failing_report_path = PathBuf::from("./runner_v2/failure_report.txt");
@@ -38,21 +35,16 @@ pub fn write_failed_tests_to_report(test: &Test, failing_test_cases: Vec<(Fork, 
         .append(true)
         .create(true)
         .open(failing_report_path)
-        .map_err(|err| RunnerError::FailedToCreateReportFile(err.to_string()))
         .unwrap();
     let content = format!(
-        "-----------------------------------------------------\nTest checks failed for test: {:?}. \nTest path: {:?}. ",
-        test.name, test.path
+        "Test checks failed for test: {:?}. \nTest path: {:?}\nTest description: {}\nTest doc reference: {}\n ",
+        test.name, test.path, test._info.description.clone().unwrap_or("This test has no description".to_string()), test._info.reference_spec.clone().unwrap_or("This test has no reference spec".to_string())
     );
-    let _ = report
-        .write_all(content.as_bytes())
-        .map_err(|err| RunnerError::FailedToWriteReport(err.to_string()));
+    report.write_all(content.as_bytes()).unwrap();
 
     for (fork, check_result) in failing_test_cases {
         let content = format!("\nFork: {:?}\n{}", fork, check_result);
-        let _ = report
-            .write_all(content.as_bytes())
-            .map_err(|err| RunnerError::FailedToWriteReport(err.to_string()));
+        report.write_all(content.as_bytes()).unwrap();
     }
     let dividing_line = "-----------------------------------------------------\n\n".to_string();
     let _ = report.write_all(dividing_line.as_bytes());

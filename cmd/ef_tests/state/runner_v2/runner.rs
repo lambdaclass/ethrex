@@ -1,10 +1,11 @@
+use colored::Colorize;
 use std::fs;
 
 use ethrex_common::{
     U256,
     types::{EIP1559Transaction, EIP7702Transaction, Transaction, TxKind},
 };
-use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM};
+use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::VMType};
 
 use crate::runner_v2::{
     error::RunnerError,
@@ -14,19 +15,35 @@ use crate::runner_v2::{
     utils::{effective_gas_price, load_initial_state},
 };
 
+/// Runs all the tests that have been parsed.
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     // Remove previous report if it exists.
     let _ = fs::remove_file("./runner_v2/success_report.txt");
     let _ = fs::remove_file("./runner_v2/failure_report.txt");
+    let mut passing_tests = 0;
+    let mut failing_tests = 0;
+    let mut total_run = 0;
 
     for test in tests {
-        println!("Executing test: {}", test.name);
-        run_test(&test).await?;
+        //println!("Executing test: {}", test.name);
+        run_test(
+            &test,
+            &mut passing_tests,
+            &mut failing_tests,
+            &mut total_run,
+        )
+        .await?;
     }
     Ok(())
 }
 
-pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
+/// Runs each individual test case (combination of <fork, transaction, post-state>) of a specific test.
+pub async fn run_test(
+    test: &Test,
+    passing_tests: &mut usize,
+    failing_tests: &mut usize,
+    total_run: &mut usize,
+) -> Result<(), RunnerError> {
     let mut failing_test_cases = Vec::new();
     for test_case in &test.test_cases {
         // Setup VM for transaction.
@@ -34,8 +51,7 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case)?;
         let tracer = LevmCallTracer::disabled();
-        let vm_type = ethrex_levm::vm::VMType::L1;
-        let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, vm_type);
+        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1);
 
         // Execute transaction with VM.
         let execution_result = vm.execute();
@@ -54,13 +70,25 @@ pub async fn run_test(test: &Test) -> Result<(), RunnerError> {
         // If test case did not pass the checks, add it to failing test cases record (for future reporting)
         if !checks_result.passed {
             failing_test_cases.push((test_case.fork, checks_result));
+            *failing_tests += 1;
+        } else {
+            *passing_tests += 1;
         }
+        *total_run += 1;
+
+        print!(
+            "\rTotal run tests: {} - Total passed: {} - Total failed: {}",
+            format!("{}", total_run).blue(),
+            format!("{}", passing_tests).green(),
+            format!("{}", failing_tests).red()
+        );
     }
     create_report((test, failing_test_cases))?;
 
     Ok(())
 }
 
+/// Gets the enviroment needed to prepare the VM for a transaction.
 pub fn get_vm_env_for_test(
     test_env: Env,
     test_case: &TestCase,
@@ -92,6 +120,7 @@ pub fn get_vm_env_for_test(
     })
 }
 
+/// Constructs the transaction that will be executed in a specific test case.
 pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, RunnerError> {
     let value = test_case.value;
     let data = test_case.data.clone();
@@ -100,6 +129,14 @@ pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, Runner
         .iter()
         .map(|list_item| (list_item.address, list_item.storage_keys.clone()))
         .collect();
+
+    // To simplify things, we represent all transactions using only two internal types.
+    // Transactions of type 0 (legacy), 1 (EIP-2930), 2 (EIP-1559), and 3 (EIP-4844) are all
+    // treated as EIP-1559-style transactions.
+    // For type 3 transactions (EIP-4844), which include blobs, the difference is captured via
+    // optional blob-related VM environment variables — these are set to Some() instead of None (check `get_vm_env_for_test()`).
+    // Transactions of type 4 (EIP-7702) are represented using their actual type.
+    // This approach avoids the need to handle five distinct transaction types separately.
     let tx = match &test_case.authorization_list {
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_case.to {

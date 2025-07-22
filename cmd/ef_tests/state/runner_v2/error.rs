@@ -1,18 +1,8 @@
-use std::path::PathBuf;
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum RunnerError {
     FailedToGetAccountsUpdates(String),
-    CurrentBaseFeeMissing,
-    MaxPriorityFeePerGasMissing,
-    MaxFeePerGasMissing,
+    VMExecutionError(String),
     EIP7702ShouldNotBeCreateType,
-    FailedToReadDirectory(PathBuf, String),
-    FailedToConvertPath,
-    FailedToGetFileType(String),
-    FailedToParseTestFile(PathBuf, String),
-    FailedToOpenFile(String),
-    FailedToWriteReport(String),
-    FailedToCreateReportFile(String),
     FailedToGetIndexValue(String),
 }
+

@@ -17,35 +17,29 @@ const IGNORED_TESTS: [&str; 12] = [
     "create2collisionStorageParis.json", // Skip because it fails on REVM
     "InitCollisionParis.json",         // Skip because it fails on REVM
     "InitCollision.json",              // Skip because it fails on REVM
-    "contract_create.json",
+    "contract_create.json", // Skip for now as it requires special transaction type handling
 ];
 
 /// Parse a `.json` file of tests into a Vec<Test>.
 pub fn parse_file(path: PathBuf) -> Result<Vec<Test>, RunnerError> {
-    println!("Parsing test file: {:?}", path);
-    let test_file = std::fs::File::open(path.clone())
-        .map_err(|err| RunnerError::FailedToOpenFile(err.to_string()))?;
-    let mut tests: Tests = serde_json::from_reader(test_file)
-        .map_err(|err| RunnerError::FailedToParseTestFile(path.clone(), err.to_string()))?;
+    let test_file = std::fs::File::open(path.clone()).unwrap();
+    let mut tests: Tests = serde_json::from_reader(test_file).unwrap();
     for test in tests.0.iter_mut() {
-        test.path = String::from(path.to_str().ok_or(RunnerError::FailedToConvertPath)?);
+        test.path = String::from(path.to_str().unwrap());
     }
     Ok(tests.0)
 }
 
 /// Parse a directory of tests into a Vec<Test>.
 pub fn parse_dir(path: PathBuf) -> Result<Vec<Test>, RunnerError> {
+    println!("Parsing test directory: {:?}", path);
     let mut tests = Vec::new();
-    let dir_entries = std::fs::read_dir(path.clone())
-        .map_err(|err| RunnerError::FailedToReadDirectory(path, err.to_string()))?
-        .flatten();
+    let dir_entries = std::fs::read_dir(path.clone()).unwrap().flatten();
 
     // For each entry in the directory check if it is a .json file or a directory as well.
     for entry in dir_entries {
         // Check entry type
-        let entry_type = entry
-            .file_type()
-            .map_err(|err| RunnerError::FailedToGetFileType(err.to_string()))?;
+        let entry_type = entry.file_type().unwrap();
         if entry_type.is_dir() {
             let dir_tests = parse_dir(entry.path())?;
             tests.push(dir_tests);

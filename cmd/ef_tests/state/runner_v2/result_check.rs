@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
-    types::{Account, AccountInfo, AccountUpdate, Genesis},
+    types::{Account, AccountUpdate, Genesis},
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
@@ -72,23 +72,27 @@ pub async fn check_test_case_results(
         );
         Ok(checks_result)
     } else {
-        // Verify hashed logs.
-        check_logs(
-            test_case,
-            &execution_result.clone().unwrap(),
-            &mut checks_result,
-        );
-
-        // Verify accounts' post state.
-        check_accounts_state(vm.db, test_case, &mut checks_result, genesis);
-
         // Verify expected root hash.
         check_root(vm, initial_block_hash, store, test_case, &mut checks_result).await?;
+        // We only compare the other fields if there is a root mismatch, otherwise, test has passed.
+        if !checks_result.passed {
+            // Verify hashed logs.
+            check_logs(
+                test_case,
+                &execution_result.clone().unwrap(),
+                &mut checks_result,
+            );
+
+            // Verify accounts' post state.
+            check_accounts_state(&mut vm.db.clone(), test_case, &mut checks_result, genesis);
+        }
 
         Ok(checks_result)
     }
 }
 
+/// Verifies that the root of the state after executing the tests is the one expected
+/// (the one that appears in the `.json` file).
 pub async fn check_root(
     vm: &mut VM<'_>,
     initial_block_hash: H256,
@@ -96,7 +100,7 @@ pub async fn check_root(
     test_case: &TestCase,
     check_result: &mut PostCheckResult,
 ) -> Result<(), RunnerError> {
-    let account_updates = backends::levm::LEVM::get_state_transitions(vm.db)
+    let account_updates = backends::levm::LEVM::get_state_transitions(&mut vm.db.clone())
         .map_err(|e| RunnerError::FailedToGetAccountsUpdates(e.to_string()))?;
     let post_state_root = post_state_root(&account_updates, initial_block_hash, store).await;
     if post_state_root != test_case.post.hash {
@@ -106,6 +110,8 @@ pub async fn check_root(
     Ok(())
 }
 
+/// Calculates the post state root applying the changes (the account updates) that are a
+/// result of running the transaction to the storage.
 pub async fn post_state_root(
     account_updates: &[AccountUpdate],
     initial_block_hash: H256,
@@ -119,6 +125,8 @@ pub async fn post_state_root(
     ret_account_updates_batch.state_trie_hash
 }
 
+/// Used when the test case expected an exception. Verifies first if it, indeed, failed
+/// and if it did if it failed with the corresponding error.
 pub fn check_exception(
     expected_exceptions: Vec<TransactionExpectedException>,
     execution_result: Result<ExecutionReport, VMError>,
@@ -136,6 +144,8 @@ pub fn check_exception(
     }
 }
 
+/// Verifies whether a transaction execution error is contained in a vector of
+/// expected exceptions.
 fn exception_matches_expected(
     expected_exceptions: Vec<TransactionExpectedException>,
     returned_error: VMError,
