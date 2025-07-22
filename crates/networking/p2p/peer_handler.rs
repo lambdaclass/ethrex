@@ -21,10 +21,7 @@ use crate::{
     rlpx::{
         connection::server::CastMessage,
         eth::{
-            blocks::{
-                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-                HashOrNumber,
-            },
+            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
@@ -1083,9 +1080,6 @@ impl PeerHandler {
                 if remaining_start < remaining_end {
                     tasks_queue_not_started.push_back((remaining_start, remaining_end));
                 } else {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score += 1;
-
                     completed_tasks += 1;
                 }
                 if bytecodes.is_empty() {
@@ -1095,6 +1089,9 @@ impl PeerHandler {
                 }
 
                 downloaded_count += bytecodes.len() as u64;
+
+                let peer_score = scores.entry(peer_id).or_default();
+                *peer_score += 1;
 
                 info!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -1382,8 +1379,6 @@ impl PeerHandler {
                     let task = (remaining_start, remaining_end, remaining_start_hash);
                     tasks_queue_not_started.push_back(task);
                 } else {
-                    let peer_score = scores.entry(peer_id).or_default();
-                    *peer_score += 1;
                     completed_tasks += 1;
                 }
 
@@ -1392,6 +1387,9 @@ impl PeerHandler {
                     *peer_score -= 1;
                     continue;
                 }
+
+                let peer_score = scores.entry(peer_id).or_default();
+                *peer_score += 1;
 
                 downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
