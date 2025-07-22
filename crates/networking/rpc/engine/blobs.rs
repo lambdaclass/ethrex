@@ -14,7 +14,7 @@ use crate::{
 
 // -> https://github.com/ethereum/execution-apis/blob/d41fdf10fabbb73c4d126fb41809785d830acace/src/engine/cancun.md?plain=1#L186
 const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize = 128;
-const CELLS_PER_EXT_BLOB: usize = 255; //??
+const CELLS_PER_EXT_BLOB: usize = 1; //??
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobsV1Request {
@@ -150,7 +150,7 @@ impl RpcHandler for BlobsV2Request {
                     .iter()
                     .position(|&hash| hash == current_versioned_hash)
                 {
-                    // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
+                    // If the versioned hash is one of the requested we save its corresponding blob and its proofs in the returned vector. We store them in the same position as the versioned hash was received.
                     res[index] = Some(BlobAndProofV2 {
                         blob: *blob,
                         proof: proofs_in_bundle
