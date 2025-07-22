@@ -209,6 +209,11 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             monitor: MonitorConfig {
                 enabled: opts.monitor,
                 tick_rate: opts.monitor_opts.tick_rate,
+                batch_widget_height: opts.monitor_opts.batch_widget_height,
+                block_widget_height: opts.monitor_opts.block_widget_height,
+                mempool_widget_height: opts.monitor_opts.mempool_widget_height,
+                l1_l2_messages_widget_height: opts.monitor_opts.l1_l2_messages_widget_height,
+                l2_l1_messages_widget_height: opts.monitor_opts.l2_l1_messages_widget_height,
             },
         })
     }
@@ -672,4 +677,14 @@ pub struct MonitorOptions {
     /// time in ms between two ticks.
     #[arg(short, long, default_value_t = 1000)]
     tick_rate: u64,
+    #[arg(long, default_value_t = 10)]
+    batch_widget_height: u16,
+    #[arg(long, default_value_t = 10)]
+    block_widget_height: u16,
+    #[arg(long, default_value_t = 10)]
+    mempool_widget_height: u16,
+    #[arg(long, default_value_t = 10)]
+    l1_l2_messages_widget_height: u16,
+    #[arg(long, default_value_t = 10)]
+    l2_l1_messages_widget_height: u16,
 }

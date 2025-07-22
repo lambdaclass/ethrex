@@ -98,4 +98,14 @@ pub struct MonitorConfig {
     pub enabled: bool,
     /// time in ms between two ticks.
     pub tick_rate: u64,
+    /// height in lines of the batch widget
+    pub batch_widget_height: u16,
+    /// height in lines of the block widget
+    pub block_widget_height: u16,
+    /// height in lines of the mempool widget
+    pub mempool_widget_height: u16,
+    /// height in lines of the L1 to L2 messages widget
+    pub l1_l2_messages_widget_height: u16,
+    /// height in lines of the L2 to L1 messages widget
+    pub l2_l1_messages_widget_height: u16,
 }
