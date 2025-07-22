@@ -317,16 +317,16 @@ impl Syncer {
                     .collect();
 
                 // deposit contract
-                let wanted1_hex = "0x00000000219ab540356cBB839Cbe05303d7705Fa";
+                let wanted1_hex = "00000000219ab540356cBB839Cbe05303d7705Fa";
                 let wanted1 = keccak_hash::keccak(hex::decode(wanted1_hex).unwrap());
 
-                println!("Account 1 address: {wanted1_hex}");
+                println!("Account 1 address: 0x{wanted1_hex}");
 
                 // smart contract
-                let wanted2_hex = "0x6f47561Be156E185572B0eaDd1D11Bc66758E44e";
+                let wanted2_hex = "6f47561Be156E185572B0eaDd1D11Bc66758E44e";
                 let wanted2 = keccak_hash::keccak(hex::decode(wanted2_hex).unwrap());
 
-                println!("Account 2 address: {wanted2_hex}");
+                println!("Account 2 address: 0x{wanted2_hex}");
 
                 let account1 = account_storage_roots
                     .iter()
