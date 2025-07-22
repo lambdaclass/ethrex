@@ -55,11 +55,11 @@ impl RpcHandler for BlobsV1Request {
             if !context
                 .storage
                 .get_chain_config()?
-                .is_cancun_activated(current_block_header.timestamp)
+                .is_osaka_activated(current_block_header.timestamp)
             {
+                // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
                 return Err(RpcErr::UnsuportedFork(
-                    "getBlobsV1 engine request unsupported for forks previous to Cancun"
-                        .to_string(),
+                    "getBlobsV1 engine request not supported for Osaka".to_string(),
                 ));
             }
         };
