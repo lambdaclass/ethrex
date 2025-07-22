@@ -908,13 +908,6 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
-        if ret_size > 0 && ctx_result.output.len() < ret_size {
-            parent_call_frame.memory.resize(
-                ret_offset
-                    .checked_add(ret_size)
-                    .ok_or(ExceptionalHalt::OutOfBounds)?,
-            )?;
-        }
         parent_call_frame.memory.store_data(
             ret_offset,
             if ctx_result.output.len() >= ret_size {
