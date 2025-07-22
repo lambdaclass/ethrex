@@ -778,7 +778,6 @@ impl PeerHandler {
                         *peer_score += 1;
 
                         completed_tasks += 1;
-                        dbg!(&completed_tasks);
                     }
                 }
                 if chunk_start_end.is_none() {
