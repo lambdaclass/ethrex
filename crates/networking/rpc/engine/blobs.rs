@@ -14,7 +14,6 @@ use crate::{
 
 // -> https://github.com/ethereum/execution-apis/blob/d41fdf10fabbb73c4d126fb41809785d830acace/src/engine/cancun.md?plain=1#L186
 const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize = 128;
-const CELLS_PER_EXT_BLOB: usize = 1; //??
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobsV1Request {
@@ -138,6 +137,8 @@ impl RpcHandler for BlobsV2Request {
             let commitments_in_bundle = blobs_bundle.commitments;
             let proofs_in_bundle = blobs_bundle.proofs;
 
+            let cells_per_ext_blob = proofs_in_bundle.len() / blobs_in_bundle.len();
+
             // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
             for (i, (commitment, blob)) in commitments_in_bundle
                 .iter()
@@ -154,7 +155,7 @@ impl RpcHandler for BlobsV2Request {
                     res[index] = Some(BlobAndProofV2 {
                         blob: *blob,
                         proof: proofs_in_bundle
-                            [i * CELLS_PER_EXT_BLOB..(i + 1) * CELLS_PER_EXT_BLOB]
+                            [i * cells_per_ext_blob..(i + 1) * cells_per_ext_blob]
                             .to_vec(),
                     });
                 }
