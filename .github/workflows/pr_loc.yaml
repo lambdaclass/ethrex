@@ -77,6 +77,10 @@ jobs:
             echo "report_exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Report exists
+        run:
+          echo "Report exists: ${{ steps.check_report.outputs.report_exists }}"
+
       - name: Find comment
         if: steps.check_report.outputs.report_exists == 'true'
         continue-on-error: true
