@@ -782,18 +782,38 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
 
     let mut h = [0; 8];
 
-    h.copy_from_slice(&std::array::from_fn::<u64, 8, _>(|_| calldata.get_u64_le()));
+    #[allow(unsafe_code)]
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            calldata.get_unchecked(0..64).as_ptr().cast(),
+            h.as_mut_ptr(),
+            8,
+        );
+    }
 
     let mut m = [0; 16];
-
-    m.copy_from_slice(&std::array::from_fn::<u64, 16, _>(|_| {
-        calldata.get_u64_le()
-    }));
+    #[allow(unsafe_code)]
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            calldata.get_unchecked(64..192).as_ptr().cast(),
+            m.as_mut_ptr(),
+            16,
+        );
+    }
 
     let mut t = [0; 2];
-    t.copy_from_slice(&std::array::from_fn::<u64, 2, _>(|_| calldata.get_u64_le()));
 
-    let f = calldata.get_u8();
+    #[allow(unsafe_code)]
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            calldata.get_unchecked(192..208).as_ptr().cast(),
+            t.as_mut_ptr(),
+            2,
+        );
+    }
+
+    #[allow(unsafe_code)]
+    let f = unsafe { *calldata.get_unchecked(208) };
     if f != 0 && f != 1 {
         return Err(PrecompileError::ParsingInputError.into());
     }
