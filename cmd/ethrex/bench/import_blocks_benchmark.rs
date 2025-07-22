@@ -25,7 +25,7 @@ fn block_import() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
         Path::new("../../fixtures/blockchain/l2-1k-erc20.rlp"),
-        Path::new(&datadir),
+        &datadir,
         genesis,
         evm_engine,
         blockchain_type,

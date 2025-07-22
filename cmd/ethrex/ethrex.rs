@@ -69,7 +69,7 @@ async fn main() -> eyre::Result<()> {
 
     init_tracing(&opts);
 
-    let datadir = PathBuf::from(init_datadir(opts.datadir.clone()));
+    let datadir = init_datadir(opts.datadir.clone());
 
     let network = get_network(&opts);
 
