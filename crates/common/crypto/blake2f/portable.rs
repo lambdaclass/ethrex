@@ -105,7 +105,7 @@ pub fn blake2f_compress_f(
         clippy::arithmetic_side_effects,
         reason = "index is within constant bounds"
     )]
-    std::array::from_fn(|i| h[i] ^ v[i] ^ h[i + 8])
+    std::array::from_fn(|i| h[i] ^ v[i] ^ v[i + 8])
 }
 
 #[cfg(test)]
