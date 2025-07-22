@@ -1123,7 +1123,7 @@ impl PeerHandler {
 
         info!("Starting to download storage ranges from peers");
 
-        // *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+        *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
         let mut completed_tasks = 0;
@@ -1134,10 +1134,10 @@ impl PeerHandler {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
-                // *METRICS.accounts_downloads_tasks_queued.lock().await =
-                //     tasks_queue_not_started.len() as u64;
-                // *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
-                // *METRICS.downloaded_account_tries.lock().await = downloaded_count;
+                *METRICS.storages_downloads_tasks_queued.lock().await =
+                    tasks_queue_not_started.len() as u64;
+                *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
+                *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
             }
 
             if let Ok(result) = task_receiver.try_recv() {
@@ -1170,6 +1170,10 @@ impl PeerHandler {
                 }
 
                 downloaded_count += account_storages.len() as u64;
+                // If we didn't finish downloading the account, don't count it
+                if !remaining_start_hash.is_zero() {
+                    downloaded_count -= 1;
+                }
 
                 info!(
                     "Downloaded {} storages from peer {peer_id} (current count: {downloaded_count})",
@@ -1208,7 +1212,7 @@ impl PeerHandler {
                 .collect::<Vec<_>>();
 
             if new_last_metrics_update >= Duration::from_secs(1) {
-                // *METRICS.free_storage_downloaders.lock().await = free_downloaders.len() as u64;
+                *METRICS.free_storages_downloaders.lock().await = free_downloaders.len() as u64;
             }
 
             if free_downloaders.is_empty() {
@@ -1418,11 +1422,11 @@ impl PeerHandler {
             }
         }
 
-        // *METRICS.accounts_downloads_tasks_queued.lock().await =
-        //     tasks_queue_not_started.len() as u64;
-        // *METRICS.total_accounts_downloaders.lock().await = downloaders.len() as u64;
-        // *METRICS.downloaded_account_tries.lock().await = downloaded_count;
-        // *METRICS.free_accounts_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.storages_downloads_tasks_queued.lock().await =
+            tasks_queue_not_started.len() as u64;
+        *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
+        *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
+        *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
 
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading account ranges, total storage slots: {total_slots}");
