@@ -91,10 +91,13 @@ pub fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, Runner
         .map(|list_item| (list_item.address, list_item.storage_keys.clone()))
         .collect();
 
-    // For simplicity, we only use two types of transactions to represent all cases.
-    // Legacy, EIP-2930, and EIP-1559 transactions (which do not support blobs) are all treated as EIP-1559 transactions.
-    // Blob supporting transactions, EIP-4844 and EIP-7702, are represented using the latest.
-    // This avoids having to handle five different transaction types separately.
+    // To simplify things, we represent all transactions using only two internal types.
+    // Transactions of type 0 (legacy), 1 (EIP-2930), 2 (EIP-1559), and 3 (EIP-4844) are all
+    // treated as EIP-1559-style transactions.
+    // For type 3 transactions (EIP-4844), which include blobs, the difference is captured via
+    // optional blob-related VM environment variables — these are set to Some() instead of None (check `get_vm_env_for_test()`).
+    // Transactions of type 4 (EIP-7702) are represented using their actual type.
+    // This approach avoids the need to handle five distinct transaction types separately.
     let tx = match &test_case.authorization_list {
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_case.to {
