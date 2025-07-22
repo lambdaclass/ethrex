@@ -206,7 +206,7 @@ ifndef RLP_FILE
 	$(error "RLP file with blocks not provided")
 endif
 	@echo "Starting L1 docker compose with metrics..."
-	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	cd $(ETHREX_DIR)/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
 	@echo "Starting ethrex..."
 	cd $(ETHREX_DIR) && cargo run --release --features "metrics" --bin ethrex -- \
 	--network cmd/ethrex/networks/hoodi/genesis.json \
@@ -214,7 +214,7 @@ endif
 	--profiling \
     --metrics.port 3701 \
 	import $(RLP_FILE) \
-	--removedb \
+	--removedb 
 
 tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME

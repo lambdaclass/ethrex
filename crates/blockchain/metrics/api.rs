@@ -29,16 +29,14 @@ pub(crate) async fn get_metrics() -> String {
         }
     };
 
-    {
-        ret_string.push('\n');
-        match gather_profiling_metrics() {
-            Ok(string) => ret_string.push_str(&string),
-            Err(_) => {
-                tracing::error!("Failed to register METRICS_PROFILING");
-                return String::new();
-            }
-        };
-    }
+    ret_string.push('\n');
+    match gather_profiling_metrics() {
+        Ok(string) => ret_string.push_str(&string),
+        Err(_) => {
+            tracing::error!("Failed to register METRICS_PROFILING");
+            return String::new();
+        }
+    };
 
     ret_string.push('\n');
     match METRICS_BLOCKS.gather_metrics() {
