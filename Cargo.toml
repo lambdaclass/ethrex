@@ -106,6 +106,7 @@ spawned-concurrency = "0.1.5"
 spawned-rt = "0.1.5"
 lambdaworks-crypto = "0.11.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
+rayon = "1.10.0"
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-5.0.0" }

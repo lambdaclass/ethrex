@@ -27,7 +27,7 @@ crc32fast.workspace = true
 bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
-rayon = "1.5"
+rayon.workspace = true
 url.workspace = true
 
 [dev-dependencies]
