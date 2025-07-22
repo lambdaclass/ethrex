@@ -172,7 +172,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         let last_sent_batch = state.rollup_store.get_latest_sent_batch_proof().await?;
         std::cmp::max(last_sent_batch, last_verified_batch) + 1
     } else {
-        last_verified_batch
+        last_verified_batch + 1
     };
 
     let last_committed_batch = state
