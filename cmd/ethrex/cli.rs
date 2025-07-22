@@ -15,11 +15,10 @@ use ethrex_vm::EvmEngine;
 use tracing::{Level, info, warn};
 
 use crate::{
-    DEFAULT_DATADIR,
     initializers::{get_network, init_blockchain, init_store, init_tracing, open_store},
     l2,
     networks::Network,
-    utils::{self, get_client_version, init_datadir},
+    utils::{self, default_datadir, get_client_version, init_datadir},
 };
 
 #[allow(clippy::upper_case_acronyms)]
@@ -49,7 +48,7 @@ pub struct Options {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        default_value = DEFAULT_DATADIR,
+        default_value = default_datadir("ethrex"),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",
@@ -222,7 +221,7 @@ impl Default for Options {
 pub enum Subcommand {
     #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir("ethrex"), required = false)]
         datadir: PathBuf,
         #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,

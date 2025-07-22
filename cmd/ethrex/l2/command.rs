@@ -1,5 +1,4 @@
 use crate::{
-    DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
@@ -7,7 +6,9 @@ use crate::{
     },
     l2::{self, options::Options},
     networks::Network,
-    utils::{NodeConfigFile, init_datadir, parse_private_key, store_node_config_file},
+    utils::{
+        NodeConfigFile, default_datadir, init_datadir, parse_private_key, store_node_config_file,
+    },
 };
 use clap::Subcommand;
 use ethrex_blockchain::BlockchainType;
@@ -53,7 +54,7 @@ pub enum Command {
     },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
-        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir("ethrex"), required = false)]
         datadir: PathBuf,
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
@@ -110,7 +111,7 @@ pub enum Command {
         network: Network,
         #[arg(
             long = "datadir",
-            default_value = DEFAULT_L2_DATADIR,
+            default_value = default_datadir("ethrex-l2"),
             value_name = "DATABASE_DIRECTORY",
             help = "Receives the name of the directory where the Database is located.",
             env = "ETHREX_DATADIR"

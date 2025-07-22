@@ -3,9 +3,8 @@ lazy_static::lazy_static! {
 }
 
 use clap::Parser;
-use ethrex::DEFAULT_DATADIR;
 use ethrex::initializers::open_store;
-use ethrex::utils::init_datadir;
+use ethrex::utils::{default_datadir, init_datadir};
 use ethrex_common::types::BlockHash;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
@@ -303,7 +302,7 @@ struct Args {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        default_value = DEFAULT_DATADIR,
+        default_value = default_datadir("ethrex"),
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options",

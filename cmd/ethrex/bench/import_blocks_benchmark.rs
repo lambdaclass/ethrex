@@ -1,9 +1,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex::{
-    DEFAULT_DATADIR,
     cli::{import_blocks, remove_db},
     networks::Network,
-    utils::init_datadir,
+    utils::{default_datadir, init_datadir},
 };
 use ethrex_blockchain::BlockchainType;
 use ethrex_vm::EvmEngine;
@@ -11,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 #[inline]
 fn block_import() {
-    let datadir = init_datadir(PathBuf::from(DEFAULT_DATADIR));
+    let datadir = init_datadir(PathBuf::from(default_datadir("ethrex")));
     remove_db(&datadir, true);
 
     let evm_engine = EvmEngine::default();
