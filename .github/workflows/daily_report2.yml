@@ -3,9 +3,8 @@ permissions:
 
 name: Daily Reports
 on:
-  schedule:
-    # Every day at UTC 03:00
-    - cron: "0 3 * * 1,2,3,4,5"
+  pull_request:
+    branches: ["**"]
   workflow_dispatch:
 
 jobs:
