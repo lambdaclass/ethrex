@@ -43,6 +43,12 @@ contract OnChainProposer is
     /// @dev The key is the batch number.
     mapping(uint256 => BatchCommitmentInfo) public batchCommitments;
 
+    /// @notice The addresses of the verified batches.
+    /// @dev The key is the batch number, the value is the address of the prover.
+    // TODO: consider replacing it with a Merkle tree or just capping the number of verified batches.
+    // TODO: Consider adding the amount of gasProven to the mapping, i.e. (uint256 => (address, uint256)).
+    mapping(uint256 => address) public verifiedBatches;
+
     /// @notice The latest verified batch number.
     /// @dev This variable holds the batch number of the most recently verified batch.
     /// @dev All batches with a batch number less than or equal to `lastVerifiedBatch` are considered verified.
@@ -305,12 +311,15 @@ contract OnChainProposer is
     function verifyBatch(
         uint256 batchNumber,
         //risc0
+        // TODO: add gasProven to the RISC0 public inputs
         bytes memory risc0BlockProof,
         bytes calldata risc0Journal,
         //sp1
+        // TODO: add gasProven to the SP1 public inputs
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
         //tdx
+        // TODO: add gasProven to the TDX public inputs
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external {
@@ -339,6 +348,8 @@ contract OnChainProposer is
             );
         }
 
+        uint256 gasProven = 0;
+
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, risc0Journal);
@@ -347,7 +358,11 @@ contract OnChainProposer is
                 RISC0_VERIFICATION_KEY,
                 sha256(risc0Journal)
             );
+            gasProven = uint256(
+                bytes32(risc0Journal[224:256])
+            );
         }
+
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
@@ -356,6 +371,9 @@ contract OnChainProposer is
                 SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
+            );
+            gasProven = uint256(
+                bytes32(sp1PublicValues[16+224:16+256])
             );
         }
 
@@ -366,6 +384,11 @@ contract OnChainProposer is
         }
 
         lastVerifiedBatch = batchNumber;
+
+        // Update verified batches with the new batch
+        // TODO: Should we check that this prover is registered somewhere?
+        address message_sender = msg.sender;
+        verifiedBatches[batchNumber] = message_sender;
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -489,6 +512,9 @@ contract OnChainProposer is
         uint256 nonPrivilegedTransactions = uint256(
             bytes32(publicData[192:224])
         );
+
+        // TODO: consider checking the gasProven here.
+
         require(
             !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
                 nonPrivilegedTransactions == 0,
