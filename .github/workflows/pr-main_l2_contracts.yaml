@@ -36,7 +36,12 @@ jobs:
 
       - name: Compare based and non based contracts
         run: |
-          bash .github/scripts/public_inputs_compare.sh \
+          bash .github/scripts/compare_solidity_functions.sh \
             _verifyPublicData \
+            crates/l2/contracts/src/l1/OnChainProposer.sol \
+            crates/l2/contracts/src/l1/based/OnChainProposer.sol
+
+          bash .github/scripts/compare_solidity_functions.sh \
+            verifyBatch \
             crates/l2/contracts/src/l1/OnChainProposer.sol \
             crates/l2/contracts/src/l1/based/OnChainProposer.sol
