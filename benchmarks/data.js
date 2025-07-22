@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753211896877,
+  "lastUpdate": 1753215457409,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5365,6 +5365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 170461481232,
             "range": "± 582474291",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b41d878a318aeaf8dcbd7c2292569fa697282a76",
+          "message": "fix(l2): fix L1 proof sender's wallet/signer (#3747)\n\n**Motivation**\n\nThe L1 proof sender was broken in #2714 by creating an invalid ethers'\n`Wallet`\n[here](github.com/lambdaclass/ethrex/pull/2714/files#r2216602944). This\nPR fixes it but only allows running the proof sender with a local\nsigner.\n\nTo support a remote signer we must investigate if there's a way to\ncreate an ethers' signer that uses web3signer.\n\nThanks @avilagaston9 for noticing the bug!",
+          "timestamp": "2025-07-22T19:31:59Z",
+          "tree_id": "20136d8c01aeca6066b9529a2e69154d4cacc679",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b41d878a318aeaf8dcbd7c2292569fa697282a76"
+        },
+        "date": 1753215445373,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169428522229,
+            "range": "± 322104276",
             "unit": "ns/iter"
           }
         ]
