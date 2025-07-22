@@ -291,13 +291,13 @@ impl Subcommand {
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 let datadir = init_datadir(datadir.clone());
-                remove_db(Path::new(&datadir), force);
+                remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 let datadir = init_datadir(opts.datadir.clone());
 
                 if removedb {
-                    remove_db(Path::new(&datadir), opts.force);
+                    remove_db(&datadir, opts.force);
                 }
 
                 let network = get_network(opts);
@@ -307,18 +307,11 @@ impl Subcommand {
                 } else {
                     BlockchainType::L1
                 };
-                import_blocks(
-                    &path,
-                    Path::new(&datadir),
-                    genesis,
-                    opts.evm,
-                    blockchain_type,
-                )
-                .await?;
+                import_blocks(&path, &datadir, genesis, opts.evm, blockchain_type).await?;
             }
             Subcommand::Export { path, first, last } => {
                 let datadir = init_datadir(opts.datadir.clone());
-                export_blocks(Path::new(&path), Path::new(&datadir), first, last).await
+                export_blocks(&Path::new(&path), &datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -357,12 +350,12 @@ pub fn remove_db(datadir: &Path, force: bool) {
 
 pub async fn import_blocks(
     path: &Path,
-    data_dir: &Path,
+    datadir: &Path,
     genesis: Genesis,
     evm: EvmEngine,
     blockchain_type: BlockchainType,
 ) -> Result<(), ChainError> {
-    let store = init_store(data_dir, genesis).await;
+    let store = init_store(datadir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone(), blockchain_type);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -441,11 +434,11 @@ pub async fn import_blocks(
 
 pub async fn export_blocks(
     path: &Path,
-    data_dir: &Path,
+    datadir: &Path,
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
-    let store = open_store(data_dir);
+    let store = open_store(datadir);
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {

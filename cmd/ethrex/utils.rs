@@ -111,7 +111,7 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn init_datadir(datadir: PathBuf) -> String {
+pub fn init_datadir(datadir: PathBuf) -> PathBuf {
     let project_dir = ProjectDirs::from("", "", datadir.to_str().expect("Invalid data directory"))
         .expect("Couldn't find home directory");
     project_dir
@@ -119,9 +119,10 @@ pub fn init_datadir(datadir: PathBuf) -> String {
         .to_str()
         .expect("invalid data directory")
         .to_owned()
+        .into()
 }
 
-pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
+pub async fn store_node_config_file(config: NodeConfigFile, file_path: &PathBuf) {
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {

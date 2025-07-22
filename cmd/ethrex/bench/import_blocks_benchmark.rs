@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 #[inline]
 fn block_import() {
     let datadir = init_datadir(PathBuf::from(DEFAULT_DATADIR));
-    remove_db(Path::new(&datadir), true);
+    remove_db(&datadir, true);
 
     let evm_engine = EvmEngine::default();
 

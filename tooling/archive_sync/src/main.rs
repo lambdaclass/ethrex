@@ -21,7 +21,7 @@ use keccak_hash::keccak;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -318,6 +318,6 @@ pub async fn main() -> eyre::Result<()> {
     tracing::subscriber::set_global_default(FmtSubscriber::new())
         .expect("setting default subscriber failed");
     let datadir = init_datadir(args.datadir);
-    let store = open_store(Path::new(&datadir));
+    let store = open_store(&datadir);
     archive_sync(&args.archive_node_ipc, args.block_number, store).await
 }
