@@ -128,6 +128,7 @@ pub fn stateless_validation_l1(
         final_state_hash,
         last_block_hash,
         non_privileged_count,
+        total_gas_used,
         ..
     } = execute_stateless(blocks, db, elasticity_multiplier)?;
     Ok(ProgramOutput {
@@ -142,6 +143,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
+        total_gas_used,
     })
 }
 
@@ -164,6 +166,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
+        total_gas_used,
     } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
@@ -203,6 +206,7 @@ pub fn stateless_validation_l2(
         last_block_hash,
         chain_id: chain_id.into(),
         non_privileged_count,
+        total_gas_used,
     })
 }
 
@@ -214,6 +218,7 @@ struct StatelessResult {
     last_block_header: BlockHeader,
     last_block_hash: H256,
     non_privileged_count: U256,
+    total_gas_used: U256,
 }
 
 fn execute_stateless(
@@ -263,6 +268,8 @@ fn execute_stateless(
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
     let mut non_privileged_count = 0;
+    // Total gas used for the batch
+    let mut total_gas_used = 0;
     for block in blocks {
         // Validate the block
         validate_block(
@@ -303,8 +310,11 @@ fn execute_stateless(
         non_privileged_count += block.body.transactions.len()
             - get_block_privileged_transactions(&block.body.transactions).len();
 
+
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
+        // TODO: Verify if this is correct
+        total_gas_used += block.header.gas_used;
         validate_receipts_root(&block.header, &receipts)
             .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
         // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (messages, privileged transactions and consolidations)
@@ -336,6 +346,7 @@ fn execute_stateless(
         last_block_header: last_block.header.clone(),
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
+        total_gas_used: total_gas_used.into(),
     })
 }
 
