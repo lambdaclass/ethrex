@@ -20,13 +20,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       
       - name: Fetch base branch
-        run: git fetch origin main
+        run: git fetch origin ${{ github.event.pull_request.base.ref }}
 
       - name: Find merge base
         id: find_merge_base
         run: |
-          MERGE_BASE=$(git merge-base HEAD origin/${{ github.event.pull_request.base.ref }})
-          echo "merge_base=$MERGE_BASE" >> $GITHUB_OUTPUT
+          git merge-base HEAD origin/${{ github.event.pull_request.base.ref }}
       
       - name: Checkout merge base commit
         uses: actions/checkout@v4
