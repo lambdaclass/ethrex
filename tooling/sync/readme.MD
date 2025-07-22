@@ -13,7 +13,7 @@ The commands use a number of environment variables, which can be easily passed a
 
 - `SYNC_BLOCK_NUM`: block number on which to start the sync. Required by both the `sync` and `flamegraph` commands. All the commands which use this variable require it to be set by the user.
 
-- `BLOCK_HEADER_LIMIT`: the amount of blocks to sync in batch. Optional.
+- `EXECUTE_BATCH_SIZE`: the amount of blocks to execute in batch during full sync. Optional.
 
 - `BRANCH`: required by the `flamegraph-branch` command. Branch on which to run.
 
