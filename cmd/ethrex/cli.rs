@@ -311,7 +311,7 @@ impl Subcommand {
             }
             Subcommand::Export { path, first, last } => {
                 let datadir = init_datadir(opts.datadir.clone());
-                export_blocks(&Path::new(&path), &datadir, first, last).await
+                export_blocks(Path::new(&path), &datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;

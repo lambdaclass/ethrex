@@ -1,4 +1,5 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
+use std::path::Path;
 
 use bytes::Bytes;
 use clap::Parser;
@@ -78,7 +79,7 @@ fn add_with_proxy(
     Ok(())
 }
 
-fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsUpdaterError> {
+fn update_genesis_file(l2_genesis_path: &Path) -> Result<(), SystemContractsUpdaterError> {
     let mut genesis = read_genesis_file(l2_genesis_path.to_str().ok_or(
         SystemContractsUpdaterError::InvalidPath(
             "Failed to convert l2 genesis path to string".to_string(),
