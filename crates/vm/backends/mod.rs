@@ -262,6 +262,8 @@ impl Evm {
         }
     }
 
+    /// Creates access list
+    /// Output: (gas_used, access_list, Option<ErrorReason>)
     pub fn create_access_list(
         &mut self,
         tx: &GenericTransaction,
@@ -279,22 +281,10 @@ impl Evm {
             }
         };
         match result {
-            (
-                ExecutionResult::Success {
-                    gas_used,
-                    gas_refunded: _,
-                    logs: _,
-                    output: _,
-                },
-                access_list,
-            ) => Ok((gas_used, access_list, None)),
-            (
-                ExecutionResult::Revert {
-                    gas_used,
-                    output: _,
-                },
-                access_list,
-            ) => Ok((
+            (ExecutionResult::Success { gas_used, .. }, access_list) => {
+                Ok((gas_used, access_list, None))
+            }
+            (ExecutionResult::Revert { gas_used, .. }, access_list) => Ok((
                 gas_used,
                 access_list,
                 Some("Transaction Reverted".to_string()),
