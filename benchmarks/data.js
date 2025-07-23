@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753232355117,
+  "lastUpdate": 1753233626034,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11276,6 +11276,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00771521387283237,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4a3a5aec56e6b6a96942ad161b32fd2f50ccd5c7",
+          "message": "refactor(l2): apply fcu only on the last block of the batch for the block fetcher (#3782)\n\n**Motivation**\n\nWith the actual implementation of the block fetcher, we apply a fork\nchoice update for every block. This is not the optimal way since we can\napply only on the last block.\n\n**Description**\n\n- Move the `apply_fork_choice` call after the loop and only call it with\nthe last block\n- Add new type of error `EmptyBatchError`",
+          "timestamp": "2025-07-22T21:03:49Z",
+          "tree_id": "710ac64388c952a5a69f10f5b9a1eda132ef6c9a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4a3a5aec56e6b6a96942ad161b32fd2f50ccd5c7"
+        },
+        "date": 1753233625569,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013523120567375886,
             "unit": "Mgas/s"
           }
         ]
