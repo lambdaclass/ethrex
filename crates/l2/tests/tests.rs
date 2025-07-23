@@ -172,7 +172,7 @@ async fn test_upgrade(
     compile_contract(contracts_path, "src/l2/CommonBridgeL2.sol", false)?;
 
     let bridge_code = hex::decode(std::fs::read("contracts/solc_out/CommonBridgeL2.bin")?)?;
-    let deploy_address = test_deploy(&bridge_code, &private_key, l2_client).await?;
+    let deploy_address = test_deploy(l2_client, &bridge_code, &private_key).await?;
 
     let impl_slot = get_erc1967_slot("eip1967.proxy.implementation");
     let initial_impl = l2_client
@@ -229,7 +229,7 @@ async fn test_privileged_tx_with_contract_call(
     )?;
 
     let deployed_contract_address =
-        test_deploy(&init_code, rich_wallet_private_key, l2_client).await?;
+        test_deploy(l2_client, &init_code, rich_wallet_private_key).await?;
 
     let number_to_emit = U256::from(424242);
     let calldata_to_contract: Bytes =
@@ -239,11 +239,11 @@ async fn test_privileged_tx_with_contract_call(
     let first_block = l2_client.get_block_number().await?;
 
     test_call_to_contract_with_deposit(
+        l1_client,
+        l2_client,
         deployed_contract_address,
         calldata_to_contract,
         rich_wallet_private_key,
-        l2_client,
-        l1_client,
     )
     .await?;
 
@@ -314,16 +314,16 @@ async fn test_privileged_tx_with_contract_call_revert(
     )?;
 
     let deployed_contract_address =
-        test_deploy(&init_code, rich_wallet_private_key, l2_client).await?;
+        test_deploy(l2_client, &init_code, rich_wallet_private_key).await?;
 
     let calldata_to_contract: Bytes = calldata::encode_calldata("revert_call()", &[])?.into();
 
     test_call_to_contract_with_deposit(
+        l1_client,
+        l2_client,
         deployed_contract_address,
         calldata_to_contract,
         rich_wallet_private_key,
-        l2_client,
-        l1_client,
     )
     .await?;
 
@@ -343,7 +343,7 @@ async fn test_erc20_roundtrip(
     let init_code_l1 = hex::decode(std::fs::read(
         "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
     )?)?;
-    let token_l1 = test_deploy_l1(&init_code_l1, rich_wallet_private_key, l1_client).await?;
+    let token_l1 = test_deploy_l1(l1_client, &init_code_l1, rich_wallet_private_key).await?;
 
     let contracts_path = Path::new("contracts");
     ethrex_l2_sdk::download_contract_deps(contracts_path)?;
@@ -357,7 +357,7 @@ async fn test_erc20_roundtrip(
         token_l1.to_fixed_bytes().to_vec(),
     ]
     .concat();
-    let token_l2 = test_deploy(&init_code_l2, rich_wallet_private_key, l2_client).await?;
+    let token_l2 = test_deploy(l2_client, &init_code_l2, rich_wallet_private_key).await?;
 
     println!("token l1={token_l1:x}, l2={token_l2:x}");
     test_send(
@@ -466,7 +466,7 @@ async fn test_aliasing(
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
-    let caller_l1 = test_deploy_l1(&init_code_l1, rich_wallet_private_key, l1_client).await?;
+    let caller_l1 = test_deploy_l1(l1_client, &init_code_l1, rich_wallet_private_key).await?;
     let send_to_l2_calldata = encode_calldata(
         "sendToL2((address,uint256,uint256,bytes))",
         &[Value::Tuple(vec![
@@ -513,7 +513,7 @@ async fn test_erc20_failed_deposit(
     let init_code_l1 = hex::decode(std::fs::read(
         "../../fixtures/contracts/ERC20/ERC20.bin/TestToken.bin",
     )?)?;
-    let token_l1 = test_deploy_l1(&init_code_l1, rich_wallet_private_key, l1_client).await?;
+    let token_l1 = test_deploy_l1(l1_client, &init_code_l1, rich_wallet_private_key).await?;
     let token_l2 = Address::random(); // will cause deposit to fail
 
     test_send(
@@ -1315,9 +1315,9 @@ async fn test_total_eth_l2(
 }
 
 async fn test_deploy(
+    l2_client: &EthClient,
     init_code: &[u8],
     deployer_private_key: &SecretKey,
-    l2_client: &EthClient,
 ) -> Result<Address, Box<dyn std::error::Error>> {
     println!("Deploying contract on L2");
 
@@ -1377,9 +1377,9 @@ async fn test_deploy(
 }
 
 async fn test_deploy_l1(
+    client: &EthClient,
     init_code: &[u8],
     private_key: &SecretKey,
-    client: &EthClient,
 ) -> Result<Address, Box<dyn std::error::Error>> {
     println!("Deploying contract on L1");
 
@@ -1399,11 +1399,11 @@ async fn test_deploy_l1(
 }
 
 async fn test_call_to_contract_with_deposit(
+    l1_client: &EthClient,
+    l2_client: &EthClient,
     deployed_contract_address: Address,
     calldata_to_contract: Bytes,
     caller_private_key: &SecretKey,
-    l2_client: &EthClient,
-    l1_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let caller_address = ethrex_l2_sdk::get_address_from_secret_key(caller_private_key)
         .expect("Failed to get address");
