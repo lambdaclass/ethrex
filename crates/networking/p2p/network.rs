@@ -16,7 +16,12 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
-use std::{io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::{
     net::{TcpListener, TcpSocket, UdpSocket},
     sync::Mutex,
@@ -209,25 +214,23 @@ pub async fn periodically_show_peer_stats() {
         let busy_account_tries_downloaders =
             total_account_tries_downloaders.saturating_sub(*free_account_tries_downloaders);
 
-        let mut maybe_account_tries_download_time = METRICS
-            .account_tries_download_start_time
-            .lock()
-            .await
-            .map(|t| {
-                t.elapsed()
-                    .expect("Failed to get current headers download time")
-            });
+        let time_taken_to_download_account_tries = {
+            let end_time = METRICS
+                .account_tries_download_end_time
+                .lock()
+                .await
+                .unwrap_or(SystemTime::now());
 
-        let mut maybe_time_taken_to_download_account_tries =
-            METRICS.time_taken_to_download_account_tries.lock().await;
-
-        if busy_account_tries_downloaders == 0 {
-            if maybe_time_taken_to_download_account_tries.is_none() {
-                *maybe_time_taken_to_download_account_tries = maybe_account_tries_download_time;
-            } else {
-                maybe_account_tries_download_time = *maybe_time_taken_to_download_account_tries;
-            }
-        }
+            METRICS
+                .account_tries_download_start_time
+                .lock()
+                .await
+                .map(|start_time| {
+                    end_time
+                        .duration_since(start_time)
+                        .expect("Failed to get account tries download time")
+                })
+        };
 
         // Storage Tries
         let total_storage_tries_downloaders = METRICS.total_storages_downloaders.lock().await;
@@ -235,25 +238,23 @@ pub async fn periodically_show_peer_stats() {
         let busy_storage_tries_downloaders =
             total_storage_tries_downloaders.saturating_sub(*free_storage_tries_downloaders);
 
-        let mut maybe_storage_tries_download_time = METRICS
-            .storage_tries_download_start_time
-            .lock()
-            .await
-            .map(|t| {
-                t.elapsed()
-                    .expect("Failed to get current headers download time")
-            });
+        let time_taken_to_download_storage_tries = {
+            let end_time = METRICS
+                .storage_tries_download_end_time
+                .lock()
+                .await
+                .unwrap_or(SystemTime::now());
 
-        let mut maybe_time_taken_to_download_storage_tries =
-            METRICS.time_taken_to_download_storage_tries.lock().await;
-
-        if busy_storage_tries_downloaders == 0 {
-            if maybe_time_taken_to_download_storage_tries.is_none() {
-                *maybe_time_taken_to_download_storage_tries = maybe_storage_tries_download_time;
-            } else {
-                maybe_storage_tries_download_time = *maybe_time_taken_to_download_storage_tries;
-            }
-        }
+            METRICS
+                .storage_tries_download_start_time
+                .lock()
+                .await
+                .map(|start_time| {
+                    end_time
+                        .duration_since(start_time)
+                        .expect("Failed to get storage tries download time")
+                })
+        };
 
         // Bytecodes
         let total_bytecode_downloaders = METRICS.total_bytecode_downloaders.lock().await;
@@ -261,22 +262,23 @@ pub async fn periodically_show_peer_stats() {
         let busy_bytecode_downloaders =
             total_bytecode_downloaders.saturating_sub(*free_bytecode_downloaders);
 
-        let mut maybe_bytecode_download_time =
-            METRICS.bytecode_download_start_time.lock().await.map(|t| {
-                t.elapsed()
-                    .expect("Failed to get current headers download time")
-            });
+        let time_taken_to_download_bytecodes = {
+            let end_time = METRICS
+                .storage_tries_download_end_time
+                .lock()
+                .await
+                .unwrap_or(SystemTime::now());
 
-        let mut maybe_time_taken_to_download_bytecodes =
-            METRICS.time_taken_to_download_bytecodes.lock().await;
-
-        if busy_bytecode_downloaders == 0 {
-            if maybe_time_taken_to_download_bytecodes.is_none() {
-                *maybe_time_taken_to_download_bytecodes = maybe_bytecode_download_time;
-            } else {
-                maybe_bytecode_download_time = *maybe_time_taken_to_download_bytecodes;
-            }
-        }
+            METRICS
+                .storage_tries_download_start_time
+                .lock()
+                .await
+                .map(|start_time| {
+                    end_time
+                        .duration_since(start_time)
+                        .expect("Failed to get storage tries download time")
+                })
+        };
 
         info!(
             r#"
@@ -376,7 +378,7 @@ download tasks queued: {bytecode_downloads_tasks_queued}"#,
             free_headers_downloaders = free_headers_downloaders,
             header_downloads_tasks_queued = METRICS.header_downloads_tasks_queued.lock().await,
             peers_by_client = rlpx_connection_client_types,
-            account_tries_download_time = maybe_account_tries_download_time
+            account_tries_download_time = time_taken_to_download_account_tries
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_owned()),
             downloaded_account_tries = *METRICS.downloaded_account_tries.lock().await,
@@ -384,7 +386,7 @@ download tasks queued: {bytecode_downloads_tasks_queued}"#,
             busy_account_tries_downloaders = busy_account_tries_downloaders,
             free_account_tries_downloaders = free_account_tries_downloaders,
             account_tries_tasks_queued = METRICS.accounts_downloads_tasks_queued.lock().await,
-            storage_tries_download_time = maybe_storage_tries_download_time
+            storage_tries_download_time = time_taken_to_download_storage_tries
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_owned()),
             downloaded_storage_tries = *METRICS.downloaded_storage_tries.lock().await,
@@ -392,7 +394,7 @@ download tasks queued: {bytecode_downloads_tasks_queued}"#,
             busy_storage_tries_downloaders = busy_storage_tries_downloaders,
             free_storage_tries_downloaders = free_storage_tries_downloaders,
             storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
-            bytecodes_download_time = maybe_bytecode_download_time
+            bytecodes_download_time = time_taken_to_download_bytecodes
                 .map(format_duration)
                 .unwrap_or_else(|| "-".to_owned()),
             downloaded_bytecodes = *METRICS.downloaded_bytecodes.lock().await,

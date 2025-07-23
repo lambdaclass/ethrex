@@ -994,6 +994,8 @@ impl PeerHandler {
             all_account_hashes.len()
         );
 
+        *METRICS.account_tries_download_end_time.lock().await = Some(SystemTime::now());
+
         // TODO: proof validation and should_continue aggregation
         // For now, just return the collected accounts
         if all_account_hashes.is_empty() || all_accounts_state.is_empty() {

@@ -71,7 +71,7 @@ pub struct Metrics {
     pub free_accounts_downloaders: Arc<Mutex<u64>>,
     pub accounts_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub account_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub time_taken_to_download_account_tries: Arc<Mutex<Option<Duration>>>,
+    pub account_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage tries
     pub downloaded_storage_tries: Arc<Mutex<u64>>,
@@ -79,7 +79,7 @@ pub struct Metrics {
     pub free_storages_downloaders: Arc<Mutex<u64>>,
     pub storages_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub storage_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub time_taken_to_download_storage_tries: Arc<Mutex<Option<Duration>>>,
+    pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Bytecodes
     pub downloaded_bytecodes: Arc<Mutex<u64>>,
@@ -87,7 +87,7 @@ pub struct Metrics {
     pub free_bytecode_downloaders: Arc<Mutex<u64>>,
     pub bytecode_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub bytecode_download_start_time: Arc<Mutex<Option<SystemTime>>>,
-    pub time_taken_to_download_bytecodes: Arc<Mutex<Option<Duration>>>,
+    pub bytecode_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     start_time: SystemTime,
 }
@@ -510,7 +510,7 @@ impl Default for Metrics {
             free_accounts_downloaders: Arc::new(Mutex::new(0)),
             accounts_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             account_tries_download_start_time: Arc::new(Mutex::new(None)),
-            time_taken_to_download_account_tries: Arc::new(Mutex::new(None)),
+            account_tries_download_end_time: Arc::new(Mutex::new(None)),
 
             // Storage tries
             downloaded_storage_tries: Arc::new(Mutex::new(0)),
@@ -518,7 +518,7 @@ impl Default for Metrics {
             free_storages_downloaders: Arc::new(Mutex::new(0)),
             storages_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             storage_tries_download_start_time: Arc::new(Mutex::new(None)),
-            time_taken_to_download_storage_tries: Arc::new(Mutex::new(None)),
+            storage_tries_download_end_time: Arc::new(Mutex::new(None)),
 
             // Bytecodes
             downloaded_bytecodes: Arc::new(Mutex::new(0)),
@@ -526,7 +526,7 @@ impl Default for Metrics {
             free_bytecode_downloaders: Arc::new(Mutex::new(0)),
             bytecode_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             bytecode_download_start_time: Arc::new(Mutex::new(None)),
-            time_taken_to_download_bytecodes: Arc::new(Mutex::new(None)),
+            bytecode_download_end_time: Arc::new(Mutex::new(None)),
 
             start_time: SystemTime::now(),
         }
