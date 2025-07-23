@@ -66,7 +66,7 @@ pub struct ProofCoordinatorConfig {
 
 #[derive(Clone, Debug)]
 pub struct BasedConfig {
-    pub based: bool,
+    pub enabled: bool,
     pub state_updater: StateUpdaterConfig,
     pub block_fetcher: BlockFetcherConfig,
 }

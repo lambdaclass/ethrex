@@ -4,10 +4,15 @@ use std::{
     sync::Arc,
 };
 
+use super::{
+    codec::RLPxCodec,
+    server::{Initiator, Receiver},
+};
 use crate::{
     rlpx::{
         connection::server::{Established, InnerState},
         error::RLPxError,
+        l2::l2_connection::L2ConnState,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
@@ -36,11 +41,6 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
-
-use super::{
-    codec::RLPxCodec,
-    server::{Initiator, Receiver},
-};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -131,6 +131,9 @@ pub(crate) async fn perform(
             table: context.table.clone(),
             backend_channel: None,
             inbound,
+            l2_state: context
+                .based_context
+                .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
         },
         stream,
     ))
