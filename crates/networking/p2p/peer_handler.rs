@@ -1420,6 +1420,7 @@ impl PeerHandler {
                                 end_hash: None,
                             };
                             tasks_queue_not_started.push_back(task);
+                            task_count += 1;
                         }
                         // Task found a big storage account, so we split the chunk into multiple chunks
                         let start_hash_u256 = U256::from_big_endian(&hash_start.0);
@@ -1455,7 +1456,8 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                         }
                         info!("Split big storage account into {chunk_count} chunks.");
-                        task_count += chunk_count;
+                        // We already completed one task, so we account for that
+                        task_count += chunk_count - 1;
                     }
                 } else {
                     completed_tasks += 1;
