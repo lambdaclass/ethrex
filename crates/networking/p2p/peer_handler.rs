@@ -1421,14 +1421,15 @@ impl PeerHandler {
                         }
                         // Task found a big storage account, so we split the chunk into multiple chunks
                         let start_hash_u256 = U256::from_big_endian(&hash_start.0);
-                        let end_hash_u256 = U256::MAX;
-                        let missing_storage_range = end_hash_u256 - start_hash_u256;
+                        let missing_storage_range = U256::MAX - start_hash_u256;
 
-                        let slot_count = account_storages.last().map(|v| v.len()).unwrap();
+                        let slot_count = account_storages.last().map(|v| v.len()).unwrap().max(1);
                         let storage_density = start_hash_u256 / slot_count;
 
-                        let slots_per_chunk = 10000;
-                        let chunk_size = storage_density * slots_per_chunk;
+                        let slots_per_chunk = U256::from(10000);
+                        let chunk_size = storage_density
+                            .checked_mul(slots_per_chunk)
+                            .unwrap_or(U256::MAX);
 
                         let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
