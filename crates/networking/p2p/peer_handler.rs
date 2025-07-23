@@ -1499,10 +1499,6 @@ impl PeerHandler {
                 debug!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
-                info!(
-                    "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
-                    tasks_queue_not_started.len()
-                );
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
                     all_account_storages[start_index].extend(account_storages.remove(0));
