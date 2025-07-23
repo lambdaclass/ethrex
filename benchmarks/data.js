@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753309052325,
+  "lastUpdate": 1753309664557,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5695,6 +5695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166022088539,
             "range": "± 512383533",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "212d72a92a0c1ca9a718e3c46bafd1e7fe5ab163",
+          "message": "fix(l2): join verifier task (#3781)\n\n**Motivation**\n\nThe `join()` of the verifier task was accidentally removed in #3635.\n\n**Description**\n\nThis PR is a quick fix that restores the removed `join()`. The verifier\ntask is being replaced by spawned in #3761.\n\nCloses None",
+          "timestamp": "2025-07-23T21:44:07Z",
+          "tree_id": "49a9893bb669d69fe5e9328bdb23cec1380dfa41",
+          "url": "https://github.com/lambdaclass/ethrex/commit/212d72a92a0c1ca9a718e3c46bafd1e7fe5ab163"
+        },
+        "date": 1753309652217,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166317527640,
+            "range": "± 354129657",
             "unit": "ns/iter"
           }
         ]
