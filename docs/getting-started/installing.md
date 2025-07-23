@@ -57,7 +57,7 @@ To install the client, [first install Rust](https://www.rust-lang.org/tools/inst
 ```sh
 cargo install --locked ethrex \
     --git https://github.com/lambdaclass/ethrex.git \
-    --tag v0.0.2-rc.1 \
+    --tag <LATEST_VERSION_HERE> \
     --features dev
 ```
 
