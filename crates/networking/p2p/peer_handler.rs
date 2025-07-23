@@ -1430,12 +1430,12 @@ impl PeerHandler {
                         let slots_per_chunk = 10000;
                         let chunk_size = storage_density * slots_per_chunk;
 
-                        let chunk_count = (missing_storage_range / chunk_size).as_usize();
+                        let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
 
-                        for i in 0..(chunk_count + 1) {
+                        for i in 0..chunk_count {
                             let start_hash_u256 = start_hash_u256 + chunk_size * i;
                             let start_hash = H256::from_uint(&start_hash_u256);
-                            let end_hash = if i == chunk_count {
+                            let end_hash = if i == chunk_count - 1 {
                                 H256::repeat_byte(0xff)
                             } else {
                                 let end_hash_u256 =
@@ -1452,7 +1452,7 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                         }
                         info!("Split big storage account into {chunk_count} chunks.");
-                        task_count += chunk_count + 1;
+                        task_count += chunk_count;
                     }
                 } else {
                     completed_tasks += 1;
