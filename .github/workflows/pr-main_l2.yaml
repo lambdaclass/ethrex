@@ -195,7 +195,7 @@ jobs:
       - name: Start Sequencer
         run: |
           cd crates/l2
-          source .env
+          export $(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS .env | xargs)
           if [ -z "$ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS" ]; then
             echo "Failed to get ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS from .env file"
             exit 1
