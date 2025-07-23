@@ -2,6 +2,7 @@ use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
+use ethrex_common::Address;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::{H256, types::Transaction};
@@ -10,6 +11,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::error::StoreError;
+use std::collections::HashSet;
 
 use crate::rlpx::utils::log_peer_warn;
 use crate::rlpx::{
@@ -269,7 +271,14 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
-    pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
+    ///
+    /// Returns address of senders that sent invalid transactions.
+    pub async fn handle(
+        self,
+        node: &Node,
+        blockchain: &Blockchain,
+    ) -> Result<HashSet<Address>, MempoolError> {
+        let mut ret_senders = HashSet::new();
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if let Err(e) = blockchain
@@ -280,16 +289,18 @@ impl PooledTransactions {
                     continue;
                 }
             } else {
-                let regular_tx = tx
+                let regular_tx: Transaction = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
+                let sender: Address = regular_tx.sender()?;
                 if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
                     log_peer_warn(node, &format!("Error adding transaction: {e}"));
+                    ret_senders.insert(sender);
                     continue;
                 }
             }
         }
-        Ok(())
+        Ok(ret_senders)
     }
 }
 

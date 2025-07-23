@@ -725,7 +725,10 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
                         state.requested_pooled_txs.remove(&msg.id);
                     }
                 }
-                msg.handle(&state.node, &state.blockchain).await?;
+                let list_of_failed_address = msg.handle(&state.node, &state.blockchain).await?;
+                if !list_of_failed_address.is_empty() {
+                    println!("@@@@@@@@@@@@@@@@@@ {list_of_failed_address:?} @@@@@@@@@@@@@@@@@@");
+                }
             }
         }
         Message::GetStorageRanges(req) => {
