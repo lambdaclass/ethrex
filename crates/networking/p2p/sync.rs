@@ -302,7 +302,7 @@ impl Syncer {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
-        let mut block_sync_state = BlockSyncState::new(&SyncMode::Full, store.clone());
+        let mut block_sync_state = FullBlockSyncState::new(store.clone());
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
