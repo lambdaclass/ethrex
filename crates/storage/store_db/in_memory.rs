@@ -222,11 +222,18 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        let block_number = block_header.number;
+        self.add_block_number(block_hash, block_number).await?;
         self.inner()?.headers.insert(block_hash, block_header);
         Ok(())
     }
 
     async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        self.inner()?.block_numbers.extend(
+            block_headers
+                .iter()
+                .map(|header| (header.hash(), header.number)),
+        );
         self.inner()?.headers.extend(
             block_headers
                 .into_iter()
@@ -259,7 +266,6 @@ impl StoreEngine for Store {
             self.add_transaction_locations(locations.collect()).await?;
             self.add_block_body(hash, block.body.clone()).await?;
             self.add_block_header(hash, header).await?;
-            self.add_block_number(hash, number).await?;
         }
 
         Ok(())
