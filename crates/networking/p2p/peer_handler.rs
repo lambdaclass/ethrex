@@ -13,6 +13,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
+use serde::de::EnumAccess;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -1298,19 +1299,30 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
-        const MAX_STORAGE_REQUEST_SIZE: usize = 200;
         // 1) split the range in chunks of same length
-        let chunk_size = 300;
+        let chunk_size = 200;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
-        let mut tasks_queue_not_started = VecDeque::<(usize, usize, H256)>::new();
+        struct Task {
+            start_index: usize,
+            end_index: usize,
+            start_hash: H256,
+            // end_hash is None if the task is for the first big storage request
+            end_hash: Option<H256>,
+        }
+        let mut tasks_queue_not_started = VecDeque::<Task>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
             let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
-            tasks_queue_not_started.push_back((chunk_start, chunk_end, H256::zero()));
+            tasks_queue_not_started.push_back(Task {
+                start_index: chunk_start,
+                end_index: chunk_end,
+                start_hash: H256::zero(),
+                end_hash: None,
+            });
         }
 
         // 2) request the chunks from peers
@@ -1328,7 +1340,7 @@ impl PeerHandler {
             peer_id: H256,
             remaining_start: usize,
             remaining_end: usize,
-            remaining_start_hash: H256,
+            remaining_hash_range: (H256, Option<H256>),
         }
 
         // channel to send the tasks to the peers
@@ -1367,25 +1379,69 @@ impl PeerHandler {
                     peer_id,
                     remaining_start,
                     remaining_end,
-                    remaining_start_hash,
+                    remaining_hash_range: (hash_start, hash_end),
                 } = result;
+
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
 
                 if remaining_start < remaining_end {
                     trace!("Failed to download chunk from peer {peer_id}");
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true;
-                    });
-                    if remaining_start_hash.is_zero() {
-                        let task = (remaining_start, remaining_end, H256::zero());
+                    if hash_start.is_zero() {
+                        // Task is common storage range request
+                        let task = Task {
+                            start_index: remaining_start,
+                            end_index: remaining_end,
+                            start_hash: H256::zero(),
+                            end_hash: None,
+                        };
                         tasks_queue_not_started.push_back(task);
+                    } else if let Some(hash_end) = hash_end {
+                        // Task was a big storage account result
+                        if hash_start <= hash_end {
+                            let task = Task {
+                                start_index: remaining_start,
+                                end_index: remaining_end,
+                                start_hash: hash_start,
+                                end_hash: Some(hash_end),
+                            };
+                            tasks_queue_not_started.push_back(task);
+                        }
                     } else {
-                        // If we got to a big storage account, we split the chunk in two:
-                        // one for the current storage, another for the rest
-                        let task1 = (remaining_start, remaining_start + 1, remaining_start_hash);
-                        tasks_queue_not_started.push_back(task1);
-                        let task2 = (remaining_start + 1, remaining_end, H256::zero());
-                        tasks_queue_not_started.push_back(task2);
-                        task_count += 1;
+                        let task = Task {
+                            start_index: remaining_start + 1,
+                            end_index: remaining_end,
+                            start_hash: H256::zero(),
+                            end_hash: None,
+                        };
+                        tasks_queue_not_started.push_back(task);
+                        // Task found a big storage account, so we split the chunk into multiple chunks
+                        let start_hash_u256 = U256::from_big_endian(&hash_start.0);
+                        let end_hash_u256 = U256::MAX;
+                        let missing_storage_range = end_hash_u256 - start_hash_u256;
+
+                        let chunk_count = (missing_storage_range / start_hash_u256)
+                            .max(U256::from(10_000))
+                            .as_usize();
+                        let chunk_size = missing_storage_range / chunk_count;
+
+                        for i in 0..(chunk_count + 1) {
+                            let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                            let end_hash_u256 =
+                                start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
+                            let start_hash = H256::from_uint(&start_hash_u256);
+                            let end_hash = H256::from_uint(&end_hash_u256);
+
+                            let task = Task {
+                                start_index: remaining_start,
+                                end_index: remaining_start + 1,
+                                start_hash: start_hash,
+                                end_hash: Some(end_hash),
+                            };
+                            tasks_queue_not_started.push_back(task);
+                        }
+                        task_count += chunk_count + 1;
                     }
                 } else {
                     completed_tasks += 1;
@@ -1416,9 +1472,6 @@ impl PeerHandler {
                 info!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
                     all_account_storages[start_index].extend(account_storages.remove(0));
@@ -1486,7 +1539,7 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some((start, end, start_hash)) = tasks_queue_not_started.pop_front() else {
+            let Some(task) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= task_count {
                     info!("All account storages downloaded successfully");
                     break;
@@ -1503,30 +1556,26 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            let size = if !start_hash.is_zero() {
-                1
-            } else {
-                end - start
-            };
-            let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
-                account_storage_roots
-                    .iter()
-                    .skip(start)
-                    .take((size).min(MAX_STORAGE_REQUEST_SIZE))
-                    .map(|(hash, root)| (*hash, *root))
-                    .unzip();
+
+            let (chunk_account_hashes, chunk_storage_roots) = account_storage_roots
+                .iter()
+                .skip(task.start_index)
+                .take(task.end_index - task.start_index)
+                .map(|(hash, root)| (*hash, *root))
+                .unzip();
 
             tokio::spawn(async move {
-                debug!(
-                    "Requesting account range from peer {free_peer_id}, chunk: {start:?} - {end:?}"
-                );
+                let start = task.start_index;
+                let end = task.end_index;
+                let start_hash = task.start_hash;
+
                 let empty_task_result = TaskResult {
-                    start_index: start,
+                    start_index: task.start_index,
                     account_storages: Vec::new(),
                     peer_id: free_peer_id,
-                    remaining_start: start,
-                    remaining_end: end,
-                    remaining_start_hash: start_hash,
+                    remaining_start: task.start_index,
+                    remaining_end: task.end_index,
+                    remaining_hash_range: (start_hash, task.end_hash),
                 };
                 let request_id = rand::random();
                 let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
@@ -1534,7 +1583,7 @@ impl PeerHandler {
                     root_hash: state_root,
                     account_hashes: chunk_account_hashes,
                     starting_hash: start_hash,
-                    limit_hash: HASH_MAX,
+                    limit_hash: task.end_hash.unwrap_or(HASH_MAX),
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
@@ -1649,7 +1698,7 @@ impl PeerHandler {
                     peer_id: free_peer_id,
                     remaining_start,
                     remaining_end,
-                    remaining_start_hash,
+                    remaining_hash_range: (remaining_start_hash, task.end_hash),
                 };
                 tx.send(task_result).await.ok();
             });
