@@ -129,21 +129,21 @@ impl L1ProofSender {
             .map_err(ProofSenderError::GenServerError)
     }
 
-    async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSenderError> {
-        let last_verified_batch = state
+    async fn verify_and_send_proof(&self) -> Result<(), ProofSenderError> {
+        let last_verified_batch = self
             .eth_client
-            .get_last_verified_batch(state.on_chain_proposer_address)
+            .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
-        let batch_to_send = if state.aligned_mode {
-            let last_sent_batch = state.rollup_store.get_latest_sent_batch_proof().await?;
+        let batch_to_send = if self.aligned_mode {
+            let last_sent_batch = self.rollup_store.get_latest_sent_batch_proof().await?;
             std::cmp::max(last_sent_batch, last_verified_batch) + 1
         } else {
             last_verified_batch + 1
         };
 
-        let last_committed_batch = state
+        let last_committed_batch = self
             .eth_client
-            .get_last_committed_batch(state.on_chain_proposer_address)
+            .get_last_committed_batch(self.on_chain_proposer_address)
             .await?;
 
         if last_committed_batch < batch_to_send {
@@ -153,8 +153,8 @@ impl L1ProofSender {
 
         let mut proofs = HashMap::new();
         let mut missing_proof_types = Vec::new();
-        for proof_type in &state.needed_proof_types {
-            if let Some(proof) = state
+        for proof_type in &self.needed_proof_types {
+            if let Some(proof) = self
                 .rollup_store
                 .get_proof_by_batch_and_type(batch_to_send, *proof_type)
                 .await?
@@ -166,13 +166,13 @@ impl L1ProofSender {
         }
 
         if missing_proof_types.is_empty() {
-            if state.aligned_mode {
-                send_proof_to_aligned(state, batch_to_send, proofs.values()).await?;
+            if self.aligned_mode {
+                self.send_proof_to_aligned(batch_to_send, proofs.values())
+                    .await?;
             } else {
-                send_proof_to_contract(state, batch_to_send, proofs).await?;
+                self.send_proof_to_contract(batch_to_send, proofs).await?;
             }
-            state
-                .rollup_store
+            self.rollup_store
                 .set_latest_sent_batch_proof(batch_to_send)
                 .await?;
         } else {
@@ -191,21 +191,21 @@ impl L1ProofSender {
     }
 
     async fn send_proof_to_aligned(
-        state: &L1ProofSenderState,
+        &self,
         batch_number: u64,
         batch_proofs: impl IntoIterator<Item = &BatchProof>,
     ) -> Result<(), ProofSenderError> {
         info!(?batch_number, "Sending batch proof(s) to Aligned Layer");
 
-        let fee_estimation = estimate_fee(state).await?;
+        let fee_estimation = Self::estimate_fee(self).await?;
 
-        let nonce = get_nonce_from_batcher(state.network.clone(), state.signer.address().0.into())
+        let nonce = get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
             .await
             .map_err(|err| {
                 ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
             })?;
 
-        let Signer::Local(local_signer) = &state.signer else {
+        let Signer::Local(local_signer) = &self.signer else {
             return Err(ProofSenderError::InternalError(
                 "Aligned mode only supports local signer".to_string(),
             ));
@@ -214,7 +214,7 @@ impl L1ProofSender {
         let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
             .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
 
-        let wallet = wallet.with_chain_id(state.l1_chain_id);
+        let wallet = wallet.with_chain_id(self.l1_chain_id);
 
         for batch_proof in batch_proofs {
             let prover_type = batch_proof.prover_type();
@@ -245,14 +245,14 @@ impl L1ProofSender {
             let verification_data = VerificationData {
                 proving_system,
                 proof,
-                proof_generator_addr: state.signer.address().0.into(),
+                proof_generator_addr: self.signer.address().0.into(),
                 vm_program_code: Some(vm_program_code),
                 verification_key: None,
                 pub_input,
             };
 
             submit(
-                state.network.clone(),
+                self.network.clone(),
                 &verification_data,
                 fee_estimation,
                 wallet.clone(),
@@ -267,12 +267,10 @@ impl L1ProofSender {
     }
 
     /// Performs a call to aligned SDK estimate_fee function with retries over all RPC URLs.
-    async fn estimate_fee(
-        state: &L1ProofSenderState,
-    ) -> Result<ethers::types::U256, ProofSenderError> {
-        for rpc_url in &state.eth_client.urls {
+    async fn estimate_fee(&self) -> Result<ethers::types::U256, ProofSenderError> {
+        for rpc_url in &self.eth_client.urls {
             if let Ok(estimation) =
-                aligned_estimate_fee(rpc_url.as_str(), state.fee_estimate.clone()).await
+                aligned_estimate_fee(rpc_url.as_str(), self.fee_estimate.clone()).await
             {
                 return Ok(estimation);
             }
@@ -283,7 +281,7 @@ impl L1ProofSender {
     }
 
     pub async fn send_proof_to_contract(
-        state: &L1ProofSenderState,
+        &self,
         batch_number: u64,
         proofs: HashMap<ProverType, BatchProof>,
     ) -> Result<(), ProofSenderError> {
@@ -316,14 +314,13 @@ impl L1ProofSender {
 
         let verify_tx_hash = send_verify_tx(
             calldata,
-            &state.eth_client,
-            state.on_chain_proposer_address,
-            &state.signer,
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            &self.signer,
         )
         .await?;
 
-        state
-            .rollup_store
+        self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)
             .await?;
 
@@ -345,7 +342,7 @@ impl GenServer for L1ProofSender {
     type Error = ProofSenderError;
 
     async fn handle_cast(
-        mut self,
+        self,
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse<Self> {

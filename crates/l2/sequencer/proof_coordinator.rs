@@ -229,9 +229,7 @@ impl ProofCoordinator {
         blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
-        let state =
-            Self::new(&cfg, store, rollup_store, blockchain, needed_proof_types)
-                .await?;
+        let state = Self::new(&cfg, store, rollup_store, blockchain, needed_proof_types).await?;
         let listener =
             Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
         let mut proof_coordinator = ProofCoordinator::start(state);
@@ -273,6 +271,7 @@ impl ProofCoordinator {
         commit_hash: String,
     ) -> Result<(), ProofCoordinatorError> {
         info!("BatchRequest received");
+        let batch_to_prove = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
 
         if commit_hash != self.commit_hash {
             error!(
@@ -286,20 +285,11 @@ impl ProofCoordinator {
             return Ok(());
         }
 
-        let batch_to_verify = 1 + get_latest_sent_batch(
-            self.needed_proof_types.clone(),
-            &self.rollup_store,
-            &self.eth_client,
-            self.on_chain_proposer_address,
-        )
-        .await
-        .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
-
         let mut all_proofs_exist = true;
         for proof_type in &self.needed_proof_types {
             if self
                 .rollup_store
-                .get_proof_by_batch_and_type(batch_to_verify, *proof_type)
+                .get_proof_by_batch_and_type(batch_to_prove, *proof_type)
                 .await?
                 .is_none()
             {
@@ -309,22 +299,22 @@ impl ProofCoordinator {
         }
 
         let response =
-            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_verify).await? {
+            if all_proofs_exist || !self.rollup_store.contains_batch(&batch_to_prove).await? {
                 debug!("Sending empty BatchResponse");
                 ProofData::empty_batch_response()
             } else {
-                let input = self.create_prover_input(batch_to_verify).await?;
-                let format = if state.aligned {
+                let input = self.create_prover_input(batch_to_prove).await?;
+                let format = if self.aligned {
                     ProofFormat::Compressed
                 } else {
                     ProofFormat::Groth16
                 };
-                debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-                ProofData::batch_response(batch_to_verify, input, format)
+                debug!("Sending BatchResponse for block_number: {batch_to_prove}");
+                ProofData::batch_response(batch_to_prove, input, format)
             };
 
         send_response(stream, &response).await?;
-        info!("BatchResponse sent for batch number: {batch_to_verify}");
+        info!("BatchResponse sent for batch number: {batch_to_prove}");
 
         Ok(())
     }
