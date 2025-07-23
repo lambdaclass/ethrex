@@ -1301,8 +1301,8 @@ impl PeerHandler {
         account_storage_roots: Vec<(H256, H256)>,
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
         // 1) split the range in chunks of same length
-        let chunk_size = 200;
-        let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
+        const CHUNK_SIZE: usize = 200;
+        let chunk_count = (account_storage_roots.len() / CHUNK_SIZE) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
@@ -1316,8 +1316,8 @@ impl PeerHandler {
         }
         let mut tasks_queue_not_started = VecDeque::<Task>::new();
         for i in 0..chunk_count {
-            let chunk_start = chunk_size * i;
-            let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
+            let chunk_start = CHUNK_SIZE * i;
+            let chunk_end = (chunk_start + CHUNK_SIZE).min(account_storage_roots.len());
             tasks_queue_not_started.push_back(Task {
                 start_index: chunk_start,
                 end_index: chunk_end,
@@ -1422,10 +1422,14 @@ impl PeerHandler {
                         let end_hash_u256 = U256::MAX;
                         let missing_storage_range = end_hash_u256 - start_hash_u256;
 
-                        let chunk_count = (missing_storage_range / start_hash_u256)
+                        let slot_count = account_storages.last().map(|v| v.len()).unwrap_or(1);
+                        let storage_density = start_hash_u256 / slot_count;
+
+                        let chunk_size = storage_density * CHUNK_SIZE;
+
+                        let chunk_count = (missing_storage_range / chunk_size)
                             .min(U256::from(10_000))
                             .as_usize();
-                        let chunk_size = missing_storage_range / chunk_count;
 
                         for i in 0..(chunk_count + 1) {
                             let start_hash_u256 = start_hash_u256 + chunk_size * i;
