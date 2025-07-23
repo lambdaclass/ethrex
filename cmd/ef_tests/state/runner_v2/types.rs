@@ -10,6 +10,8 @@ use crate::runner_v2::{
     error::RunnerError,
 };
 
+use std::hash::Hash;
+
 use bytes::Bytes;
 
 use ethrex_common::{
@@ -299,7 +301,7 @@ pub struct Env {
 /// This structure represents a specific test case under general test conditions (Test struct). It is mainly
 /// composed of a particular transaction combined with a particular fork. It includes the expected post state
 /// after the transaction is executed.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TestCase {
     pub vector: (usize, usize, usize),
     pub data: Bytes,
@@ -327,15 +329,20 @@ impl TestCase {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct Post {
     pub hash: H256,
     pub logs: H256,
     pub state: Option<HashMap<Address, AccountState>>,
     pub expected_exceptions: Option<Vec<TransactionExpectedException>>,
 }
+impl Hash for Post {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct AccountState {
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub balance: U256,
@@ -358,7 +365,7 @@ impl From<&AccountState> for GenesisAccount {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum TransactionExpectedException {
     InitcodeSizeExceeded,
     NonceIsMax,
@@ -380,14 +387,14 @@ pub enum TransactionExpectedException {
     Other,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessListItem {
     pub address: Address,
     pub storage_keys: Vec<H256>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizationListTuple {
     #[serde(deserialize_with = "deserialize_u256_safe")]
