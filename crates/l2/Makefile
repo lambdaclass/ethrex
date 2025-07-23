@@ -119,6 +119,7 @@ deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml --
 
 update-system-contracts:
+	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
 	--l2-genesis-path ../../fixtures/genesis/l2.json
 
