@@ -92,7 +92,8 @@ impl BlockProducer {
             rollup_store,
             blockchain,
             sequencer_state,
-        ).start();
+        )
+        .start();
         block_producer
             .cast(InMessage::Produce)
             .await

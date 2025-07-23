@@ -101,7 +101,8 @@ impl StateUpdater {
             blockchain,
             store,
             rollup_store,
-        )?.start();
+        )?
+        .start();
         state_updater
             .cast(InMessage::UpdateState)
             .await
