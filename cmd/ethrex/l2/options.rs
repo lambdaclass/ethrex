@@ -612,7 +612,7 @@ impl Default for AlignedOptions {
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
             aligned_sp1_elf_path: Some(format!(
-                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                "{}/../../prover/src/guest_program/src/sp1/out/riscv32im-succinct-zkvm-elf",
                 env!("CARGO_MANIFEST_DIR")
             )),
         }

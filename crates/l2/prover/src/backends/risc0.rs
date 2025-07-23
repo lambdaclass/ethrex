@@ -9,7 +9,7 @@ use risc0_zkvm::{
 };
 use tracing::info;
 use zkvm_interface::{
-    io::{JSONProgramInput, ProgramInput},
+    input::{JSONProgramInput, ProgramInput},
     methods::{ZKVM_RISC0_PROGRAM_ELF, ZKVM_RISC0_PROGRAM_ID},
 };
 

@@ -50,7 +50,7 @@ L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
 PROOF_COORDINATOR_ADDRESS?=127.0.0.1
-ETHREX_PROOF_COORDINATOR_DEV_MODE?=true
+ETHREX_PROOF_COORDINATOR_DEV_MODE?=false
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -105,7 +105,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--private-key ${L1_PRIVATE_KEY} \
 	--contracts-path contracts \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
+	--sp1.deploy-verifier \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
