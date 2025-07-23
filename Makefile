@@ -106,7 +106,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 	fi
 
 TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 1
+SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
 
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
