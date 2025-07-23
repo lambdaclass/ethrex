@@ -10,6 +10,7 @@ use ratatui::{
 
 use crate::{based::sequencer_state::SequencerState, sequencer::errors::MonitorError};
 
+#[derive(Clone)]
 pub struct NodeStatusTable {
     pub state: TableState,
     pub items: [(String, String); 5],

@@ -44,7 +44,7 @@
   - [Quickstart](./developers/quickstart.md)
   - [L2](./developers/l2/README.md)
     - [load-tests](./developers/l2/load_tests.md)
-
+  - [Replay](./ethrex_replay/ethrex_replay.md)
 - [CLI reference]()
 - [Troubleshooting]()
 

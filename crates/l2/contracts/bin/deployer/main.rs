@@ -32,15 +32,13 @@ use tracing::{Level, debug, error, info, trace, warn};
 mod cli;
 mod error;
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[])";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address,uint256)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,address,address,address,address,bytes32,bytes32,bytes32,address[],uint256)";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256)";
 
 #[derive(Clone, Copy)]
 pub struct ContractAddresses {
@@ -349,6 +347,7 @@ async fn initialize_contracts(
             Value::FixedBytes(risc0_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
+            Value::Uint(genesis.config.chain_id.into()),
         ];
 
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
@@ -405,6 +404,7 @@ async fn initialize_contracts(
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
             ]),
+            Value::Uint(genesis.config.chain_id.into()),
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
@@ -490,6 +490,7 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Address(opts.bridge_owner),
             Value::Address(contract_addresses.on_chain_proposer_address),
+            Value::Uint(opts.inclusion_max_wait.into()),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
