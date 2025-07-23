@@ -264,13 +264,13 @@ pub async fn periodically_show_peer_stats() {
 
         let time_taken_to_download_bytecodes = {
             let end_time = METRICS
-                .storage_tries_download_end_time
+                .bytecode_download_end_time
                 .lock()
                 .await
                 .unwrap_or(SystemTime::now());
 
             METRICS
-                .storage_tries_download_start_time
+                .bytecode_download_start_time
                 .lock()
                 .await
                 .map(|start_time| {
