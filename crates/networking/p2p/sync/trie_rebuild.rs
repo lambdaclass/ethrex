@@ -51,6 +51,7 @@ impl TrieRebuilder {
             || self.storage_trie_rebuilder.is_finished()
             || self.storage_rebuilder_sender.is_closed())
     }
+
     /// Waits for the rebuild process to complete and returns the resulting mismatched accounts
     pub async fn complete(self) -> Result<(), SyncError> {
         // Signal storage rebuilder to finish

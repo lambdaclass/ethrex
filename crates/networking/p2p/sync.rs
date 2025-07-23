@@ -6,7 +6,10 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
-use crate::{peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST}, utils::current_unix_time};
+use crate::{
+    peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    utils::current_unix_time,
+};
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -285,40 +288,22 @@ impl Syncer {
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
                 let all_block_hashes = block_sync_state.into_snap_block_hashes();
-                let mut pivot_idx = all_block_hashes.len().saturating_sub(1);
+                let pivot_idx = all_block_hashes.len().saturating_sub(1);
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
                 info!(
                     "Selected block {} as pivot for snap sync, with timestamp {}",
-                    pivot_header.number,
-                    pivot_header.timestamp
+                    pivot_header.number, pivot_header.timestamp
                 );
-
-                const SNAP_LIMIT: usize = 6;
-
-                let time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT as u64);
-                info!("{time_limit}");
-                let store2 = store.clone();
-
-                let _ = tokio::spawn(
-                    async move {
-                        loop {
-                            tokio::time::sleep(Duration::from_secs(12)).await;
-                            if time_limit > current_unix_time() {
-                                info!("We're stale now");
-                                let foo = store2.get_block_header(pivot_header.number + SNAP_LIMIT as u64);
-                                info!("new Block Header {foo:?}");
-                            }
-                        }
-                    }
-                ).await;
-
-                let state_root = pivot_header.state_root;
 
                 let (account_hashes, account_states, continues) = self
                     .peers
-                    .request_account_range(state_root, H256::zero(), H256::repeat_byte(0xff))
+                    .request_account_range(
+                        pivot_header.clone(),
+                        H256::zero(),
+                        H256::repeat_byte(0xff),
+                    )
                     .await
                     .unwrap();
 
@@ -339,7 +324,7 @@ impl Syncer {
 
                 let (storages_key_value_pairs, should_continue) = self
                     .peers
-                    .request_storage_ranges(state_root, account_storage_roots.clone())
+                    .request_storage_ranges(pivot_header.state_root, account_storage_roots.clone())
                     .await
                     .unwrap();
 
@@ -378,7 +363,7 @@ impl Syncer {
                 let account_store_time =
                     Instant::now().saturating_duration_since(account_store_start);
 
-                info!("Expected state root: {state_root:?}");
+                info!("Expected state root: {:?}", pivot_header.state_root);
                 info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
                 let storages_store_start = Instant::now();

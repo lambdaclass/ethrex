@@ -32,6 +32,7 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
+    utils::current_unix_time,
 };
 use tracing::{debug, error, info, trace, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -702,7 +703,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
         &self,
-        state_root: H256,
+        mut pivot_header: BlockHeader,
         start: H256,
         limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
@@ -881,7 +882,18 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let state_root = state_root.clone();
+            let state_root = pivot_header.state_root.clone();
+            const SNAP_LIMIT: u64 = 6;
+            let time_limit = pivot_header.timestamp + SNAP_LIMIT;
+            if current_unix_time() > time_limit {
+                info!("We are stale, updating pivot");
+                pivot_header = self
+                    .get_block_header(pivot_header.number + SNAP_LIMIT)
+                    .await
+                    .unwrap();
+                info!("New pivot block number: {}", pivot_header.number);
+            }
+
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
             tokio::spawn(async move {
                 debug!(
@@ -1929,6 +1941,51 @@ impl PeerHandler {
 
     // TODO: Implement the logic to remove a peer from the peer table
     pub async fn remove_peer(&self, _peer_id: H256) {}
+
+    async fn get_block_header(&self, block_number: u64) -> Option<BlockHeader> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(block_number),
+            limit: 1,
+            skip: 0,
+            reverse: false,
+        });
+        let retries = 5;
+        for _ in 0..retries {
+            let (peer_id, mut peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .await
+                .unwrap();
+            peer_channel
+                .connection
+                .cast(CastMessage::BackendMessage(request.clone()))
+                .await
+                .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
+                .unwrap();
+
+            // debug!("(Retry {retries}) Requesting block number {sync_head} to peer {peer_id}");
+            let receiver = peer_channel.receiver.clone();
+            match tokio::time::timeout(Duration::from_secs(2), async move {
+                receiver.lock().await.recv().await.unwrap()
+            })
+            .await
+            {
+                Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
+                    if id == request_id && !block_headers.is_empty() {
+                        return Some(block_headers.last().unwrap().clone());
+                    }
+                }
+                Ok(_other_msgs) => {
+                    debug!("Received unexpected message from peer {peer_id}");
+                }
+                Err(_err) => {
+                    debug!("Timeout while waiting for sync head from {peer_id}");
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header

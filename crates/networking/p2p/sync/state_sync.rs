@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{BigEndianHash, H256, U256, U512, constants::EMPTY_KECCACK_HASH};
+use ethrex_common::{
+    BigEndianHash, H256, U256, U512, constants::EMPTY_KECCACK_HASH, types::BlockHeader,
+};
 use ethrex_storage::{STATE_TRIE_SEGMENTS, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::{
@@ -141,7 +143,7 @@ async fn state_sync_segment(
         );
         if let Some((account_hashes, accounts, should_continue)) = peers
             .request_account_range(
-                state_root,
+                BlockHeader::default(), // TODO: fix this
                 start_account_hash,
                 STATE_TRIE_SEGMENTS_END[segment_number],
             )
