@@ -285,7 +285,7 @@ impl Syncer {
                 // - Fetch the pivot block's state via snap p2p requests
                 // - Execute blocks after the pivot (like in full-sync)
                 let all_block_hashes = block_sync_state.into_snap_block_hashes();
-                let pivot_idx = all_block_hashes.len().saturating_sub(1);
+                let mut pivot_idx = all_block_hashes.len().saturating_sub(1);
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
@@ -295,7 +295,10 @@ impl Syncer {
                     pivot_header.timestamp
                 );
 
-                let time_limit = pivot_header.timestamp + (12 * 6);
+                const SNAP_LIMIT: usize = 6;
+
+                let time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT as u64);
+                info!("{time_limit}");
 
                 let _ = tokio::spawn(
                     async move {
@@ -303,6 +306,7 @@ impl Syncer {
                             tokio::time::sleep(Duration::from_secs(12)).await;
                             if time_limit > current_unix_time() {
                                 info!("We're stale now");
+                                pivot_idx += SNAP_LIMIT;
                             }
                         }
                     }
