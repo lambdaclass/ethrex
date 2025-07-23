@@ -48,9 +48,13 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
-      - name: Run tests
+      - name: Run unit tests
         run: |
           make test
+
+      - name: Run Blockchain EF tests
+        run: |
+          make -C cmd/ef_tests/blockchain test
 
   docker_build:
     name: Build Docker
