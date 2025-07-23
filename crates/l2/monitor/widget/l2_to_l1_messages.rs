@@ -267,7 +267,9 @@ impl L2ToL1MessagesTable {
                             &log.log
                                 .topics
                                 .get(WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX)
-                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX))?
+                                .ok_or(MonitorError::LogsTopics(
+                                    WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX,
+                                ))?
                                 .as_fixed_bytes()[12..],
                         ),
                         U256::from_big_endian(
@@ -280,14 +282,18 @@ impl L2ToL1MessagesTable {
                             &log.log
                                 .topics
                                 .get(1)
-                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX))?
+                                .ok_or(MonitorError::LogsTopics(
+                                    WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX,
+                                ))?
                                 .as_fixed_bytes()[12..],
                         ),
                         Address::from_slice(
                             &log.log
                                 .topics
                                 .get(2)
-                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX))?
+                                .ok_or(MonitorError::LogsTopics(
+                                    WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX,
+                                ))?
                                 .as_fixed_bytes()[12..],
                         ),
                         log.transaction_hash,
