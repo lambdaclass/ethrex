@@ -173,17 +173,19 @@ pub async fn start_l2(
         .await?;
     }
 
-    if let Some(handle) = verifier_handle {
-        match handle.await {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error running verifier: {err}");
-            }
-            Err(err) => {
-                error!("Task error: {err}");
-            }
-        };
-    }
+    let Some(handle) = verifier_handle else {
+        return Ok(());
+    };
+
+    match handle.await {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            error!("Error running verifier: {err}");
+        }
+        Err(err) => {
+            error!("Task error: {err}");
+        }
+    };
 
     Ok(())
 }
