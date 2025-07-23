@@ -1430,15 +1430,19 @@ impl PeerHandler {
                         let chunk_size = storage_density * CHUNK_SIZE;
 
                         let chunk_count = (missing_storage_range / chunk_size)
-                            .min(U256::from(1_000))
+                            .min(U256::from(usize::MAX))
                             .as_usize();
 
                         for i in 0..(chunk_count + 1) {
                             let start_hash_u256 = start_hash_u256 + chunk_size * i;
-                            let end_hash_u256 =
-                                start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
                             let start_hash = H256::from_uint(&start_hash_u256);
-                            let end_hash = H256::from_uint(&end_hash_u256);
+                            let end_hash = if i == chunk_count {
+                                H256::repeat_byte(0xff)
+                            } else {
+                                let end_hash_u256 =
+                                    start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
+                                H256::from_uint(&end_hash_u256)
+                            };
 
                             let task = Task {
                                 start_index: remaining_start,
