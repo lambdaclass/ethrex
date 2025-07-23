@@ -74,6 +74,7 @@ pub struct Metrics {
     pub account_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Storage tries
+    pub storage_tries_to_download: Arc<Mutex<u64>>,
     pub downloaded_storage_tries: Arc<Mutex<u64>>,
     pub total_storages_downloaders: Arc<Mutex<u64>>,
     pub free_storages_downloaders: Arc<Mutex<u64>>,
@@ -82,6 +83,7 @@ pub struct Metrics {
     pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Bytecodes
+    pub bytecodes_to_download: Arc<Mutex<u64>>,
     pub downloaded_bytecodes: Arc<Mutex<u64>>,
     pub total_bytecode_downloaders: Arc<Mutex<u64>>,
     pub free_bytecode_downloaders: Arc<Mutex<u64>>,
@@ -513,6 +515,7 @@ impl Default for Metrics {
             account_tries_download_end_time: Arc::new(Mutex::new(None)),
 
             // Storage tries
+            storage_tries_to_download: Arc::new(Mutex::new(0)),
             downloaded_storage_tries: Arc::new(Mutex::new(0)),
             total_storages_downloaders: Arc::new(Mutex::new(0)),
             free_storages_downloaders: Arc::new(Mutex::new(0)),
@@ -521,6 +524,7 @@ impl Default for Metrics {
             storage_tries_download_end_time: Arc::new(Mutex::new(None)),
 
             // Bytecodes
+            bytecodes_to_download: Arc::new(Mutex::new(0)),
             downloaded_bytecodes: Arc::new(Mutex::new(0)),
             total_bytecode_downloaders: Arc::new(Mutex::new(0)),
             free_bytecode_downloaders: Arc::new(Mutex::new(0)),

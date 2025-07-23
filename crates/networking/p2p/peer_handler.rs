@@ -433,7 +433,7 @@ impl PeerHandler {
 
         let elapsed = start_time.elapsed().expect("Failed to get elapsed time");
 
-        info!(
+        debug!(
             "Downloaded {} headers in {} seconds",
             ret.len(),
             format_duration(elapsed)
@@ -443,7 +443,7 @@ impl PeerHandler {
             let downloaded_headers = ret.len();
             let unique_headers = ret.iter().map(|h| h.hash()).collect::<HashSet<_>>();
 
-            info!(
+            debug!(
                 "Downloaded {} headers, unique: {}, duplicates: {}",
                 downloaded_headers,
                 unique_headers.len(),
@@ -788,7 +788,7 @@ impl PeerHandler {
 
                 downloaded_count += accounts.len() as u64;
 
-                info!(
+                debug!(
                     "Downloaded {} accounts from peer {} (current count: {downloaded_count})",
                     accounts.len(),
                     peer_id
@@ -1056,6 +1056,7 @@ impl PeerHandler {
 
         info!("Starting to download bytecodes from peers");
 
+        *METRICS.bytecodes_to_download.lock().await = all_bytecode_hashes.len() as u64;
         *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
@@ -1096,7 +1097,7 @@ impl PeerHandler {
                 let peer_score = scores.entry(peer_id).or_default();
                 *peer_score += 1;
 
-                info!(
+                debug!(
                     "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
                     bytecodes.len(),
                 );
@@ -1262,7 +1263,7 @@ impl PeerHandler {
                     };
                     tx.send(result).await.ok();
                 } else {
-                    tracing::error!("Failed to get account range");
+                    tracing::error!("Failed to get bytecode");
                     tx.send(empty_task_result).await.ok();
                 }
             });
@@ -1346,7 +1347,7 @@ impl PeerHandler {
         );
 
         info!("Starting to download storage ranges from peers");
-
+        *METRICS.storage_tries_to_download.lock().await = account_storage_roots.len() as u64;
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
@@ -1407,7 +1408,7 @@ impl PeerHandler {
                     .iter()
                     .map(|storage| storage.len())
                     .sum::<usize>();
-                info!(
+                debug!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
@@ -1557,7 +1558,7 @@ impl PeerHandler {
                 .ok()
                 .flatten();
                 let Some((slots, proof)) = request_result else {
-                    tracing::error!("Failed to get account range");
+                    tracing::error!("Failed to get storage range");
                     tx.send(empty_task_result).await.ok();
                     return;
                 };
