@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Roadmap - Ethrex</title>
+        <title>Installing ethrex - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -237,52 +237,92 @@
 }
 
 </style>
-<h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<p>This project is under active development. Over the next <strong>two months</strong>, our <strong>primary objective is to finalize and audit the first version of the stack</strong>.
-This means every component — from L1 syncing to L2 bridging and prover integration — must meet stability, performance, and security standards.</p>
-<p>The roadmap below outlines the remaining work required to achieve this milestone, organized into three major areas: <strong>L2</strong>, <strong>DevOps &amp; Performance</strong>, and <strong>L1</strong>.</p>
-<hr />
-<h2 id="l2-roadmap"><a class="header" href="#l2-roadmap">L2 Roadmap</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
-<tr><td>Native Bridge</td><td>Secure and trust-minimized ERC-20 bridge between Ethereum L1 and L2 using canonical messaging and smart contracts.</td><td>In Progress</td></tr>
-<tr><td>Based Rollup</td><td>Launch the rollup as a based permissionless rollup. Leverages Ethereum for sequencing and DA. For more information check <a href="https://hackmd.io/TCa-bQisToW46enF58_3Vw?view">ethrex roadmap for becoming based</a></td><td>In Progress</td></tr>
-<tr><td>Aligned Integration</td><td>Optimize integration with Aligned’s aggregation mode.</td><td>In Progress</td></tr>
-<tr><td>Risc0 Support</td><td>Integrate RISC Zero as an alternative zkVM to SP1, enabling configurable proving backends.</td><td>In Progress</td></tr>
-<tr><td>Battle-Test the Prover</td><td>Ensure the prover (e.g., SP1, Risc0) is robust, correct, and performant under production-level  conditions.</td><td>In Progress</td></tr>
-<tr><td>One-Click L2 Deployment</td><td>Deploy a fully operational rollup with a single command. Includes TDX, Prover, integrated Grafana metrics, alerting system, block explorer, bridge hub, backups and default configuration for rapid developer spin-up.</td><td>In Progress</td></tr>
-<tr><td>Shared Bridge</td><td>Direct bridging between multiple L2s to improve UX and avoid L1 costs.</td><td>Planned</td></tr>
-<tr><td>Custom Native Token</td><td>Define a native token (non-ETH) for gas, staking, incentives, and governance. Fully integrated into fee mechanics and bridging.</td><td>Planned</td></tr>
-<tr><td>Validiums &amp; DACs</td><td>Enhance Validium mode with Data Availability Committees.</td><td>Planned</td></tr>
-<tr><td>Gas &amp; Fees</td><td>Set up a custom fee model to price deposits or any forced-included transaction, including data availability costs.</td><td>Planned</td></tr>
-</tbody></table>
+<h1 id="installing-ethrex"><a class="header" href="#installing-ethrex">Installing ethrex</a></h1>
+<p>Before <a href="./running.html">running the ethrex client</a>, you need to install it.
+We have multiple ways to install, depending on your needs.</p>
+<p>Pre-built binaries for Linux and macOS are available for each release.
+See <a href="#installing-from-pre-built-binaries">Installing from pre-built binaries</a> for installation instructions.</p>
+<p>You can also <a href="#installing-through-cargo-install">install through cargo install</a>, or <a href="#building-from-source">build the client from source</a>.</p>
+<h2 id="installing-from-pre-built-binaries"><a class="header" href="#installing-from-pre-built-binaries">Installing from pre-built binaries</a></h2>
+<p>To install ethrex from pre-built binaries, first download the binaries for your platform from the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a>.
+You can also download it from the command line using <code>curl</code> or <code>wget</code>:</p>
+<pre><code class="language-sh"># For Linux x86_64
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -O ethrex
+
+# For Linux ARM
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -O ethrex
+
+# For MacOS
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -O ethrex
+</code></pre>
+<p>And set the execution bit:</p>
+<pre><code class="language-sh">chmod +x ethrex
+</code></pre>
+<p>After that, you can verify the program is working by running:</p>
+<pre><code class="language-sh">./ethrex --version
+</code></pre>
+<p>This should output something like:</p>
+<pre><code class="language-text">ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
+</code></pre>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>For convenience, you can move the <code>ethrex</code> binary to a directory in your <code>PATH</code>, so you can run it from anywhere.</p>
 </div>
-<hr />
-<h2 id="devops--performance"><a class="header" href="#devops--performance">DevOps &amp; Performance</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Initiative</th><th>Description</th><th>Status</th></tr></thead><tbody>
-<tr><td>Performance Benchmarking</td><td>Continuous <code>ggas/s</code> measurement, client comparison, and reproducible load tests.</td><td>In Progress</td></tr>
-<tr><td>DB Optimizations</td><td>Snapshots, background trie commits, parallel Merkle root calculation, and exploratory DB design.</td><td>In Progress</td></tr>
-<tr><td>EVM Profiling</td><td>Identify and optimize execution bottlenecks in the VM.</td><td>In Progress</td></tr>
-<tr><td>Deployment &amp; Dev Experience</td><td>One-command L2 launch, localnet spam testing, and L1 syncing on any network.</td><td>In Progress</td></tr>
-</tbody></table>
+<p>After installing the client, see <a href="./running.html">"Running the client"</a> for instructions on how to use it to run L1 and/or L2 networks.</p>
+<h2 id="installing-through-cargo-install"><a class="header" href="#installing-through-cargo-install">Installing through <code>cargo install</code></a></h2>
+<p>To install the client, <a href="https://www.rust-lang.org/tools/install">first install Rust</a> and then run:</p>
+<pre><code class="language-sh">cargo install --locked ethrex \
+    --git https://github.com/lambdaclass/ethrex.git \
+    --tag v0.0.2-rc.1 \
+    --features dev
+</code></pre>
+<p>This installs the <code>ethrex</code> binary.
+For more information on how it is built and installed, see <a href="https://doc.rust-lang.org/cargo/commands/cargo-install.html">the cargo-install documentation</a>.</p>
+<p>After that, you can verify the program is working by running:</p>
+<pre><code class="language-sh">ethrex --version
+</code></pre>
+<p>This should output something like:</p>
+<pre><code class="language-text">ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
+</code></pre>
+<p>After installing the client, see <a href="./running.html">"Running the client"</a> for instructions on how to use it to run L1 and/or L2 networks.</p>
+<h2 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h2>
+<p>This section assumes you already have <a href="https://www.rust-lang.org/tools/install">Rust's <code>cargo</code></a> and <a href="https://git-scm.com/book/en/v2/Getting-Started-Installing-Git"><code>git</code></a> installed.</p>
+<p>You can download the source code of a release from the <a href="https://github.com/lambdaclass/ethrex/releases">GitHub releases page</a>, or by cloning the repository at that version:</p>
+<pre><code class="language-sh">git clone --branch &lt;LATEST_VERSION_HERE&gt; --depth 1 https://github.com/lambdaclass/ethrex.git
+</code></pre>
+<p>After that, you can run the following command inside the cloned repo to build the client:</p>
+<pre><code class="language-sh">cargo build --bin ethrex --release --features dev
+</code></pre>
+<p>You can find the built binary inside <code>target/release</code> directory:</p>
+<pre><code class="language-sh">./target/release/ethrex --version
+</code></pre>
+<p>This should output something like:</p>
+<pre><code class="language-text">ethrex ethrex/v0.1.0-HEAD-23191af/aarch64-apple-darwin/rustc-v1.87.0
+</code></pre>
+<div class="mdbook-alerts mdbook-alerts-tip">
+<p class="mdbook-alerts-title">
+  <span class="mdbook-alerts-icon"></span>
+  tip
+</p>
+<p>For convenience, you can move the <code>ethrex</code> binary to a directory in your <code>PATH</code>, so you can run it from anywhere.</p>
 </div>
-<hr />
-<h2 id="l1-roadmap"><a class="header" href="#l1-roadmap">L1 Roadmap</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>Description</th><th>Status</th></tr></thead><tbody>
-<tr><td>P2P Improvements</td><td>Use <a href="https://github.com/lambdaclass/spawned">spawned</a> to improve peer discovery, sync reliability, and connection handling.</td><td>In Progress</td></tr>
-<tr><td>Chain Syncing</td><td>Verify the execution of all blocks across all chains. For Proof-of-Stake (PoS) chains (Holesky, Hoodi), verify all blocks since genesis. For chains with a pre-Merge genesis (Sepolia, Mainnet), verify all blocks after the Merge.</td><td>In Progress</td></tr>
-<tr><td>Snap Sync</td><td>Improve Snap Sync implementation to make it more reliable and efficient.</td><td>Planned</td></tr>
-<tr><td>Client Stability</td><td>Increase client resilience to adverse scenarios and network disruptions. Improve observability and logging.</td><td>Planned</td></tr>
-</tbody></table>
-</div>
+<p>After installing the client, see <a href="./running.html">"Running the client"</a> for instructions on how to use it to run L1 and/or L2 networks.</p>
+
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../getting-started/running.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../getting-started/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../l1/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../getting-started/running.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -292,11 +332,11 @@ This means every component — from L1 syncing to L2 bridging and prover integra
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../getting-started/running.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../getting-started/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../l1/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../getting-started/running.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
