@@ -200,7 +200,7 @@ fn main() {
 
 fn is_valid_hex(s: &str) -> bool {
     let s = s.trim_start_matches("0x");
-    s.len() % 2 == 0 && s.chars().all(|c| c.is_digit(16))
+    s.len() % 2 == 0 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Prints on screen difference between initial state and current one.
