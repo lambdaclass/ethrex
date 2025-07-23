@@ -1457,6 +1457,12 @@ impl PeerHandler {
                     *peer_score -= 1;
                     continue;
                 }
+                if let Some(hash_end) = hash_end {
+                    // This is a big storage account, and the range might be empty
+                    if account_storages[0].len() == 1 && account_storages[0][0].0 > hash_end {
+                        continue;
+                    }
+                }
 
                 let peer_score = scores.entry(peer_id).or_default();
                 if *peer_score < 10 {
@@ -1617,15 +1623,11 @@ impl PeerHandler {
                 .await
                 .ok()
                 .flatten();
-                let Some((mut slots, proof)) = request_result else {
+                let Some((slots, proof)) = request_result else {
                     tracing::error!("Failed to get storage range");
                     tx.send(empty_task_result).await.ok();
                     return;
                 };
-                // This is a big storage account, and the range is empty
-                if slots.is_empty() && !proof.is_empty() && task.end_hash.is_some() {
-                    slots.push(vec![]);
-                }
                 if slots.is_empty() && proof.is_empty() {
                     tx.send(empty_task_result).await.ok();
                     tracing::error!("Received empty account range");
