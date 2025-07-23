@@ -6,8 +6,6 @@ RUN apt-get update && apt-get install -y \
     libc6 \
     libssl-dev \
     ca-certificates \
-    curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
@@ -19,6 +17,7 @@ WORKDIR /ethrex
 FROM chef AS planner
 COPY crates ./crates
 COPY tooling ./tooling
+COPY metrics ./metrics
 COPY cmd ./cmd
 COPY Cargo.* .
 RUN cargo chef prepare --recipe-path recipe.json
@@ -35,14 +34,11 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # Copy the full, up-to-date source code and build the application.
 # This uses the cached dependencies from the builder stage.
 
-# Install solc for build scripts
-RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
-    && chmod +x /usr/bin/solc
-
 # Optional build flags
 ARG BUILD_FLAGS=""
 COPY crates ./crates
 COPY cmd ./cmd
+COPY metrics ./metrics
 COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 

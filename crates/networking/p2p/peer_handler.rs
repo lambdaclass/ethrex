@@ -7,7 +7,7 @@ use std::{
 use bytes::Bytes;
 use ethrex_common::{
     H256, U256,
-    types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
+    types::{AccountState, BlockBody, BlockHeader, Receipt, validate_block_body},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
@@ -40,7 +40,7 @@ pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
-// Ask as much as 128 block bodies per request
+// Request as many as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
 // https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
 //
@@ -268,56 +268,40 @@ impl PeerHandler {
         None
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes and validates them
-    /// Returns the full block or None if:
+    /// Requests block bodies from any suitable peer given their block headers and validates them
+    /// Returns the requested block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
-    pub async fn request_and_validate_block_bodies<'a>(
+    pub async fn request_and_validate_block_bodies(
         &self,
-        block_hashes: &mut Vec<H256>,
-        headers_iter: &mut impl Iterator<Item = &BlockHeader>,
-    ) -> Option<Vec<Block>> {
-        let original_hashes = block_hashes.clone();
-        let headers_vec: Vec<&BlockHeader> = headers_iter.collect();
+        block_headers: &[BlockHeader],
+    ) -> Option<Vec<BlockBody>> {
+        let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            *block_hashes = original_hashes.clone();
-            let mut headers_iter = headers_vec.iter().copied();
-
             let Some((block_bodies, peer_id)) =
                 self.request_block_bodies_inner(block_hashes.clone()).await
             else {
                 continue; // Retry on empty response
             };
-
-            let mut blocks: Vec<Block> = vec![];
-            let block_bodies_len = block_bodies.len();
-
-            // Push blocks
-            for (_, body) in block_hashes.drain(..block_bodies_len).zip(block_bodies) {
-                let Some(header) = headers_iter.next() else {
-                    debug!("[SYNCING] Header not found for the block bodies received, skipping...");
-                    break; // Break out of block creation and retry with different peer
-                };
-
-                let block = Block::new(header.clone(), body);
-                blocks.push(block);
+            let mut res = Vec::new();
+            let mut validation_success = true;
+            for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
+                if let Err(e) = validate_block_body(header, &body) {
+                    warn!(
+                        "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
+                    );
+                    validation_success = false;
+                    self.record_peer_critical_failure(peer_id).await;
+                    break;
+                }
+                res.push(body);
             }
-
-            // Validate blocks
-            if let Some(e) = blocks
-                .iter()
-                .find_map(|block| validate_block_body(block).err())
-            {
-                warn!(
-                    "[SYNCING] Invalid block body error {e}, discarding peer {peer_id} and retrying..."
-                );
-                self.record_peer_critical_failure(peer_id).await;
-                continue; // Retry on validation failure
+            // Retry on validation failure
+            if validation_success {
+                return Some(res);
             }
-
-            return Some(blocks);
         }
         None
     }

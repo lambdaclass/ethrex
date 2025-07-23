@@ -53,7 +53,7 @@ impl From<&EFTest> for Genesis {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct EFTestInfo {
     #[serde(default)]
     pub comment: Option<String>,

@@ -10,10 +10,11 @@ use ethrex_l2_rpc::{
     clients::{deploy, send_eip1559_transaction},
     signer::{LocalSigner, Signer},
 };
+use ethrex_l2_sdk::calldata::{self, encode_calldata};
+use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, L1ToL2TransactionData,
-    calldata::{self, encode_calldata},
-    claim_erc20withdraw, claim_withdraw, compile_contract, deposit_erc20, download_contract_deps,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, claim_withdraw,
+    compile_contract, deposit_erc20, download_contract_deps, get_address_alias,
     get_address_from_secret_key, get_erc1967_slot, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
@@ -136,6 +137,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         &proposer_client,
     )
     .await?;
+
+    test_aliasing(&proposer_client, &eth_client).await?;
 
     test_erc20_roundtrip(bridge_address, &proposer_client, &eth_client).await?;
 
@@ -464,6 +467,46 @@ async fn test_erc20_roundtrip(
     Ok(())
 }
 
+async fn test_aliasing(
+    l2_client: &EthClient,
+    l1_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rich_wallet_private_key = l1_rich_wallet_private_key();
+    let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
+    let caller_l1 = test_deploy_l1(&init_code_l1, &rich_wallet_private_key, l1_client).await?;
+    let send_to_l2_calldata = encode_calldata(
+        "sendToL2((address,uint256,uint256,bytes))",
+        &[Value::Tuple(vec![
+            Value::Address(H160::zero()),
+            Value::Uint(U256::from(100_000)),
+            Value::Uint(U256::zero()),
+            Value::Bytes(Bytes::new()),
+        ])],
+    )?;
+    let receipt_l1 = test_send(
+        l1_client,
+        &rich_wallet_private_key,
+        caller_l1,
+        "doCall(address,bytes)",
+        &[
+            Value::Address(bridge_address()?),
+            Value::Bytes(send_to_l2_calldata.into()),
+        ],
+    )
+    .await;
+    let receipt_l2 =
+        wait_for_l2_deposit_receipt(receipt_l1.block_info.block_number, l1_client, l2_client)
+            .await
+            .unwrap();
+    println!(
+        "alising {:#x} to {:#x}",
+        get_address_alias(caller_l1),
+        receipt_l2.tx_info.from
+    );
+    assert_eq!(receipt_l2.tx_info.from, get_address_alias(caller_l1));
+    Ok(())
+}
+
 async fn test_erc20_failed_deposit(
     bridge_address: Address,
     l2_client: &EthClient,
@@ -574,7 +617,7 @@ async fn test_forced_withdrawal(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
         Some(0),
-        Some(21000 * 10),
+        Some(21000 * 15),
         L1ToL2TransactionData::new(
             COMMON_BRIDGE_L2_ADDRESS,
             21000 * 5,
@@ -851,7 +894,7 @@ async fn test_transfer_with_privileged_tx(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         transferer_address,
         Some(0),
-        Some(21000 * 10),
+        Some(21000 * 15),
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &l1_rich_wallet_private_key(),
         common_bridge_address(),
@@ -1400,7 +1443,7 @@ async fn test_call_to_contract_with_deposit(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         caller_address,
         Some(0),
-        Some(21000 * 10),
+        None,
         L1ToL2TransactionData::new(
             deployed_contract_address,
             21000 * 5,
