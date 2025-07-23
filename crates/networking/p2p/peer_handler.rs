@@ -1424,14 +1424,12 @@ impl PeerHandler {
                         let end_hash_u256 = U256::MAX;
                         let missing_storage_range = end_hash_u256 - start_hash_u256;
 
-                        let slot_count = account_storages.last().map(|v| v.len()).unwrap_or(1);
+                        let slot_count = account_storages.last().map(|v| v.len()).unwrap();
                         let storage_density = start_hash_u256 / slot_count;
 
                         let chunk_size = storage_density * CHUNK_SIZE;
 
-                        let chunk_count = (missing_storage_range / chunk_size)
-                            .min(U256::from(usize::MAX))
-                            .as_usize();
+                        let chunk_count = (missing_storage_range / chunk_size).as_usize();
 
                         for i in 0..(chunk_count + 1) {
                             let start_hash_u256 = start_hash_u256 + chunk_size * i;
