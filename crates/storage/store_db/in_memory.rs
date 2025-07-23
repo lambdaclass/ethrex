@@ -275,10 +275,9 @@ impl StoreEngine for Store {
         &self,
         numbers_and_hashes: &[(u64, H256)],
     ) -> Result<(), StoreError> {
-        let mut store = self.inner()?;
-        for (n, h) in numbers_and_hashes {
-            store.canonical_hashes.insert(*n, *h);
-        }
+        self.inner()?
+            .canonical_hashes
+            .extend(numbers_and_hashes.iter().copied());
         Ok(())
     }
 

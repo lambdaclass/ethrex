@@ -770,10 +770,10 @@ impl Syncer {
         let pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
-        debug!(
-            "Selected block {} as pivot for snap sync",
-            pivot_header.number
-        );
+
+        let pivot_number = pivot_header.number;
+        let pivot_hash = pivot_header.hash();
+        debug!("Selected block {pivot_number} as pivot for snap sync");
 
         let state_root = pivot_header.state_root;
 
@@ -842,42 +842,42 @@ impl Syncer {
 
         let store_clone = store.clone();
         tokio::task::spawn_blocking(move || {
-                    let store = store_clone;
-                    // Store trie in storage
-                    for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
-                        .into_iter()
-                        .zip(storages_key_value_pairs)
-                    {
-                        let mut storage_trie = store
-                            .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                            .unwrap();
+            let store = store_clone;
+            // Store trie in storage
+            for ((account_hash, storage_root), key_value_pairs) in account_storage_roots
+                .into_iter()
+                .zip(storages_key_value_pairs)
+            {
+                let mut storage_trie = store
+                    .open_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .unwrap();
 
-                        for (hashed_key, value) in key_value_pairs {
-                            storage_trie
-                                .insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                                .unwrap();
-                            if let Err(err) =
-                                storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
-                            {
-                                error!(
-                                    "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
-                                );
-                                continue;
-                            };
-                        }
-                        let Ok(computed_state_root) = storage_trie.hash() else {
-                            error!(
-                                "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
-                            );
-                            continue;
-                        };
-                        if computed_state_root != storage_root {
-                            error!(
-                                "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
-                            );
-                        }
-                    }
-                }).await.unwrap();
+                for (hashed_key, value) in key_value_pairs {
+                    storage_trie
+                        .insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                        .unwrap();
+                    if let Err(err) =
+                        storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec())
+                    {
+                        error!(
+                            "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
+                        );
+                        continue;
+                    };
+                }
+                let Ok(computed_state_root) = storage_trie.hash() else {
+                    error!(
+                        "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
+                    );
+                    continue;
+                };
+                if computed_state_root != storage_root {
+                    error!(
+                        "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
+                    );
+                }
+            }
+        }).await.unwrap();
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
@@ -902,24 +902,26 @@ impl Syncer {
                 });
         }
 
-        store_block_bodies(
-            vec![all_block_hashes[pivot_idx]],
-            self.peers.clone(),
-            store.clone(),
-        )
-        .await
-        .unwrap();
+        store_block_bodies(vec![pivot_hash], self.peers.clone(), store.clone())
+            .await
+            .unwrap();
 
         let block = store
-            .get_block_by_hash(all_block_hashes[pivot_idx])
+            .get_block_by_hash(pivot_hash)
             .await?
             .ok_or(SyncError::CorruptDB)?;
-        let block_number = block.header.number;
+
         store.add_block(block).await?;
-        store
-            .set_canonical_block(block_number, all_block_hashes[pivot_idx])
-            .await?;
-        store.update_latest_block_number(block_number).await?;
+
+        let numbers_and_hashes = all_block_hashes
+            .into_iter()
+            .rev()
+            .enumerate()
+            .map(|(i, hash)| (pivot_number - i as u64, hash))
+            .collect::<Vec<_>>();
+
+        store.mark_chain_as_canonical(&numbers_and_hashes).await?;
+        store.update_latest_block_number(pivot_number).await?;
 
         Ok(())
     }
