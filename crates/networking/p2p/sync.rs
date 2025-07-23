@@ -305,10 +305,11 @@ impl Syncer {
                     async move {
                         loop {
                             tokio::time::sleep(Duration::from_secs(12)).await;
-                            if time_limit > current_unix_time() {
+                            if time_limit < current_unix_time() {
                                 info!("We're stale now");
                                 let foo = store2.get_block_header(pivot_header.number + SNAP_LIMIT as u64);
                                 info!("new Block Header {foo:?}");
+                                time_limit += (12 * SNAP_LIMIT as u64);
                             }
                         }
                     }
