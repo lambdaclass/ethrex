@@ -7,10 +7,10 @@ use ethrex_levm::{
     db::{CacheDB, gen_db::GeneralizedDatabase},
     vm::VMType,
 };
-use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, backends::levm::LEVM};
+use ethrex_vm::{DynVmDatabase, Evm, EvmEngine, ExecutionWitnessWrapper, backends::levm::LEVM};
 use eyre::Ok;
 use std::sync::Arc;
-use zkvm_interface::io::{ExecutionWitnessWrapper, ProgramInput};
+use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<()> {
     let input = get_input(cache)?;

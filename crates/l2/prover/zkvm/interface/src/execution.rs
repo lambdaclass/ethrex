@@ -1,4 +1,4 @@
-use crate::io::{ExecutionWitnessWrapper, ProgramInput, ProgramOutput};
+use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
@@ -14,7 +14,7 @@ use ethrex_common::{
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
-use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError, VmDatabase};
+use ethrex_vm::{Evm, EvmEngine, EvmError, ExecutionWitnessWrapper, ProverDBError, VmDatabase};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
