@@ -886,8 +886,8 @@ impl PeerHandler {
 
             let state_root = pivot_header.state_root.clone();
             const SNAP_LIMIT: u64 = 3;
-            let time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
-            if current_unix_time() > time_limit {
+            let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
+            while current_unix_time() > time_limit {
                 info!("We are stale, updating pivot");
                 let Some(header) = self
                     .get_block_header(pivot_header.number + SNAP_LIMIT)
@@ -901,6 +901,7 @@ impl PeerHandler {
                     "New pivot block number: {}, header: {:?}",
                     pivot_header.number, pivot_header
                 );
+                time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
             }
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
