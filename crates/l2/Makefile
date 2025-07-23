@@ -98,6 +98,7 @@ clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 
+# TODO: add a new target for based deployments
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
@@ -113,7 +114,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
-	# TODO: add a new target for based deployments
 	--deploy-based-contracts \
 	--sequencer-registry-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
 	--genesis-l2-path ../../fixtures/genesis/l2.json

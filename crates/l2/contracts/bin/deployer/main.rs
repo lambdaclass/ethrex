@@ -389,6 +389,24 @@ async fn initialize_contracts(
             .await?
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+
+        info!("Deploying RewardVault...");
+
+        let reward_vault_calldata = encode_calldata("initialize(address,address)", &[
+            Value::Address(contract_addresses.on_chain_proposer_address),
+            Value::Address(Default::default()), /* TODO: set the reward token address */
+        ])?;
+
+
+        let reward_vault_initialize_tx_hash = initialize_contract(
+            contract_addresses.on_chain_proposer_address,
+            reward_vault_calldata,
+            &deployer,
+            eth_client,
+        )
+        .await?;
+
+        info!(tx_hash = %format!("{reward_vault_initialize_tx_hash:#x}"), "RewardVault initialized");
     } else {
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
