@@ -1410,13 +1410,15 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                         }
                     } else {
-                        let task = Task {
-                            start_index: remaining_start + 1,
-                            end_index: remaining_end,
-                            start_hash: H256::zero(),
-                            end_hash: None,
-                        };
-                        tasks_queue_not_started.push_back(task);
+                        if remaining_start + 1 < remaining_end {
+                            let task = Task {
+                                start_index: remaining_start + 1,
+                                end_index: remaining_end,
+                                start_hash: H256::zero(),
+                                end_hash: None,
+                            };
+                            tasks_queue_not_started.push_back(task);
+                        }
                         // Task found a big storage account, so we split the chunk into multiple chunks
                         let start_hash_u256 = U256::from_big_endian(&hash_start.0);
                         let end_hash_u256 = U256::MAX;
