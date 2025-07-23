@@ -368,12 +368,6 @@ account tries state root: {account_tries_state_root}
 storage tries state root progress: {storage_tries_state_roots_compute_progress} (total: {total_storage_tries_state_roots_to_compute}, computed: {computed_storage_tries_state_roots}, remaining: {remaining_storage_tries_state_roots}, elapsed: {storage_tries_state_roots_compute_time})
 bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {downloaded_bytecodes}, remaining: {remaining_bytecodes}, elapsed: {bytecodes_download_time})"#,
             elapsed = format_duration(start.elapsed()),
-            current_contacts = METRICS.contacts.lock().await,
-            new_contacts_rate = METRICS.new_contacts_rate.get().floor(),
-            discarded_nodes = METRICS.discarded_nodes.get(),
-            discovered_nodes = METRICS.discovered_nodes.get(),
-            sent_pings = METRICS.pings_sent.get(),
-            sent_pings_rate = METRICS.pings_sent_rate.get().floor(),
             peers = METRICS.peers.lock().await,
             new_peers_rate = METRICS.new_connection_establishments_rate.get().floor(),
             lost_peers = rlpx_disconnections
