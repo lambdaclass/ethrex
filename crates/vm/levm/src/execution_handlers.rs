@@ -9,19 +9,13 @@ use bytes::Bytes;
 
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
-        &mut self,
         precompile_result: Result<Bytes, VMError>,
+        gas_used: u64,
     ) -> Result<ContextResult, VMError> {
         match precompile_result {
             Ok(output) => Ok(ContextResult {
                 result: TxResult::Success,
-                gas_used: {
-                    let callframe = self.current_call_frame()?;
-                    callframe
-                        .gas_limit
-                        .checked_sub(callframe.gas_remaining)
-                        .ok_or(InternalError::Underflow)?
-                },
+                gas_used,
                 output,
             }),
             Err(error) => {
@@ -31,7 +25,7 @@ impl<'a> VM<'a> {
 
                 Ok(ContextResult {
                     result: TxResult::Revert(error),
-                    gas_used: self.current_call_frame()?.gas_limit,
+                    gas_used,
                     output: Bytes::new(),
                 })
             }

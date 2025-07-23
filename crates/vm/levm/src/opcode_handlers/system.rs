@@ -811,40 +811,87 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let mut stack = self.stack_pool.pop().unwrap_or_default();
-        stack.clear();
-
-        let next_memory = self.current_call_frame_mut()?.memory.next_memory();
-
-        let new_call_frame = CallFrame::new(
-            msg_sender,
-            to,
-            code_address,
-            bytecode,
-            value,
-            calldata,
-            is_static,
-            gas_limit,
-            new_depth,
-            should_transfer_value,
-            false,
-            ret_offset,
-            ret_size,
-            stack,
-            next_memory,
-        );
-        self.call_frames.push(new_call_frame);
-
-        // Transfer value from caller to callee.
-        if should_transfer_value {
-            self.transfer(msg_sender, to, value)?;
-        }
-
-        self.backup_substate();
-
         if self.is_precompile(&code_address) && !is_delegation_7702 {
-            let ctx_result = self.execute_precompile()?;
-            self.handle_return(&ctx_result)?;
+            // Transfer value from caller to callee.
+            if should_transfer_value {
+                self.transfer(msg_sender, to, value)?;
+            }
+
+            let mut gas_remaining = gas_limit;
+            let ctx_result = Self::execute_precompile(
+                self.vm_type,
+                code_address,
+                &calldata,
+                &mut gas_remaining,
+            )?;
+
+            let call_frame = self.current_call_frame_mut()?;
+
+            // Return gas left from subcontext
+            call_frame.gas_remaining = call_frame
+                .gas_remaining
+                .checked_add(
+                    gas_limit
+                        .checked_sub(ctx_result.gas_used)
+                        .ok_or(InternalError::Underflow)?,
+                )
+                .ok_or(InternalError::Overflow)?;
+
+            // Store return data of sub-context
+            call_frame.memory.store_data(
+                ret_offset,
+                if ctx_result.output.len() >= ret_size {
+                    ctx_result
+                        .output
+                        .get(..ret_size)
+                        .ok_or(ExceptionalHalt::OutOfBounds)?
+                } else {
+                    &ctx_result.output
+                },
+            )?;
+            call_frame.sub_return_data = ctx_result.output.clone();
+
+            // What to do, depending on TxResult
+            call_frame.stack.push1(match &ctx_result.result {
+                TxResult::Success => SUCCESS,
+                TxResult::Revert(_) => FAIL,
+            })?;
+
+            // self.tracer.exit_context(&ctx_result, false)?;
+
+            // Increment PC of the parent callframe after execution of the child.
+            self.increment_pc_by(1)?;
+        } else {
+            let mut stack = self.stack_pool.pop().unwrap_or_default();
+            stack.clear();
+
+            let next_memory = self.current_call_frame_mut()?.memory.next_memory();
+
+            let new_call_frame = CallFrame::new(
+                msg_sender,
+                to,
+                code_address,
+                bytecode,
+                value,
+                calldata,
+                is_static,
+                gas_limit,
+                new_depth,
+                should_transfer_value,
+                false,
+                ret_offset,
+                ret_size,
+                stack,
+                next_memory,
+            );
+            self.call_frames.push(new_call_frame);
+
+            // Transfer value from caller to callee.
+            if should_transfer_value {
+                self.transfer(msg_sender, to, value)?;
+            }
+
+            self.backup_substate();
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
