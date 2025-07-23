@@ -1407,13 +1407,9 @@ impl PeerHandler {
                     downloaded_count -= 1;
                 }
 
-                let n_storages = account_storages.len();
-                let n_slots = account_storages
-                    .iter()
-                    .map(|storage| storage.len())
-                    .sum::<usize>();
                 info!(
-                    "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
+                    "Downloaded {} storages from peer {peer_id} (current count: {downloaded_count})",
+                    account_storages.len(),
                 );
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
