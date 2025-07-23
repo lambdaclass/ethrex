@@ -800,12 +800,11 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
     let f = f == 1;
 
     #[expect(clippy::as_conversions)] // safe to convert a u32 to usize
-    let result = blake2f_compress_f(rounds as usize, &h, &m, &t, f);
+    blake2f_compress_f(rounds as usize, &mut h, &m, &t, f);
 
-    // map the result to the output format (from a u64 slice to a u8 one)
-    let output: Vec<u8> = result.iter().flat_map(|num| num.to_le_bytes()).collect();
-
-    Ok(Bytes::from(output))
+    Ok(Bytes::from_iter(
+        h.into_iter().flat_map(|value| value.to_le_bytes()),
+    ))
 }
 
 /// Converts the provided commitment to match the provided versioned_hash.
