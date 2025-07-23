@@ -363,7 +363,7 @@ Snap Sync:
 ==========
 headers progress: {headers_download_progress} (total: {headers_to_download}, downloaded: {downloaded_headers}, remaining: {remaining_headers}, elapsed: {headers_download_time})
 downloaded account tries: {downloaded_account_tries}, elapsed: {account_tries_download_time}
-storage tries progress: {storage_tries_download_progress} (total: {storage_tries_to_download}, downloaded: {downloaded_storage_tries}, remaining: {remaining_storage_tries}, elapsed: {storage_tries_download_time})
+storage tries progress: {storage_tries_download_progress} (total: {storage_tries_to_download}, downloaded: {downloaded_storage_tries}, remaining: {remaining_storage_tries}, slots: {downloaded_storage_slots}, tasks: {storage_tries_tasks_queued}, elapsed: {storage_tries_download_time})
 account tries state root: {account_tries_state_root}
 storage tries state root progress: {storage_tries_state_roots_compute_progress} (total: {total_storage_tries_state_roots_to_compute}, computed: {computed_storage_tries_state_roots}, remaining: {remaining_storage_tries_state_roots}, elapsed: {storage_tries_state_roots_compute_time})
 bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download}, downloaded: {downloaded_bytecodes}, remaining: {remaining_bytecodes}, elapsed: {bytecodes_download_time})"#,
@@ -423,6 +423,8 @@ bytecodes progress: {bytecodes_download_progress} (total: {bytecodes_to_download
                 time_taken_to_compute_storage_tries_state_roots
                     .map(format_duration)
                     .unwrap_or_else(|| "-".to_owned()),
+            downloaded_storage_slots = *METRICS.downloaded_storage_slots.lock().await,
+            storage_tries_tasks_queued = METRICS.storages_downloads_tasks_queued.lock().await,
         );
 
         //         info!(

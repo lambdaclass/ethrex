@@ -82,6 +82,9 @@ pub struct Metrics {
     pub storage_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
 
+    // Storage slots
+    pub downloaded_storage_slots: Arc<Mutex<u64>>,
+
     // Storage tries state roots
     pub storage_tries_state_roots_to_compute: Arc<Mutex<u64>>,
     pub storage_tries_state_roots_computed: IntCounter,
@@ -539,6 +542,9 @@ impl Default for Metrics {
             storages_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             storage_tries_download_start_time: Arc::new(Mutex::new(None)),
             storage_tries_download_end_time: Arc::new(Mutex::new(None)),
+
+            // Storage slots
+            downloaded_storage_slots: Arc::new(Mutex::new(0)),
 
             // Storage tries state roots
             storage_tries_state_roots_to_compute: Arc::new(Mutex::new(0)),

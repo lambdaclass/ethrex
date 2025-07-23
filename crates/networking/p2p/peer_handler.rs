@@ -1412,6 +1412,9 @@ impl PeerHandler {
                     .iter()
                     .map(|storage| storage.len())
                     .sum::<usize>();
+
+                *METRICS.downloaded_storage_slots.lock().await += n_slots as u64;
+
                 debug!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
