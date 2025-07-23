@@ -179,7 +179,7 @@ pub fn write_state(batch_number: u64, state_type: &StateType) -> Result<(), Save
 }
 
 fn get_latest_batch_number_and_path() -> Result<(u64, PathBuf), SaveStateError> {
-    let datadir = default_datadir()?;
+    let data_dir = default_datadir()?;
     let latest_batch_number = read_dir(&data_dir)?
         .filter_map(|entry| {
             let entry = entry.ok()?;
