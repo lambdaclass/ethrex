@@ -62,13 +62,6 @@ pub struct EthrexMonitorWidget {
     pub last_scroll: Instant,
 }
 
-#[derive(Clone)]
-pub struct EthrexMonitorState {
-    widget: EthrexMonitorWidget,
-    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
-    cancellation_token: CancellationToken,
-}
-
 #[derive(Clone, Debug)]
 pub enum CastInMessage {
     Tick,
@@ -80,8 +73,12 @@ pub enum OutMessage {
     Done,
 }
 
-#[derive(Default)]
-pub struct EthrexMonitor {}
+#[derive(Clone)]
+pub struct EthrexMonitor {
+    widget: EthrexMonitorWidget,
+    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
+    cancellation_token: CancellationToken,
+}
 
 impl EthrexMonitor {
     pub async fn spawn(
@@ -92,12 +89,12 @@ impl EthrexMonitor {
         cancellation_token: CancellationToken,
     ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
-        let state = EthrexMonitorState {
+        let ethrex_monitor = EthrexMonitor {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
             cancellation_token,
         };
-        Ok(EthrexMonitor::start(state))
+        Ok(ethrex_monitor.start())
     }
 }
 
@@ -105,21 +102,12 @@ impl GenServer for EthrexMonitor {
     type CallMsg = Unused;
     type CastMsg = CastInMessage;
     type OutMsg = OutMessage;
-    type State = EthrexMonitorState;
     type Error = MonitorError;
 
-    fn new() -> Self {
-        Self {}
-    }
-
-    async fn init(
-        &mut self,
-        handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> Result<Self::State, Self::Error> {
+    async fn init(self, handle: &GenServerHandle<Self>) -> Result<Self, Self::Error> {
         // Tick handling
         send_interval(
-            Duration::from_millis(state.widget.tick_rate),
+            Duration::from_millis(self.widget.tick_rate),
             handle.clone(),
             Self::CastMsg::Tick,
         );
@@ -129,19 +117,18 @@ impl GenServer for EthrexMonitor {
             |event: Event| Self::CastMsg::Event(event),
             EventStream::new(),
         );
-        Ok(state)
+        Ok(self)
     }
 
     async fn handle_cast(
-        &mut self,
+        mut self,
         message: Self::CastMsg,
         _handle: &GenServerHandle<Self>,
-        mut state: Self::State,
     ) -> CastResponse<Self> {
         match message {
             // On event
             CastInMessage::Event(event) => {
-                let widget = &mut state.widget;
+                let widget = &mut self.widget;
                 if let Some(key) = event.as_key_press_event() {
                     widget.on_key_event(key.code);
                 }
@@ -151,7 +138,7 @@ impl GenServer for EthrexMonitor {
             }
             // Tick received
             CastInMessage::Tick => {
-                let _ = state
+                let _ = self
                     .widget
                     .on_tick()
                     .await
@@ -159,28 +146,24 @@ impl GenServer for EthrexMonitor {
             }
         }
 
-        if !state.widget.should_quit {
-            let _ = state
+        if !self.widget.should_quit {
+            let _ = self
                 .widget
-                .draw(&mut *state.terminal.lock().await)
+                .draw(&mut *self.terminal.lock().await)
                 .inspect_err(|err| error!("Render error: {err}"));
-            CastResponse::NoReply(state)
+            CastResponse::NoReply(self)
         } else {
             CastResponse::Stop
         }
     }
 
-    async fn teardown(
-        &mut self,
-        _handle: &GenServerHandle<Self>,
-        state: Self::State,
-    ) -> Result<(), Self::Error> {
-        let mut terminal = state.terminal.lock().await;
+    async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
+        let mut terminal = self.terminal.lock().await;
         let _ = restore_terminal(&mut terminal).inspect_err(|err| {
             error!("Error restoring terminal: {err}");
         });
         info!("Monitor has been cancelled");
-        state.cancellation_token.cancel();
+        self.cancellation_token.cancel();
         Ok(())
     }
 }
