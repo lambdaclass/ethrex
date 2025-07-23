@@ -15,16 +15,16 @@ You can also download it from the command line using `curl` or `wget`:
 
 ```sh
 # For Linux x86_64
-curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_x86_64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_x86_64 -O ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_x86_64 -O ethrex
 
 # For Linux ARM
-curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_aarch64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-linux_aarch64 -O ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux_aarch64 -O ethrex
 
 # For MacOS
-curl -L https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-macos_aarch64 -o ethrex
-wget https://github.com/lambdaclass/ethrex/releases/download/v0.0.2-rc.1/ethrex-macos_aarch64 -O ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -o ethrex
+wget https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos_aarch64 -O ethrex
 ```
 
 And set the execution bit:
