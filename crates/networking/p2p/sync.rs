@@ -886,22 +886,16 @@ impl Syncer {
                         continue;
                     };
                 }
-<<<<<<< HEAD
-=======
                 
->>>>>>> @{-1}
                 let Ok(computed_state_root) = storage_trie.hash() else {
                     error!(
                         "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
                     );
                     continue;
                 };
-<<<<<<< HEAD
-=======
 
                 METRICS.storage_tries_state_roots_computed.inc();
 
->>>>>>> @{-1}
                 if computed_state_root != storage_root {
                     error!(
                         "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
@@ -909,14 +903,11 @@ impl Syncer {
                 }
             }
         }).await.unwrap();
-<<<<<<< HEAD
-=======
         
 
         METRICS.storage_tries_state_roots_end_time
             .lock()
             .await.replace(SystemTime::now());
->>>>>>> @{-1}
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
