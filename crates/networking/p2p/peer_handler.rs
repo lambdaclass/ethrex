@@ -1382,6 +1382,7 @@ impl PeerHandler {
                     remaining_end,
                     remaining_hash_range: (hash_start, hash_end),
                 } = result;
+                completed_tasks += 1;
 
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
                     *downloader_is_free = true;
@@ -1398,6 +1399,7 @@ impl PeerHandler {
                             end_hash: None,
                         };
                         tasks_queue_not_started.push_back(task);
+                        task_count += 1;
                     } else if let Some(hash_end) = hash_end {
                         // Task was a big storage account result
                         if hash_start <= hash_end {
@@ -1408,8 +1410,7 @@ impl PeerHandler {
                                 end_hash: Some(hash_end),
                             };
                             tasks_queue_not_started.push_back(task);
-                        } else {
-                            completed_tasks += 1;
+                            task_count += 1;
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
@@ -1454,13 +1455,10 @@ impl PeerHandler {
                                 end_hash: Some(end_hash),
                             };
                             tasks_queue_not_started.push_back(task);
+                            task_count += 1;
                         }
                         info!("Split big storage account into {chunk_count} chunks.");
-                        // We already completed one task, so we account for that
-                        task_count += chunk_count - 1;
                     }
-                } else {
-                    completed_tasks += 1;
                 }
 
                 if account_storages.is_empty() {
