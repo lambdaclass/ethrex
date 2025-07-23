@@ -98,17 +98,19 @@ fn main() {
         let file_content =
             fs::read_to_string(&code_file_path).expect("Failed to read bytecode file");
 
-        // If it starts with "0x" or it's a valid hex number we interpret it as bytecode, otherwise as mnemonic.
-        // First check is just for "performance" reasons
-        let trimmed = file_content.trim();
-        let bytecode = if trimmed.starts_with("0x") || is_valid_hex(trimmed) {
+        let strings: Vec<String> = file_content
+            .split_ascii_whitespace()
+            .map(String::from)
+            .collect();
+        // We interpret as bytecode if there's only one string and that string is not an opcode
+        // Otherwise, if there are multiple strings or if the string is for example ADD we'll know it's mnemonics
+        let bytecode = if strings.len() == 1 && strings[0].parse::<Opcode>().is_err() {
             debug!("Decoding raw bytecode");
-            let trimmed_content = trimmed.trim_start_matches("0x");
-            Bytes::from(hex::decode(trimmed_content).expect("Failed to decode hex string"))
+            let code = strings[0].trim_start_matches("0x");
+            Bytes::from(hex::decode(code).expect("Failed to decode hex string"))
         } else {
             debug!("Parsing mnemonics");
-            let mnemonics = trimmed.split_ascii_whitespace().map(String::from).collect();
-            mnemonics_to_bytecode(mnemonics)
+            mnemonics_to_bytecode(strings)
         };
 
         debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
@@ -196,11 +198,6 @@ fn main() {
         db.current_accounts_state,
         &runner_input.transaction,
     );
-}
-
-fn is_valid_hex(s: &str) -> bool {
-    let s = s.trim_start_matches("0x");
-    s.len() % 2 == 0 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Prints on screen difference between initial state and current one.
