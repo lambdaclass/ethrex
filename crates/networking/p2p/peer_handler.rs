@@ -1448,6 +1448,7 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                         }
+                        info!("Split big storage account into {chunk_count} chunks");
                         task_count += chunk_count + 1;
                     }
                 } else {
