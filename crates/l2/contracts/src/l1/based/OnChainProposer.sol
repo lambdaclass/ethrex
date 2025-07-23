@@ -294,6 +294,10 @@ contract OnChainProposer is
         emit BatchCommitted(batchNumber, newStateRoot);
 
         lastCommittedBatch = batchNumber;
+        ISequencerRegistry(SEQUENCER_REGISTRY).pushSequencer(
+            batchNumber,
+            msg.sender
+        );
     }
 
     /// @inheritdoc IOnChainProposer
