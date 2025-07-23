@@ -179,6 +179,10 @@ pub enum ProofVerifierError {
         existing_hex: String,
         latest_hex: String,
     },
+    // TODO: Avoid propagating GenServerErrors outside GenServer modules
+    // See https://github.com/lambdaclass/ethrex/issues/3376
+    #[error("Spawned GenServer Error")]
+    GenServer(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
