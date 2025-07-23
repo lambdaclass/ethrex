@@ -1422,17 +1422,14 @@ impl PeerHandler {
                         let end_hash_u256 = U256::MAX;
                         let missing_storage_range = end_hash_u256 - start_hash_u256;
 
-                        let slot_count =
-                            dbg!(account_storages.last().map(|v| v.len()).unwrap_or(1));
-                        let storage_density = dbg!(start_hash_u256 / slot_count);
+                        let slot_count = account_storages.last().map(|v| v.len()).unwrap_or(1);
+                        let storage_density = start_hash_u256 / slot_count;
 
-                        let chunk_size = dbg!(storage_density * CHUNK_SIZE);
+                        let chunk_size = storage_density * CHUNK_SIZE;
 
-                        let chunk_count = dbg!(
-                            (missing_storage_range / chunk_size)
-                                .min(U256::from(1_000))
-                                .as_usize()
-                        );
+                        let chunk_count = (missing_storage_range / chunk_size)
+                            .min(U256::from(1_000))
+                            .as_usize();
 
                         for i in 0..(chunk_count + 1) {
                             let start_hash_u256 = start_hash_u256 + chunk_size * i;
@@ -1620,15 +1617,18 @@ impl PeerHandler {
                 .await
                 .ok()
                 .flatten();
-                let Some((slots, proof)) = request_result else {
+                let Some((mut slots, proof)) = request_result else {
                     tracing::error!("Failed to get storage range");
                     tx.send(empty_task_result).await.ok();
                     return;
                 };
-                if slots.is_empty() {
+                // This is a big storage account, and the range is empty
+                if slots.is_empty() && !proof.is_empty() && task.end_hash.is_some() {
+                    slots.push(vec![]);
+                }
+                if slots.is_empty() && proof.is_empty() {
                     tx.send(empty_task_result).await.ok();
-                    // Too spammy
-                    // tracing::error!("Received empty account range");
+                    tracing::error!("Received empty account range");
                     return;
                 }
                 // Check we got some data and no more than the requested amount
