@@ -1460,7 +1460,7 @@ impl PeerHandler {
 
                 downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
-                if !remaining_start_hash.is_zero() {
+                if !hash_start.is_zero() {
                     downloaded_count -= 1;
                 }
 
@@ -1557,12 +1557,13 @@ impl PeerHandler {
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
 
-            let (chunk_account_hashes, chunk_storage_roots) = account_storage_roots
-                .iter()
-                .skip(task.start_index)
-                .take(task.end_index - task.start_index)
-                .map(|(hash, root)| (*hash, *root))
-                .unzip();
+            let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
+                account_storage_roots
+                    .iter()
+                    .skip(task.start_index)
+                    .take(task.end_index - task.start_index)
+                    .map(|(hash, root)| (*hash, *root))
+                    .unzip();
 
             tokio::spawn(async move {
                 let start = task.start_index;
