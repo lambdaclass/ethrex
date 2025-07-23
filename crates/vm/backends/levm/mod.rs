@@ -59,7 +59,7 @@ impl LEVM {
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
-                matches!(report.result.clone(), TxResult::Success),
+                report.is_success(),
                 cumulative_gas_used,
                 report.logs.clone(),
             );
@@ -453,7 +453,7 @@ impl LEVM {
     }
 }
 
-pub fn generic_system_contract_levm(
+fn generic_system_contract_levm(
     block_header: &BlockHeader,
     calldata: Bytes,
     db: &mut GeneralizedDatabase,

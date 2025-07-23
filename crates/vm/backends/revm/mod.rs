@@ -191,12 +191,7 @@ impl REVM {
         }
 
         match tx_result {
-            ExecutionResult::Success {
-                gas_used: _,
-                gas_refunded: _,
-                logs: _,
-                output,
-            } => Ok(output.into()),
+            ExecutionResult::Success { output, .. } => Ok(output.into()),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!(
@@ -236,12 +231,7 @@ impl REVM {
         }
 
         match tx_result {
-            ExecutionResult::Success {
-                gas_used: _,
-                gas_refunded: _,
-                logs: _,
-                output,
-            } => Ok(output.into()),
+            ExecutionResult::Success { output, .. } => Ok(output.into()),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!(
