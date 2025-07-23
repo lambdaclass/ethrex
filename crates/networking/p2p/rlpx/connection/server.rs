@@ -274,15 +274,9 @@ impl GenServer for RLPxConnection {
                         }
                     }
                 }
-                _ => {
-                    log_peer_warn(
-                        &established_state.node,
-                        "No handler for cast message or no capabilities matched",
-                    );
-                    Err(RLPxError::MessageNotHandled(
-                        "Unknown message or capability not handled".to_string(),
-                    ))
-                }
+                _ => Err(RLPxError::MessageNotHandled(
+                    "Unknown message or capability not handled".to_string(),
+                )),
             };
 
             if let Err(e) = result {
