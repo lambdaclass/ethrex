@@ -885,12 +885,12 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             let state_root = pivot_header.state_root.clone();
-            const SNAP_LIMIT: u64 = 3;
+            const SNAP_LIMIT: u64 = 6;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
             while current_unix_time() > time_limit {
                 info!("We are stale, updating pivot");
                 let Some(header) = self
-                    .get_block_header(pivot_header.number + SNAP_LIMIT)
+                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1)
                     .await
                 else {
                     info!("Received None pivot_header");
