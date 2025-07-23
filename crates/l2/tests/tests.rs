@@ -72,11 +72,6 @@ const DEFAULT_L2_RETURN_TRANSFER_PRIVATE_KEY: H256 = H256([
     0xbc, 0xdf, 0x20, 0x24, 0x9a, 0xbf, 0x0e, 0xd6, 0xd9, 0x44, 0xc0, 0x28, 0x8f, 0xad, 0x48, 0x9e,
     0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
 ]);
-// 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
-const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x8c, 0xcf, 0x74, 0x99, 0x9c, 0x49, 0x6e, 0x4d, 0x27, 0xa2, 0xb0, 0x29, 0x41, 0x67, 0x3f, 0x41,
-    0xdd, 0x0d, 0xab, 0x2a,
-]);
 // 0x0007a881CD95B1484fca47615B64803dad620C8d
 const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0x00, 0x07, 0xa8, 0x81, 0xcd, 0x95, 0xb1, 0x48, 0x4f, 0xca, 0x47, 0x61, 0x5b, 0x64, 0x80, 0x3d,
@@ -95,41 +90,39 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let l2_client = l2_client();
     let rich_wallet_private_key = l1_rich_wallet_private_key();
     let transfer_return_private_key = l2_return_transfer_private_key();
-    let bridge_address = common_bridge_address();
     let deposit_recipient_address = get_address_from_secret_key(&rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
 
     test_upgrade(&l1_client, &l2_client).await?;
 
     test_deposit(
-        &rich_wallet_private_key,
-        bridge_address,
-        deposit_recipient_address,
         &l1_client,
         &l2_client,
+        &rich_wallet_private_key,
+        deposit_recipient_address,
     )
     .await?;
 
     test_transfer(
+        &l2_client,
         &rich_wallet_private_key,
         &transfer_return_private_key,
-        &l2_client,
     )
     .await?;
 
     test_transfer_with_privileged_tx(
-        &rich_wallet_private_key,
-        &transfer_return_private_key,
         &l1_client,
         &l2_client,
+        &rich_wallet_private_key,
+        &transfer_return_private_key,
     )
     .await?;
 
     test_gas_burning(&l1_client, &rich_wallet_private_key).await?;
 
-    test_privileged_tx_with_contract_call(&l2_client, &l1_client, &rich_wallet_private_key).await?;
+    test_privileged_tx_with_contract_call(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
-    test_privileged_tx_with_contract_call_revert(&l2_client, &l1_client, &rich_wallet_private_key)
+    test_privileged_tx_with_contract_call_revert(&l1_client, &l2_client, &rich_wallet_private_key)
         .await?;
 
     test_privileged_tx_not_enough_balance(
@@ -140,22 +133,22 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    test_aliasing(&l2_client, &l1_client, &rich_wallet_private_key).await?;
+    test_aliasing(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
-    test_erc20_roundtrip(&l2_client, &l1_client, &rich_wallet_private_key).await?;
+    test_erc20_roundtrip(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
-    test_erc20_failed_deposit(&l2_client, &l1_client, &rich_wallet_private_key).await?;
+    test_erc20_failed_deposit(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
-    test_forced_withdrawal(&l2_client, &l1_client, &rich_wallet_private_key).await?;
+    test_forced_withdrawal(&l1_client, &l2_client, &rich_wallet_private_key).await?;
 
     let withdrawals_count = std::env::var("INTEGRATION_TEST_WITHDRAW_COUNT")
         .map(|amount| amount.parse().expect("Invalid withdrawal amount value"))
         .unwrap_or(5);
 
     test_n_withdraws(
-        &rich_wallet_private_key,
         &l1_client,
         &l2_client,
+        &rich_wallet_private_key,
         withdrawals_count,
     )
     .await?;
@@ -192,7 +185,7 @@ async fn test_upgrade(
     let tx_receipt = test_send(
         l1_client,
         &private_key,
-        common_bridge_address(),
+        bridge_address()?,
         "upgradeL2Contract(address,address,uint256,bytes)",
         &[
             Value::Address(COMMON_BRIDGE_L2_ADDRESS),
@@ -220,8 +213,8 @@ async fn test_upgrade(
 /// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
 /// The deposit will trigger the call to the contract.
 async fn test_privileged_tx_with_contract_call(
-    l2_client: &EthClient,
     l1_client: &EthClient,
+    l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // pragma solidity ^0.8.27;
@@ -306,8 +299,8 @@ async fn test_privileged_tx_with_contract_call(
 /// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
 /// The call to the contract should revert but the deposit should be successful.
 async fn test_privileged_tx_with_contract_call_revert(
-    l2_client: &EthClient,
     l1_client: &EthClient,
+    l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // pragma solidity ^0.8.27;
@@ -338,8 +331,8 @@ async fn test_privileged_tx_with_contract_call_revert(
 }
 
 async fn test_erc20_roundtrip(
-    l2_client: &EthClient,
     l1_client: &EthClient,
+    l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let token_amount: U256 = U256::from(100);
@@ -468,8 +461,8 @@ async fn test_erc20_roundtrip(
 }
 
 async fn test_aliasing(
-    l2_client: &EthClient,
     l1_client: &EthClient,
+    l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let init_code_l1 = hex::decode(std::fs::read("../../fixtures/contracts/caller/Caller.bin")?)?;
@@ -508,8 +501,8 @@ async fn test_aliasing(
 }
 
 async fn test_erc20_failed_deposit(
-    l2_client: &EthClient,
     l1_client: &EthClient,
+    l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let token_amount: U256 = U256::from(100);
@@ -596,8 +589,8 @@ async fn test_erc20_failed_deposit(
 /// Tests that a withdrawal can be triggered by a privileged transaction
 /// This ensures the sequencer can't censor withdrawals without stopping the network
 async fn test_forced_withdrawal(
-    l2_client: &EthClient,
     l1_client: &EthClient,
+    l2_client: &EthClient,
     rich_wallet_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rich_address = ethrex_l2_sdk::get_address_from_secret_key(rich_wallet_private_key)
@@ -624,7 +617,7 @@ async fn test_forced_withdrawal(
             Bytes::from(calldata),
         ),
         &l1_rich_wallet_private_key(),
-        common_bridge_address(),
+        bridge_address()?,
         l1_client,
     )
     .await?;
@@ -732,11 +725,10 @@ async fn test_send(
 }
 
 async fn test_deposit(
-    depositor_private_key: &SecretKey,
-    bridge_address: Address,
-    deposit_recipient_address: Address,
     l1_client: &EthClient,
     l2_client: &EthClient,
+    depositor_private_key: &SecretKey,
+    deposit_recipient_address: Address,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Fetching initial balances on L1 and L2");
 
@@ -762,7 +754,7 @@ async fn test_deposit(
         .await?;
 
     let bridge_initial_balance = l1_client
-        .get_balance(bridge_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     let fee_vault_balance_before_deposit = l2_client
@@ -797,7 +789,7 @@ async fn test_deposit(
     );
 
     let bridge_balance_after_deposit = l1_client
-        .get_balance(bridge_address, BlockIdentifier::Tag(BlockTag::Latest))
+        .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     assert_eq!(
@@ -841,9 +833,9 @@ async fn test_deposit(
 }
 
 async fn test_transfer(
+    l2_client: &EthClient,
     transferer_private_key: &SecretKey,
     returnerer_private_key: &SecretKey,
-    l2_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Transferring funds on L2");
     let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
@@ -874,10 +866,10 @@ async fn test_transfer(
 }
 
 async fn test_transfer_with_privileged_tx(
-    transferer_private_key: &SecretKey,
-    receiver_private_key: &SecretKey,
     l1_client: &EthClient,
     l2_client: &EthClient,
+    transferer_private_key: &SecretKey,
+    receiver_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Transferring funds on L2 through a deposit");
     let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
@@ -896,7 +888,7 @@ async fn test_transfer_with_privileged_tx(
         Some(21000 * 15),
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &l1_rich_wallet_private_key(),
-        common_bridge_address(),
+        bridge_address()?,
         l1_client,
     )
     .await?;
@@ -940,7 +932,7 @@ async fn test_gas_burning(
         Some(l2_gas_limit + l1_extra_gas_limit),
         L1ToL2TransactionData::new(rich_address, l2_gas_limit, U256::zero(), Bytes::new()),
         rich_wallet_private_key,
-        common_bridge_address(),
+        bridge_address()?,
         l1_client,
     )
     .await?;
@@ -979,7 +971,7 @@ async fn test_privileged_tx_not_enough_balance(
         Some(21000 * 10),
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &l1_rich_wallet_private_key(),
-        common_bridge_address(),
+        bridge_address()?,
         l1_client,
     )
     .await?;
@@ -1095,9 +1087,9 @@ async fn perform_transfer(
 }
 
 async fn test_n_withdraws(
-    withdrawer_private_key: &SecretKey,
     l1_client: &EthClient,
     l2_client: &EthClient,
+    withdrawer_private_key: &SecretKey,
     n: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Withdraw funds from L2 to L1
@@ -1118,10 +1110,7 @@ async fn test_n_withdraws(
     );
 
     let bridge_balance_before_withdrawal = l1_client
-        .get_balance(
-            common_bridge_address(),
-            BlockIdentifier::Tag(BlockTag::Latest),
-        )
+        .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     assert!(
@@ -1275,10 +1264,7 @@ async fn test_n_withdraws(
     );
 
     let bridge_balance_after_withdrawal = l1_client
-        .get_balance(
-            common_bridge_address(),
-            BlockIdentifier::Tag(BlockTag::Latest),
-        )
+        .get_balance(bridge_address()?, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
     assert_eq!(
@@ -1313,7 +1299,7 @@ async fn test_total_eth_l2(
 
     println!("Checking locked ETH on CommonBridge");
 
-    let bridge_address = common_bridge_address();
+    let bridge_address = bridge_address()?;
     let bridge_locked_eth = l1_client
         .get_balance(bridge_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
@@ -1452,7 +1438,7 @@ async fn test_call_to_contract_with_deposit(
             calldata_to_contract.clone(),
         ),
         &l1_rich_wallet_private_key(),
-        common_bridge_address(),
+        bridge_address()?,
         l1_client,
     )
     .await?;
@@ -1551,18 +1537,6 @@ fn l2_client() -> EthClient {
         .unwrap()
 }
 
-fn common_bridge_address() -> Address {
-    std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
-        .expect("ETHREX_WATCHER_BRIDGE_ADDRESS env var not set")
-        .parse()
-        .unwrap_or_else(|_| {
-            println!(
-                "ETHREX_WATCHER_BRIDGE_ADDRESS env var not set, using default: {DEFAULT_BRIDGE_ADDRESS}"
-            );
-            DEFAULT_BRIDGE_ADDRESS
-        })
-}
-
 fn fees_vault() -> Address {
     std::env::var("INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer coinbase address"))
@@ -1594,7 +1568,7 @@ async fn wait_for_l2_deposit_receipt(
         .get_logs(
             U256::from(l1_receipt_block_number),
             U256::from(l1_receipt_block_number),
-            common_bridge_address(),
+            bridge_address()?,
             vec![topic],
         )
         .await?;
