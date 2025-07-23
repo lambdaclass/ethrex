@@ -199,33 +199,33 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                 header: new_block_header,
                 body: new_block_body,
             };
-            let (signature, recovery_id) = if let Some(recovered_sig) = l2_state
+            let signature = match l2_state
                 .store_rollup
                 .get_signature_by_block(new_block.hash())
                 .await?
             {
-                let mut signature = [0u8; 64];
-                signature.copy_from_slice(&recovered_sig[..64]);
-                let recovery_id = recovered_sig[64];
-                (signature, recovery_id)
-            } else {
-                let (recovery_id, signature) = secp256k1::SECP256K1
-                    .sign_ecdsa_recoverable(
-                        &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
-                        &l2_state.committer_key,
-                    )
-                    .serialize_compact();
-                let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
-                    RLPxError::InternalError(format!(
-                        "Failed to convert recovery id to u8: {e}. This is a bug."
-                    ))
-                })?;
-                (signature, recovery_id)
+                Some(sig) => sig,
+                None => {
+                    let (recovery_id, signature) = secp256k1::SECP256K1
+                        .sign_ecdsa_recoverable(
+                            &SecpMessage::from_digest(new_block.hash().to_fixed_bytes()),
+                            &l2_state.committer_key,
+                        )
+                        .serialize_compact();
+                    let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
+                        RLPxError::InternalError(format!(
+                            "Failed to convert recovery id to u8: {e}. This is a bug."
+                        ))
+                    })?;
+                    let mut sig = [0u8; 65];
+                    sig[..64].copy_from_slice(&signature);
+                    sig[64] = recovery_id;
+                    Signature::from_slice(&sig)
+                }
             };
             NewBlock {
                 block: new_block.into(),
                 signature,
-                recovery_id,
             }
         };
 
@@ -261,12 +261,8 @@ async fn should_process_new_block(
     }
 
     let block_hash = msg.block.hash();
-    let mut signature = [0u8; 65];
-    signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64] = msg.recovery_id;
-    let signature = Signature::from_slice(&signature);
 
-    let recovered_lead_sequencer = recover_address(signature, block_hash).map_err(|e| {
+    let recovered_lead_sequencer = recover_address(msg.signature, block_hash).map_err(|e| {
         log_peer_error(
             &established.node,
             &format!("Failed to recover lead sequencer: {e}"),
@@ -277,12 +273,9 @@ async fn should_process_new_block(
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
     }
-    let mut signature = [0u8; 65];
-    signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_block(block_hash, Signature::from_slice(&signature))
+        .store_signature_by_block(block_hash, msg.signature)
         .await?;
     Ok(true)
 }
@@ -317,12 +310,8 @@ async fn should_process_batch_sealed(
     }
 
     let hash = batch_hash(&msg.batch);
-    let mut signature = [0u8; 65];
-    signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64] = msg.recovery_id;
-    let signature = Signature::from_slice(&signature);
 
-    let recovered_lead_sequencer = recover_address(signature, hash).map_err(|e| {
+    let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
         log_peer_error(
             &established.node,
             &format!("Failed to recover lead sequencer: {e}"),
@@ -333,13 +322,9 @@ async fn should_process_batch_sealed(
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
     }
-
-    let mut signature = [0u8; 65];
-    signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_batch(msg.batch.number, Signature::from_slice(&signature))
+        .store_signature_by_batch(msg.batch.number, msg.signature)
         .await?;
     Ok(true)
 }
@@ -416,18 +401,10 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
             .inspect_err(|err| {
                 warn!(
                     "Fetching signature from store returned an error, \
-             defaulting to signing with commiter key: {err}"
+             defaulting to signing with committer key: {err}"
                 )
             }) {
-            Ok(Some(recovered_sig)) => {
-                let (signature, recovery_id) = {
-                    let mut signature = [0u8; 64];
-                    signature.copy_from_slice(&recovered_sig[..64]);
-                    let recovery_id = recovered_sig[64];
-                    (signature, recovery_id)
-                };
-                BatchSealed::new(batch, signature, recovery_id)
-            }
+            Ok(Some(recovered_sig)) => BatchSealed::new(batch, recovered_sig),
             Ok(None) | Err(_) => {
                 BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())?
             }
