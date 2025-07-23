@@ -48,16 +48,14 @@ pub fn init_tracing(opts: &Options) {
         .add_directive(Directive::from(opts.log_level));
 
     let fmt_layer = fmt::layer().with_filter(log_filter);
-    if opts.profiling_enabled {
+    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = if opts.profiling_enabled {
         let profiling_layer = FunctionProfilingLayer::default();
-        let subscriber = Registry::default().with(fmt_layer).with(profiling_layer);
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
+        Box::new(Registry::default().with(fmt_layer).with(profiling_layer))
     } else {
-        let subscriber = Registry::default().with(fmt_layer);
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
-    }
+        Box::new(Registry::default().with(fmt_layer))
+    };
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
