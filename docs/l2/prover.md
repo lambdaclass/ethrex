@@ -78,7 +78,7 @@ After this initialization we should have the prover running in `dev_mode` &rarr;
    - Add the `user` you are using to the `docker` group &rarr; command: `sudo usermod -aG docker $USER`. (needs reboot, doing it after CUDA installation)
    - `id -nG` after reboot to check if the user is in the group.
 2. Install [Rust](https://www.rust-lang.org/tools/install)
-3. Install [RISC0](https://dev.risczero.com/api/src/guest_program/install)
+3. Install [RISC0](https://dev.risczero.com/api/zkvm/install)
 4. Install [CUDA for Ubuntu](https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_local)
    - Install `CUDA Toolkit Installer` first. Then the `nvidia-open` drivers.
 5. Reboot
