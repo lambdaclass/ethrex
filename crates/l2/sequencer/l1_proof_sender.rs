@@ -260,7 +260,7 @@ impl L1ProofSender {
             )
             .await?;
 
-            nonce = nonce + 1;
+            nonce = nonce.checked_add(1.into()).ok_or(ProofSenderError::InternalError("aligned batcher nonce overflow".to_string()))?;
 
             info!(?prover_type, ?batch_number, "Submitted proof to Aligned");
         }
