@@ -1408,6 +1408,8 @@ impl PeerHandler {
                                 end_hash: Some(hash_end),
                             };
                             tasks_queue_not_started.push_back(task);
+                        } else {
+                            completed_tasks += 1;
                         }
                     } else {
                         if remaining_start + 1 < remaining_end {
