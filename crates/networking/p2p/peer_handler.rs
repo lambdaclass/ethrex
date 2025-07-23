@@ -1423,7 +1423,7 @@ impl PeerHandler {
                         let missing_storage_range = end_hash_u256 - start_hash_u256;
 
                         let chunk_count = (missing_storage_range / start_hash_u256)
-                            .max(U256::from(10_000))
+                            .min(U256::from(10_000))
                             .as_usize();
                         let chunk_size = missing_storage_range / chunk_count;
 
