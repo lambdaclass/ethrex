@@ -199,11 +199,12 @@ impl L1ProofSender {
 
         let fee_estimation = Self::estimate_fee(self).await?;
 
-        let mut nonce = get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
-            .await
-            .map_err(|err| {
-                ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
-            })?;
+        let mut nonce =
+            get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
+                .await
+                .map_err(|err| {
+                    ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
+                })?;
 
         let Signer::Local(local_signer) = &self.signer else {
             return Err(ProofSenderError::InternalError(
@@ -260,7 +261,11 @@ impl L1ProofSender {
             )
             .await?;
 
-            nonce = nonce.checked_add(1.into()).ok_or(ProofSenderError::InternalError("aligned batcher nonce overflow".to_string()))?;
+            nonce = nonce
+                .checked_add(1.into())
+                .ok_or(ProofSenderError::InternalError(
+                    "aligned batcher nonce overflow".to_string(),
+                ))?;
 
             info!(?prover_type, ?batch_number, "Submitted proof to Aligned");
         }
