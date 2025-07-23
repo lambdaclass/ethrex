@@ -12,16 +12,17 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
-use k256::{PublicKey, ecdsa::SigningKey};
 use rand::random;
+use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
     messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
+    tasks::{CastResponse, GenServer, GenServerHandle, send_interval, spawn_listener},
 };
+use spawned_rt::tasks::BroadcastStream;
 use tokio::{
     net::TcpStream,
     sync::{Mutex, broadcast, mpsc::Sender},
-    task,
+    task::{self, Id},
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -44,7 +45,10 @@ use crate::{
         },
         l2::{
             self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            l2_connection::{self, L2Cast, L2ConnState, handle_based_capability_message},
+            l2_connection::{
+                self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
+                handle_l2_broadcast,
+            },
         },
         message::Message,
         p2p::{
@@ -87,7 +91,7 @@ pub struct Receiver {
 
 #[derive(Clone)]
 pub struct Established {
-    pub(crate) signer: SigningKey,
+    pub(crate) signer: SecretKey,
     // Sending part of the TcpStream to connect with the remote peer
     // The receiving part is owned by the stream listen loop task
     pub(crate) sink: Arc<Mutex<SplitSink<Framed<TcpStream, RLPxCodec>, Message>>>,
@@ -225,6 +229,7 @@ impl GenServer for RLPxConnection {
         mut state: Self::State,
     ) -> CastResponse<Self> {
         if let InnerState::Established(mut established_state) = state.0.clone() {
+            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             match message {
                 // TODO: handle all these "let _"
                 // See https://github.com/lambdaclass/ethrex/issues/3375
@@ -260,7 +265,7 @@ impl GenServer for RLPxConnection {
                     log_peer_debug(&established_state.node, "Block Range Update");
                     let _ = handle_block_range_update(&mut established_state).await;
                 }
-                Self::CastMsg::L2(msg) => {
+                Self::CastMsg::L2(msg) if peer_supports_l2 => {
                     log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
                     match msg {
                         L2Cast::BatchBroadcast => {
@@ -270,6 +275,13 @@ impl GenServer for RLPxConnection {
                             let _ = l2::l2_connection::send_new_block(&mut established_state).await;
                         }
                     }
+                }
+                _ => {
+                    log_peer_warn(
+                        &established_state.node,
+                        "No handler for cast message or no capabilities matched",
+                    );
+                    // TODO: return error when handled issue
                 }
             }
             // Update the state
@@ -338,6 +350,7 @@ where
         CastMessage::BlockRangeUpdate,
     );
 
+    // Periodic L2 messages events.
     if state.l2_state.connection_state().is_ok() {
         send_interval(
             PERIODIC_BLOCK_BROADCAST_INTERVAL,
@@ -351,9 +364,18 @@ where
         );
     }
 
-    spawn_listener(handle.clone(), &state.node, stream);
+    spawn_listener(
+        handle.clone(),
+        |msg: Message| CastMessage::PeerMessage(msg),
+        stream,
+    );
 
-    spawn_broadcast_listener(handle.clone(), state);
+    if state.negotiated_eth_capability.is_some() {
+        let stream = BroadcastStream::new(state.connection_broadcast_send.subscribe());
+        let message_builder =
+            |(id, msg): (Id, Arc<Message>)| CastMessage::BroadcastMessage(id, msg);
+        spawn_listener(handle.clone(), message_builder, stream);
+    }
 
     Ok(())
 }
@@ -539,7 +561,7 @@ where
     }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
-        PublicKey::from(state.signer.verifying_key()),
+        PublicKey::from_secret_key(secp256k1::SECP256K1, &state.signer),
         state.client_version.clone(),
     ));
 
@@ -635,58 +657,9 @@ where
     stream.next().await
 }
 
-// TODO replace this spawn, once it's implemented in spawned
-// See https://github.com/lambdaclass/ethrex/issues/3387 and
-// https://github.com/lambdaclass/spawned/issues/17
-fn spawn_listener<S>(mut conn: RLPxConnectionHandle, node: &Node, mut stream: S)
-where
-    S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
-{
-    let node = node.clone();
-    spawned_rt::tasks::spawn(async move {
-        loop {
-            match stream.next().await {
-                Some(Ok(message)) => {
-                    let _ = conn.cast(CastMessage::PeerMessage(message)).await;
-                }
-                Some(Err(e)) => {
-                    log_peer_debug(&node, &format!("Received RLPX Error in msg {e}"));
-                    break;
-                }
-                // `None` does not neccessary means EOF, so we will keep the loop running
-                // (See Framed::new)
-                None => (),
-            }
-        }
-    });
-}
-
-// TODO Maybe provide a similar mechanism for this listener, or remove it when
-// Broadcast is handled in a spawned GenServer
-// See https://github.com/lambdaclass/ethrex/issues/3387 and
-// https://github.com/lambdaclass/spawned/issues/17 and
-// https://github.com/lambdaclass/ethrex/issues/3388
-fn spawn_broadcast_listener(mut handle: RLPxConnectionHandle, state: &mut Established) {
-    // Subscribe this connection to the broadcasting channel.
-    // TODO currently spawning a listener task that will suscribe to a broadcast channel and
-    // create RLPxConnection Broadcast messages to send the Genserver
-    // We have to improve this mechanism to avoid manual creation of channels and subscriptions
-    // (That is, we should have a spawned-based broadcaster or maybe the backend should handle the
-    // transactions propagation)
-    if state.negotiated_eth_capability.is_some() {
-        let mut receiver = state.connection_broadcast_send.subscribe();
-        spawned_rt::tasks::spawn(async move {
-            loop {
-                if let Ok((id, msg)) = receiver.recv().await {
-                    let _ = handle.cast(CastMessage::BroadcastMessage(id, msg)).await;
-                };
-            }
-        });
-    };
-}
-
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
+    let peer_supports_l2 = state.l2_state.connection_state().is_ok();
     match message {
         Message::Disconnect(msg_data) => {
             log_peer_debug(
@@ -807,7 +780,7 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let response = process_trie_nodes_request(req, state.storage.clone())?;
             send(state, Message::TrieNodes(response)).await?
         }
-        Message::L2(req) => {
+        Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
         }
         // Send response messages to the backend
@@ -856,9 +829,7 @@ async fn handle_broadcast(
                 send(state, new_msg).await?;
             }
             l2_msg @ Message::L2(_) => {
-                // TODO: Only broadcast L2 messages that are intended to be broadcasted.
-                // In the future, some of the messages don't need to be broadcasted.
-                send(state, l2_msg.clone()).await?;
+                handle_l2_broadcast(state, l2_msg).await?;
             }
             msg => {
                 let error_message = format!("Non-supported message broadcasted: {msg}");
@@ -890,18 +861,7 @@ pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(),
             };
             Ok(())
         }
-        l2_msg @ Message::L2(_) => {
-            let task_id = tokio::task::id();
-            let Ok(_) = state
-                .connection_broadcast_send
-                .send((task_id, l2_msg.into()))
-            else {
-                let error_message = "Could not broadcast l2 message";
-                log_peer_error(&state.node, error_message);
-                return Err(RLPxError::BroadcastError(error_message.to_owned()));
-            };
-            Ok(())
-        }
+        l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
             log_peer_error(&state.node, &error_message);

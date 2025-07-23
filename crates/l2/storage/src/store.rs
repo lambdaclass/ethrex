@@ -258,7 +258,7 @@ impl Store {
     pub async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: [u8; 68],
+        signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.engine
             .store_signature_by_block(block_hash, signature)
@@ -271,7 +271,7 @@ impl Store {
     pub async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         self.engine.get_signature_by_block(block_hash).await
     }
 
@@ -282,7 +282,7 @@ impl Store {
     pub async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: [u8; 68],
+        signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.engine
             .store_signature_by_batch(batch_number, signature)
@@ -295,7 +295,7 @@ impl Store {
     pub async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         self.engine.get_signature_by_batch(batch_number).await
     }
 

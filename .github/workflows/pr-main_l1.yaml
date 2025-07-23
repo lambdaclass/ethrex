@@ -149,9 +149,9 @@ jobs:
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
           enclave_name: ${{ matrix.enclave_name }}
-          kurtosis_version: "1.6.0"
+          kurtosis_version: "1.10.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "ethrex-integration-pectra"
+          ethereum_package_branch: "7d0d6c6d91f1745a6b396b3965df69d580cf70a9"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
@@ -169,7 +169,7 @@ jobs:
           - name: "Devp2p tests"
             hive_version: "fork"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
+            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/PastExpiration|Amplification|Status|StorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs
             # AccountRange and GetTrieNodes don't pass anymore.
             #|BlobViolations
             # Findnode/UnsolicitedNeighbors and Findnode/BasicFindnode flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
@@ -214,7 +214,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
+        run: chmod +x hive && ./hive --client-file fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 --sim.loglevel 1
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:

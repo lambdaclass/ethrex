@@ -3,6 +3,7 @@ use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::utils::{log_peer_error, recover_address};
 use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
 use ethereum_types::Address;
+use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::Block;
@@ -112,6 +113,62 @@ pub(crate) async fn handle_based_capability_message(
     Ok(())
 }
 
+pub(crate) async fn handle_l2_broadcast(
+    state: &mut Established,
+    l2_msg: &Message,
+) -> Result<(), RLPxError> {
+    match l2_msg {
+        msg @ Message::L2(L2Message::BatchSealed(_)) => send(state, msg.clone()).await,
+        msg @ Message::L2(L2Message::NewBlock(_)) => send(state, msg.clone()).await,
+        _ => Err(RLPxError::BroadcastError(format!(
+            "Message {:?} is not a valid L2 message for broadcast",
+            l2_msg
+        )))?,
+    }
+}
+
+pub(crate) fn broadcast_l2_message(state: &Established, l2_msg: Message) -> Result<(), RLPxError> {
+    match l2_msg {
+        msg @ Message::L2(L2Message::BatchSealed(_)) => {
+            let task_id = tokio::task::id();
+            state
+                .connection_broadcast_send
+                .send((task_id, msg.into()))
+                .inspect_err(|e| {
+                    log_peer_error(
+                        &state.node,
+                        &format!("Could not broadcast l2 message BatchSealed: {e}"),
+                    );
+                })
+                .map_err(|_| {
+                    RLPxError::BroadcastError(
+                        "Could not broadcast l2 message BatchSealed".to_owned(),
+                    )
+                })?;
+            Ok(())
+        }
+        msg @ Message::L2(L2Message::NewBlock(_)) => {
+            let task_id = tokio::task::id();
+            state
+                .connection_broadcast_send
+                .send((task_id, msg.into()))
+                .inspect_err(|e| {
+                    log_peer_error(
+                        &state.node,
+                        &format!("Could not broadcast l2 message NewBlock: {e}"),
+                    );
+                })
+                .map_err(|_| {
+                    RLPxError::BroadcastError("Could not broadcast l2 message NewBlock".to_owned())
+                })?;
+            Ok(())
+        }
+        _ => Err(RLPxError::BroadcastError(format!(
+            "Message {:?} is not a valid L2 message for broadcast",
+            l2_msg
+        ))),
+    }
+}
 pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), RLPxError> {
     let latest_block_number = established.storage.get_latest_block_number().await?;
     let latest_block_sent = established
@@ -148,9 +205,8 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                 .await?
             {
                 let mut signature = [0u8; 64];
-                let mut recovery_id = [0u8; 4];
                 signature.copy_from_slice(&recovered_sig[..64]);
-                recovery_id.copy_from_slice(&recovered_sig[64..68]);
+                let recovery_id = recovered_sig[64];
                 (signature, recovery_id)
             } else {
                 let (recovery_id, signature) = secp256k1::SECP256K1
@@ -159,7 +215,11 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                         &l2_state.committer_key,
                     )
                     .serialize_compact();
-                let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+                let recovery_id: u8 = recovery_id.to_i32().try_into().map_err(|e| {
+                    RLPxError::InternalError(format!(
+                        "Failed to convert recovery id to u8: {e}. This is a bug."
+                    ))
+                })?;
                 (signature, recovery_id)
             };
             NewBlock {
@@ -218,12 +278,12 @@ async fn should_process_new_block(
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
     }
-    let mut signature = [0u8; 68];
+    let mut signature = [0u8; 65];
     signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64..].copy_from_slice(&msg.recovery_id[..]);
+    signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_block(block_hash, signature)
+        .store_signature_by_block(block_hash, Signature::from_slice(&signature))
         .await?;
     Ok(true)
 }
@@ -272,12 +332,12 @@ async fn should_process_batch_sealed(
         return Ok(false);
     }
 
-    let mut signature = [0u8; 68];
+    let mut signature = [0u8; 65];
     signature[..64].copy_from_slice(&msg.signature[..]);
-    signature[64..].copy_from_slice(&msg.recovery_id[..]);
+    signature[64] = msg.recovery_id;
     l2_state
         .store_rollup
-        .store_signature_by_batch(msg.batch.number, signature)
+        .store_signature_by_batch(msg.batch.number, Signature::from_slice(&signature))
         .await?;
     Ok(true)
 }
@@ -351,15 +411,14 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
             Ok(Some(recovered_sig)) => {
                 let (signature, recovery_id) = {
                     let mut signature = [0u8; 64];
-                    let mut recovery_id = [0u8; 4];
                     signature.copy_from_slice(&recovered_sig[..64]);
-                    recovery_id.copy_from_slice(&recovered_sig[64..68]);
+                    let recovery_id = recovered_sig[64];
                     (signature, recovery_id)
                 };
                 BatchSealed::new(batch, signature, recovery_id)
             }
             Ok(None) | Err(_) => {
-                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())
+                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())?
             }
         }
     };

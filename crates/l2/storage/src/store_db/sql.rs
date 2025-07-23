@@ -677,7 +677,7 @@ impl StoreEngineRollup for SQLStore {
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: [u8; 68],
+        signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(
             vec![
@@ -687,7 +687,11 @@ impl StoreEngineRollup for SQLStore {
                 ),
                 (
                     "INSERT INTO block_signatures VALUES (?1, ?2)",
-                    (Vec::from(block_hash.to_fixed_bytes()), signature.to_vec()).into_params()?,
+                    (
+                        Vec::from(block_hash.to_fixed_bytes()),
+                        Vec::from(signature.as_fixed_bytes()),
+                    )
+                        .into_params()?,
                 ),
             ],
             None,
@@ -698,7 +702,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT signature FROM block_signatures WHERE block_hash = ?1",
@@ -708,11 +712,8 @@ impl StoreEngineRollup for SQLStore {
         rows.next()
             .await?
             .map(|row| {
-                read_from_row_blob(&row, 0).and_then(|vec| {
-                    vec.try_into().map_err(|_| {
-                        RollupStoreError::Custom("Invalid signature length".to_string())
-                    })
-                })
+                read_from_row_blob(&row, 0)
+                    .map(|vec| ethereum_types::Signature::from_slice(vec.as_slice()))
             })
             .transpose()
     }
@@ -720,7 +721,7 @@ impl StoreEngineRollup for SQLStore {
     async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: [u8; 68],
+        signature: ethereum_types::Signature,
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(
             vec![
@@ -730,7 +731,7 @@ impl StoreEngineRollup for SQLStore {
                 ),
                 (
                     "INSERT INTO batch_signatures VALUES (?1, ?2)",
-                    (batch_number, signature.to_vec()).into_params()?,
+                    (batch_number, Vec::from(signature.to_fixed_bytes())).into_params()?,
                 ),
             ],
             None,
@@ -741,7 +742,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<[u8; 68]>, RollupStoreError> {
+    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT signature FROM batch_signatures WHERE batch = ?1",
@@ -751,11 +752,8 @@ impl StoreEngineRollup for SQLStore {
         rows.next()
             .await?
             .map(|row| {
-                read_from_row_blob(&row, 0).and_then(|vec| {
-                    vec.try_into().map_err(|_| {
-                        RollupStoreError::Custom("Invalid signature length".to_string())
-                    })
-                })
+                read_from_row_blob(&row, 0)
+                    .map(|vec| ethereum_types::Signature::from_slice(vec.as_slice()))
             })
             .transpose()
     }
