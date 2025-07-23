@@ -56,7 +56,7 @@ impl LEVM {
         let env = Self::setup_env(tx, sender, block_header, db)?;
 
         let tracer = LevmCallTracer::new(only_top_call, with_log);
-        let mut vm = VM::new(env, db, tx, tracer, vm_type);
+        let mut vm = VM::new(env, db, tx, tracer, vm_type)?;
 
         vm.execute()?;
 
