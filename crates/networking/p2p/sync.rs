@@ -289,7 +289,7 @@ impl Syncer {
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
-                debug!(
+                info!(
                     "Selected block {} as pivot for snap sync, with timestamp {}",
                     pivot_header.number,
                     pivot_header.timestamp
