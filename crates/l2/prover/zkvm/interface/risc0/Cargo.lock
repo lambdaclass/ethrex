@@ -4808,6 +4808,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "risc0-zkvm",
+ "risc0-zkvm-platform",
  "zkvm_interface",
 ]
 
