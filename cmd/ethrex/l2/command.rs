@@ -52,6 +52,11 @@ pub enum Command {
         #[command(flatten)]
         opts: Options,
     },
+    #[command(about = "Initialize an ethrex prover", visible_alias = "p")]
+    Prover {
+        #[command(flatten)]
+        prover_client_options: ProverClientOptions,
+    },
     #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
@@ -250,6 +255,18 @@ impl Command {
                 store_node_config_file(node_config, node_config_path).await;
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 info!("Server shutting down!");
+            }
+            Command::Prover {
+                prover_client_options,
+            } => {
+                let subscriber = tracing_subscriber::FmtSubscriber::builder()
+                    .with_max_level(prover_client_options.log_level)
+                    .finish();
+                if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+                    error!("Failed setting tracing::subscriber: {e}");
+                    return Ok(());
+                }
+                ethrex_prover_lib::init_client(prover_client_options.into()).await
             }
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
