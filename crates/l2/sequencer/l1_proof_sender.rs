@@ -171,12 +171,12 @@ impl L1ProofSender {
             // TODO: we should put in code that if the prover is running with Aligned, then there
             // shouldn't be any other required types.
             if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
-                self.send_proof_to_aligned(batch_to_send, aligned_proof).await?;
+                self.send_proof_to_aligned(batch_to_send, aligned_proof)
+                    .await?;
             } else {
                 self.send_proof_to_contract(batch_to_send, proofs).await?;
             }
-            self
-                .rollup_store
+            self.rollup_store
                 .set_lastest_sent_batch_proof(batch_to_send)
                 .await?;
         } else {
@@ -198,8 +198,9 @@ impl L1ProofSender {
         batch_number: u64,
         aligned_proof: BatchProof,
     ) -> Result<(), ProofSenderError> {
-        let elf = std::fs::read(self.aligned_sp1_elf_path.clone())
-            .map_err(|e| ProofSenderError::InternalError(format!("Failed to read ELF file: {e}")))?;
+        let elf = std::fs::read(self.aligned_sp1_elf_path.clone()).map_err(|e| {
+            ProofSenderError::InternalError(format!("Failed to read ELF file: {e}"))
+        })?;
 
         let verification_data = VerificationData {
             proving_system: ProvingSystemId::SP1,
@@ -302,8 +303,7 @@ impl L1ProofSender {
         )
         .await?;
 
-        self
-            .rollup_store
+        self.rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)
             .await?;
 
@@ -331,7 +331,8 @@ impl GenServer for L1ProofSender {
     ) -> CastResponse<Self> {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self.verify_and_send_proof()
+            let _ = self
+                .verify_and_send_proof()
                 .await
                 .inspect_err(|err| error!("L1 Proof Sender: {err}"));
         }

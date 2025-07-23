@@ -124,8 +124,7 @@ impl BlockFetcher {
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
     ) -> Result<(), BlockFetcherError> {
-        let state =
-            Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
+        let state = Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
         let mut block_fetcher = state.start();
         block_fetcher
             .cast(InMessage::Fetch)
@@ -170,7 +169,8 @@ impl BlockFetcher {
 
             let (batch_committed_logs, batch_verified_logs) = self.get_logs().await?;
 
-            self.process_committed_logs(batch_committed_logs, last_l2_batch_number_known).await?;
+            self.process_committed_logs(batch_committed_logs, last_l2_batch_number_known)
+                .await?;
             self.process_verified_logs(batch_verified_logs).await?;
         }
 
@@ -259,12 +259,8 @@ impl BlockFetcher {
 
             self.store_batch(&batch).await?;
 
-            self.seal_batch(
-                &batch,
-                batch_number,
-                batch_committed_log.transaction_hash,
-            )
-            .await?;
+            self.seal_batch(&batch, batch_number, batch_committed_log.transaction_hash)
+                .await?;
         }
         Ok(())
     }
@@ -441,7 +437,9 @@ impl BlockFetcher {
                 .get_receipt(
                     block_number,
                     index.try_into().map_err(|_| {
-                        BlockFetcherError::InternalError("Failed to convert index to u64".to_owned())
+                        BlockFetcherError::InternalError(
+                            "Failed to convert index to u64".to_owned(),
+                        )
                     })?,
                 )
                 .await?
@@ -474,8 +472,7 @@ impl BlockFetcher {
 
             let verify_tx_hash = batch_verified_log.transaction_hash;
 
-            self
-                .rollup_store
+            self.rollup_store
                 .store_verify_tx_by_batch(batch_number.as_u64(), verify_tx_hash)
                 .await?;
 

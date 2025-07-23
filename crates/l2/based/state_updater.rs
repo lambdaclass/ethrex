@@ -101,7 +101,8 @@ impl StateUpdater {
             blockchain,
             store,
             rollup_store,
-        ).await?;
+        )
+        .await?;
         let mut state_updater = state.start();
         state_updater
             .cast(InMessage::UpdateState)
@@ -111,8 +112,7 @@ impl StateUpdater {
 
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let lead_sequencer = hash_to_address(
-            self
-                .eth_client
+            self.eth_client
                 .call(
                     self.sequencer_registry_address,
                     encode_calldata("leaderSequencer()", &[])?.into(),
@@ -232,8 +232,7 @@ impl StateUpdater {
         info!(
             "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
         );
-        self
-            .store
+        self.store
             .update_latest_block_number(*last_l2_committed_block_number)
             .await?;
         let _ = apply_fork_choice(
@@ -259,7 +258,8 @@ impl GenServer for StateUpdater {
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse<Self> {
-        let _ = self.update_state()
+        let _ = self
+            .update_state()
             .await
             .inspect_err(|err| error!("State Updater Error: {err}"));
         send_after(
