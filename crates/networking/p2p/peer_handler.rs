@@ -1706,7 +1706,8 @@ impl PeerHandler {
                 }
                 let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
                     let (last_hash, _) = account_storages.last().unwrap().last().unwrap();
-                    let next_hash_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                    let next_hash_u256 =
+                        U256::from_big_endian(&last_hash.0).saturating_add(1.into());
                     let next_hash = H256::from_uint(&next_hash_u256);
                     (start + account_storages.len() - 1, end, next_hash)
                 } else {
