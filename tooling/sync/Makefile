@@ -212,7 +212,7 @@ endif
 	--network cmd/ethrex/networks/hoodi/genesis.json \
 	--metrics \
 	--profiling \
-    --metrics.port 3701 \
+	--metrics.port 3701 \
 	import $(RLP_FILE) \
 	--removedb 
 
