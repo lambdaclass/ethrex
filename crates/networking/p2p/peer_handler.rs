@@ -559,7 +559,7 @@ impl PeerHandler {
             debug!("Failed to send message to peer: {err:?}");
             return None;
         }
-        if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+        if let Some(block_bodies) = tokio::time::timeout(Duration::from_secs(2), async move {
             loop {
                 match receiver.recv().await {
                     Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
