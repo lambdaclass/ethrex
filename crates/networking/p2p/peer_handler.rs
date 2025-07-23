@@ -203,11 +203,8 @@ impl PeerHandler {
         *METRICS.headers_to_download.lock().await = *sync_head_number.lock().await + 1;
         *METRICS.sync_head_hash.lock().await = sync_head;
 
-        // 1) get the number of total headers in the chain (e.g. 800.000)
-        // let block_count = 800_000_u64;
-        let chunk_count = 800_usize; // e.g. 8 tasks
-
         let block_count = *sync_head_number.lock().await + 1 - start;
+        let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks
         let chunk_limit = block_count / chunk_count as u64;
@@ -1393,7 +1390,9 @@ impl PeerHandler {
                 }
 
                 let peer_score = scores.entry(peer_id).or_default();
-                *peer_score += 1;
+                if *peer_score < 10 {
+                    *peer_score += 1;
+                }
 
                 downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
