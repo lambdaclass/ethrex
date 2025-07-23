@@ -835,7 +835,7 @@ impl<'a> VM<'a> {
                             .ok_or(InternalError::Underflow)?,
                     )
                     .ok_or(InternalError::Overflow)?;
-            };
+            }
 
             // Store return data of sub-context
             call_frame.memory.store_data(
@@ -849,7 +849,7 @@ impl<'a> VM<'a> {
                     &ctx_result.output
                 },
             )?;
-            call_frame.sub_return_data = ctx_result.output;
+            call_frame.sub_return_data = ctx_result.output.clone();
 
             // What to do, depending on TxResult
             call_frame.stack.push1(match &ctx_result.result {
@@ -857,10 +857,15 @@ impl<'a> VM<'a> {
                 TxResult::Revert(_) => FAIL,
             })?;
 
-            // self.tracer.exit_context(&ctx_result, false)?;
-
             // Increment PC of the parent callframe after execution of the child.
             call_frame.increment_pc_by(1)?;
+
+            // Transfer value from caller to callee.
+            if should_transfer_value && ctx_result.is_success() {
+                self.transfer(msg_sender, to, value)?;
+            }
+
+            self.tracer.exit_context(&ctx_result, false)?;
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
