@@ -71,6 +71,7 @@ pub struct Metrics {
     pub accounts_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub account_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub account_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
+    pub account_tries_state_root: Arc<Mutex<Option<H256>>>,
 
     // Storage tries
     pub storage_tries_to_download: Arc<Mutex<u64>>,
@@ -80,6 +81,12 @@ pub struct Metrics {
     pub storages_downloads_tasks_queued: Arc<Mutex<u64>>,
     pub storage_tries_download_start_time: Arc<Mutex<Option<SystemTime>>>,
     pub storage_tries_download_end_time: Arc<Mutex<Option<SystemTime>>>,
+
+    // Storage tries state roots
+    pub storage_tries_state_roots_to_compute: Arc<Mutex<u64>>,
+    pub storage_tries_state_roots_computed: IntCounter,
+    pub storage_tries_state_roots_start_time: Arc<Mutex<Option<SystemTime>>>,
+    pub storage_tries_state_roots_end_time: Arc<Mutex<Option<SystemTime>>>,
 
     // Bytecodes
     pub bytecodes_to_download: Arc<Mutex<u64>>,
@@ -463,6 +470,16 @@ impl Default for Metrics {
             .register(Box::new(pings_sent_rate.clone()))
             .expect("Failed to register pings_sent_rate gauge");
 
+        let storage_tries_state_roots_computed = IntCounter::new(
+            "storage_tries_state_roots_computed",
+            "Total number of storage tries state roots computed",
+        )
+        .expect("Failed to create storage_tries_state_roots_computed counter");
+
+        registry
+            .register(Box::new(storage_tries_state_roots_computed.clone()))
+            .expect("Failed to register storage_tries_state_roots_computed counter");
+
         Metrics {
             _registry: registry,
             new_contacts_events: Arc::new(Mutex::new(VecDeque::new())),
@@ -512,6 +529,7 @@ impl Default for Metrics {
             accounts_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             account_tries_download_start_time: Arc::new(Mutex::new(None)),
             account_tries_download_end_time: Arc::new(Mutex::new(None)),
+            account_tries_state_root: Arc::new(Mutex::new(None)),
 
             // Storage tries
             storage_tries_to_download: Arc::new(Mutex::new(0)),
@@ -521,6 +539,12 @@ impl Default for Metrics {
             storages_downloads_tasks_queued: Arc::new(Mutex::new(0)),
             storage_tries_download_start_time: Arc::new(Mutex::new(None)),
             storage_tries_download_end_time: Arc::new(Mutex::new(None)),
+
+            // Storage tries state roots
+            storage_tries_state_roots_to_compute: Arc::new(Mutex::new(0)),
+            storage_tries_state_roots_computed,
+            storage_tries_state_roots_start_time: Arc::new(Mutex::new(None)),
+            storage_tries_state_roots_end_time: Arc::new(Mutex::new(None)),
 
             // Bytecodes
             bytecodes_to_download: Arc::new(Mutex::new(0)),
