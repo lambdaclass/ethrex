@@ -9,6 +9,9 @@ edition = "2024"
 risc0-zkvm = { version = "=2.1.0", default-features = false, features = ["std"] }
 zkvm_interface = { path = "../", default-features = false, features = ["c-kzg"]}
 
+# This crate is necessary to enable the sys_getenv system call
+risc0-zkvm-platform = { version = "2.0.2", default-features = false, features = ["sys-getenv"] }
+
 ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
