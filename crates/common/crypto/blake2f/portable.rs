@@ -1,6 +1,6 @@
 // Message word schedule permutations for each round are defined by SIGMA constant.
 // Extracted from https://datatracker.ietf.org/doc/html/rfc7693#section-2.7
-pub const SIGMA: [[usize; 16]; 10] = [
+const SIGMA: [[usize; 16]; 10] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
     [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4],
@@ -15,7 +15,7 @@ pub const SIGMA: [[usize; 16]; 10] = [
 
 // Initialization vector, used to initialize the work vector
 // Extracted from https://datatracker.ietf.org/doc/html/rfc7693#appendix-C.2
-pub const IV: [u64; 8] = [
+const IV: [u64; 8] = [
     0x6a09e667f3bcc908,
     0xbb67ae8584caa73b,
     0x3c6ef372fe94f82b,
@@ -70,7 +70,7 @@ fn word_permutation(rounds_to_permute: usize, v: &mut [u64; 16], m: &[u64; 16]) 
 }
 
 /// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.2
-pub fn blake2f_compress_f(
+pub fn blake2b_f(
     rounds: usize,    // Specifies the rounds to permute
     h: &mut [u64; 8], // State vector, defines the work vector (v) and affects the XOR process
     m: &[u64; 16],    // The message block to compress
@@ -100,11 +100,12 @@ pub fn blake2f_compress_f(
 
 #[cfg(test)]
 mod test {
-    use crate::blake2f::portable::blake2f_compress_f;
+    use super::*;
+
     #[test]
     fn test_12r() {
         let mut h = [1, 2, 3, 4, 5, 6, 7, 8];
-        blake2f_compress_f(
+        blake2b_f(
             12,
             &mut h,
             &[

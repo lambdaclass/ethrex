@@ -8,7 +8,7 @@ use ethrex_common::{
     Address, H160, H256, U256, kzg::verify_kzg_proof, serde_utils::bool, types::Fork,
     utils::u256_from_big_endian,
 };
-use ethrex_crypto::blake2f::blake2f_compress_f;
+use ethrex_crypto::blake2f::blake2b_f;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
     cyclic_group::IsGroup,
@@ -800,7 +800,7 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMErr
     let f = f == 1;
 
     #[expect(clippy::as_conversions)] // safe to convert a u32 to usize
-    blake2f_compress_f(rounds as usize, &mut h, &m, &t, f);
+    blake2b_f(rounds as usize, &mut h, &m, &t, f);
 
     Ok(Bytes::from_iter(
         h.into_iter().flat_map(|value| value.to_le_bytes()),
