@@ -290,8 +290,9 @@ impl Syncer {
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
                 debug!(
-                    "Selected block {} as pivot for snap sync",
-                    pivot_header.number
+                    "Selected block {} as pivot for snap sync, with timestamp {}",
+                    pivot_header.number,
+                    pivot_header.timestamp
                 );
 
                 let state_root = pivot_header.state_root;
@@ -400,7 +401,7 @@ impl Syncer {
                             );
                         }
                     }
-                }).await.unwrap();
+                }).await.expect("foo");
 
                 let storages_store_time =
                     Instant::now().saturating_duration_since(storages_store_start);
