@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753231351786,
+  "lastUpdate": 1753231866476,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11218,6 +11218,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013427887323943662,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c36b343d8508b62b7de0a7d87bc58a026278704a",
+          "message": "fix(levm): memory bug when storing data (#3774)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nWe didn't realize that #3564 introduced a bug when storing data of\nlength zero. This aims to fix it.\nI also delete a resize check that's completely unnecessary\n\nTested the fix and it works. I now am able to execute the blocks\nmentioned in the issue of this PR without any problems at all.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3775",
+          "timestamp": "2025-07-22T20:11:38Z",
+          "tree_id": "db0e155e11ab6e5d6808c62ec2e43bfed8834f9a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c36b343d8508b62b7de0a7d87bc58a026278704a"
+        },
+        "date": 1753231865786,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007760069767441861,
             "unit": "Mgas/s"
           }
         ]
