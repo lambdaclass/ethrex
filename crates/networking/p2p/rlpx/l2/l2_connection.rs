@@ -1,12 +1,12 @@
 use crate::rlpx::connection::server::{broadcast_message, send};
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
-use crate::rlpx::utils::{log_peer_error, recover_address};
+use crate::rlpx::utils::log_peer_error;
 use crate::rlpx::{connection::server::Established, error::RLPxError, message::Message};
 use ethereum_types::Address;
 use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, recover_address};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
@@ -261,13 +261,12 @@ async fn should_process_new_block(
     }
 
     let block_hash = msg.block.hash();
+    let mut signature = [0u8; 65];
+    signature[..64].copy_from_slice(&msg.signature[..]);
+    signature[64] = msg.recovery_id;
+    let signature = Signature::from_slice(&signature);
 
-    let recovered_lead_sequencer = recover_address(
-        msg.recovery_id,
-        &msg.signature,
-        *block_hash.as_fixed_bytes(),
-    )
-    .map_err(|e| {
+    let recovered_lead_sequencer = recover_address(signature, block_hash).map_err(|e| {
         log_peer_error(
             &established.node,
             &format!("Failed to recover lead sequencer: {e}"),
@@ -318,15 +317,18 @@ async fn should_process_batch_sealed(
     }
 
     let hash = batch_hash(&msg.batch);
+    let mut signature = [0u8; 65];
+    signature[..64].copy_from_slice(&msg.signature[..]);
+    signature[64] = msg.recovery_id;
+    let signature = Signature::from_slice(&signature);
 
-    let recovered_lead_sequencer = recover_address(msg.recovery_id, &msg.signature, hash.0)
-        .map_err(|e| {
-            log_peer_error(
-                &established.node,
-                &format!("Failed to recover lead sequencer: {e}"),
-            );
-            RLPxError::CryptographyError(e.to_string())
-        })?;
+    let recovered_lead_sequencer = recover_address(signature, hash).map_err(|e| {
+        log_peer_error(
+            &established.node,
+            &format!("Failed to recover lead sequencer: {e}"),
+        );
+        RLPxError::CryptographyError(e.to_string())
+    })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
