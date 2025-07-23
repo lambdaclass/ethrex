@@ -297,7 +297,11 @@ impl Syncer {
         Ok(())
     }
 
-    /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
+    /// Performs the sync cycle described in `start_sync`.
+    ///
+    /// # Returns
+    ///
+    /// Returns an error if the sync fails at any given step and aborts all active processes
     async fn sync_cycle_full(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
@@ -580,7 +584,8 @@ impl FullBlockSyncState {
             .ok_or(SyncError::NoLatestCanonical)
     }
 
-    /// Saves incoming headers, requests as many block bodies as needed to complete an execution batch and executes it
+    /// Saves incoming headers, requests as many block bodies as needed to complete
+    /// an execution batch and executes it.
     /// An incomplete batch may be executed if the sync_head was already found
     async fn process_incoming_headers(
         &mut self,
