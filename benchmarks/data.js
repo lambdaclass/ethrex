@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753297712256,
+  "lastUpdate": 1753301443285,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11746,6 +11746,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007456603351955308,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56092489+ColoCarletti@users.noreply.github.com",
+            "name": "Joaquin Carletti",
+            "username": "ColoCarletti"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8408fe0854a66e0a510b0a6bf474dda20edd38de",
+          "message": "perf(levm): migrate EcAdd and EcMul to Arkworks (#3719)\n\nThis PR improves the performance of the precompiles by switching to\nArkworks.\nIn particular, scalar multiplication on the BN254 curve is significantly\nfaster in Arkworks compared to Lambdaworks.\n\ncloses #3726\n\n---------\n\nCo-authored-by: Leandro Serra <leandro.serra@lambdaclass.com>",
+          "timestamp": "2025-07-23T16:04:55Z",
+          "tree_id": "780cbcf4c7f07b65b63ff07011ea6247e03377cc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8408fe0854a66e0a510b0a6bf474dda20edd38de"
+        },
+        "date": 1753301442598,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013124208456243855,
             "unit": "Mgas/s"
           }
         ]
