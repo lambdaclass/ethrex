@@ -66,7 +66,7 @@ pub struct StateUpdater {
 }
 
 impl StateUpdater {
-    pub async fn new(
+    pub fn new(
         sequencer_cfg: SequencerConfig,
         sequencer_state: SequencerState,
         blockchain: Arc<Blockchain>,
@@ -101,8 +101,7 @@ impl StateUpdater {
             blockchain,
             store,
             rollup_store,
-        )
-        .await?;
+        )?;
         let mut state_updater = state.start();
         state_updater
             .cast(InMessage::UpdateState)
