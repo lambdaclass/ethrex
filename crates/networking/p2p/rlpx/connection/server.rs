@@ -246,7 +246,9 @@ impl GenServer for RLPxConnection {
                     );
                     handle_backend_message(&mut established_state, message).await
                 }
-                Self::CastMsg::SendPing => handle_send_ping(&mut established_state).await,
+                Self::CastMsg::SendPing => {
+                    send(&mut established_state, Message::Ping(PingMessage {})).await
+                }
                 Self::CastMsg::SendNewPooledTxHashes => {
                     send_new_pooled_tx_hashes(&mut established_state).await
                 }
@@ -908,16 +910,6 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
         send_block_range_update(state).await
     } else {
         Ok(())
-    }
-}
-
-async fn handle_send_ping(state: &mut Established) -> Result<(), RLPxError> {
-    match send(state, Message::Ping(PingMessage {})).await {
-        Ok(_) => {
-            log_peer_debug(&state.node, "Ping sent");
-            Ok(())
-        }
-        Err(e) => Err(e),
     }
 }
 
