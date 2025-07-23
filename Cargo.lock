@@ -4113,6 +4113,9 @@ dependencies = [
 name = "ethrex-levm"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
  "bls12_381 0.8.0",
  "bytes",
  "colored",
