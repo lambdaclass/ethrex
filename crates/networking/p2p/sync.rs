@@ -299,6 +299,7 @@ impl Syncer {
 
                 let time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT as u64);
                 info!("{time_limit}");
+                let store2 = store.clone();
 
                 let _ = tokio::spawn(
                     async move {
@@ -306,7 +307,8 @@ impl Syncer {
                             tokio::time::sleep(Duration::from_secs(12)).await;
                             if time_limit > current_unix_time() {
                                 info!("We're stale now");
-                                pivot_idx += SNAP_LIMIT;
+                                let foo = store2.get_block_header(pivot_header.number + SNAP_LIMIT as u64);
+                                info!("new Block Header {foo:?}");
                             }
                         }
                     }
