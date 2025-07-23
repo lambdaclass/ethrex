@@ -55,8 +55,7 @@ impl MetricsGatherer {
         rollup_store: StoreRollup,
         l2_url: String,
     ) -> Result<(), MetricsGathererError> {
-        let state = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url).await?;
-        let mut metrics = MetricsGatherer::start(state);
+        let mut metrics = Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url).await?.start();
         metrics
             .cast(InMessage::Gather)
             .await

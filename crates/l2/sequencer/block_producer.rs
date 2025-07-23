@@ -86,14 +86,13 @@ impl BlockProducer {
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
     ) -> Result<(), BlockProducerError> {
-        let state = Self::new(
+        let mut block_producer = Self::new(
             &cfg.block_producer,
             store,
             rollup_store,
             blockchain,
             sequencer_state,
-        );
-        let mut block_producer = state.start();
+        ).start();
         block_producer
             .cast(InMessage::Produce)
             .await

@@ -89,12 +89,12 @@ impl EthrexMonitor {
         cancellation_token: CancellationToken,
     ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
-        let state = EthrexMonitor {
+        let ethrex_monitor = EthrexMonitor {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
             cancellation_token,
         };
-        Ok(state.start())
+        Ok(ethrex_monitor.start())
     }
 }
 

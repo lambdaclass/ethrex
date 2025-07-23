@@ -95,14 +95,13 @@ impl StateUpdater {
         store: Store,
         rollup_store: StoreRollup,
     ) -> Result<(), StateUpdaterError> {
-        let state = Self::new(
+        let mut state_updater = Self::new(
             sequencer_cfg,
             sequencer_state,
             blockchain,
             store,
             rollup_store,
-        )?;
-        let mut state_updater = state.start();
+        )?.start();
         state_updater
             .cast(InMessage::UpdateState)
             .await
