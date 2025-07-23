@@ -29,16 +29,17 @@ contract RewardVault {
         uint256 gasProvenByClaimer = 0;
         for (uint256 i = 0; i < numberOfBatches; i++) {
             uint256 batchNumber = _batchNumbers[i];
-            (address proverAddress, uint256 gasProven) = onChainProposer.verifiedBatches(batchNumber);
-            require(proverAddress == sender, "Sender is not the prover");
-            gasProvenByClaimer += gasProven;
+            VerifiedBatchInfo memory verifiedBatchInfo = onChainProposer.verifiedBatches(batchNumber);
+            require(verifiedBatchInfo.prover == sender, "Sender is not the prover");
+            gasProvenByClaimer += verifiedBatchInfo.gasProven;
         }
 
         // calculate the rewards for the prover and transfer them
         uint256 totalGasProven = onChainProposer.getTotalGasProven();
-        uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** rewardToken.decimals();
+        // TODO: we should use the decimals of the reward token instead of hardcoding 18.
+        uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** 18;
         uint256 totalRewards = dailyRewardPool * gasProvenByClaimer / totalGasProven;
 
-        rewardToken.transfer(sender, totalRewards);
+        rewardToken.transfer(sender  totalRewards);
     }
 }

@@ -47,7 +47,7 @@ contract OnChainProposer is
     /// @dev The key is the batch number, the value is the address of the prover.
     // TODO: consider replacing it with a Merkle tree or just capping the number of verified batches.
     // TODO: Consider moving this mapping to a separate contract if needed.
-    mapping(uint256 => (address, uint256)) public verifiedBatches;
+    mapping(uint256 => VerifiedBatchInfo) _verifiedBatches;
 
     /// @notice The latest verified batch number.
     /// @dev This variable holds the batch number of the most recently verified batch.
@@ -385,7 +385,10 @@ contract OnChainProposer is
         // Update verified batches with the new batch
         // TODO: Should we check that this prover is registered somewhere?
         address message_sender = msg.sender;
-        verifiedBatches[batchNumber] = message_sender;
+        _verifiedBatches[batchNumber] = VerifiedBatchInfo(
+            message_sender,
+            gasProven
+        );
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -464,12 +467,22 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
+    // @inheritdoc IOnChainProposer
+    function verifiedBatches(uint256 batchNumber) public view returns (VerifiedBatchInfo memory) {
+        return _verifiedBatches[batchNumber];
+    }
+
+    // @inheritdoc IOnChainProposer
+    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) public {
+        _verifiedBatches[batchNumber] = VerifiedBatchInfo({prover: prover, gasProven: gasProven});
+    }
+
+    // @inheritdoc IOnChainProposer
     function getTotalGasProven() public view returns (uint256) {
         uint256 totalGasProven = 0;
         // TODO: we should only iterate through recent batches (i.e batches proven in the last day)
         for (uint256 i = 0; i <= lastVerifiedBatch; i++) {
-            (_, uint256 gasProven) = verifiedBatches[i];
-            totalGasProven += gasProven;
+            totalGasProven += _verifiedBatches[i].gasProven;
         }
         return totalGasProven;
     }

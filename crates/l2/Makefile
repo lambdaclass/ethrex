@@ -113,6 +113,9 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--deposit-rich \
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ../../fixtures/genesis/l1-dev.json \
+	# TODO: add a new target for based deployments
+	--deploy-based-contracts \
+	--sequencer-registry-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
 	--genesis-l2-path ../../fixtures/genesis/l2.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia

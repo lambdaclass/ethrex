@@ -113,6 +113,7 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
             "src/l1/based/OnChainProposer.sol",
             false,
         )?;
+        compile_contract(&opts.contracts_path, "src/l1/based/RewardVault.sol", false)?;
     } else {
         info!("Compiling OnChainProposer contract");
         compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
