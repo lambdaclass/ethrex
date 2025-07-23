@@ -21,6 +21,35 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+/*
+event WithdrawalInitiated(
+    address indexed senderOnL2,   => topic 1
+    address indexed receiverOnL1, => topic 2
+    uint256 indexed amount        => topic 3
+);
+*/
+const WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX: usize = 2;
+const WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX: usize = 3;
+/*
+event ERC20WithdrawalInitiated(
+    address indexed tokenL1,      => topic 1
+    address indexed tokenL2,      => topic 2
+    address indexed receiverOnL1, => topic 3
+    uint256 amount                => data 0..32
+);
+*/
+const WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX: usize = 1;
+const WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX: usize = 2;
+const WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX: usize = 3;
+/*
+event L1Message(
+    address indexed senderOnL2,   => topic 1
+    bytes32 indexed data,         => topic 2
+    uint256 indexed messageId     => topic 3
+);
+*/
+const L1MESSAGE_MESSAGE_ID_TOPIC_IDX: usize = 3;
+
 #[derive(Debug, Clone)]
 pub enum L2ToL1MessageStatus {
     WithdrawalInitiated,
@@ -48,8 +77,8 @@ impl L2ToL1MessageStatus {
         let msg_id = l1message_log
             .log
             .topics
-            .get(3)
-            .ok_or(MonitorError::LogsTopics(3))?;
+            .get(L1MESSAGE_MESSAGE_ID_TOPIC_IDX)
+            .ok_or(MonitorError::LogsTopics(L1MESSAGE_MESSAGE_ID_TOPIC_IDX))?;
         let withdrawal_is_claimed = {
             let calldata = encode_calldata(
                 "claimedWithdrawalIDs(uint256)",
@@ -214,15 +243,15 @@ impl L2ToL1MessagesTable {
                         Address::from_slice(
                             &log.log
                                 .topics
-                                .get(1)
-                                .ok_or(MonitorError::LogsTopics(1))?
+                                .get(WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX)
+                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ETH_RECEIVER_TOPIC_IDX))?
                                 .as_fixed_bytes()[12..],
                         ),
                         U256::from_big_endian(
                             log.log
                                 .topics
-                                .get(2)
-                                .ok_or(MonitorError::LogsTopics(2))?
+                                .get(WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX)
+                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ETH_AMOUNT_TOPIC_IDX))?
                                 .as_fixed_bytes(),
                         ),
                         Address::default(),
@@ -237,8 +266,8 @@ impl L2ToL1MessagesTable {
                         Address::from_slice(
                             &log.log
                                 .topics
-                                .get(3)
-                                .ok_or(MonitorError::LogsTopics(3))?
+                                .get(WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX)
+                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ERC20_RECEIVER_TOPIC_IDX))?
                                 .as_fixed_bytes()[12..],
                         ),
                         U256::from_big_endian(
@@ -251,14 +280,14 @@ impl L2ToL1MessagesTable {
                             &log.log
                                 .topics
                                 .get(1)
-                                .ok_or(MonitorError::LogsTopics(1))?
+                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ERC20_TOKEN_L1_TOPIC_IDX))?
                                 .as_fixed_bytes()[12..],
                         ),
                         Address::from_slice(
                             &log.log
                                 .topics
                                 .get(2)
-                                .ok_or(MonitorError::LogsTopics(2))?
+                                .ok_or(MonitorError::LogsTopics(WITHDRAWAL_ERC20_TOKEN_L2_TOPIC_IDX))?
                                 .as_fixed_bytes()[12..],
                         ),
                         log.transaction_hash,
