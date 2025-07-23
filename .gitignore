@@ -13,6 +13,8 @@ cmd/ef_tests/blockchain/vectors
 
 cmd/ef_tests/state/vectors
 
+cmd/ef_tests/state/runner_v2/runner_report.txt
+
 # Repos checked out by make target
 hive/
 ethereum-package/
@@ -73,3 +75,7 @@ mermaid-init.js
 mermaid.min.js
 
 bench-results/
+
+# AI tools. Eventually we might agree on a standard, but lets keep them personal for now
+Claude.md
+GEMINI.md

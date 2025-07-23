@@ -1,10 +1,10 @@
 use std::{cmp::min, fmt::Display};
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256, Signature, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
-use secp256k1::{Message, SecretKey, ecdsa::RecoveryId};
+use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
@@ -285,22 +285,6 @@ impl Display for TxType {
             TxType::Privileged => write!(f, "Privileged"),
         }
     }
-}
-
-pub trait Signable {
-    /// Both sign and sign_in_place return error when the payload hash calculated that has to
-    /// be signed is not exactly 32 bytes long. Currently it's an unreachable error
-    /// since the payload is hashed with the keccak algorithm which produces a 32 byte hash.
-    fn sign(&self, private_key: &SecretKey) -> Result<Self, secp256k1::Error>
-    where
-        Self: Sized,
-        Self: Clone,
-    {
-        let mut signable = self.clone();
-        signable.sign_inplace(private_key)?;
-        Ok(signable)
-    }
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error>;
 }
 
 impl Transaction {
@@ -890,121 +874,6 @@ impl RLPDecode for PrivilegedL2Transaction {
     }
 }
 
-impl Signable for Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        match self {
-            Transaction::LegacyTransaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP2930Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::EIP7702Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::PrivilegedL2Transaction(_) => Ok(()), // Privileged Transactions are not signed
-        }
-    }
-}
-
-impl Signable for LegacyTransaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let data = Message::from_digest_slice(&keccak(self.encode_payload_to_vec()).0)?;
-
-        let (recovery_id, signature) = secp256k1::SECP256K1
-            .sign_ecdsa_recoverable(&data, private_key)
-            .serialize_compact();
-
-        let mut r = [0u8; 32];
-        let mut s = [0u8; 32];
-        r.copy_from_slice(&signature[..32]);
-        s.copy_from_slice(&signature[32..]);
-
-        self.r = U256::from_big_endian(&r);
-        self.s = U256::from_big_endian(&s);
-        self.v = U256::from(recovery_id.to_i32());
-        Ok(())
-    }
-}
-
-impl Signable for EIP1559Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP1559 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-impl Signable for EIP2930Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP2930 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-impl Signable for EIP4844Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP4844 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-impl Signable for EIP7702Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
-        let mut payload = vec![TxType::EIP7702 as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        )
-    }
-}
-
-fn sing_inplace(
-    payload: &Vec<u8>,
-    private_key: &SecretKey,
-    signature_r: &mut U256,
-    signature_s: &mut U256,
-    signature_y_parity: &mut bool,
-) -> Result<(), secp256k1::Error> {
-    let data = Message::from_digest_slice(&keccak(payload).0)?;
-
-    let (recovery_id, signature) = secp256k1::SECP256K1
-        .sign_ecdsa_recoverable(&data, private_key)
-        .serialize_compact();
-
-    let mut r = [0u8; 32];
-    let mut s = [0u8; 32];
-    r.copy_from_slice(&signature[..32]);
-    s.copy_from_slice(&signature[32..]);
-
-    let parity = recovery_id.to_i32() != 0;
-
-    *signature_r = U256::from_big_endian(&r);
-    *signature_s = U256::from_big_endian(&s);
-    *signature_y_parity = parity;
-    Ok(())
-}
-
 impl Transaction {
     pub fn sender(&self) -> Result<Address, secp256k1::Error> {
         match self {
@@ -1035,7 +904,11 @@ impl Transaction {
                         .encode_field(&0u8)
                         .finish(),
                 }
-                recover_address(&tx.r, &tx.s, signature_y_parity, &Bytes::from(buf))
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.s.to_big_endian());
+                sig[64] = signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1049,12 +922,11 @@ impl Transaction {
                     .encode_field(&tx.data)
                     .encode_field(&tx.access_list)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP1559Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1069,12 +941,11 @@ impl Transaction {
                     .encode_field(&tx.data)
                     .encode_field(&tx.access_list)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP4844Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1091,12 +962,11 @@ impl Transaction {
                     .encode_field(&tx.max_fee_per_blob_gas)
                     .encode_field(&tx.blob_versioned_hashes)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP7702Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1112,12 +982,11 @@ impl Transaction {
                     .encode_field(&tx.access_list)
                     .encode_field(&tx.authorization_list)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
         }
@@ -1319,25 +1188,27 @@ impl Transaction {
     }
 }
 
-pub fn recover_address(
-    signature_r: &U256,
-    signature_s: &U256,
-    signature_y_parity: bool,
+pub fn recover_address_from_message(
+    signature: Signature,
     message: &Bytes,
 ) -> Result<Address, secp256k1::Error> {
-    // Create signature
-    let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
-    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-        &signature_bytes,
-        RecoveryId::from_i32(signature_y_parity as i32)?, // cannot fail
-    )?;
     // Hash message
-    let msg_digest: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
+    let payload: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
         .finalize()
         .into();
+    recover_address(signature, H256::from_slice(&payload))
+}
+
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
+    // Create signature
+    let signature_bytes = signature.to_fixed_bytes();
+    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
+        &signature_bytes[..64],
+        RecoveryId::from_i32(signature_bytes[64] as i32)?, // cannot fail
+    )?;
     // Recover public key
-    let public =
-        secp256k1::SECP256K1.recover_ecdsa(&Message::from_digest(msg_digest), &signature)?;
+    let public = secp256k1::SECP256K1
+        .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
     Ok(Address::from_slice(&hash[12..]))
@@ -2368,6 +2239,72 @@ mod serde_impl {
             }
         }
     }
+
+    impl From<LegacyTransaction> for GenericTransaction {
+        fn from(value: LegacyTransaction) -> Self {
+            Self {
+                r#type: TxType::Legacy,
+                nonce: Some(value.nonce),
+                to: value.to,
+                from: Address::default(),
+                gas: Some(value.gas),
+                value: value.value,
+                gas_price: value.gas_price,
+                max_priority_fee_per_gas: None,
+                max_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                access_list: vec![],
+                authorization_list: None,
+                blob_versioned_hashes: vec![],
+                blobs: vec![],
+                chain_id: None,
+                input: value.data,
+            }
+        }
+    }
+
+    impl From<EIP2930Transaction> for GenericTransaction {
+        fn from(value: EIP2930Transaction) -> Self {
+            Self {
+                r#type: TxType::EIP2930,
+                nonce: Some(value.nonce),
+                to: value.to,
+                from: Address::default(),
+                gas: Some(value.gas_limit),
+                value: value.value,
+                gas_price: value.gas_price,
+                max_priority_fee_per_gas: None,
+                max_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|(address, storage_keys)| AccessListEntry {
+                        address,
+                        storage_keys,
+                    })
+                    .collect(),
+                authorization_list: None,
+                blob_versioned_hashes: vec![],
+                blobs: vec![],
+                chain_id: Some(value.chain_id),
+                input: value.data,
+            }
+        }
+    }
+
+    impl From<Transaction> for GenericTransaction {
+        fn from(value: Transaction) -> Self {
+            match value {
+                Transaction::LegacyTransaction(tx) => tx.into(),
+                Transaction::EIP2930Transaction(tx) => tx.into(),
+                Transaction::EIP1559Transaction(tx) => tx.into(),
+                Transaction::EIP4844Transaction(tx) => tx.into(),
+                Transaction::EIP7702Transaction(tx) => tx.into(),
+                Transaction::PrivilegedL2Transaction(tx) => tx.into(),
+            }
+        }
+    }
 }
 
 mod mempool {
@@ -2903,5 +2840,73 @@ mod tests {
 
         assert_eq!(deserialized_tx, privileged_l2);
         Ok(())
+    }
+
+    #[test]
+    fn test_legacy_transaction_into_generic() {
+        let legacy_tx = LegacyTransaction {
+            nonce: 1,
+            gas_price: 20_000_000_000,
+            gas: 21000,
+            to: TxKind::Call(
+                Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
+            ),
+            value: U256::from(1_000_000_000_000_000_000u64),
+            data: Bytes::default(),
+            v: U256::from(27),
+            r: U256::from(1),
+            s: U256::from(1),
+        };
+
+        let generic_tx: GenericTransaction = legacy_tx.into();
+        assert_eq!(generic_tx.r#type, TxType::Legacy);
+        assert_eq!(generic_tx.nonce, Some(1));
+        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas, Some(21000));
+        assert_eq!(generic_tx.max_priority_fee_per_gas, None);
+        assert_eq!(generic_tx.max_fee_per_gas, None);
+        assert_eq!(generic_tx.access_list.len(), 0);
+        assert_eq!(generic_tx.chain_id, None);
+    }
+
+    #[test]
+    fn test_eip2930_transaction_into_generic() {
+        let access_list = vec![(
+            Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
+            vec![
+                H256::from_str(
+                    "0x1234567890123456789012345678901234567890123456789012345678901234",
+                )
+                .unwrap(),
+            ],
+        )];
+
+        let eip2930_tx = EIP2930Transaction {
+            chain_id: 1,
+            nonce: 1,
+            gas_price: 20_000_000_000,
+            gas_limit: 21000,
+            to: TxKind::Call(
+                Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
+            ),
+            value: U256::from(1_000_000_000_000_000_000u64),
+            data: Bytes::default(),
+            access_list: access_list.clone(),
+            signature_y_parity: false,
+            signature_r: U256::from(1),
+            signature_s: U256::from(1),
+        };
+
+        let generic_tx: GenericTransaction = eip2930_tx.into();
+        assert_eq!(generic_tx.r#type, TxType::EIP2930);
+        assert_eq!(generic_tx.nonce, Some(1));
+        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas, Some(21000));
+        assert_eq!(generic_tx.max_priority_fee_per_gas, None);
+        assert_eq!(generic_tx.max_fee_per_gas, None);
+        assert_eq!(generic_tx.chain_id, Some(1));
+        assert_eq!(generic_tx.access_list.len(), 1);
+        assert_eq!(generic_tx.access_list[0].address, access_list[0].0);
+        assert_eq!(generic_tx.access_list[0].storage_keys, access_list[0].1);
     }
 }
