@@ -8,7 +8,7 @@ pub struct SequencerState(Arc<Mutex<SequencerStatus>>);
 
 impl SequencerState {
     pub async fn status(&self) -> SequencerStatus {
-        (*self.0.clone().lock().await).clone()
+        *self.0.clone().lock().await
     }
 
     pub async fn new_status(&self, status: SequencerStatus) {
@@ -22,10 +22,11 @@ impl From<SequencerStatus> for SequencerState {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, Copy)]
 pub enum SequencerStatus {
     Sequencing,
     #[default]
+    Syncing,
     Following,
 }
 
@@ -33,6 +34,7 @@ impl std::fmt::Display for SequencerStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SequencerStatus::Sequencing => write!(f, "Sequencing"),
+            SequencerStatus::Syncing => write!(f, "Syncing"),
             SequencerStatus::Following => write!(f, "Following"),
         }
     }

@@ -41,7 +41,7 @@ pub async fn start_l2(
     cancellation_token: CancellationToken,
     #[cfg(feature = "metrics")] l2_url: String,
 ) -> Result<(), errors::SequencerError> {
-    let initial_status = if cfg.based.based {
+    let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
     } else {
         SequencerStatus::Sequencing
@@ -131,10 +131,11 @@ pub async fn start_l2(
             needed_proof_types.clone(),
         ));
     }
-    if cfg.based.based {
+    if cfg.based.enabled {
         let _ = StateUpdater::spawn(
             cfg.clone(),
             shared_state.clone(),
+            blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
         )
