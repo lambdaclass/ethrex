@@ -85,7 +85,7 @@ This section assumes you already have [Rust's `cargo`](https://www.rust-lang.org
 You can download the source code of a release from the [GitHub releases page](https://github.com/lambdaclass/ethrex/releases), or by cloning the repository at that version:
 
 ```sh
-git clone --branch v0.0.2-rc.1 --depth 1 https://github.com/lambdaclass/ethrex.git
+git clone --branch <LATEST_VERSION_HERE> --depth 1 https://github.com/lambdaclass/ethrex.git
 ```
 
 After that, you can run the following command inside the cloned repo to build the client:
