@@ -791,13 +791,15 @@ impl<'a> VM<'a> {
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
-        self.current_call_frame_mut()?.sub_return_data = Bytes::new();
+        self.current_call_frame_mut()?.sub_return_data.clear();
 
         // Validate sender has enough value
-        let sender_balance = self.db.get_account(msg_sender)?.info.balance;
-        if should_transfer_value && sender_balance < value {
-            self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        if should_transfer_value && !value.is_zero() {
+            let sender_balance = self.db.get_account(msg_sender)?.info.balance;
+            if sender_balance < value {
+                self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
+                return Ok(OpcodeResult::Continue { pc_increment: 1 });
+            }
         }
 
         // Validate max depth has not been reached yet.
@@ -812,11 +814,6 @@ impl<'a> VM<'a> {
         }
 
         if self.is_precompile(&code_address) && !is_delegation_7702 {
-            // Transfer value from caller to callee.
-            if should_transfer_value {
-                self.transfer(msg_sender, to, value)?;
-            }
-
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
                 self.vm_type,
@@ -849,7 +846,7 @@ impl<'a> VM<'a> {
                     &ctx_result.output
                 },
             )?;
-            call_frame.sub_return_data = ctx_result.output.clone();
+            call_frame.sub_return_data = ctx_result.output;
 
             // What to do, depending on TxResult
             call_frame.stack.push1(match &ctx_result.result {
@@ -860,7 +857,7 @@ impl<'a> VM<'a> {
             // self.tracer.exit_context(&ctx_result, false)?;
 
             // Increment PC of the parent callframe after execution of the child.
-            self.increment_pc_by(1)?;
+            call_frame.increment_pc_by(1)?;
         } else {
             let mut stack = self.stack_pool.pop().unwrap_or_default();
             stack.clear();
