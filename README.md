@@ -72,6 +72,16 @@ Full documentation is available in the [`docs/`](./docs/) directory. Please refe
 For better viewing, we have it hosted in [docs.ethrex.xyz](https://docs.ethrex.xyz/).
 This includes both [L1](https://docs.ethrex.xyz/l1/index.html) and [L2](https://docs.ethrex.xyz/l2/index.html) documentation.
 
+## Contribution
+
+We welcome and apprciate any contributions to ethrex, from the small fixes / documention to the 
+big feature changes. All contributions are required to be [cryptographically signed.](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+
+If you would like to contribute to our source code, fork the [ethrex GitHub repository](https://github.com/lambdaclass/ethrex), do the fixes in your own repo and open pull requests to `main`. Before opening for review, check that our CI passes all scheduled tests, which includes linting and running `cargo fmt`.
+ 
+For contributing to our documentation, refer to 
+[`docs/CONTRIBUTING_DOCS.md`](./docs/CONTRIBUTING_DOCS.md)
+
 
 ## 📚 References and acknowledgements
 
