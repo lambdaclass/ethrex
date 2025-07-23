@@ -31,7 +31,7 @@ sequenceDiagram
 
 **Dependencies:**
 
-- [RISC0](https://dev.risczero.com/api/src/guest_program/install)
+- [RISC0](https://dev.risczero.com/api/zkvm/install)
   1. `curl -L https://risczero.com/install | bash`
   2. `rzup install cargo-risczero 1.2.0`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
