@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753235416294,
+  "lastUpdate": 1753281307890,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5515,6 +5515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 168942697642,
             "range": "± 457770537",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c1778eadda9854a3824aac5f304204150c14a97b",
+          "message": "chore(l1): change logs in hive to info by default (#3767)\n\n**Motivation**\n\nIn the PR #2975 the default value for the `make run-hive` was changed to\nerror. I propose changing this to info (3), as we usually run make hive\nto try to see a problem with the test. For the CI I propose we change it\nto log level error (1), as we can't actually look at those logs.\n\n**Description**\n\n- Changed makefile `SIM_LOG_LEVEL` default value to 3 (info)\n- Added to the ci workflows `--sim.loglevel 1` which corresponds to\nerror.",
+          "timestamp": "2025-07-23T13:51:18Z",
+          "tree_id": "c226e0a9f7ec2b05e2e4c8136af012522784660a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c1778eadda9854a3824aac5f304204150c14a97b"
+        },
+        "date": 1753281295838,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 165884922401,
+            "range": "± 207154120",
             "unit": "ns/iter"
           }
         ]
