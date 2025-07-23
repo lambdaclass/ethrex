@@ -1355,7 +1355,11 @@ impl PeerHandler {
 
         info!("Starting to download storage ranges from peers");
         *METRICS.storage_tries_to_download.lock().await = account_storage_roots.len() as u64;
-        *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+        METRICS
+            .storage_tries_download_start_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
         let mut task_count = tasks_queue_not_started.len();
@@ -1489,7 +1493,10 @@ impl PeerHandler {
                     .iter()
                     .map(|storage| storage.len())
                     .sum::<usize>();
-                info!(
+
+                *METRICS.downloaded_storage_slots.lock().await += n_slots as u64;
+
+                debug!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
                 info!(
@@ -1738,6 +1745,11 @@ impl PeerHandler {
         *METRICS.total_storages_downloaders.lock().await = downloaders.len() as u64;
         *METRICS.downloaded_storage_tries.lock().await = downloaded_count;
         *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
+        METRICS
+            .storage_tries_download_end_time
+            .lock()
+            .await
+            .replace(SystemTime::now());
 
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
         info!("Finished downloading account ranges, total storage slots: {total_slots}");

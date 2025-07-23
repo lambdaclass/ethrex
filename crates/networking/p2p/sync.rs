@@ -6,7 +6,10 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
-use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
+use crate::{
+    metrics::METRICS,
+    peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+};
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -26,6 +29,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::SystemTime,
 };
 use storage_healing::storage_healer;
 use tokio::{
@@ -269,15 +273,22 @@ impl Syncer {
             // Discard the first header as we already have it
             block_headers.remove(0);
             if !block_headers.is_empty() {
-                block_sync_state
-                    .process_incoming_headers(
-                        block_headers,
-                        sync_head_found,
-                        self.blockchain.clone(),
-                        self.peers.clone(),
-                        self.cancel_token.clone(),
-                    )
-                    .await?;
+                match block_sync_state {
+                    BlockSyncState::Full(ref mut state) => {
+                        state
+                            .process_incoming_headers(
+                                block_headers,
+                                sync_head_found,
+                                self.blockchain.clone(),
+                                self.peers.clone(),
+                                self.cancel_token.clone(),
+                            )
+                            .await?
+                    }
+                    BlockSyncState::Snap(ref mut state) => {
+                        state.process_incoming_headers(block_headers).await?
+                    }
+                }
             }
 
             if sync_head_found {
@@ -520,33 +531,6 @@ impl BlockSyncState {
         }
     }
 
-    /// Processes the incoming batch of headers from BlockSync
-    /// For FullSync: Request corresponding bodies and execute the full blocks
-    /// For SnapSync: Store headers
-    async fn process_incoming_headers(
-        &mut self,
-        block_headers: Vec<BlockHeader>,
-        sync_head_found: bool,
-        blockchain: Arc<Blockchain>,
-        peers: PeerHandler,
-        cancel_token: CancellationToken,
-    ) -> Result<(), SyncError> {
-        match self {
-            BlockSyncState::Full(state) => {
-                state
-                    .process_incoming_headers(
-                        block_headers,
-                        sync_head_found,
-                        blockchain,
-                        peers,
-                        cancel_token,
-                    )
-                    .await
-            }
-            BlockSyncState::Snap(state) => state.process_incoming_headers(block_headers).await,
-        }
-    }
-
     /// Consumes the current state and returns the contained block hashes if the state is a SnapSynd state
     /// If it is a FullSync state, returns an empty vector
     pub fn into_snap_block_hashes(self) -> Vec<BlockHash> {
@@ -597,6 +581,7 @@ impl FullBlockSyncState {
     ) -> Result<(), SyncError> {
         info!("Processing incoming headers full sync");
         self.current_headers.extend(block_headers);
+        dbg!("CHECKPOINT 1");
         // if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
         //     // We don't have enough headers to fill up a batch, lets request more
         //     return Ok(());
@@ -608,17 +593,21 @@ impl FullBlockSyncState {
         // Download block bodies
         let headers =
             &self.current_headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, self.current_headers.len())];
+        dbg!("CHECKPOINT 2");
         let bodies = peers
             .request_and_validate_block_bodies(headers)
             .await
             .ok_or(SyncError::BodiesNotFound)?;
+        dbg!("CHECKPOINT 3");
         debug!("Obtained: {} block bodies", bodies.len());
         let blocks = self
             .current_headers
             .drain(..bodies.len())
             .zip(bodies)
             .map(|(header, body)| Block { header, body });
+        dbg!("CHECKPOINT 4");
         self.current_blocks.extend(blocks);
+        dbg!("CHECKPOINT 5");
         // }
         // Execute full blocks
         // while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
@@ -633,24 +622,30 @@ impl FullBlockSyncState {
             self.current_blocks.last().unwrap().hash()
         );
         let execution_start = Instant::now();
+        dbg!("CHECKPOINT 6");
         let block_batch: Vec<Block> = self
             .current_blocks
             .drain(..min(*EXECUTE_BATCH_SIZE, self.current_blocks.len()))
             .collect();
+        dbg!("CHECKPOINT 7");
         // Copy some values for later
         let blocks_len = block_batch.len();
+        dbg!("CHECKPOINT 8");
         let numbers_and_hashes = block_batch
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
+        dbg!("CHECKPOINT 9");
         let (last_block_number, last_block_hash) = numbers_and_hashes
             .last()
             .cloned()
             .ok_or(SyncError::InvalidRangeReceived)?;
+        dbg!("CHECKPOINT 10");
         let (first_block_number, first_block_hash) = numbers_and_hashes
             .first()
             .cloned()
             .ok_or(SyncError::InvalidRangeReceived)?;
+        dbg!("CHECKPOINT 11");
         // Run the batch
         if let Err((err, batch_failure)) = Syncer::add_blocks(
             blockchain.clone(),
@@ -660,7 +655,9 @@ impl FullBlockSyncState {
         )
         .await
         {
+            dbg!("CHECKPOINT 12.a");
             if let Some(batch_failure) = batch_failure {
+                dbg!("CHECKPOINT 13.a");
                 warn!("Failed to add block during FullSync: {err}");
                 self.store
                     .set_latest_valid_ancestor(
@@ -668,19 +665,26 @@ impl FullBlockSyncState {
                         batch_failure.last_valid_hash,
                     )
                     .await?;
+                dbg!("CHECKPOINT 14.a");
             }
+            dbg!("CHECKPOINT 15.a");
             return Err(err.into());
         }
+        dbg!("CHECKPOINT 12.b");
         // Mark chain as canonical & last block as latest
         self.store
             .mark_chain_as_canonical(&numbers_and_hashes)
             .await?;
+        dbg!("CHECKPOINT 13.b");
         self.store
             .update_latest_block_number(last_block_number)
             .await?;
+        dbg!("CHECKPOINT 14.b");
 
         let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
+        dbg!("CHECKPOINT 15.b");
         let blocks_per_second = blocks_len as f64 / execution_time;
+        dbg!("CHECKPOINT 16.b");
 
         info!(
             "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
@@ -696,6 +700,7 @@ impl FullBlockSyncState {
             blocks_per_second
         );
         // }
+        dbg!("CHECKPOINT 17.b");
         Ok(())
     }
 }
@@ -838,6 +843,8 @@ impl Syncer {
         .await
         .unwrap();
 
+        *METRICS.account_tries_state_root.lock().await = Some(computed_state_root);
+
         let account_store_time = Instant::now().saturating_duration_since(account_store_start);
 
         info!("Expected state root: {state_root:?}");
@@ -845,7 +852,16 @@ impl Syncer {
 
         let storages_store_start = Instant::now();
 
+        METRICS.storage_tries_state_roots_start_time
+            .lock()
+            .await.replace(SystemTime::now());
+
+        *METRICS.storage_tries_state_roots_to_compute
+            .lock()
+            .await = account_storage_roots.len() as u64;
+
         let store_clone = store.clone();
+
         tokio::task::spawn_blocking(move || {
             let store = store_clone;
             // Store trie in storage
@@ -870,12 +886,22 @@ impl Syncer {
                         continue;
                     };
                 }
+<<<<<<< HEAD
+=======
+                
+>>>>>>> @{-1}
                 let Ok(computed_state_root) = storage_trie.hash() else {
                     error!(
                         "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
                     );
                     continue;
                 };
+<<<<<<< HEAD
+=======
+
+                METRICS.storage_tries_state_roots_computed.inc();
+
+>>>>>>> @{-1}
                 if computed_state_root != storage_root {
                     error!(
                         "Got different state roots for account hash: {account_hash:?}, expected: {storage_root:?}, computed: {computed_state_root:?}"
@@ -883,6 +909,14 @@ impl Syncer {
                 }
             }
         }).await.unwrap();
+<<<<<<< HEAD
+=======
+        
+
+        METRICS.storage_tries_state_roots_end_time
+            .lock()
+            .await.replace(SystemTime::now());
+>>>>>>> @{-1}
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
