@@ -199,7 +199,7 @@ impl L1ProofSender {
 
         let fee_estimation = Self::estimate_fee(self).await?;
 
-        let nonce = get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
+        let mut nonce = get_nonce_from_batcher(self.network.clone(), self.signer.address().0.into())
             .await
             .map_err(|err| {
                 ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
@@ -259,6 +259,8 @@ impl L1ProofSender {
                 nonce,
             )
             .await?;
+
+            nonce = nonce + 1;
 
             info!(?prover_type, ?batch_number, "Submitted proof to Aligned");
         }
