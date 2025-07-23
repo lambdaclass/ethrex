@@ -90,7 +90,7 @@ blake2b_f:
     vpinsrq     xmm7,   xmm7,   [rsi + 0x10],   1
     vpinsrq     xmm8,   xmm8,   [rsi + 0x68],   1
     vpinsrq     xmm9,   xmm9,   [rsi + 0x30],   1
-    vpinsrq     xmm10,  xmm10,  [rsi + 0x2B],   1
+    vpinsrq     xmm10,  xmm10,  [rsi + 0x28],   1
     vpinsrq     xmm11,  xmm11,  [rsi + 0x18],   1
     vinserti128 ymm4,   ymm4,   xmm8,   1
     vinserti128 ymm5,   ymm5,   xmm9,   1
@@ -118,7 +118,7 @@ blake2b_f:
     vpinsrq     xmm8,   xmm8,   [rsi + 0x78],   1
     vpinsrq     xmm9,   xmm9,   [rsi + 0x68],   1
     vpinsrq     xmm10,  xmm10,  [rsi + 0x48],   1
-    vpinsrq     xmm11,  xmm11,  [rsi + 0x32],   1
+    vpinsrq     xmm11,  xmm11,  [rsi + 0x20],   1
     vinserti128 ymm4,   ymm4,   xmm8,   1
     vinserti128 ymm5,   ymm5,   xmm9,   1
     vinserti128 ymm6,   ymm6,   xmm10,  1
@@ -268,8 +268,8 @@ blake2b_f:
     vmovq       xmm4,   [rsi + 0x30]
     vmovq       xmm5,   [rsi + 0x78]
     vmovq       xmm6,   [rsi + 0x60]
-    vmovq       xmm8,   [rsi + 0x5B]
-    vmovq       xmm9,   [rsi + 0x1B]
+    vmovq       xmm8,   [rsi + 0x58]
+    vmovq       xmm9,   [rsi + 0x18]
     vmovq       xmm10,  [rsi + 0x08]
     vpermq      ymm7,   [rsi + 0x20], 0x4E
     vpermq      ymm11,  [rsi + 0x00], 0xC6
