@@ -162,11 +162,17 @@ impl Syncer {
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
-        let mut sync_mode = if self.snap_enabled.load(Ordering::Relaxed) {
-            SyncMode::Snap
+        if self.snap_enabled.load(Ordering::Relaxed) {
+            self.sync_cycle_snap(sync_head, store).await
         } else {
-            SyncMode::Full
-        };
+            self.sync_cycle_full(sync_head, store).await
+        }
+    }
+
+    /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
+    async fn sync_cycle_snap(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+        // Take picture of the current sync mode, we will update the original value when we need to
+        let mut sync_mode = SyncMode::Snap;
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
@@ -287,6 +293,108 @@ impl Syncer {
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
+        }
+        Ok(())
+    }
+
+    /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
+    async fn sync_cycle_full(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+        // Request all block headers between the current head and the sync head
+        // We will begin from the current head so that we download the earliest state first
+        // This step is not parallelized
+        let mut block_sync_state = BlockSyncState::new(&SyncMode::Full, store.clone());
+        // Check if we have some blocks downloaded from a previous sync attempt
+        // This applies only to snap sync—full sync always starts fetching headers
+        // from the canonical block, which updates as new block headers are fetched.
+        let mut current_head = block_sync_state.get_current_head().await?;
+        let current_head_number = store.get_block_number(current_head).await.unwrap().unwrap();
+        info!(
+            "Syncing from current head {:?} to sync_head {:?}",
+            current_head, sync_head
+        );
+        let pending_block = match store.get_pending_block(sync_head).await {
+            Ok(res) => res,
+            Err(e) => return Err(e.into()),
+        };
+
+        loop {
+            debug!("Requesting Block Headers from {current_head}");
+
+            let Some(mut block_headers) = self
+                .peers
+                .request_block_headers(current_head_number, sync_head, BlockRequestOrder::OldToNew)
+                .await
+            else {
+                warn!("Sync failed to find target block header, aborting");
+                return Ok(());
+            };
+
+            let (first_block_hash, first_block_number, first_block_parent_hash) =
+                match block_headers.first() {
+                    Some(header) => (header.hash(), header.number, header.parent_hash),
+                    None => continue,
+                };
+            let (last_block_hash, last_block_number) = match block_headers.last() {
+                Some(header) => (header.hash(), header.number),
+                None => continue,
+            };
+            // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+            // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+            if first_block_hash == last_block_hash
+                && first_block_hash == current_head
+                && current_head != sync_head
+            {
+                // There is no path to the sync head this goes back until it find a common ancerstor
+                warn!("Sync failed to find target block header, going back to the previous parent");
+                current_head = first_block_parent_hash;
+                continue;
+            }
+
+            debug!(
+                "Received {} block headers| First Number: {} Last Number: {}",
+                block_headers.len(),
+                first_block_number,
+                last_block_number
+            );
+
+            // If we have a pending block from new_payload request
+            // attach it to the end if it matches the parent_hash of the latest received header
+            if let Some(ref block) = pending_block {
+                if block.header.parent_hash == last_block_hash {
+                    block_headers.push(block.header.clone());
+                }
+            }
+
+            // Filter out everything after the sync_head
+            let mut sync_head_found = false;
+            if let Some(index) = block_headers
+                .iter()
+                .position(|header| header.hash() == sync_head)
+            {
+                sync_head_found = true;
+                block_headers.drain(index + 1..);
+            }
+
+            // Update current fetch head
+            current_head = last_block_hash;
+
+            // Discard the first header as we already have it
+            block_headers.remove(0);
+            if !block_headers.is_empty() {
+                block_sync_state
+                    .process_incoming_headers(
+                        block_headers,
+                        sync_head_found,
+                        self.blockchain.clone(),
+                        self.peers.clone(),
+                        self.cancel_token.clone(),
+                    )
+                    .await?;
+            }
+
+            if sync_head_found {
+                break;
+            };
         }
         Ok(())
     }
