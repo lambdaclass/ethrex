@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
-    types::{Account, AccountUpdate, Genesis},
+    types::{Account, AccountUpdate, Fork, Genesis},
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
@@ -21,6 +21,8 @@ use crate::runner_v2::{
 };
 
 pub struct PostCheckResult {
+    pub fork: Fork,
+    pub vector: (usize, usize, usize),
     pub passed: bool,
     pub root_dif: Option<(H256, H256)>,
     pub accounts_diff: Option<Vec<AccountMismatch>>,
@@ -30,6 +32,8 @@ pub struct PostCheckResult {
 impl Default for PostCheckResult {
     fn default() -> Self {
         Self {
+            fork: Fork::Prague,
+            vector: (0, 0, 0),
             passed: true,
             root_dif: None,
             accounts_diff: None,
@@ -61,7 +65,11 @@ pub async fn check_test_case_results(
     execution_result: Result<ExecutionReport, VMError>,
     genesis: Genesis,
 ) -> Result<PostCheckResult, RunnerError> {
-    let mut checks_result = PostCheckResult::default();
+    let mut checks_result = PostCheckResult {
+        fork: test_case.fork,
+        vector: test_case.vector,
+        ..Default::default()
+    };
 
     if test_case.expects_exception() {
         // Verify in case an exception was expected.
@@ -279,9 +287,9 @@ pub fn check_accounts_state(
         };
 
         // We verify if the account matches the expected post state.
-        let account_mismatch = verify_matching_accounts(addr, &account, &expected_account);
-        if account_mismatch.is_some() {
-            accounts_diff.push(account_mismatch.unwrap());
+        let account_mismatch = verify_matching_accounts(addr, account, &expected_account);
+        if let Some(mismatch) = account_mismatch {
+            accounts_diff.push(mismatch);
         }
     }
 
@@ -326,5 +334,5 @@ fn verify_matching_accounts(
         };
         return Some(account_mismatch);
     }
-    return None;
+    None
 }

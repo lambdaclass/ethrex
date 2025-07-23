@@ -9,7 +9,7 @@ use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::V
 
 use crate::runner_v2::{
     error::RunnerError,
-    report::create_report,
+    report::add_to_report,
     result_check::check_test_case_results,
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
@@ -25,7 +25,6 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
     let mut total_run = 0;
 
     for test in tests {
-        //println!("Executing test: {}", test.name);
         run_test(
             &test,
             &mut passing_tests,
@@ -51,7 +50,8 @@ pub async fn run_test(
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case)?;
         let tracer = LevmCallTracer::disabled();
-        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMExecutionError)?;
+        let mut vm =
+            VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
 
         // Execute transaction with VM.
         let execution_result = vm.execute();
@@ -69,7 +69,7 @@ pub async fn run_test(
 
         // If test case did not pass the checks, add it to failing test cases record (for future reporting)
         if !checks_result.passed {
-            failing_test_cases.push((test_case.fork, checks_result));
+            failing_test_cases.push(checks_result);
             *failing_tests += 1;
         } else {
             *passing_tests += 1;
@@ -83,7 +83,7 @@ pub async fn run_test(
             format!("{}", failing_tests).red()
         );
     }
-    create_report((test, failing_test_cases))?;
+    add_to_report((test, failing_test_cases))?;
 
     Ok(())
 }
