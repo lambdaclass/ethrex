@@ -13,6 +13,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
+use serde::de::EnumAccess;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -473,8 +474,8 @@ impl PeerHandler {
 
         // 5) loop until all the chunks are received (retry to get the chunks that failed)
 
-        ret.sort_by(|x, y| x.number.cmp(&y.number));
-        info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
+        // ret.sort_by(|x, y| x.number.cmp(&y.number));
+        // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
         // std::process::exit(0);
     }
@@ -1299,7 +1300,6 @@ impl PeerHandler {
         state_root: H256,
         account_storage_roots: Vec<(H256, H256)>,
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
-        const MAX_STORAGE_REQUEST_SIZE: usize = 200;
         // 1) split the range in chunks of same length
         let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
@@ -1307,17 +1307,24 @@ impl PeerHandler {
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
-        let mut tasks_queue_not_started = VecDeque::<(usize, usize, H256)>::new();
+        struct Task {
+            start_index: usize,
+            end_index: usize,
+            start_hash: H256,
+            // end_hash is None if the task is for the first big storage request
+            end_hash: Option<H256>,
+        }
+        let mut tasks_queue_not_started = VecDeque::<Task>::new();
         for i in 0..chunk_count {
             let chunk_start = chunk_size * i;
             let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
-            tasks_queue_not_started.push_back((chunk_start, chunk_end, H256::zero()));
+            tasks_queue_not_started.push_back(Task {
+                start_index: chunk_start,
+                end_index: chunk_end,
+                start_hash: H256::zero(),
+                end_hash: None,
+            });
         }
-        // Modify the last chunk to go up to the last element
-        let last_task = tasks_queue_not_started
-            .back_mut()
-            .expect("we just inserted some elements");
-        last_task.1 = account_storage_roots.len();
 
         // 2) request the chunks from peers
         let peers_table = self
@@ -1334,7 +1341,7 @@ impl PeerHandler {
             peer_id: H256,
             remaining_start: usize,
             remaining_end: usize,
-            remaining_start_hash: H256,
+            remaining_hash_range: (H256, Option<H256>),
         }
 
         // channel to send the tasks to the peers
@@ -1355,6 +1362,7 @@ impl PeerHandler {
             .replace(SystemTime::now());
 
         let mut last_metrics_update = SystemTime::now();
+        let mut task_count = tasks_queue_not_started.len();
         let mut completed_tasks = 0;
 
         let mut scores = self.peer_scores.lock().await;
@@ -1376,24 +1384,97 @@ impl PeerHandler {
                     peer_id,
                     remaining_start,
                     remaining_end,
-                    remaining_start_hash,
+                    remaining_hash_range: (hash_start, hash_end),
                 } = result;
+                completed_tasks += 1;
+
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
 
                 if remaining_start < remaining_end {
                     trace!("Failed to download chunk from peer {peer_id}");
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true;
-                    });
-                    let task = (remaining_start, remaining_end, remaining_start_hash);
-                    tasks_queue_not_started.push_back(task);
-                } else {
-                    completed_tasks += 1;
+                    if hash_start.is_zero() {
+                        // Task is common storage range request
+                        let task = Task {
+                            start_index: remaining_start,
+                            end_index: remaining_end,
+                            start_hash: H256::zero(),
+                            end_hash: None,
+                        };
+                        tasks_queue_not_started.push_back(task);
+                        task_count += 1;
+                    } else if let Some(hash_end) = hash_end {
+                        // Task was a big storage account result
+                        if hash_start <= hash_end {
+                            let task = Task {
+                                start_index: remaining_start,
+                                end_index: remaining_end,
+                                start_hash: hash_start,
+                                end_hash: Some(hash_end),
+                            };
+                            tasks_queue_not_started.push_back(task);
+                            task_count += 1;
+                        }
+                    } else {
+                        if remaining_start + 1 < remaining_end {
+                            let task = Task {
+                                start_index: remaining_start + 1,
+                                end_index: remaining_end,
+                                start_hash: H256::zero(),
+                                end_hash: None,
+                            };
+                            tasks_queue_not_started.push_back(task);
+                            task_count += 1;
+                        }
+                        // Task found a big storage account, so we split the chunk into multiple chunks
+                        let start_hash_u256 = U256::from_big_endian(&hash_start.0);
+                        let missing_storage_range = U256::MAX - start_hash_u256;
+
+                        let slot_count = account_storages.last().map(|v| v.len()).unwrap().max(1);
+                        let storage_density = start_hash_u256 / slot_count;
+
+                        let slots_per_chunk = U256::from(10000);
+                        let chunk_size = storage_density
+                            .checked_mul(slots_per_chunk)
+                            .unwrap_or(U256::MAX);
+
+                        let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
+
+                        for i in 0..chunk_count {
+                            let start_hash_u256 = start_hash_u256 + chunk_size * i;
+                            let start_hash = H256::from_uint(&start_hash_u256);
+                            let end_hash = if i == chunk_count - 1 {
+                                H256::repeat_byte(0xff)
+                            } else {
+                                let end_hash_u256 =
+                                    start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
+                                H256::from_uint(&end_hash_u256)
+                            };
+
+                            let task = Task {
+                                start_index: remaining_start,
+                                end_index: remaining_start + 1,
+                                start_hash: start_hash,
+                                end_hash: Some(end_hash),
+                            };
+                            tasks_queue_not_started.push_back(task);
+                            task_count += 1;
+                        }
+                        debug!("Split big storage account into {chunk_count} chunks.");
+                    }
                 }
 
                 if account_storages.is_empty() {
                     let peer_score = scores.entry(peer_id).or_default();
                     *peer_score -= 1;
                     continue;
+                }
+                if let Some(hash_end) = hash_end {
+                    // This is a big storage account, and the range might be empty
+                    if account_storages[0].len() == 1 && account_storages[0][0].0 > hash_end {
+                        continue;
+                    }
                 }
 
                 let peer_score = scores.entry(peer_id).or_default();
@@ -1403,7 +1484,7 @@ impl PeerHandler {
 
                 downloaded_count += account_storages.len() as u64;
                 // If we didn't finish downloading the account, don't count it
-                if !remaining_start_hash.is_zero() {
+                if !hash_start.is_zero() {
                     downloaded_count -= 1;
                 }
 
@@ -1418,9 +1499,10 @@ impl PeerHandler {
                 debug!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
+                debug!(
+                    "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
+                    tasks_queue_not_started.len()
+                );
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
                     all_account_storages[start_index].extend(account_storages.remove(0));
@@ -1488,8 +1570,8 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some((start, end, start_hash)) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= chunk_count {
+            let Some(task) = tasks_queue_not_started.pop_front() else {
+                if completed_tasks >= task_count {
                     info!("All account storages downloaded successfully");
                     break;
                 }
@@ -1505,30 +1587,27 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
-            let size = if !start_hash.is_zero() {
-                1
-            } else {
-                end - start
-            };
+
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
                     .iter()
-                    .skip(start)
-                    .take((size).min(MAX_STORAGE_REQUEST_SIZE))
+                    .skip(task.start_index)
+                    .take(task.end_index - task.start_index)
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
 
             tokio::spawn(async move {
-                debug!(
-                    "Requesting account range from peer {free_peer_id}, chunk: {start:?} - {end:?}"
-                );
+                let start = task.start_index;
+                let end = task.end_index;
+                let start_hash = task.start_hash;
+
                 let empty_task_result = TaskResult {
-                    start_index: start,
+                    start_index: task.start_index,
                     account_storages: Vec::new(),
                     peer_id: free_peer_id,
-                    remaining_start: start,
-                    remaining_end: end,
-                    remaining_start_hash: start_hash,
+                    remaining_start: task.start_index,
+                    remaining_end: task.end_index,
+                    remaining_hash_range: (start_hash, task.end_hash),
                 };
                 let request_id = rand::random();
                 let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
@@ -1536,7 +1615,7 @@ impl PeerHandler {
                     root_hash: state_root,
                     account_hashes: chunk_account_hashes,
                     starting_hash: start_hash,
-                    limit_hash: HASH_MAX,
+                    limit_hash: task.end_hash.unwrap_or(HASH_MAX),
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
@@ -1569,10 +1648,9 @@ impl PeerHandler {
                     tx.send(empty_task_result).await.ok();
                     return;
                 };
-                if slots.is_empty() {
+                if slots.is_empty() && proof.is_empty() {
                     tx.send(empty_task_result).await.ok();
-                    // Too spammy
-                    // tracing::error!("Received empty account range");
+                    tracing::debug!("Received empty account range");
                     return;
                 }
                 // Check we got some data and no more than the requested amount
@@ -1639,7 +1717,8 @@ impl PeerHandler {
                 }
                 let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
                     let (last_hash, _) = account_storages.last().unwrap().last().unwrap();
-                    let next_hash_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                    let next_hash_u256 =
+                        U256::from_big_endian(&last_hash.0).saturating_add(1.into());
                     let next_hash = H256::from_uint(&next_hash_u256);
                     (start + account_storages.len() - 1, end, next_hash)
                 } else {
@@ -1651,7 +1730,7 @@ impl PeerHandler {
                     peer_id: free_peer_id,
                     remaining_start,
                     remaining_end,
-                    remaining_start_hash,
+                    remaining_hash_range: (remaining_start_hash, task.end_hash),
                 };
                 tx.send(task_result).await.ok();
             });
