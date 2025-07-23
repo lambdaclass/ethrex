@@ -139,44 +139,29 @@ impl Evm {
         remaining_gas: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
-        match self {
+        let (success, gas_used, logs) = match self {
             Evm::REVM { state } => {
                 let chain_config = state.chain_config()?;
-                let execution_result = REVM::execute_tx(
-                    tx,
-                    block_header,
-                    state,
-                    spec_id(&chain_config, block_header.timestamp),
-                    sender,
-                )?;
-
-                *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
-
-                let receipt = Receipt::new(
-                    tx.tx_type(),
-                    execution_result.is_success(),
-                    block_header.gas_limit - *remaining_gas,
-                    execution_result.logs(),
-                );
-
-                Ok((receipt, execution_result.gas_used()))
+                let spec_id = spec_id(&chain_config, block_header.timestamp);
+                let result = REVM::execute_tx(tx, block_header, state, spec_id, sender)?;
+                (result.is_success(), result.gas_used(), result.logs())
             }
             Evm::LEVM { db, vm_type } => {
-                let execution_report =
-                    LEVM::execute_tx(tx, sender, block_header, db, vm_type.clone())?;
-
-                *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
-
-                let receipt = Receipt::new(
-                    tx.tx_type(),
-                    execution_report.is_success(),
-                    block_header.gas_limit - *remaining_gas,
-                    execution_report.logs.clone(),
-                );
-
-                Ok((receipt, execution_report.gas_used))
+                let result = LEVM::execute_tx(tx, sender, block_header, db, vm_type.clone())?;
+                (result.is_success(), result.gas_used, result.logs.clone())
             }
-        }
+        };
+
+        *remaining_gas = remaining_gas.saturating_sub(gas_used);
+
+        let receipt = Receipt::new(
+            tx.tx_type(),
+            success,
+            block_header.gas_limit - *remaining_gas,
+            logs,
+        );
+
+        Ok((receipt, gas_used))
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
