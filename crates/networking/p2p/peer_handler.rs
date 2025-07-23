@@ -1301,7 +1301,7 @@ impl PeerHandler {
         account_storage_roots: Vec<(H256, H256)>,
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
         // 1) split the range in chunks of same length
-        let chunk_size = 200;
+        let chunk_size = 300;
         let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
 
         // list of tasks to be executed
