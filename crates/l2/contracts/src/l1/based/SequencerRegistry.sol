@@ -38,7 +38,6 @@ contract SequencerRegistry is
     /// @dev This list is used to iterate over the registered sequencers.
     /// @dev The order of the sequencers in this list is important for determining the leader for future a batch.
     address[] public sequencers;
-    mapping(uint256 => address) public sequencerForBatch;
 
     /// @notice Mapping of batch numbers to the sequencer that committed them.
     /// @dev This mapping is used to keep track of which sequencer committed which batch.
