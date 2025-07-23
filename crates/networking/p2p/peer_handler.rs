@@ -887,11 +887,19 @@ impl PeerHandler {
             let time_limit = pivot_header.timestamp + SNAP_LIMIT;
             if current_unix_time() > time_limit {
                 info!("We are stale, updating pivot");
-                pivot_header = self
+                let Some(header) = self
                     .get_block_header(pivot_header.number + SNAP_LIMIT)
                     .await
-                    .unwrap();
-                info!("New pivot block number: {}", pivot_header.number);
+                else {
+                    info!("Received None pivot_header");
+                    continue;
+                };
+                pivot_header = header;
+                info!(
+                    "New pivot block number: {}, hash: {:?}",
+                    pivot_header.number,
+                    pivot_header.hash.get()
+                );
             }
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
