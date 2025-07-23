@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753234128676,
+  "lastUpdate": 1753235416294,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11334,6 +11334,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00762704,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3f60642861576555f50dd330410eb75c49188447",
+          "message": "feat(l2): based P2P (#2999)\n\n**Motivation**\n\nThis PR follows #2931 . We implement some basic functionality to\ncommunicate L2 based nodes via P2P.\n\n**Description**\n\n- Add new capability to the RLPx called `Based`.\n- Add new Message `NewBlock`.\n  - Behaves similar to the message `Transactions`.\n- Every interval we look to the new blocks produced and send them to the\npeer.\n- Add this message to the allowed ones to be broadcasted via the P2P\nnetwork.\n- When receiving this message we implemented a queue to be able to\nreceive them in disorder. Once a continuos interval of blocks is in the\nqueue we store them in order.\n- Add new message `BatchSealed`\n- Every interval we look in the `store_rollup` if a new batch has been\nsealed and then we send it to the peer.\n- Add this message to the allowed ones to be broadcasted via the P2P\nnetwork.\n- This two new messages are signed by the lead sequencer who proposed\nthe blocks and the batches. Every node must verify this signature\ncorrespond to the lead sequencer\n- Change `BlockFetcher` to not add a block received via the L1 if it\nalready has been received via P2P, and vice versa.\n- Add a new `SequencingStatus`: `Syncing`. It is for nodes that are not\nup to date to the last committed batch.\n\n**How to test**\n\nRead the `Run Locally` section from `crates/l2/based/README.md` to run 3\nnodes and register 2 of them as Sequencers. It is important that you\nassign different values in the nodes:\n- `--http.port <PORT>`\n- `--committer.l1-private-key <PRIVATE_KEY>`\n- `--proof-coordinator.port <PORT>`\n- `--p2p.port <P2P_PORT>`\n- `--discovery.port <PORT>`\n\n> [!TIP]\n> To enrich the review, I strongly suggest you read the documentation in\n`crates/l2/based/docs`.\n\n---------\n\nCo-authored-by: Leandro Serra <leandro.serra@lambdaclass.com>\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>\nCo-authored-by: fkrause98 <fkrausear@gmail.com>\nCo-authored-by: Francisco Krause Arnim <56402156+fkrause98@users.noreply.github.com>",
+          "timestamp": "2025-07-22T22:04:21Z",
+          "tree_id": "2fbb970513ea40b72556f60e771be7c88d6540a4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3f60642861576555f50dd330410eb75c49188447"
+        },
+        "date": 1753235415840,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013731810699588478,
             "unit": "Mgas/s"
           }
         ]
