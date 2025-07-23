@@ -182,7 +182,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 validium: opts.validium,
             },
             based: BasedConfig {
-                based: opts.based,
+                enabled: opts.based,
                 state_updater: StateUpdaterConfig {
                     sequencer_registry: opts
                         .based_opts

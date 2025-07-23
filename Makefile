@@ -69,7 +69,7 @@ localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-pack
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet-assertoor-ethrex-only: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_only.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file fixtures/network/network_params_ethrex_only.yaml
 	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
 localnet-assertoor-different-cl: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
@@ -106,7 +106,7 @@ setup-hive: ## 🐝 Set up Hive testing framework
 	fi
 
 TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 1
+SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
 
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080

@@ -7,7 +7,6 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
 };
-use ethrex_l2_sdk::calldata::encode_tuple;
 use ethrex_l2_sdk::get_address_from_secret_key;
 use keccak_hash::keccak;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
@@ -41,30 +40,7 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let output = zkvm_interface::execution::execution_program(input).map_err(|e| e.to_string())?;
 
-    let initial_hash_bytes = output.initial_state_hash.0.to_vec();
-    let final_hash_bytes = output.final_state_hash.0.to_vec();
-    let last_block_hash_bytes = output.last_block_hash.0.to_vec();
-    #[cfg(feature = "l2")]
-    let l1messages_merkle_root_bytes = output.l1messages_merkle_root.0.to_vec();
-    #[cfg(feature = "l2")]
-    let privileged_transactions_hash_bytes = output.privileged_transactions_hash.0.to_vec();
-    #[cfg(feature = "l2")]
-    let blob_versioned_hash_bytes = output.blob_versioned_hash.0.to_vec();
-
-    let data = vec![
-        Value::FixedBytes(initial_hash_bytes.into()),
-        Value::FixedBytes(final_hash_bytes.into()),
-        #[cfg(feature = "l2")]
-        Value::FixedBytes(l1messages_merkle_root_bytes.into()),
-        #[cfg(feature = "l2")]
-        Value::FixedBytes(privileged_transactions_hash_bytes.into()),
-        #[cfg(feature = "l2")]
-        Value::FixedBytes(blob_versioned_hash_bytes.into()),
-        Value::FixedBytes(last_block_hash_bytes.into()),
-    ]
-    .clone();
-    let bytes = encode_tuple(&data).map_err(|e| format!("Error packing data: {e}"))?;
-    Ok(bytes)
+    Ok(output.encode())
 }
 
 fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {
