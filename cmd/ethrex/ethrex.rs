@@ -116,12 +116,12 @@ async fn main() -> eyre::Result<()> {
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {
+
             use ethrex::initializers::init_dev_network;
 
             init_dev_network(&opts, &store, tracker.clone()).await;
         } else {
             use ethrex::initializers::init_network;
-
             if opts.p2p_enabled {
                 init_network(
                     &opts,
@@ -134,6 +134,7 @@ async fn main() -> eyre::Result<()> {
                     store.clone(),
                     tracker.clone(),
                     blockchain.clone(),
+                    None
                 )
                 .await;
             } else {
