@@ -794,6 +794,7 @@ impl Syncer {
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
+            return Ok(false)
         }
         // Wait for the bytecode fetcher to finish
         info!("Waiting for the bytecode fetcher to finish");
@@ -802,7 +803,7 @@ impl Syncer {
             .ok_or(SyncError::Unexpected)?
             .complete()
             .await?;
-        Ok(state_heal_complete && storage_heal_complete)
+        Ok(true)
     }
 }
 
