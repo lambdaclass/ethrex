@@ -85,7 +85,7 @@ jobs:
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.buildarg branch=7abf18e1ad5970232cf2646481024d8922194ec3 --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1 --docker.nocache "ethereum/eest/*"
+        run: cd hive && ./hive --client-file ../fixtures/network/hive_clients/ethrex.yml --client ethrex --sim ${{ matrix.test.simulation }} --sim.buildarg branch=v4.5.0 --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --sim.loglevel 1 --docker.nocache "ethereum/eest/*"
         continue-on-error: true
 
       - name: Upload results
