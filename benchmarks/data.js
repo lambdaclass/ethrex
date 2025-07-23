@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753283448588,
+  "lastUpdate": 1753287075626,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5545,6 +5545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165884922401,
             "range": "± 207154120",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4edd454bf4df8dad51b2c32a810a89cd2a9479a6",
+          "message": "chore(l1): avoid running EF blockchain tests on `make test` (#3772)\n\n**Motivation**\nThey take a some time and `make test` should be more of a healthcheck\nimo. They run in the CI anyway.",
+          "timestamp": "2025-07-23T15:25:54Z",
+          "tree_id": "bc9f06de3dbdad519a7d50581577dea43afb1fa8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4edd454bf4df8dad51b2c32a810a89cd2a9479a6"
+        },
+        "date": 1753287063429,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 167899094786,
+            "range": "± 390332596",
             "unit": "ns/iter"
           }
         ]
