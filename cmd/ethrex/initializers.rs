@@ -6,7 +6,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::Genesis;
 
-use ethrex_metrics::metrics_profiling::{FunctionProfilingLayer, initialize_profiling_metrics};
+use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_profiling_metrics};
 
 use ethrex_p2p::{
     kademlia::KademliaTable,

@@ -38,7 +38,6 @@ fn initialize_profiling_vec() -> GaugeVec {
 
 // We use this struct to simplify accumulating the time spent doing each task and publishing the metric only when the sync cycle is finished
 // We need to do this because things like database reads and writes are spread out throughout the code, so we need to gather multiple measurements to publish
-
 #[derive(Default)]
 pub struct FunctionProfilingLayer {
     functions: Mutex<HashMap<Id, Instant>>,

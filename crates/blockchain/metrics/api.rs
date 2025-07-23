@@ -1,6 +1,6 @@
 use axum::{Router, routing::get};
 
-use crate::metrics_profiling::gather_profiling_metrics;
+use crate::profiling::gather_profiling_metrics;
 
 use crate::{MetricsApiError, metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
