@@ -50,7 +50,7 @@ impl From<RemoteSigner> for Signer {
 
 #[derive(Clone, Debug)]
 pub struct LocalSigner {
-    private_key: SecretKey,
+    pub private_key: SecretKey,
     pub address: Address,
 }
 

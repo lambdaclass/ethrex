@@ -23,7 +23,7 @@ pub struct BatchLine {
     verify_tx: Option<H256>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct BatchesTable {
     pub state: TableState,
     pub items: Vec<BatchLine>,
