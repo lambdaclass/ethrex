@@ -638,7 +638,7 @@ async fn test_forced_withdrawal(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
         Some(0),
-        Some(21000 * 15),
+        None,
         L1ToL2TransactionData::new(
             COMMON_BRIDGE_L2_ADDRESS,
             21000 * 5,
@@ -915,7 +915,7 @@ async fn test_transfer_with_privileged_tx(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         transferer_address,
         Some(0),
-        Some(21000 * 15),
+        None,
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &l1_rich_wallet_private_key(),
         common_bridge_address(),
@@ -996,7 +996,7 @@ async fn test_privileged_tx_not_enough_balance(
     let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
         rich_address,
         Some(0),
-        Some(21000 * 10),
+        None,
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
         &l1_rich_wallet_private_key(),
         common_bridge_address(),
