@@ -278,7 +278,7 @@ impl GenServer for RLPxConnection {
                         "No handler for cast message or no capabilities matched",
                     );
                     Err(RLPxError::MessageNotHandled(
-                        "Message unknown or without capabilities to handle".to_string(),
+                        "Unknown message or capability not handled".to_string(),
                     ))
                 }
             };
