@@ -178,7 +178,7 @@ Node options:
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
 
           [env: ETHREX_DATADIR=]
-          [default: ethrex]
+          [default: /home/runner/.local/share/ethrex]
 
       --force
           Delete the database without confirmation.
@@ -334,11 +334,11 @@ Make sure you have your docker daemon running.
    ```bash
    # Navigate to tooling/sync directory
    cd tooling/sync
-   
-   # Run target for hoodi 
+
+   # Run target for hoodi
    make start-hoodi-metrics-docker
 
-    # Run target for holesky 
+    # Run target for holesky
    make start-holesky-metrics-docker
    ```
 
