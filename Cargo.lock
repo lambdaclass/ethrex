@@ -2162,7 +2162,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -11239,9 +11239,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.1.7"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "239ab1253b4872aa9104a64e2d884859d909b075444e3fa8a2f3a1b51f0d3df3"
+checksum = "01bd46fef02d70d06e3e169d89eaddf1a3c8db6cb689a541705463f7a12260d7"
 dependencies = [
  "futures",
  "spawned-rt",
@@ -11251,9 +11251,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.1.7"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "972bbfe83337d386c1ba0a464b3bc6371b285b59cc35dfc3f605a0790f6558b1"
+checksum = "a7105ceb2a49ea3566f29c57bdc164397d81db934ff6241e1a555df76069b657"
 dependencies = [
  "crossbeam",
  "tokio",
@@ -13223,7 +13223,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
