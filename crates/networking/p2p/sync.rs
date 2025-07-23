@@ -6,7 +6,7 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
-use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
+use crate::{peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST}, utils::current_unix_time};
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -294,6 +294,19 @@ impl Syncer {
                     pivot_header.number,
                     pivot_header.timestamp
                 );
+
+                let time_limit = pivot_header.timestamp + (12 * 6);
+
+                let _ = tokio::spawn(
+                    async move {
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(12)).await;
+                            if time_limit > current_unix_time() {
+                                info!("We're stale now");
+                            }
+                        }
+                    }
+                ).await;
 
                 let state_root = pivot_header.state_root;
 
