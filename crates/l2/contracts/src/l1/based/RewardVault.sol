@@ -12,17 +12,20 @@ contract RewardVault is Initializable {
     // TODO: we should replace this value with a mechanism that changes over time.
     uint256 public tokensUnlockedPerDay;
 
-    function initialize(address _onChainProposer, address _rewardToken) public initializer {
+    bool public claimed;
+
+    function initialize(address _onChainProposer /* address _rewardToken */) public initializer {
         onChainProposer = IOnChainProposer(_onChainProposer);
-        rewardToken = IERC20(_rewardToken);
+        // rewardToken = IERC20(_rewardToken);
         // TODO: change this value to a mechanism that changes over time.
         tokensUnlockedPerDay = 1_000_000;
+        claimed = false;
     }
 
 
     /// @notice Claims rewards for a list of batches.
     /// @param _batchNumbers The list of batch numbers to claim rewards for.
-    function claimRewards(uint256[] calldata _batchNumbers) public {
+    function claimRewards(uint256[] calldata _batchNumbers) external {
         // TODO: should we prevent a prover from claiming many times per day?
         address sender = msg.sender;
 
@@ -41,6 +44,7 @@ contract RewardVault is Initializable {
         uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** 18;
         uint256 totalRewards = dailyRewardPool * gasProvenByClaimer / totalGasProven;
 
-        rewardToken.transfer(sender, totalRewards);
+        // rewardToken.transfer(sender, totalRewards);
+        claimed = true;
     }
 }
