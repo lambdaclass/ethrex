@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753287075626,
+  "lastUpdate": 1753287524129,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11476,6 +11476,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/c1778eadda9854a3824aac5f304204150c14a97b"
         },
         "date": 1753283448129,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00771521387283237,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4edd454bf4df8dad51b2c32a810a89cd2a9479a6",
+          "message": "chore(l1): avoid running EF blockchain tests on `make test` (#3772)\n\n**Motivation**\nThey take a some time and `make test` should be more of a healthcheck\nimo. They run in the CI anyway.",
+          "timestamp": "2025-07-23T15:25:54Z",
+          "tree_id": "bc9f06de3dbdad519a7d50581577dea43afb1fa8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4edd454bf4df8dad51b2c32a810a89cd2a9479a6"
+        },
+        "date": 1753287509110,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
