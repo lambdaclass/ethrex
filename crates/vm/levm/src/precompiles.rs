@@ -11,7 +11,6 @@ use ethrex_common::{
 use ethrex_crypto::blake2f::blake2f_compress_f;
 use keccak_hash::keccak256;
 use lambdaworks_math::{
-    cyclic_group::IsGroup,
     elliptic_curve::{
         short_weierstrass::{
             curves::bn_254::{
@@ -31,8 +30,12 @@ use lambdaworks_math::{
         fields::montgomery_backed_prime_fields::MontgomeryBackendPrimeField,
     },
     traits::ByteConversion,
-    unsigned_integer::element,
 };
+
+use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
+use ark_ec::CurveGroup;
+use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
+
 use num_bigint::BigUint;
 use secp256k1::{
     Message,
@@ -464,58 +467,65 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let second_point_x = calldata.get(64..96).ok_or(InternalError::Slicing)?;
     let second_point_y = calldata.get(96..128).ok_or(InternalError::Slicing)?;
 
-    // If points are zero the precompile should not fail, but the conversion in
-    // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let first_point_is_zero = u256_from_big_endian(first_point_x).is_zero()
-        && u256_from_big_endian(first_point_y).is_zero();
-    let second_point_is_zero = u256_from_big_endian(second_point_x).is_zero()
-        && u256_from_big_endian(second_point_y).is_zero();
-
-    let first_point_x = BN254FieldElement::from_bytes_be(first_point_x)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let second_point_x = BN254FieldElement::from_bytes_be(second_point_x)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let second_point_y = BN254FieldElement::from_bytes_be(second_point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
-    if first_point_is_zero && second_point_is_zero {
-        // If both points are zero, return is zero
-        Ok(Bytes::from([0u8; 64].to_vec()))
-    } else if first_point_is_zero {
-        // If first point is zero, return is second point
-        let second_point = BN254Curve::create_point_from_affine(second_point_x, second_point_y)
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-        let res = [
-            second_point.x().to_bytes_be(),
-            second_point.y().to_bytes_be(),
-        ]
-        .concat();
-        Ok(Bytes::from(res))
-    } else if second_point_is_zero {
-        // If second point is zero, return is first point
-        let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-        let res = [first_point.x().to_bytes_be(), first_point.y().to_bytes_be()].concat();
-        Ok(Bytes::from(res))
-    } else {
-        // If none of the points is zero, return is the sum of both in the EC
-        let first_point = BN254Curve::create_point_from_affine(first_point_x, first_point_y)
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-        let second_point = BN254Curve::create_point_from_affine(second_point_x, second_point_y)
-            .map_err(|_| PrecompileError::ParsingInputError)?;
-        let sum = first_point.operate_with(&second_point).to_affine();
-
-        if u256_from_big_endian(&sum.x().to_bytes_be()) == U256::zero()
-            || u256_from_big_endian(&sum.y().to_bytes_be()) == U256::zero()
-        {
-            Ok(Bytes::from([0u8; 64].to_vec()))
-        } else {
-            let res = [sum.x().to_bytes_be(), sum.y().to_bytes_be()].concat();
-            Ok(Bytes::from(res))
-        }
+    if u256_from_big_endian(first_point_x) >= ALT_BN128_PRIME
+        || u256_from_big_endian(first_point_y) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_x) >= ALT_BN128_PRIME
+        || u256_from_big_endian(second_point_y) >= ALT_BN128_PRIME
+    {
+        return Err(PrecompileError::InvalidPoint.into());
     }
+
+    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(first_point_x);
+    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(first_point_y);
+    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(second_point_x);
+    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(second_point_y);
+
+    let first_point_is_zero = first_point_x.is_zero() && first_point_y.is_zero();
+    let second_point_is_zero = second_point_x.is_zero() && second_point_y.is_zero();
+
+    let result: G1AffineArk = match (first_point_is_zero, second_point_is_zero) {
+        (true, true) => {
+            return Ok(Bytes::from([0u8; 64].to_vec()));
+        }
+        (false, true) => {
+            let first_point = G1AffineArk::new_unchecked(first_point_x, first_point_y);
+            if !first_point.is_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+            first_point
+        }
+        (true, false) => {
+            let second_point = G1AffineArk::new_unchecked(second_point_x, second_point_y);
+            if !second_point.is_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+            second_point
+        }
+        (false, false) => {
+            let first_point = G1AffineArk::new_unchecked(first_point_x, first_point_y);
+            if !first_point.is_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+            let second_point = G1AffineArk::new_unchecked(second_point_x, second_point_y);
+            if !second_point.is_on_curve() {
+                return Err(PrecompileError::InvalidPoint.into());
+            }
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "Valid operation between two elliptic curve points"
+            )]
+            let sum = first_point + second_point;
+            sum.into_affine()
+        }
+    };
+
+    let out = [
+        result.x.into_bigint().to_bytes_be(),
+        result.y.into_bigint().to_bytes_be(),
+    ]
+    .concat();
+
+    Ok(Bytes::from(out))
 }
 
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
@@ -529,36 +539,38 @@ pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64) -> Result<Bytes, VMError
     let point_y = calldata.get(32..64).ok_or(InternalError::Slicing)?;
     let scalar = calldata.get(64..96).ok_or(InternalError::Slicing)?;
 
-    let scalar = element::U256::from_bytes_be(scalar).map_err(|_| InternalError::Slicing)?;
+    if u256_from_big_endian(point_x) >= ALT_BN128_PRIME
+        || u256_from_big_endian(point_y) >= ALT_BN128_PRIME
+    {
+        return Err(PrecompileError::InvalidPoint.into());
+    }
 
-    // If point is zero the precompile should not fail, but the conversion in
-    // BN254Curve::create_point_from_affine will, so we verify it before the conversion
-    let point_is_zero =
-        u256_from_big_endian(point_x).is_zero() && u256_from_big_endian(point_y).is_zero();
-    if point_is_zero {
+    let x = ark_bn254::Fq::from_be_bytes_mod_order(point_x);
+    let y = ark_bn254::Fq::from_be_bytes_mod_order(point_y);
+
+    if x.is_zero() && y.is_zero() {
         return Ok(Bytes::from([0u8; 64].to_vec()));
     }
 
-    let point_x = BN254FieldElement::from_bytes_be(point_x).map_err(|_| InternalError::Slicing)?;
-    let point_y = BN254FieldElement::from_bytes_be(point_y).map_err(|_| InternalError::Slicing)?;
-
-    let point = BN254Curve::create_point_from_affine(point_x, point_y)
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
-    let zero_u256 = element::U256::from(0_u16);
-    if scalar.eq(&zero_u256) {
-        Ok(Bytes::from([0u8; 64].to_vec()))
-    } else {
-        let mul = point.operate_with_self(scalar).to_affine();
-        if u256_from_big_endian(&mul.x().to_bytes_be()) == U256::zero()
-            || u256_from_big_endian(&mul.y().to_bytes_be()) == U256::zero()
-        {
-            Ok(Bytes::from([0u8; 64].to_vec()))
-        } else {
-            let res = [mul.x().to_bytes_be(), mul.y().to_bytes_be()].concat();
-            Ok(Bytes::from(res))
-        }
+    let point = G1AffineArk::new_unchecked(x, y);
+    if !point.is_on_curve() {
+        return Err(PrecompileError::InvalidPoint.into());
     }
+
+    let scalar = FrArk::from_be_bytes_mod_order(scalar);
+    if scalar.is_zero() {
+        return Ok(Bytes::from([0u8; 64].to_vec()));
+    }
+
+    let result = point.mul(scalar).into_affine();
+
+    let out = [
+        result.x.into_bigint().to_bytes_be(),
+        result.y.into_bigint().to_bytes_be(),
+    ]
+    .concat();
+
+    Ok(Bytes::from(out))
 }
 
 const ALT_BN128_PRIME: U256 = U256([
