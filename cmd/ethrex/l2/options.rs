@@ -20,6 +20,7 @@ use ethrex_rpc::clients::eth::{
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
+use tracing::Level;
 
 #[derive(Parser)]
 #[group(id = "L2Options")]

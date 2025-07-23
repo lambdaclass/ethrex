@@ -5,7 +5,10 @@ use crate::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_network, init_store,
     },
-    l2::{self, options::Options},
+    l2::{
+        self,
+        options::{Options, ProverClientOptions},
+    },
     networks::Network,
     utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
