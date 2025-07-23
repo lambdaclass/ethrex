@@ -297,7 +297,7 @@ impl Syncer {
 
                 const SNAP_LIMIT: usize = 6;
 
-                let time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT as u64);
+                let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT as u64);
                 info!("{time_limit}");
                 let store2 = store.clone();
 
