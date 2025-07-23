@@ -794,13 +794,12 @@ impl Syncer {
                 });
         }
 
-        tokio::spawn(store_block_bodies(
+        store_block_bodies(
             vec![all_block_hashes[pivot_idx]],
             self.peers.clone(),
             store.clone(),
-        ))
+        )
         .await
-        .unwrap()
         .unwrap();
 
         let block = store
