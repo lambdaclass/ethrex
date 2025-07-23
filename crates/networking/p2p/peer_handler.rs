@@ -883,7 +883,7 @@ impl PeerHandler {
             debug!("Downloader {free_peer_id} is now busy");
 
             let state_root = pivot_header.state_root.clone();
-            const SNAP_LIMIT: u64 = 6;
+            const SNAP_LIMIT: u64 = 3;
             let time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
             if current_unix_time() > time_limit {
                 info!("We are stale, updating pivot");
