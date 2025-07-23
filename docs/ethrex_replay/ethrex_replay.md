@@ -8,7 +8,7 @@ A tool for executing and proving Ethereum blocks, transactions, and L2 batches â
 
 ### Dependencies
 
-#### [RISC0](https://dev.risczero.com/api/src/guest_program/install)
+#### [RISC0](https://dev.risczero.com/api/zkvm/install)
 
 ```sh
 curl -L https://risczero.com/install | bash
