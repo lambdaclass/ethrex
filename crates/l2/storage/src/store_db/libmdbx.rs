@@ -76,6 +76,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
         table_info!(OperationsCount),
         table_info!(SignatureByBlockHash),
         table_info!(SignatureByBatch),
+        table_info!(PrecommitPrivileged),
         table_info!(BlobsBundles),
         table_info!(StateRoots),
         table_info!(PrivilegedTransactionsHash),
@@ -90,7 +91,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, RollupStoreEr
     let path = path.map(|p| p.as_ref().to_path_buf());
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
-        max_readers: Some(20),
         mode: Mode::ReadWrite(ReadWriteOptions {
             // Set max DB size to 1TB
             max_size: Some(1024_isize.pow(4)),
