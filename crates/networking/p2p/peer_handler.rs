@@ -1450,7 +1450,7 @@ impl PeerHandler {
                             };
                             tasks_queue_not_started.push_back(task);
                         }
-                        info!("Split big storage account into {chunk_count} chunks");
+                        info!("Split big storage account into {chunk_count} chunks.");
                         task_count += chunk_count + 1;
                     }
                 } else {
@@ -1485,8 +1485,12 @@ impl PeerHandler {
                     .iter()
                     .map(|storage| storage.len())
                     .sum::<usize>();
-                debug!(
+                info!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
+                );
+                info!(
+                    "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
+                    tasks_queue_not_started.len()
                 );
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
