@@ -64,6 +64,8 @@ pub enum BlockFetcherError {
     // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+    #[error("Tried to store an empty batch")]
+    EmptyBatchError,
 }
 
 #[derive(Clone)]
@@ -153,7 +155,7 @@ impl GenServer for BlockFetcher {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> CastResponse<Self> {
-        if let SequencerStatus::Following = state.sequencer_state.status().await {
+        if let SequencerStatus::Syncing = state.sequencer_state.status().await {
             let _ = fetch(&mut state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
@@ -409,13 +411,22 @@ async fn store_batch(
 
         let block_hash = block.hash();
 
-        apply_fork_choice(&state.store, block_hash, block_hash, block_hash).await?;
-
         info!(
             "Added fetched block {} with hash {block_hash:#x}",
             block.header.number,
         );
     }
+    let latest_hash_on_batch = batch
+        .last()
+        .ok_or(BlockFetcherError::EmptyBatchError)?
+        .hash();
+    apply_fork_choice(
+        &state.store,
+        latest_hash_on_batch,
+        latest_hash_on_batch,
+        latest_hash_on_batch,
+    )
+    .await?;
 
     Ok(())
 }
