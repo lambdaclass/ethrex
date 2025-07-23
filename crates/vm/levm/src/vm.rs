@@ -186,7 +186,8 @@ impl<'a> VM<'a> {
             return Self::execute_precompile(
                 vm_type,
                 call_frame.code_address,
-                &call_frame.bytecode,
+                &call_frame.calldata,
+                call_frame.gas_limit,
                 &mut call_frame.gas_remaining,
             );
         }
@@ -225,9 +226,9 @@ impl<'a> VM<'a> {
         vm_type: VMType,
         code_address: H160,
         calldata: &Bytes,
+        gas_limit: u64,
         gas_remaining: &mut u64,
     ) -> Result<ContextResult, VMError> {
-        let gas_limit = *gas_remaining;
         let execute_precompile = match vm_type {
             VMType::L1 => precompiles::execute_precompile,
             VMType::L2 => l2_precompiles::execute_precompile,
@@ -235,9 +236,8 @@ impl<'a> VM<'a> {
 
         Self::handle_precompile_result(
             execute_precompile(code_address, calldata, gas_remaining),
-            gas_limit
-                .checked_sub(*gas_remaining)
-                .ok_or(InternalError::Underflow)?,
+            gas_limit,
+            *gas_remaining,
         )
     }
 

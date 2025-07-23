@@ -819,20 +819,23 @@ impl<'a> VM<'a> {
                 self.vm_type,
                 code_address,
                 &calldata,
+                gas_limit,
                 &mut gas_remaining,
             )?;
 
             let call_frame = self.current_call_frame_mut()?;
 
             // Return gas left from subcontext
-            call_frame.gas_remaining = call_frame
-                .gas_remaining
-                .checked_add(
-                    gas_limit
-                        .checked_sub(ctx_result.gas_used)
-                        .ok_or(InternalError::Underflow)?,
-                )
-                .ok_or(InternalError::Overflow)?;
+            if ctx_result.is_success() {
+                call_frame.gas_remaining = call_frame
+                    .gas_remaining
+                    .checked_add(
+                        gas_limit
+                            .checked_sub(ctx_result.gas_used)
+                            .ok_or(InternalError::Underflow)?,
+                    )
+                    .ok_or(InternalError::Overflow)?;
+            };
 
             // Store return data of sub-context
             call_frame.memory.store_data(
