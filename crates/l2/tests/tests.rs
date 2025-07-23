@@ -1,16 +1,15 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
-use ethereum_types::{Address, U256};
-use ethrex_common::H160;
 use ethrex_common::types::BlockNumber;
+use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2::sequencer::l1_watcher::PrivilegedTransactionData;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::{
     clients::{deploy, send_eip1559_transaction},
     signer::{LocalSigner, Signer},
 };
-use ethrex_l2_sdk::calldata::{self, encode_calldata};
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{
     COMMON_BRIDGE_L2_ADDRESS, bridge_address, claim_erc20withdraw, claim_withdraw,
@@ -25,7 +24,7 @@ use ethrex_rpc::{
     },
 };
 use hex::FromHexError;
-use keccak_hash::{H256, keccak};
+use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{
     fs::{File, read_to_string},
@@ -233,7 +232,7 @@ async fn test_privileged_tx_with_contract_call(
 
     let number_to_emit = U256::from(424242);
     let calldata_to_contract: Bytes =
-        calldata::encode_calldata("emitNumber(uint256)", &[Value::Uint(number_to_emit)])?.into();
+        encode_calldata("emitNumber(uint256)", &[Value::Uint(number_to_emit)])?.into();
 
     // We need to get the block number before the deposit to search for logs later.
     let first_block = l2_client.get_block_number().await?;
@@ -316,7 +315,7 @@ async fn test_privileged_tx_with_contract_call_revert(
     let deployed_contract_address =
         test_deploy(l2_client, &init_code, rich_wallet_private_key).await?;
 
-    let calldata_to_contract: Bytes = calldata::encode_calldata("revert_call()", &[])?.into();
+    let calldata_to_contract: Bytes = encode_calldata("revert_call()", &[])?.into();
 
     test_call_to_contract_with_deposit(
         l1_client,
@@ -634,7 +633,7 @@ async fn test_balance_of(client: &EthClient, token: Address, user: Address) -> U
     let res = client
         .call(
             token,
-            ethrex_l2_sdk::calldata::encode_calldata("balanceOf(address)", &[Value::Address(user)])
+            encode_calldata("balanceOf(address)", &[Value::Address(user)])
                 .unwrap()
                 .into(),
             Default::default(),
@@ -656,9 +655,7 @@ async fn test_send(
         .build_eip1559_transaction(
             to,
             signer.address(),
-            ethrex_l2_sdk::calldata::encode_calldata(signature, data)
-                .unwrap()
-                .into(),
+            encode_calldata(signature, data).unwrap().into(),
             Default::default(),
         )
         .await
