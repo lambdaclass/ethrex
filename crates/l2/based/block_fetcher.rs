@@ -64,6 +64,8 @@ pub enum BlockFetcherError {
     // See https://github.com/lambdaclass/ethrex/issues/3376
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
+    #[error("Tried to store an empty batch")]
+    EmptyBatchError,
 }
 
 #[derive(Clone)]
@@ -122,7 +124,8 @@ impl BlockFetcher {
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
     ) -> Result<(), BlockFetcherError> {
-        let state = Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
+        let state =
+            Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
         let mut block_fetcher = state.start();
         block_fetcher
             .cast(InMessage::Fetch)
@@ -167,8 +170,7 @@ impl BlockFetcher {
 
             let (batch_committed_logs, batch_verified_logs) = self.get_logs().await?;
 
-            self.process_committed_logs(batch_committed_logs, last_l2_batch_number_known)
-                .await?;
+            self.process_committed_logs(batch_committed_logs, last_l2_batch_number_known).await?;
             self.process_verified_logs(batch_verified_logs).await?;
         }
 
@@ -257,8 +259,12 @@ impl BlockFetcher {
 
             self.store_batch(&batch).await?;
 
-            self.seal_batch(&batch, batch_number, batch_committed_log.transaction_hash)
-                .await?;
+            self.seal_batch(
+                &batch,
+                batch_number,
+                batch_committed_log.transaction_hash,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -269,13 +275,22 @@ impl BlockFetcher {
 
             let block_hash = block.hash();
 
-            apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
-
             info!(
                 "Added fetched block {} with hash {block_hash:#x}",
                 block.header.number,
             );
         }
+        let latest_hash_on_batch = batch
+            .last()
+            .ok_or(BlockFetcherError::EmptyBatchError)?
+            .hash();
+        apply_fork_choice(
+            &self.store,
+            latest_hash_on_batch,
+            latest_hash_on_batch,
+            latest_hash_on_batch,
+        )
+        .await?;
 
         Ok(())
     }
@@ -426,9 +441,7 @@ impl BlockFetcher {
                 .get_receipt(
                     block_number,
                     index.try_into().map_err(|_| {
-                        BlockFetcherError::InternalError(
-                            "Failed to convert index to u64".to_owned(),
-                        )
+                        BlockFetcherError::InternalError("Failed to convert index to u64".to_owned())
                     })?,
                 )
                 .await?
@@ -461,7 +474,8 @@ impl BlockFetcher {
 
             let verify_tx_hash = batch_verified_log.transaction_hash;
 
-            self.rollup_store
+            self
+                .rollup_store
                 .store_verify_tx_by_batch(batch_number.as_u64(), verify_tx_hash)
                 .await?;
 
@@ -482,7 +496,7 @@ impl GenServer for BlockFetcher {
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse<Self> {
-        if let SequencerStatus::Following = self.sequencer_state.status().await {
+        if let SequencerStatus::Syncing = self.sequencer_state.status().await {
             let _ = self.fetch().await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });

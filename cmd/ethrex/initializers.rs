@@ -9,6 +9,7 @@ use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{P2PContext, public_key_from_signing_key},
     peer_handler::PeerHandler,
+    rlpx::l2::l2_connection::P2PBasedContext,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -150,6 +151,7 @@ pub async fn init_network(
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
+    based_context: Option<P2PBasedContext>,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -169,6 +171,7 @@ pub async fn init_network(
         store,
         blockchain,
         get_client_version(),
+        based_context,
     );
 
     context.set_fork_id().await.expect("Set fork id");

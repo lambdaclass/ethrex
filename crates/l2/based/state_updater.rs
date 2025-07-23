@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::{Address, types::Block};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
@@ -62,12 +62,14 @@ pub struct StateUpdater {
     rollup_store: StoreRollup,
     check_interval_ms: u64,
     sequencer_state: SequencerState,
+    blockchain: Arc<Blockchain>,
 }
 
 impl StateUpdater {
     pub async fn new(
         sequencer_cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
     ) -> Result<Self, StateUpdaterError> {
@@ -82,16 +84,24 @@ impl StateUpdater {
             rollup_store,
             check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
             sequencer_state,
+            blockchain,
         })
     }
 
     pub async fn spawn(
         sequencer_cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
     ) -> Result<(), StateUpdaterError> {
-        let state = Self::new(sequencer_cfg, sequencer_state, store, rollup_store).await?;
+        let state = Self::new(
+            sequencer_cfg,
+            sequencer_state,
+            blockchain,
+            store,
+            rollup_store,
+        ).await?;
         let mut state_updater = state.start();
         state_updater
             .cast(InMessage::UpdateState)
@@ -99,22 +109,21 @@ impl StateUpdater {
             .map_err(StateUpdaterError::GenServerError)
     }
 
-    pub async fn update(&mut self) -> Result<(), StateUpdaterError> {
-        let calldata = encode_calldata("leaderSequencer()", &[])?;
-
+    pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let lead_sequencer = hash_to_address(
-            self.eth_client
+            self
+                .eth_client
                 .call(
                     self.sequencer_registry_address,
-                    calldata.into(),
+                    encode_calldata("leaderSequencer()", &[])?.into(),
                     Overrides::default(),
                 )
                 .await?
                 .parse()
-                .map_err(|_| {
-                    StateUpdaterError::CalldataParsingError(
-                        "Failed to parse leaderSequencer() return data".to_string(),
-                    )
+                .map_err(|err| {
+                    StateUpdaterError::CalldataParsingError(format!(
+                        "Failed to parse leaderSequencer() return data: {err}"
+                    ))
                 })?,
         );
 
@@ -125,33 +134,44 @@ impl StateUpdater {
         )
         .await?;
 
-        let new_status = if lead_sequencer == self.sequencer_address {
-            if node_is_up_to_date {
-                SequencerStatus::Sequencing
-            } else {
-                warn!(
-                    "Node should transition to sequencing but it is not up to date, continue syncing."
-                );
-                SequencerStatus::Following
-            }
-        } else {
-            SequencerStatus::Following
-        };
-
         let current_state = self.sequencer_state.status().await;
 
-        match (current_state, new_status.clone()) {
-            (SequencerStatus::Sequencing, SequencerStatus::Sequencing)
-            | (SequencerStatus::Following, SequencerStatus::Following) => {}
-            (SequencerStatus::Sequencing, SequencerStatus::Following) => {
-                info!("Now the follower sequencer. Stopping sequencing.");
+        let new_status = determine_new_status(
+            current_state,
+            node_is_up_to_date,
+            lead_sequencer == self.sequencer_address,
+        );
+
+        if current_state != new_status {
+            info!("State transition: {:?} -> {:?}", current_state, new_status);
+
+            if current_state == SequencerStatus::Sequencing {
+                info!("Stopping sequencing.");
                 self.revert_uncommitted_state().await?;
             }
-            (SequencerStatus::Following, SequencerStatus::Sequencing) => {
-                info!("Now the lead sequencer. Starting sequencing.");
-            }
-        };
 
+            if new_status == SequencerStatus::Sequencing {
+                info!("Starting sequencing as lead sequencer.");
+                self.revert_uncommitted_state().await?;
+            }
+
+            match new_status {
+                // This case is handled above, it is redundant here.
+                SequencerStatus::Sequencing => {
+                    info!("Node is now the lead sequencer.");
+                }
+                SequencerStatus::Following => {
+                    self.blockchain.set_synced();
+                    info!("Node is up to date and following the lead sequencer.");
+                }
+                SequencerStatus::Syncing => {
+                    self.blockchain.set_not_synced();
+                    info!("Node is synchronizing to catch up with the latest state.");
+                }
+            }
+        }
+
+        // Update the state
         self.sequencer_state.new_status(new_status).await;
 
         Ok(())
@@ -212,7 +232,8 @@ impl StateUpdater {
         info!(
             "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
         );
-        self.store
+        self
+            .store
             .update_latest_block_number(*last_l2_committed_block_number)
             .await?;
         let _ = apply_fork_choice(
@@ -238,8 +259,7 @@ impl GenServer for StateUpdater {
         _message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
     ) -> CastResponse<Self> {
-        let _ = self
-            .update()
+        let _ = self.update_state()
             .await
             .inspect_err(|err| error!("State Updater Error: {err}"));
         send_after(
@@ -248,5 +268,34 @@ impl GenServer for StateUpdater {
             Self::CastMsg::UpdateState,
         );
         CastResponse::NoReply(self)
+    }
+}
+
+fn determine_new_status(
+    current_state: SequencerStatus,
+    node_is_up_to_date: bool,
+    is_lead_sequencer: bool,
+) -> SequencerStatus {
+    match (node_is_up_to_date, is_lead_sequencer) {
+        // A node can be the lead sequencer only if it is up to date.
+        (true, true) => {
+            if current_state == SequencerStatus::Syncing {
+                SequencerStatus::Following
+            } else {
+                SequencerStatus::Sequencing
+            }
+        }
+        // If the node is up to date but not the lead sequencer, it follows the lead sequencer.
+        (true, false) => {
+            info!("Node is up to date and following the lead sequencer.");
+            SequencerStatus::Following
+        }
+        // If the node is not up to date, it should sync.
+        (false, _) => {
+            if is_lead_sequencer && current_state == SequencerStatus::Syncing {
+                warn!("Node is not up to date but is the lead sequencer, continue syncing.");
+            }
+            SequencerStatus::Syncing
+        }
     }
 }

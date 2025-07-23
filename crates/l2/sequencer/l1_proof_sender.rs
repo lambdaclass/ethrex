@@ -5,6 +5,7 @@ use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProverType},
 };
+use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -29,7 +30,7 @@ use aligned_sdk::{
     verification_layer::{estimate_fee as aligned_estimate_fee, get_nonce_from_batcher, submit},
 };
 
-use ethers::signers::{Signer, Wallet};
+use ethers::signers::{Signer as EthersSigner, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatch(uint256,bytes,bytes,bytes,bytes,bytes,bytes)";
 
@@ -170,12 +171,12 @@ impl L1ProofSender {
             // TODO: we should put in code that if the prover is running with Aligned, then there
             // shouldn't be any other required types.
             if let Some(aligned_proof) = proofs.remove(&ProverType::Aligned) {
-                self.send_proof_to_aligned(batch_to_send, aligned_proof)
-                    .await?;
+                self.send_proof_to_aligned(batch_to_send, aligned_proof).await?;
             } else {
                 self.send_proof_to_contract(batch_to_send, proofs).await?;
             }
-            self.rollup_store
+            self
+                .rollup_store
                 .set_lastest_sent_batch_proof(batch_to_send)
                 .await?;
         } else {
@@ -197,9 +198,8 @@ impl L1ProofSender {
         batch_number: u64,
         aligned_proof: BatchProof,
     ) -> Result<(), ProofSenderError> {
-        let elf = std::fs::read(self.aligned_sp1_elf_path.clone()).map_err(|e| {
-            ProofSenderError::InternalError(format!("Failed to read ELF file: {e}"))
-        })?;
+        let elf = std::fs::read(self.aligned_sp1_elf_path.clone())
+            .map_err(|e| ProofSenderError::InternalError(format!("Failed to read ELF file: {e}")))?;
 
         let verification_data = VerificationData {
             proving_system: ProvingSystemId::SP1,
@@ -218,7 +218,13 @@ impl L1ProofSender {
                 ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
             })?;
 
-        let wallet = Wallet::from_bytes(&self.signer.address().0)
+        let Signer::Local(local_signer) = &self.signer else {
+            return Err(ProofSenderError::InternalError(
+                "Aligned mode only supports local signer".to_string(),
+            ));
+        };
+
+        let wallet = Wallet::from_bytes(local_signer.private_key.as_ref())
             .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
 
         let wallet = wallet.with_chain_id(self.l1_chain_id);
@@ -296,7 +302,8 @@ impl L1ProofSender {
         )
         .await?;
 
-        self.rollup_store
+        self
+            .rollup_store
             .store_verify_tx_by_batch(batch_number, verify_tx_hash)
             .await?;
 
@@ -324,8 +331,7 @@ impl GenServer for L1ProofSender {
     ) -> CastResponse<Self> {
         // Right now we only have the Send message, so we ignore the message
         if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
-            let _ = self
-                .verify_and_send_proof()
+            let _ = self.verify_and_send_proof()
                 .await
                 .inspect_err(|err| error!("L1 Proof Sender: {err}"));
         }

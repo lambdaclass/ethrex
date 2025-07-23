@@ -122,7 +122,7 @@ impl L1Committer {
             blockchain,
             store.clone(),
             rollup_store.clone(),
-            cfg.based.based,
+            cfg.based.enabled,
             sequencer_state,
         )?;
         let mut l1_committer = state.start();

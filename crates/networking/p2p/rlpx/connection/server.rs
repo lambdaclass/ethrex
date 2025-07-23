@@ -43,6 +43,13 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
             update::BlockRangeUpdate,
         },
+        l2::{
+            self, PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            l2_connection::{
+                self, L2Cast, L2ConnState, broadcast_l2_message, handle_based_capability_message,
+                handle_l2_broadcast,
+            },
+        },
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
@@ -112,6 +119,7 @@ pub struct Established {
     pub(crate) table: Arc<Mutex<KademliaTable>>,
     pub(crate) backend_channel: Option<Sender<Message>>,
     pub(crate) inbound: bool,
+    pub(crate) l2_state: L2ConnState,
 }
 
 #[derive(Clone, Debug)]
@@ -138,7 +146,7 @@ impl RLPxConnectionState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(private_interfaces)]
 pub enum CastMessage {
     PeerMessage(Message),
@@ -147,6 +155,7 @@ pub enum CastMessage {
     SendNewPooledTxHashes,
     BlockRangeUpdate,
     BroadcastMessage(task::Id, Arc<Message>),
+    L2(L2Cast),
 }
 
 #[derive(Clone)]
@@ -221,6 +230,7 @@ impl GenServer for RLPxConnection {
         _handle: &RLPxConnectionHandle,
     ) -> CastResponse<Self> {
         if let InnerState::Established(mut established_state) = self.inner_state.clone() {
+            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
             match message {
                 // TODO: handle all these "let _"
                 // See https://github.com/lambdaclass/ethrex/issues/3375
@@ -255,6 +265,24 @@ impl GenServer for RLPxConnection {
                 Self::CastMsg::BlockRangeUpdate => {
                     log_peer_debug(&established_state.node, "Block Range Update");
                     let _ = handle_block_range_update(&mut established_state).await;
+                }
+                Self::CastMsg::L2(msg) if peer_supports_l2 => {
+                    log_peer_debug(&established_state.node, "Handling cast for L2 msg: {msg:?}");
+                    match msg {
+                        L2Cast::BatchBroadcast => {
+                            let _ = l2_connection::send_sealed_batch(&mut established_state).await;
+                        }
+                        L2Cast::BlockBroadcast => {
+                            let _ = l2::l2_connection::send_new_block(&mut established_state).await;
+                        }
+                    }
+                }
+                _ => {
+                    log_peer_warn(
+                        &established_state.node,
+                        "No handler for cast message or no capabilities matched",
+                    );
+                    // TODO: return error when handled issue
                 }
             }
             // Update the state
@@ -322,6 +350,20 @@ where
         handle.clone(),
         CastMessage::BlockRangeUpdate,
     );
+
+    // Periodic L2 messages events.
+    if state.l2_state.connection_state().is_ok() {
+        send_interval(
+            PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            handle.clone(),
+            CastMessage::L2(L2Cast::BlockBroadcast),
+        );
+        send_interval(
+            PERIODIC_BATCH_BROADCAST_INTERVAL,
+            handle.clone(),
+            CastMessage::L2(L2Cast::BatchBroadcast),
+        );
+    }
 
     spawn_listener(
         handle.clone(),
@@ -510,11 +552,14 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, RLPxError>>,
 {
-    let supported_capabilities: Vec<Capability> = [
+    let mut supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
     ]
     .concat();
+    if let L2ConnState::Disconnected(_) = state.l2_state {
+        supported_capabilities.push(l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+    }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
         PublicKey::from_secret_key(secp256k1::SECP256K1, &state.signer),
@@ -559,6 +604,9 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
+                    "based" => {
+                        state.l2_state.set_established()?;
+                    }
                     _ => {}
                 }
             }
@@ -588,7 +636,7 @@ where
     }
 }
 
-async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
+pub(crate) async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     state.sink.lock().await.send(message).await
 }
 
@@ -612,6 +660,7 @@ where
 
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
+    let peer_supports_l2 = state.l2_state.connection_state().is_ok();
     match message {
         Message::Disconnect(msg_data) => {
             log_peer_debug(
@@ -732,6 +781,9 @@ async fn handle_peer_message(state: &mut Established, message: Message) -> Resul
             let response = process_trie_nodes_request(req, state.storage.clone())?;
             send(state, Message::TrieNodes(response)).await?
         }
+        Message::L2(req) if peer_supports_l2 => {
+            handle_based_capability_message(state, req).await?;
+        }
         // Send response messages to the backend
         message @ Message::AccountRange(_)
         | message @ Message::StorageRanges(_)
@@ -777,6 +829,9 @@ async fn handle_broadcast(
                 });
                 send(state, new_msg).await?;
             }
+            l2_msg @ Message::L2(_) => {
+                handle_l2_broadcast(state, l2_msg).await?;
+            }
             msg => {
                 let error_message = format!("Non-supported message broadcasted: {msg}");
                 log_peer_error(&state.node, &error_message);
@@ -795,7 +850,7 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), RLPxEr
     }
 }
 
-fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
+pub(crate) fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
         txs_msg @ Message::Transactions(_) => {
             let txs = Arc::new(txs_msg);
@@ -807,6 +862,7 @@ fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError>
             };
             Ok(())
         }
+        l2_msg @ Message::L2(_) => broadcast_l2_message(state, l2_msg),
         msg => {
             let error_message = format!("Broadcasting for msg: {msg} is not supported");
             log_peer_error(&state.node, &error_message);
