@@ -94,6 +94,8 @@ pub struct ProgramOutput {
     pub chain_id: U256,
     /// amount of non-privileged transactions
     pub non_privileged_count: U256,
+    /// total gas used in the batch
+    pub total_gas_used: U256,
 }
 
 impl ProgramOutput {
@@ -110,6 +112,7 @@ impl ProgramOutput {
             self.last_block_hash.to_fixed_bytes(),
             self.chain_id.to_big_endian(),
             self.non_privileged_count.to_big_endian(),
+            self.total_gas_used.to_big_endian(),
         ]
         .concat()
     }

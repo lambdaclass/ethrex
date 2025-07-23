@@ -43,6 +43,12 @@ contract OnChainProposer is
     /// @dev The key is the batch number.
     mapping(uint256 => BatchCommitmentInfo) public batchCommitments;
 
+    /// @notice The addresses of the verified batches.
+    /// @dev The key is the batch number, the value is the address of the prover.
+    // TODO: consider replacing it with a Merkle tree or just capping the number of verified batches.
+    // TODO: Consider moving this mapping to a separate contract if needed.
+    mapping(uint256 => VerifiedBatchInfo) _verifiedBatches;
+
     /// @notice The latest verified batch number.
     /// @dev This variable holds the batch number of the most recently verified batch.
     /// @dev All batches with a batch number less than or equal to `lastVerifiedBatch` are considered verified.
@@ -343,6 +349,8 @@ contract OnChainProposer is
             );
         }
 
+        uint256 gasProven = 0;
+
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, risc0Journal);
@@ -351,7 +359,11 @@ contract OnChainProposer is
                 RISC0_VERIFICATION_KEY,
                 sha256(risc0Journal)
             );
+            gasProven = uint256(
+                bytes32(risc0Journal[224:256])
+            );
         }
+
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
@@ -360,6 +372,9 @@ contract OnChainProposer is
                 SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
+            );
+            gasProven = uint256(
+                bytes32(sp1PublicValues[16+224:16+256])
             );
         }
 
@@ -370,6 +385,14 @@ contract OnChainProposer is
         }
 
         lastVerifiedBatch = batchNumber;
+
+        // Update verified batches with the new batch
+        // TODO: Should we check that this prover is registered somewhere?
+        address message_sender = msg.sender;
+        _verifiedBatches[batchNumber] = VerifiedBatchInfo(
+            message_sender,
+            gasProven
+        );
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -448,6 +471,26 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
+    // @inheritdoc IOnChainProposer
+    function verifiedBatches(uint256 batchNumber) public view returns (VerifiedBatchInfo memory) {
+        return _verifiedBatches[batchNumber];
+    }
+
+    // @inheritdoc IOnChainProposer
+    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) public {
+        _verifiedBatches[batchNumber] = VerifiedBatchInfo({prover: prover, gasProven: gasProven});
+    }
+
+    // @inheritdoc IOnChainProposer
+    function getTotalGasProven() public view returns (uint256) {
+        uint256 totalGasProven = 0;
+        // TODO: we should only iterate through recent batches (i.e batches proven in the last day)
+        for (uint256 i = 0; i <= lastVerifiedBatch; i++) {
+            totalGasProven += _verifiedBatches[i].gasProven;
+        }
+        return totalGasProven;
+    }
+
     function _verifyPublicData(
         uint256 batchNumber,
         bytes calldata publicData
@@ -493,6 +536,9 @@ contract OnChainProposer is
         uint256 nonPrivilegedTransactions = uint256(
             bytes32(publicData[192:224])
         );
+
+        // TODO: consider checking the gasProven here.
+
         require(
             !ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() ||
                 nonPrivilegedTransactions == 0,

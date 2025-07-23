@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
+struct VerifiedBatchInfo {
+    address prover;
+    uint256 gasProven;
+}
+
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
@@ -88,4 +93,20 @@ interface IOnChainProposer {
         bytes[] calldata alignedPublicInputsList,
         bytes32[][] calldata alignedMerkleProofsList
     ) external;
+
+
+    /// @notice Get verified batch information for a specific batch number.
+    /// @param batchNumber The batch number to query.
+    /// @return The VerifiedBatchInfo struct containing prover address and gas proven.
+    function verifiedBatches(uint256 batchNumber) external view returns (VerifiedBatchInfo memory);
+
+    /// @notice Add a verified batch to the list of verified batches.
+    /// @param batchNumber The batch number to add.
+    /// @param prover The prover address.
+    /// @param gasProven The amount of gas proven.
+    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) external;
+
+    /// @notice Get the total gas proven across all verified batches.
+    /// @return The total amount of gas proven.
+    function getTotalGasProven() external view returns (uint256);
 }

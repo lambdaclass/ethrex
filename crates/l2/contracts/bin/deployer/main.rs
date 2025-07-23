@@ -49,6 +49,7 @@ pub struct ContractAddresses {
     pub tdx_verifier_address: Address,
     pub sequencer_registry_address: Address,
     pub aligned_aggregator_address: Address,
+    pub reward_vault_address: Address,
 }
 
 #[tokio::main]
@@ -113,6 +114,7 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
             "src/l1/based/OnChainProposer.sol",
             false,
         )?;
+        compile_contract(&opts.contracts_path, "src/l1/based/RewardVault.sol", false)?;
     } else {
         info!("Compiling OnChainProposer contract");
         compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
@@ -163,6 +165,24 @@ async fn deploy_contracts(
         on_chain_proposer_deployment.proxy_tx_hash,
         on_chain_proposer_deployment.implementation_address,
         on_chain_proposer_deployment.implementation_tx_hash,
+    );
+
+    info!("Deploying RewardVault");
+
+    let reward_vault_deployment = deploy_with_proxy(
+        deployer,
+        eth_client,
+        &opts.contracts_path.join("solc_out/RewardVault.bin"),
+        &salt,
+    )
+    .await?;
+
+    info!(
+        "RewardVault deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        reward_vault_deployment.proxy_address,
+        reward_vault_deployment.proxy_tx_hash,
+        reward_vault_deployment.implementation_address,
+        reward_vault_deployment.implementation_tx_hash,
     );
 
     info!("Deploying CommonBridge");
@@ -265,6 +285,7 @@ async fn deploy_contracts(
         tdx_verifier_address,
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
         aligned_aggregator_address: opts.aligned_aggregator_address,
+        reward_vault_address: reward_vault_deployment.proxy_address,
     })
 }
 
@@ -388,6 +409,25 @@ async fn initialize_contracts(
             .await?
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+
+        info!("Deploying RewardVault...");
+
+        let reward_vault_calldata = encode_calldata("initialize(address)", &[
+            Value::Address(contract_addresses.on_chain_proposer_address),
+            // Value::Address(Default::default()), /* TODO: set the reward token address */
+        ])?;
+
+        info!("Initializing RewardVault");
+
+        let reward_vault_initialize_tx_hash = initialize_contract(
+            contract_addresses.reward_vault_address,
+            reward_vault_calldata,
+            &deployer,
+            eth_client,
+        )
+        .await?;
+
+        info!(tx_hash = %format!("{reward_vault_initialize_tx_hash:#x}"), "RewardVault initialized");
     } else {
         // Initialize only OnChainProposer without Based config
         let calldata_values = vec![
