@@ -896,9 +896,8 @@ impl PeerHandler {
                 };
                 pivot_header = header;
                 info!(
-                    "New pivot block number: {}, hash: {:?}",
-                    pivot_header.number,
-                    pivot_header.hash.get()
+                    "New pivot block number: {}, header: {:?}",
+                    pivot_header.number, pivot_header
                 );
             }
 
