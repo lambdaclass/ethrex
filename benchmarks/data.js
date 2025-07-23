@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753289364677,
+  "lastUpdate": 1753291561041,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11599,6 +11599,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001349577350859454,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e2cb314efc88038727816005e66b3ee99def5c8c",
+          "message": "feat(levm): subcommand for converting mnemonics into bytecode and accepting both kinds as arguments (#3786)\n\n**Motivation**\n\n- Add code related features to levm runner\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Accept both raw bytecode and mnemonics as arguments for the `--code`\nflag in the `.txt` file\n- Add `--emit-bytes` for converting mnemonics into a new bytecode file\nthat can then be used for running the transaction without parsing the\nvalues.\n\nCloses #3788",
+          "timestamp": "2025-07-23T15:42:14Z",
+          "tree_id": "fcad77c30da72b4e4322322f55b3bc04ba4e1bd9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e2cb314efc88038727816005e66b3ee99def5c8c"
+        },
+        "date": 1753291546221,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007415177777777778,
             "unit": "Mgas/s"
           }
         ]
