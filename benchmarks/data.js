@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753305158762,
+  "lastUpdate": 1753309052325,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11891,6 +11891,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.001334732,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "614cc6d0300718b727304672d93a2ddf6adaf21d",
+          "message": "docs(l1): move install instructions to new section and embed script one-liner (#3505)\n\n**Motivation**\n\nSince the install script just builds from source using a `cargo install`\none-liner, it's preferable to show that instead of having to download\nand run an install script.\n\n**Description**\n\nThis PR removes the install script, embedding the one-liner inside the\ndocs. It also moves the installation instructions to the book, linking\nto it in the readme, and expands them with instructions on how to build\nfrom source or download the pre-built binaries.\n\n---------\n\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-07-23T21:47:54Z",
+          "tree_id": "0b46ef2d7f648cf19cf1c02cfa8af0c4501391a5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/614cc6d0300718b727304672d93a2ddf6adaf21d"
+        },
+        "date": 1753309043175,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007374209944751382,
             "unit": "Mgas/s"
           }
         ]
