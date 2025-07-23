@@ -42,8 +42,10 @@ const ROR16_INDICES: __m128i = const {
 #[target_feature(enable = "avx2")]
 pub fn blake2b_f(mut r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: bool) {
     let h = h.as_mut_ptr().cast::<__m256i>();
-    let m = unsafe { transmute::<&[u64; 16], &[__m128i; 8]>(m) };
-    let t = unsafe { transmute::<&[u64; 2], &__m128i>(t) };
+    let m = m.as_ptr().cast::<__m128i>();
+    let t = t.as_ptr().cast::<__m128i>();
+
+    _mm256_zeroall();
 
     // Initialize local work vector.
     let mut a = unsafe { _mm256_loadu_si256(h.add(0)) };
@@ -52,21 +54,21 @@ pub fn blake2b_f(mut r: usize, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f:
     let mut d = BLAKE2B_IV[1 + f as usize];
 
     // Apply block counter to local work vector.
-    d = _mm256_xor_si256(d, _mm256_zextsi128_si256(*t));
+    d = _mm256_xor_si256(d, _mm256_zextsi128_si256(unsafe { _mm_loadu_si128(t) }));
 
     if r > 0 {
         let ror24 = _mm256_broadcastsi128_si256(ROR24_INDICES);
         let ror16 = _mm256_broadcastsi128_si256(ROR16_INDICES);
 
         // Preprocess message.
-        let m0 = _mm256_broadcastsi128_si256(m[0]);
-        let m1 = _mm256_broadcastsi128_si256(m[1]);
-        let m2 = _mm256_broadcastsi128_si256(m[2]);
-        let m3 = _mm256_broadcastsi128_si256(m[3]);
-        let m4 = _mm256_broadcastsi128_si256(m[4]);
-        let m5 = _mm256_broadcastsi128_si256(m[5]);
-        let m6 = _mm256_broadcastsi128_si256(m[6]);
-        let m7 = _mm256_broadcastsi128_si256(m[7]);
+        let m0 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(0)) });
+        let m1 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(1)) });
+        let m2 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(2)) });
+        let m3 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(3)) });
+        let m4 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(4)) });
+        let m5 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(5)) });
+        let m6 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(6)) });
+        let m7 = _mm256_broadcastsi128_si256(unsafe { _mm_loadu_si128(m.add(7)) });
 
         // Process rounds.
         loop {
