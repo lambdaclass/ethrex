@@ -18,7 +18,7 @@ use ethrex_l2_sdk::{
     get_address_from_secret_key, get_erc1967_slot, wait_for_transaction_receipt,
 };
 use ethrex_rpc::{
-    clients::eth::{EthClient, eth_sender::Overrides, from_hex_string_to_u256},
+    clients::eth::{EthClient, L1MessageProof, eth_sender::Overrides, from_hex_string_to_u256},
     types::{
         block_identifier::{BlockIdentifier, BlockTag},
         receipt::RpcReceipt,
@@ -422,25 +422,8 @@ async fn test_erc20_roundtrip(
         ],
     )
     .await;
-    let proof = l2_client
-        .wait_for_message_proof(res.tx_info.transaction_hash, 1000)
-        .await;
-    let proof = proof.unwrap().into_iter().next().expect("proof not found");
 
-    let on_chain_proposer_address = Address::from_str(
-        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
-    )
-    .unwrap();
-    while l1_client
-        .get_last_verified_batch(on_chain_proposer_address)
-        .await
-        .unwrap()
-        < proof.batch_number
-    {
-        println!("Withdrawal is not verified on L1 yet");
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
+    let proof = get_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     let withdraw_claim_tx = claim_erc20withdraw(
         token_l1,
@@ -550,25 +533,7 @@ async fn test_erc20_failed_deposit(
         .await
         .unwrap();
 
-    let proof = l2_client
-        .wait_for_message_proof(res.tx_info.transaction_hash, 1000)
-        .await;
-    let proof = proof.unwrap().into_iter().next().expect("proof not found");
-
-    let on_chain_proposer_address = Address::from_str(
-        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
-    )
-    .unwrap();
-    while l1_client
-        .get_last_verified_batch(on_chain_proposer_address)
-        .await
-        .unwrap()
-        < proof.batch_number
-    {
-        println!("Withdrawal is not verified on L1 yet");
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
+    let proof = get_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     let withdraw_claim_tx = claim_erc20withdraw(
         token_l1,
@@ -640,25 +605,7 @@ async fn test_forced_withdrawal(
         .get_balance(rich_address, BlockIdentifier::Tag(BlockTag::Latest))
         .await?;
 
-    let proof = l2_client
-        .wait_for_message_proof(res.tx_info.transaction_hash, 1000)
-        .await;
-    let proof = proof.unwrap().into_iter().next().expect("proof not found");
-
-    let on_chain_proposer_address = Address::from_str(
-        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
-    )
-    .unwrap();
-    while l1_client
-        .get_last_verified_batch(on_chain_proposer_address)
-        .await
-        .unwrap()
-        < proof.batch_number
-    {
-        println!("Withdrawal is not verified on L1 yet");
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
+    let proof = get_proof(l1_client, l2_client, res.tx_info.transaction_hash).await;
 
     let withdraw_claim_tx = claim_withdraw(
         transfer_value,
@@ -838,9 +785,6 @@ async fn test_transfer(
     returnerer_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Transferring funds on L2");
-    let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
-        .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
-        .unwrap_or(U256::from(10000000000u128));
     let transferer_address = get_address_from_secret_key(transferer_private_key)?;
     let returner_address = get_address_from_secret_key(returnerer_private_key)?;
 
@@ -848,11 +792,11 @@ async fn test_transfer(
         l2_client,
         transferer_private_key,
         returner_address,
-        transfer_value,
+        transfer_value(),
     )
     .await?;
     // Only return 99% of the transfer, other amount is for fees
-    let return_amount = (transfer_value * 99) / 100;
+    let return_amount = (transfer_value() * 99) / 100;
 
     perform_transfer(
         l2_client,
@@ -872,9 +816,6 @@ async fn test_transfer_with_privileged_tx(
     receiver_private_key: &SecretKey,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Transferring funds on L2 through a deposit");
-    let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
-        .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
-        .unwrap_or(U256::from(10000000000u128));
     let transferer_address = get_address_from_secret_key(transferer_private_key)?;
     let receiver_address = get_address_from_secret_key(receiver_private_key)?;
 
@@ -886,8 +827,8 @@ async fn test_transfer_with_privileged_tx(
         transferer_address,
         Some(0),
         Some(21000 * 15),
-        L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
-        &l1_rich_wallet_private_key(),
+        L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value(), Bytes::new()),
+        transferer_private_key,
         bridge_address()?,
         l1_client,
     )
@@ -912,7 +853,7 @@ async fn test_transfer_with_privileged_tx(
         .await?;
     assert_eq!(
         receiver_balance_after,
-        receiver_balance_before + transfer_value
+        receiver_balance_before + transfer_value()
     );
     Ok(())
 }
@@ -970,7 +911,7 @@ async fn test_privileged_tx_not_enough_balance(
         Some(0),
         Some(21000 * 10),
         L1ToL2TransactionData::new(receiver_address, 21000 * 5, transfer_value, Bytes::new()),
-        &l1_rich_wallet_private_key(),
+        rich_wallet_private_key,
         bridge_address()?,
         l1_client,
     )
@@ -1193,30 +1134,8 @@ async fn test_n_withdraws(
     // We need to wait for all the txs to be included in some batch
     let mut proofs = vec![];
     for (i, tx) in withdraw_txs.clone().into_iter().enumerate() {
-        println!("Getting withdrawal proof {}/{n}", i + 1);
-        let message_proof = l2_client.wait_for_message_proof(tx, 1000).await?;
-        let withdrawal_proof = message_proof
-            .into_iter()
-            .next()
-            .expect("no l1messages in withdrawal");
-        proofs.push(withdrawal_proof);
-    }
-
-    let on_chain_proposer_address = Address::from_str(
-        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
-    )
-    .unwrap();
-    for proof in &proofs {
-        while l1_client
-            .get_last_verified_batch(on_chain_proposer_address)
-            .await
-            .unwrap()
-            < proof.batch_number
-        {
-            println!("Withdrawal is not verified on L1 yet");
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
+        println!("Getting proof for withdrawal {i}/{n} ({tx:x})");
+        proofs.push(get_proof(l1_client, l2_client, tx).await);
     }
 
     let mut withdraw_claim_txs_receipts = vec![];
@@ -1437,7 +1356,7 @@ async fn test_call_to_contract_with_deposit(
             U256::zero(),
             calldata_to_contract.clone(),
         ),
-        &l1_rich_wallet_private_key(),
+        caller_private_key,
         bridge_address()?,
         l1_client,
     )
@@ -1585,8 +1504,6 @@ async fn wait_for_l2_deposit_receipt(
         .get_privileged_hash()
         .unwrap();
 
-    println!("Waiting for deposit transaction receipt on L2");
-
     Ok(ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 1000).await?)
 }
 
@@ -1657,4 +1574,34 @@ pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
         Some(s) => hex::decode(s).map(Into::into),
         None => hex::decode(s).map(Into::into),
     }
+}
+
+fn transfer_value() -> U256 {
+    std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
+        .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
+        .unwrap_or(U256::from(10_000_000_000u128))
+}
+
+fn on_chain_proposer_address() -> Address {
+    Address::from_str(
+        &std::env::var("ETHREX_COMMITTER_on_chain_proposer_address()")
+            .expect("ETHREX_COMMITTER_on_chain_proposer_address() env var not set"),
+    )
+    .unwrap()
+}
+
+async fn get_proof(l1_client: &EthClient, l2_client: &EthClient, tx: H256) -> L1MessageProof {
+    let proof = l2_client.wait_for_message_proof(tx, 1000).await;
+    let proof = proof.unwrap().into_iter().next().expect("proof not found");
+
+    while l1_client
+        .get_last_verified_batch(on_chain_proposer_address())
+        .await
+        .unwrap()
+        < proof.batch_number
+    {
+        println!("Withdrawal is not verified on L1 yet");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    proof
 }
