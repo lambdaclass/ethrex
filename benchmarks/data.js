@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753291561041,
+  "lastUpdate": 1753293604574,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5635,6 +5635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 166954074952,
             "range": "± 387087755",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1802f66ed21aff9ca45056ad9a0a6a81b6a4a2b0",
+          "message": "feat(l1): notebook for high-level profiling (#3633)\n\nIntroduce a new notebook to analyze contribution of eaxh part of the\nblock production process to its overall time, producing graphs for\nvisual clarity.\nInstructions included in the README.\n\nBased on #3274\nCoauthored-by: @Arkenan\n\nPart of: #3331",
+          "timestamp": "2025-07-23T17:15:17Z",
+          "tree_id": "90f55d482f41009e1f0aab974c2f11afaaef03e1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1802f66ed21aff9ca45056ad9a0a6a81b6a4a2b0"
+        },
+        "date": 1753293592187,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 169250483198,
+            "range": "± 911093676",
             "unit": "ns/iter"
           }
         ]
