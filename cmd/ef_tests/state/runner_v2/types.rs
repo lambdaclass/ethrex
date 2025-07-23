@@ -1,11 +1,9 @@
 use crate::runner_v2::{
     deserialize::{
         deserialize_access_lists, deserialize_authorization_lists,
-        deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe,
-        deserialize_hex_bytes, deserialize_hex_bytes_vec, deserialize_post,
-        deserialize_transaction_expected_exception, deserialize_u64_safe, deserialize_u64_vec_safe,
-        deserialize_u256_optional_safe, deserialize_u256_safe,
-        deserialize_u256_valued_hashmap_safe, deserialize_u256_vec_safe,
+        deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe, deserialize_post,
+        deserialize_transaction_expected_exception, deserialize_u256_valued_hashmap_safe,
+        deserialize_u256_vec_safe,
     },
     error::RunnerError,
 };
@@ -14,6 +12,11 @@ use bytes::Bytes;
 
 use ethrex_common::{
     Address, H256, U256,
+    serde_utils::{
+        bytes::{deserialize as deserialize_bytes, vec::deserialize as deserialize_bytes_vec},
+        u64::hex_str::{deser_u64_vec as deserialize_u64_vec, deserialize as deserialize_u64},
+        u256::{deser_hex_str as deserialize_u256, deser_hex_str_opt as deserialize_option_u256},
+    },
     types::{AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind},
 };
 
@@ -280,19 +283,19 @@ pub struct Info {
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct Env {
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub current_base_fee: Option<U256>,
     pub current_coinbase: Address,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub current_difficulty: U256,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub current_excess_blob_gas: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(deserialize_with = "deserialize_u64")]
     pub current_gas_limit: u64,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub current_number: U256,
     pub current_random: Option<H256>,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub current_timestamp: U256,
 }
 
@@ -337,11 +340,11 @@ pub struct Post {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AccountState {
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub balance: U256,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "deserialize_bytes")]
     pub code: Bytes,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(deserialize_with = "deserialize_u64")]
     pub nonce: u64,
     #[serde(deserialize_with = "deserialize_u256_valued_hashmap_safe")]
     pub storage: HashMap<U256, U256>,
@@ -390,16 +393,16 @@ pub struct AccessListItem {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizationListTuple {
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub chain_id: U256,
     pub address: Address,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(deserialize_with = "deserialize_u64")]
     pub nonce: u64,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub v: U256,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub r: U256,
-    #[serde(deserialize_with = "deserialize_u256_safe")]
+    #[serde(deserialize_with = "deserialize_u256")]
     pub s: U256,
     pub signer: Option<Address>,
 }
@@ -440,7 +443,7 @@ pub struct RawPostValue {
     pub indexes: HashMap<String, U256>,
     pub logs: H256,
     // we add the default because some tests don't have this field
-    #[serde(default, deserialize_with = "deserialize_hex_bytes")]
+    #[serde(default, deserialize_with = "deserialize_bytes")]
     pub txbytes: Bytes,
     pub state: Option<HashMap<Address, AccountState>>,
 }
@@ -448,24 +451,24 @@ pub struct RawPostValue {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawTransaction {
-    #[serde(deserialize_with = "deserialize_hex_bytes_vec")]
+    #[serde(deserialize_with = "deserialize_bytes_vec")]
     pub data: Vec<Bytes>,
-    #[serde(deserialize_with = "deserialize_u64_vec_safe")]
+    #[serde(deserialize_with = "deserialize_u64_vec")]
     pub gas_limit: Vec<u64>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub gas_price: Option<U256>,
-    #[serde(deserialize_with = "deserialize_u64_safe")]
+    #[serde(deserialize_with = "deserialize_u64")]
     pub nonce: u64,
     pub secret_key: H256,
     pub sender: Address,
     pub to: TxKind,
     #[serde(deserialize_with = "deserialize_u256_vec_safe")]
     pub value: Vec<U256>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub max_fee_per_gas: Option<U256>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub max_priority_fee_per_gas: Option<U256>,
-    #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
+    #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub max_fee_per_blob_gas: Option<U256>,
     #[serde(default, deserialize_with = "deserialize_h256_vec_optional_safe")]
     pub blob_versioned_hashes: Option<Vec<H256>>,
