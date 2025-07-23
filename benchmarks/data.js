@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753293604574,
+  "lastUpdate": 1753296927096,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5665,6 +5665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 169250483198,
             "range": "± 911093676",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62400508+juan518munoz@users.noreply.github.com",
+            "name": "juan518munoz",
+            "username": "juan518munoz"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "31808c9e890a3af68e659735c63dcbb47df85a56",
+          "message": "chore(l1,l2): bump spawned version to `0.2.1` (#3780)\n\n**Motivation**\n\nUpdate Spawned to accomodate new Actor interface.\n\n**Description**\n\nSince [spawned `0.2.0`](https://github.com/lambdaclass/spawned/pull/35)\nthe state and GenServer is \"the same\".",
+          "timestamp": "2025-07-23T18:10:26Z",
+          "tree_id": "1e3122f81bfb5a1e4cfcd914eae36c824d663bfc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/31808c9e890a3af68e659735c63dcbb47df85a56"
+        },
+        "date": 1753296913974,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166022088539,
+            "range": "± 512383533",
             "unit": "ns/iter"
           }
         ]
