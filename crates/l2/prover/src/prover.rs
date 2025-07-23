@@ -106,6 +106,7 @@ impl Prover {
             input: ProgramInput {
                 blocks: input.blocks,
                 db: input.db,
+                chain_config: input.chain_config,
                 elasticity_multiplier: input.elasticity_multiplier,
                 #[cfg(feature = "l2")]
                 blob_commitment: input.blob_commitment,

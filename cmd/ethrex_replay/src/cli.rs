@@ -33,12 +33,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
             env = "NETWORK",
             required = false,
             help = "Name or ChainID of the network to use"
         )]
-        network: String,
+        network: Option<String>,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -52,12 +51,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
             env = "NETWORK",
             required = false,
             help = "Name or ChainID of the network to use"
         )]
-        network: String,
+        network: Option<String>,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -69,12 +67,11 @@ enum SubcommandExecute {
         rpc_url: Url,
         #[arg(
             long,
-            default_value = "mainnet",
             env = "NETWORK",
             required = false,
             help = "Name or ChainID of the network to use"
         )]
-        network: String,
+        network: Option<String>,
         #[arg(long, required = false)]
         l2: bool,
     },
@@ -105,8 +102,11 @@ impl SubcommandExecute {
                 network,
                 bench,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
+                let chain_config = match network {
+                    Some(net) => get_chain_config(&net)?,
+                    None => eth_client.get_chain_config().await?,
+                };
                 let block = or_latest(block)?;
                 let cache = get_blockdata(eth_client, chain_config, block).await?;
                 let future = async {
@@ -128,8 +128,11 @@ impl SubcommandExecute {
                         "starting point can't be greater than ending point",
                     ));
                 }
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
+                let chain_config = match network {
+                    Some(net) => get_chain_config(&net)?,
+                    None => eth_client.get_chain_config().await?,
+                };
                 let cache = get_rangedata(eth_client, chain_config, start, end).await?;
                 let future = async {
                     let gas_used = get_total_gas_used(&cache.blocks);
@@ -144,9 +147,11 @@ impl SubcommandExecute {
                 network,
                 l2,
             } => {
-                let chain_config = get_chain_config(&network)?;
                 let eth_client = EthClient::new(rpc_url.as_str())?;
-
+                let chain_config = match network {
+                    Some(net) => get_chain_config(&net)?,
+                    None => eth_client.get_chain_config().await?,
+                };
                 // Get the block number of the transaction
                 let tx = eth_client
                     .get_transaction_by_hash(tx_hash)

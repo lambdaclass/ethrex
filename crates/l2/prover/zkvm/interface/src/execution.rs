@@ -10,7 +10,7 @@ use ethrex_common::types::{
 use ethrex_common::{Address, U256};
 use ethrex_common::{
     H256,
-    types::{Block, BlockHeader},
+    types::{Block, BlockHeader, ChainConfig},
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::l1_messages::L1Message;
@@ -93,10 +93,10 @@ pub enum StatelessExecutionError {
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
-    let chain_id = input.db.chain_config.chain_id;
     let ProgramInput {
         blocks,
         mut db,
+        chain_config,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,
@@ -108,20 +108,20 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         return stateless_validation_l2(
             &blocks,
             &mut db,
+            chain_config,
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
-            chain_id,
         );
     }
-    stateless_validation_l1(&blocks, &mut db, elasticity_multiplier, chain_id)
+    stateless_validation_l1(&blocks, &mut db, chain_config, elasticity_multiplier)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
     db: &mut ExecutionWitnessResult,
+    chain_config: ChainConfig,
     elasticity_multiplier: u64,
-    chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
         initial_state_hash,
@@ -129,7 +129,7 @@ pub fn stateless_validation_l1(
         last_block_hash,
         non_privileged_count,
         ..
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, chain_config, elasticity_multiplier)?;
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -140,7 +140,7 @@ pub fn stateless_validation_l1(
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
         last_block_hash,
-        chain_id: chain_id.into(),
+        chain_id: chain_config.chain_id.into(),
         non_privileged_count,
     })
 }
@@ -149,10 +149,10 @@ pub fn stateless_validation_l1(
 pub fn stateless_validation_l2(
     blocks: &[Block],
     db: &mut ExecutionWitnessResult,
+    chain_config: ChainConfig,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
-    chain_id: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let mut initial_db = db.clone();
 
@@ -164,7 +164,7 @@ pub fn stateless_validation_l2(
         last_block_header,
         last_block_hash,
         non_privileged_count,
-    } = execute_stateless(blocks, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, chain_config, elasticity_multiplier)?;
 
     let (l1messages, privileged_transactions) =
         get_batch_l1messages_and_privileged_transactions(blocks, &receipts)?;
@@ -177,10 +177,15 @@ pub fn stateless_validation_l2(
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
+    let first_header = &blocks
+        .first()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?
+        .header;
+
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
         initial_db
-            .rebuild_tries()
+            .rebuild_tries(chain_config, first_header)
             .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
         let state_diff = prepare_state_diff(
             last_block_header,
@@ -201,7 +206,7 @@ pub fn stateless_validation_l2(
         privileged_transactions_hash,
         blob_versioned_hash,
         last_block_hash,
-        chain_id: chain_id.into(),
+        chain_id: chain_config.chain_id.into(),
         non_privileged_count,
     })
 }
@@ -219,9 +224,15 @@ struct StatelessResult {
 fn execute_stateless(
     blocks: &[Block],
     db: &mut ExecutionWitnessResult,
+    chain_config: ChainConfig,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    db.rebuild_tries()
+    let first_header = &blocks
+        .first()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?
+        .header;
+
+    db.rebuild_tries(chain_config, first_header)
         .map_err(StatelessExecutionError::ExecutionWitness)?;
 
     // Validate block hashes, except parent block hash (latest block hash)

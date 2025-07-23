@@ -1,4 +1,6 @@
 use crate::cache::Cache;
+#[cfg(feature = "l2")]
+use crate::cache::L2Fields;
 use ethrex_common::{
     H256,
     types::{AccountUpdate, ELASTICITY_MULTIPLIER, Receipt},
@@ -35,7 +37,7 @@ pub async fn run_tx(
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
     let mut prover_db = cache.witness;
-    prover_db.rebuild_tries()?;
+    prover_db.rebuild_tries(cache.chain_config, &block.header)?;
 
     let vm_type = if l2 { VMType::L2 } else { VMType::L1 };
 
@@ -69,6 +71,7 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
     let Cache {
         blocks,
         witness: db,
+        chain_config,
         l2_fields,
     } = cache;
 
@@ -82,6 +85,7 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
             blocks,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            chain_config,
             // The L2 specific fields (blob_commitment, blob_proof)
             // will be filled by Default::default() if the 'l2' feature of
             // 'zkvm_interface' is active (due to workspace compilation).
@@ -96,11 +100,15 @@ fn get_input(cache: Cache) -> eyre::Result<ProgramInput> {
 
     #[cfg(feature = "l2")]
     {
-        let l2_fields = l2_fields.ok_or_else(|| eyre::eyre!("Missing L2 fields in cache"))?;
+        let l2_fields = l2_fields.unwrap_or(L2Fields {
+            blob_commitment: [0; 48],
+            blob_proof: [0; 48],
+        });
 
         Ok(ProgramInput {
             blocks,
             db,
+            chain_config,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             blob_commitment: l2_fields.blob_commitment,
             blob_proof: l2_fields.blob_proof,
