@@ -866,6 +866,8 @@ impl PeerHandler {
                 continue;
             };
 
+            info!("completed_tasks {completed_tasks}, chunk_count: {chunk_count}");
+
             let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
                 if completed_tasks >= chunk_count {
                     info!("All account ranges downloaded successfully");
