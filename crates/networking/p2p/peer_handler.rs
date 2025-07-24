@@ -35,7 +35,7 @@ use crate::{
     utils::current_unix_time,
 };
 use tracing::{debug, error, info, trace, warn};
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
