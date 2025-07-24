@@ -108,7 +108,13 @@ impl PeerHandler {
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
         let scores = self.peer_scores.lock().await;
-        let (mut free_peer_id, mut free_peer_channel) = self.peer_table.get_peer_channels(capabilities).await.first().unwrap().clone();
+        let (mut free_peer_id, mut free_peer_channel) = self
+            .peer_table
+            .get_peer_channels(capabilities)
+            .await
+            .first()
+            .unwrap()
+            .clone();
 
         for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
             let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
@@ -119,7 +125,7 @@ impl PeerHandler {
             }
         }
 
-        Some((free_peer_id, free_peer_channel.clone())) 
+        Some((free_peer_id, free_peer_channel.clone()))
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -880,7 +886,7 @@ impl PeerHandler {
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
             tokio::spawn(async move {
-                debug!(
+                info!(
                     "Requesting account range from peer {free_peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
                 );
                 let request_id = rand::random();
