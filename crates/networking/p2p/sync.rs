@@ -295,15 +295,12 @@ impl Syncer {
                 break;
             };
         }
-        match sync_mode {
-            SyncMode::Snap => {
-                self.snap_sync(store, block_sync_state).await?;
 
-                // Next sync will be full-sync
-                self.snap_enabled.store(false, Ordering::Relaxed);
-            }
-            // Full sync stores and executes blocks as it asks for the headers
-            SyncMode::Full => {}
+        if let SyncMode::Snap = sync_mode {
+            self.snap_sync(store, block_sync_state).await?;
+
+            // Next sync will be full-sync
+            self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -852,13 +849,14 @@ impl Syncer {
 
         let storages_store_start = Instant::now();
 
-        METRICS.storage_tries_state_roots_start_time
+        METRICS
+            .storage_tries_state_roots_start_time
             .lock()
-            .await.replace(SystemTime::now());
+            .await
+            .replace(SystemTime::now());
 
-        *METRICS.storage_tries_state_roots_to_compute
-            .lock()
-            .await = account_storage_roots.len() as u64;
+        *METRICS.storage_tries_state_roots_to_compute.lock().await =
+            account_storage_roots.len() as u64;
 
         let store_clone = store.clone();
 
@@ -886,7 +884,7 @@ impl Syncer {
                         continue;
                     };
                 }
-                
+
                 let Ok(computed_state_root) = storage_trie.hash() else {
                     error!(
                         "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
@@ -903,11 +901,12 @@ impl Syncer {
                 }
             }
         }).await.unwrap();
-        
 
-        METRICS.storage_tries_state_roots_end_time
+        METRICS
+            .storage_tries_state_roots_end_time
             .lock()
-            .await.replace(SystemTime::now());
+            .await
+            .replace(SystemTime::now());
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");

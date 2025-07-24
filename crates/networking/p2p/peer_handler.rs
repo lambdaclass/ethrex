@@ -698,7 +698,11 @@ impl PeerHandler {
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
     /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
     /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
-    /// Returns the account range or None if:
+    ///
+    /// # Returns
+    ///
+    /// The account range or `None` if:
+    ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
