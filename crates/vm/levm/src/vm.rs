@@ -50,7 +50,9 @@ pub struct Substate {
 }
 
 pub struct VM<'a> {
+    /// Parent callframes.
     pub call_frames: Vec<CallFrame>,
+    /// The current call frame.
     pub current_call_frame: CallFrame,
     pub env: Environment,
     pub substate: Substate,
@@ -152,7 +154,7 @@ impl<'a> VM<'a> {
 
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
-        self.current_call_frame_mut()?.call_frame_backup.clear();
+        self.current_call_frame.call_frame_backup.clear();
 
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
@@ -172,9 +174,9 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
-        if self.is_precompile(&self.current_call_frame()?.to) {
+        if self.is_precompile(&self.current_call_frame.to) {
             let vm_type = self.vm_type;
-            let call_frame = self.current_call_frame_mut()?;
+            let call_frame = &mut self.current_call_frame;
 
             return Self::execute_precompile(
                 vm_type,
@@ -186,7 +188,7 @@ impl<'a> VM<'a> {
         }
 
         loop {
-            let opcode = self.current_call_frame()?.next_opcode();
+            let opcode = self.current_call_frame.next_opcode();
 
             // Call the opcode, using the opcode function lookup table.
             // Indexing will not panic as all the opcode values fit within the table.
@@ -236,7 +238,7 @@ impl<'a> VM<'a> {
 
     /// True if external transaction is a contract creation
     pub fn is_create(&self) -> Result<bool, InternalError> {
-        Ok(self.current_call_frame()?.is_create)
+        Ok(self.current_call_frame.is_create)
     }
 
     /// Executes without making changes to the cache.
