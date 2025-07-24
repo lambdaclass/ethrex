@@ -234,7 +234,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 state-diff-test:
 	touch .env
 	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --bin ethrex -- \
-	l2 reconstruct \
+	l2-tools reconstruct \
 	-g ../../fixtures/genesis/l2.json \
 	-b ../../fixtures/blobs/ \
 	-s $$PWD/store \
