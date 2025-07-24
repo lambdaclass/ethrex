@@ -283,32 +283,20 @@ impl GenServer for RLPxConnection {
                 match e {
                     RLPxError::Disconnected()
                     | RLPxError::DisconnectReceived(_)
-                    | RLPxError::DisconnectSent(_) => {
-                        log_peer_debug(&established_state.node, "Peer disconnected");
-                        return CastResponse::Stop;
-                    }
-                    RLPxError::HandshakeError(_)
+                    | RLPxError::DisconnectSent(_)
+                    | RLPxError::HandshakeError(_)
                     | RLPxError::NoMatchingCapabilities()
                     | RLPxError::InvalidPeerId()
                     | RLPxError::InvalidMessageLength()
+                    | RLPxError::StateError(_)
                     | RLPxError::InvalidRecoveryId() => {
-                        log_peer_debug(
-                            &established_state.node,
-                            "Connected peer does not support needed capabilities, disconnected",
-                        );
+                        log_peer_debug(&established_state.node, &e.to_string());
                         return CastResponse::Stop;
                     }
                     RLPxError::IoError(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
                         log_peer_error(
                             &established_state.node,
                             "Broken pipe with peer, disconnected",
-                        );
-                        return CastResponse::Stop;
-                    }
-                    RLPxError::StateError(_) => {
-                        log_peer_error(
-                            &established_state.node,
-                            "Peer is in an invalid state, disconnected",
                         );
                         return CastResponse::Stop;
                     }
