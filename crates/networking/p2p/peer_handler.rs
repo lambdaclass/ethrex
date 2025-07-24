@@ -13,7 +13,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
-use serde::de::EnumAccess;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -127,7 +126,6 @@ impl PeerHandler {
         &self,
         start: u64,
         sync_head: H256,
-        order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
 
@@ -256,7 +254,7 @@ impl PeerHandler {
                 *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
             }
 
-            if let Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 if headers.is_empty() {
@@ -474,8 +472,8 @@ impl PeerHandler {
 
         // 5) loop until all the chunks are received (retry to get the chunks that failed)
 
-        ret.sort_by(|x, y| x.number.cmp(&y.number));
-        info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
+        // ret.sort_by(|x, y| x.number.cmp(&y.number));
+        // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
         // std::process::exit(0);
     }
@@ -698,7 +696,11 @@ impl PeerHandler {
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
     /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
     /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
-    /// Returns the account range or None if:
+    ///
+    /// # Returns
+    ///
+    /// The account range or `None` if:
+    ///
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_account_range(
@@ -1461,7 +1463,7 @@ impl PeerHandler {
                             tasks_queue_not_started.push_back(task);
                             task_count += 1;
                         }
-                        info!("Split big storage account into {chunk_count} chunks.");
+                        debug!("Split big storage account into {chunk_count} chunks.");
                     }
                 }
 
@@ -1498,6 +1500,10 @@ impl PeerHandler {
 
                 debug!(
                     "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
+                );
+                debug!(
+                    "Total tasks: {task_count}, completed tasks: {completed_tasks}, queued tasks: {}",
+                    tasks_queue_not_started.len()
                 );
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
@@ -1646,7 +1652,7 @@ impl PeerHandler {
                 };
                 if slots.is_empty() && proof.is_empty() {
                     tx.send(empty_task_result).await.ok();
-                    tracing::error!("Received empty account range");
+                    tracing::debug!("Received empty account range");
                     return;
                 }
                 // Check we got some data and no more than the requested amount
@@ -1904,96 +1910,6 @@ impl PeerHandler {
             }) {
                 self.record_snap_peer_success(peer_id, peer_ids).await;
                 return Some(nodes);
-            }
-        }
-        None
-    }
-
-    /// Requests a single storage range for an accouns given its hashed address and storage root, and the root of its state trie
-    /// This is a simplified version of `request_storage_range` meant to be used for large tries that require their own single requests
-    /// account_hashes & storage_roots must have the same length
-    /// storage_root must not be an empty trie hash, we will treat empty ranges as invalid responses
-    /// Returns true if the account's storage was not completely fetched by the request
-    /// Returns the list of hashed storage keys and values for the account's storage or None if:
-    /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_storage_range(
-        &self,
-        state_root: H256,
-        storage_root: H256,
-        account_hash: H256,
-        start: H256,
-    ) -> Option<(Vec<H256>, Vec<U256>, bool)> {
-        // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-        // This is so we avoid penalizing peers due to requesting stale data
-        let mut peer_ids = HashSet::new();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
-                id: request_id,
-                root_hash: state_root,
-                account_hashes: vec![account_hash],
-                starting_hash: start,
-                limit_hash: HASH_MAX,
-                response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
-                .await?;
-            peer_ids.insert(peer_id);
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel
-                .connection
-                .cast(CastMessage::BackendMessage(request))
-                .await
-            {
-                debug!("Failed to send message to peer: {err:?}");
-                continue;
-            }
-            if let Some((mut slots, proof)) =
-                tokio::time::timeout(Duration::from_secs(2), async move {
-                    loop {
-                        match receiver.recv().await {
-                            Some(RLPxMessage::StorageRanges(StorageRanges {
-                                id,
-                                slots,
-                                proof,
-                            })) if id == request_id => {
-                                self.record_peer_success(peer_id).await;
-                                return Some((slots, proof));
-                            }
-                            // Ignore replies that don't match the expected id (such as late responses)
-                            Some(_) => continue,
-                            None => return None,
-                        }
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
-            {
-                // Check we got a reasonable amount of storage ranges
-                if slots.len() != 1 {
-                    return None;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
-                    .remove(0)
-                    .into_iter()
-                    .map(|slot| (slot.hash, slot.data))
-                    .unzip();
-                let encoded_values = storage_values
-                    .iter()
-                    .map(|val| val.encode_to_vec())
-                    .collect::<Vec<_>>();
-                // Verify storage range
-                if let Ok(should_continue) =
-                    verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
-                {
-                    self.record_snap_peer_success(peer_id, peer_ids).await;
-                    return Some((storage_keys, storage_values, should_continue));
-                }
             }
         }
         None

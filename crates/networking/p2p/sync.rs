@@ -1,27 +1,16 @@
-mod bytecode_fetcher;
-mod fetcher_queue;
-mod state_healing;
-mod state_sync;
-mod storage_fetcher;
-mod storage_healing;
-mod trie_rebuild;
-
 use crate::{
     metrics::METRICS,
-    peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
-use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
-    BigEndianHash, H256, U256, U512,
+    BigEndianHash, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
-use state_healing::heal_state_trie;
-use state_sync::state_sync;
+use ethrex_trie::TrieError;
 use std::{
     array,
     cmp::min,
@@ -31,31 +20,12 @@ use std::{
     },
     time::SystemTime,
 };
-use storage_healing::storage_healer;
-use tokio::{
-    sync::mpsc::error::SendError,
-    time::{Duration, Instant},
-};
+use tokio::{sync::mpsc::error::SendError, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use trie_rebuild::TrieRebuilder;
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
-/// Max size of bach to start a bytecode fetch request in queues
-const BYTECODE_BATCH_SIZE: usize = 70;
-/// Max size of a bach to start a storage fetch request in queues
-const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-const NODE_BATCH_SIZE: usize = 900;
-/// Maximum amount of concurrent paralell fetches for a queue
-const MAX_PARALLEL_FETCHES: usize = 10;
-/// Maximum amount of messages in a channel
-const MAX_CHANNEL_MESSAGES: usize = 500;
-/// Maximum amount of messages to read from a channel at once
-const MAX_CHANNEL_READS: usize = 200;
-/// Pace at which progress is shown via info tracing
-const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
@@ -96,11 +66,6 @@ pub struct Syncer {
     /// No outside process should modify this value, only being modified by the sync cycle
     snap_enabled: Arc<AtomicBool>,
     peers: PeerHandler,
-    /// The last block number used as a pivot for snap-sync
-    /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
-    /// TODO: Reorgs
-    last_snap_pivot: u64,
-    trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
@@ -116,8 +81,6 @@ impl Syncer {
         Self {
             snap_enabled,
             peers,
-            last_snap_pivot: 0,
-            trie_rebuilder: None,
             cancel_token,
             blockchain,
         }
@@ -129,8 +92,6 @@ impl Syncer {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::dummy(),
-            last_snap_pivot: 0,
-            trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
@@ -200,7 +161,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(current_head_number, sync_head)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -295,15 +256,12 @@ impl Syncer {
                 break;
             };
         }
-        match sync_mode {
-            SyncMode::Snap => {
-                self.snap_sync(store, block_sync_state).await?;
 
-                // Next sync will be full-sync
-                self.snap_enabled.store(false, Ordering::Relaxed);
-            }
-            // Full sync stores and executes blocks as it asks for the headers
-            SyncMode::Full => {}
+        if let SyncMode::Snap = sync_mode {
+            self.snap_sync(store, block_sync_state).await?;
+
+            // Next sync will be full-sync
+            self.snap_enabled.store(false, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -337,7 +295,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(current_head_number, sync_head)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -852,13 +810,14 @@ impl Syncer {
 
         let storages_store_start = Instant::now();
 
-        METRICS.storage_tries_state_roots_start_time
+        METRICS
+            .storage_tries_state_roots_start_time
             .lock()
-            .await.replace(SystemTime::now());
+            .await
+            .replace(SystemTime::now());
 
-        *METRICS.storage_tries_state_roots_to_compute
-            .lock()
-            .await = account_storage_roots.len() as u64;
+        *METRICS.storage_tries_state_roots_to_compute.lock().await =
+            account_storage_roots.len() as u64;
 
         let store_clone = store.clone();
 
@@ -886,7 +845,6 @@ impl Syncer {
                         continue;
                     };
                 }
-                
                 let Ok(computed_state_root) = storage_trie.hash() else {
                     error!(
                         "Failed to hash account hash: {account_hash:?}, with storage root: {storage_root:?}"
@@ -903,11 +861,12 @@ impl Syncer {
                 }
             }
         }).await.unwrap();
-        
 
-        METRICS.storage_tries_state_roots_end_time
+        METRICS
+            .storage_tries_state_roots_end_time
             .lock()
-            .await.replace(SystemTime::now());
+            .await
+            .replace(SystemTime::now());
 
         let storages_store_time = Instant::now().saturating_duration_since(storages_store_start);
         info!("Finished storing storage tries in: {storages_store_time:?}");
@@ -955,139 +914,6 @@ impl Syncer {
 
         Ok(())
     }
-
-    // Downloads the latest state trie and all associated storage tries & bytecodes from peers
-    // Rebuilds the state trie and all storage tries based on the downloaded data
-    // Performs state healing in order to fix all inconsistencies with the downloaded state
-    // Returns the success status, if it is true, then the state is fully consistent and
-    // new blocks can be executed on top of it, if false then the state is still inconsistent and
-    // snap sync must be resumed on the next sync cycle
-    async fn snap_sync_old(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
-        // Begin the background trie rebuild process if it is not active yet or if it crashed
-        if !self
-            .trie_rebuilder
-            .as_ref()
-            .is_some_and(|rebuilder| rebuilder.alive())
-        {
-            self.trie_rebuilder = Some(TrieRebuilder::startup(
-                self.cancel_token.clone(),
-                store.clone(),
-            ));
-        };
-        // Spawn storage healer earlier so we can start healing stale storages
-        // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
-        let storage_healer_cancell_token = self.cancel_token.child_token();
-        // Create an AtomicBool to signal to the storage healer whether state healing has ended
-        let state_healing_ended = Arc::new(AtomicBool::new(false));
-        let storage_healer_handler = tokio::spawn(storage_healer(
-            state_root,
-            self.peers.clone(),
-            store.clone(),
-            storage_healer_cancell_token.clone(),
-            state_healing_ended.clone(),
-        ));
-        // Perform state sync if it was not already completed on a previous cycle
-        // Retrieve storage data to check which snap sync phase we are in
-        let key_checkpoints = store.get_state_trie_key_checkpoint().await?;
-        // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
-        if key_checkpoints.is_none()
-            || key_checkpoints.is_some_and(|ch| {
-                ch.into_iter()
-                    .zip(STATE_TRIE_SEGMENTS_END.into_iter())
-                    .any(|(ch, end)| ch < end)
-            })
-        {
-            let storage_trie_rebuilder_sender = self
-                .trie_rebuilder
-                .as_ref()
-                .ok_or(SyncError::Trie(TrieError::InconsistentTree))?
-                .storage_rebuilder_sender
-                .clone();
-
-            let stale_pivot = state_sync(
-                state_root,
-                store.clone(),
-                self.peers.clone(),
-                key_checkpoints,
-                storage_trie_rebuilder_sender,
-            )
-            .await?;
-            if stale_pivot {
-                warn!("Stale Pivot, aborting state sync");
-                storage_healer_cancell_token.cancel();
-                storage_healer_handler.await??;
-                return Ok(false);
-            }
-        }
-        // Wait for the trie rebuilder to finish
-        info!("Waiting for the trie rebuild to finish");
-        let rebuild_start = Instant::now();
-        let rebuilder = self
-            .trie_rebuilder
-            .take()
-            .ok_or(SyncError::Trie(TrieError::InconsistentTree))?;
-        rebuilder.complete().await?;
-
-        info!(
-            "State trie rebuilt from snapshot, overtime: {}",
-            rebuild_start.elapsed().as_secs()
-        );
-        // Clear snapshot
-        store.clear_snapshot().await?;
-
-        // Perform Healing
-        let state_heal_complete =
-            heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
-        // Wait for storage healer to end
-        if state_heal_complete {
-            state_healing_ended.store(true, Ordering::Relaxed);
-        } else {
-            storage_healer_cancell_token.cancel();
-        }
-        let storage_heal_complete = storage_healer_handler.await??;
-        if !(state_heal_complete && storage_heal_complete) {
-            warn!("Stale pivot, aborting healing");
-        }
-        Ok(state_heal_complete && storage_heal_complete)
-    }
-}
-
-/// Returns the partial paths to the node's children if they are not already part of the trie state
-fn node_missing_children(
-    node: &Node,
-    parent_path: &Nibbles,
-    trie_state: &dyn TrieDB,
-) -> Result<Vec<Nibbles>, TrieError> {
-    let mut paths = Vec::new();
-    match &node {
-        Node::Branch(node) => {
-            for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
-                    paths.push(parent_path.append_new(index as u8));
-                }
-            }
-        }
-        Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
-                paths.push(parent_path.concat(node.prefix.clone()));
-            }
-        }
-        _ => {}
-    }
-    Ok(paths)
-}
-
-fn seconds_to_readable(seconds: U512) -> String {
-    let (days, rest) = seconds.div_mod(U512::from(60 * 60 * 24));
-    let (hours, rest) = rest.div_mod(U512::from(60 * 60));
-    let (minutes, seconds) = rest.div_mod(U512::from(60));
-    if days > U512::zero() {
-        if days > U512::from(15) {
-            return "unknown".to_string();
-        }
-        return format!("Over {days} days");
-    }
-    format!("{hours}h{minutes}m{seconds}s")
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -1102,8 +928,6 @@ enum SyncError {
     Trie(#[from] TrieError),
     #[error(transparent)]
     Rlp(#[from] RLPDecodeError),
-    #[error("Corrupt path during state healing")]
-    CorruptPath,
     #[error(transparent)]
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
