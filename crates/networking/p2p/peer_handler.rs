@@ -1435,16 +1435,19 @@ impl PeerHandler {
                     *peer_score -= 1;
                     continue;
                 }
-                if let Some(hash_end) = hash_end {
-                    // This is a big storage account, and the range might be empty
-                    if account_storages[0].len() == 1 && account_storages[0][0].0 > hash_end {
-                        continue;
-                    }
-                }
 
                 let peer_score = scores.entry(peer_id).or_default();
                 if *peer_score < 10 {
                     *peer_score += 1;
+                }
+
+                if let Some(hash_end) = hash_end {
+                    // This is a big storage account, and we might have received duplicate slots
+                    let last_slot = account_storages[0].last().unwrap().clone();
+                    // If the last slot is outside the range, remove it
+                    if last_slot.0 > hash_end {
+                        account_storages[0].pop();
+                    }
                 }
 
                 downloaded_count += account_storages.len() as u64;
