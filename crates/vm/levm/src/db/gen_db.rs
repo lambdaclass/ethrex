@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -16,7 +17,6 @@ use crate::vm::VM;
 
 use super::CacheDB;
 use super::Database;
-use std::collections::HashSet;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
@@ -186,8 +186,11 @@ impl<'a> VM<'a> {
         to: Address,
         value: U256,
     ) -> Result<(), InternalError> {
-        self.decrease_account_balance(from, value)?;
-        self.increase_account_balance(to, value)?;
+        if value != U256::zero() {
+            self.decrease_account_balance(from, value)?;
+            self.increase_account_balance(to, value)?;
+        }
+
         Ok(())
     }
 

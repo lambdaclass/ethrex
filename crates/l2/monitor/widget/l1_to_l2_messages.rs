@@ -21,7 +21,7 @@ use crate::{
 // kind | status | L1 tx hash | L2 tx hash | amount
 pub type L1ToL2MessagesRow = (L1ToL2MessageKind, L1ToL2MessageStatus, H256, H256, U256);
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct L1ToL2MessagesTable {
     pub state: TableState,
     pub items: Vec<L1ToL2MessagesRow>,

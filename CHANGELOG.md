@@ -2,7 +2,21 @@
 
 ## Perf
 
+### 2025-07-24
+
+- Add shortcut to avoid callframe creation on precompile invocations [#3802](https://github.com/lambdaclass/ethrex/pull/3802)
+
+### 2025-07-21
+
+- Use `rayon` to recover the sender address from transactions [#3709](https://github.com/lambdaclass/ethrex/pull/3709)
+
 ### 2025-07-18
+
+- Migrate EcAdd and EcMul to Arkworks [#3719](https://github.com/lambdaclass/ethrex/pull/3719)
+
+- Add specialized push1 and pop1 to stack [#3705](https://github.com/lambdaclass/ethrex/pull/3705)
+
+- Improve precompiles by avoiding 0 value transfers [#3715](https://github.com/lambdaclass/ethrex/pull/3715)
 
 - Improve BlobHash [#3704](https://github.com/lambdaclass/ethrex/pull/3704)
 

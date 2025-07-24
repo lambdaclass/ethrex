@@ -16,7 +16,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H160, H256, U256,
     tracing::CallType,
     types::{Log, Transaction},
 };
@@ -28,7 +28,7 @@ use std::{
 
 pub type Storage = HashMap<U256, H256>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
     #[default]
     L1,
@@ -73,10 +73,10 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
-    ) -> Self {
+    ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        Self {
+        let mut vm = Self {
             call_frames: vec![],
             env,
             substate: Substate::default(),
@@ -89,7 +89,11 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
-        }
+        };
+
+        vm.setup_vm()?;
+
+        Ok(vm)
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
@@ -147,8 +151,6 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        self.setup_vm()?;
-
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -178,7 +180,16 @@ impl<'a> VM<'a> {
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
         if self.is_precompile(&self.current_call_frame()?.to) {
-            return self.execute_precompile();
+            let vm_type = self.vm_type;
+            let call_frame = self.current_call_frame_mut()?;
+
+            return Self::execute_precompile(
+                vm_type,
+                call_frame.code_address,
+                &call_frame.calldata,
+                call_frame.gas_limit,
+                &mut call_frame.gas_remaining,
+            );
         }
 
         loop {
@@ -211,27 +222,23 @@ impl<'a> VM<'a> {
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
-    pub fn execute_precompile(&mut self) -> Result<ContextResult, VMError> {
-        let vm_type = self.vm_type.clone();
-
-        let callframe = self.current_call_frame_mut()?;
-
-        let precompile_result = match vm_type {
-            VMType::L1 => precompiles::execute_precompile(
-                callframe.code_address,
-                &callframe.calldata,
-                &mut callframe.gas_remaining,
-            ),
-            VMType::L2 => l2_precompiles::execute_precompile(
-                callframe.code_address,
-                &callframe.calldata,
-                &mut callframe.gas_remaining,
-            ),
+    pub fn execute_precompile(
+        vm_type: VMType,
+        code_address: H160,
+        calldata: &Bytes,
+        gas_limit: u64,
+        gas_remaining: &mut u64,
+    ) -> Result<ContextResult, VMError> {
+        let execute_precompile = match vm_type {
+            VMType::L1 => precompiles::execute_precompile,
+            VMType::L2 => l2_precompiles::execute_precompile,
         };
 
-        let ctx_result = self.handle_precompile_result(precompile_result)?;
-
-        Ok(ctx_result)
+        Self::handle_precompile_result(
+            execute_precompile(code_address, calldata, gas_remaining),
+            gas_limit,
+            *gas_remaining,
+        )
     }
 
     /// True if external transaction is a contract creation

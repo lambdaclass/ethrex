@@ -1,7 +1,7 @@
 use std::{cmp::min, fmt::Display};
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256, Signature, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{Message, ecdsa::RecoveryId};
@@ -904,7 +904,11 @@ impl Transaction {
                         .encode_field(&0u8)
                         .finish(),
                 }
-                recover_address(&tx.r, &tx.s, signature_y_parity, &Bytes::from(buf))
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.s.to_big_endian());
+                sig[64] = signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -918,12 +922,11 @@ impl Transaction {
                     .encode_field(&tx.data)
                     .encode_field(&tx.access_list)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP1559Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -938,12 +941,11 @@ impl Transaction {
                     .encode_field(&tx.data)
                     .encode_field(&tx.access_list)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP4844Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -960,12 +962,11 @@ impl Transaction {
                     .encode_field(&tx.max_fee_per_blob_gas)
                     .encode_field(&tx.blob_versioned_hashes)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::EIP7702Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -981,12 +982,11 @@ impl Transaction {
                     .encode_field(&tx.access_list)
                     .encode_field(&tx.authorization_list)
                     .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
+                let mut sig = [0u8; 65];
+                sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
+                sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
+                sig[64] = tx.signature_y_parity as u8;
+                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
             }
             Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
         }
@@ -1188,25 +1188,27 @@ impl Transaction {
     }
 }
 
-pub fn recover_address(
-    signature_r: &U256,
-    signature_s: &U256,
-    signature_y_parity: bool,
+pub fn recover_address_from_message(
+    signature: Signature,
     message: &Bytes,
 ) -> Result<Address, secp256k1::Error> {
-    // Create signature
-    let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
-    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-        &signature_bytes,
-        RecoveryId::from_i32(signature_y_parity as i32)?, // cannot fail
-    )?;
     // Hash message
-    let msg_digest: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
+    let payload: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
         .finalize()
         .into();
+    recover_address(signature, H256::from_slice(&payload))
+}
+
+pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
+    // Create signature
+    let signature_bytes = signature.to_fixed_bytes();
+    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
+        &signature_bytes[..64],
+        RecoveryId::from_i32(signature_bytes[64] as i32)?, // cannot fail
+    )?;
     // Recover public key
-    let public =
-        secp256k1::SECP256K1.recover_ecdsa(&Message::from_digest(msg_digest), &signature)?;
+    let public = secp256k1::SECP256K1
+        .recover_ecdsa(&Message::from_digest(payload.to_fixed_bytes()), &signature)?;
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
     Ok(Address::from_slice(&hash[12..]))
