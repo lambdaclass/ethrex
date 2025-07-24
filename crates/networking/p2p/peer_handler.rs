@@ -879,22 +879,22 @@ impl PeerHandler {
             const SNAP_LIMIT: u64 = 6;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
             let scores_cloned = scores.clone();
-            while current_unix_time() > time_limit {
-                info!("We are stale, updating pivot");
-                let Some(header) = self
-                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
-                    .await
-                else {
-                    info!("Received None pivot_header");
-                    continue;
-                };
-                pivot_header = header;
-                info!(
-                    "New pivot block number: {}, header: {:?}",
-                    pivot_header.number, pivot_header
-                );
-                time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
-            }
+            // while current_unix_time() > time_limit {
+            //     info!("We are stale, updating pivot");
+            //     let Some(header) = self
+            //         .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
+            //         .await
+            //     else {
+            //         info!("Received None pivot_header");
+            //         continue;
+            //     };
+            //     pivot_header = header;
+            //     info!(
+            //         "New pivot block number: {}, header: {:?}",
+            //         pivot_header.number, pivot_header
+            //     );
+            //     time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
+            // }
             let state_root = pivot_header.state_root;
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
