@@ -71,13 +71,9 @@ pub async fn check_test_case_results(
         ..Default::default()
     };
 
-    if test_case.expects_exception() {
+    if let Some(expected_exceptions) = test_case.post.expected_exceptions.clone() {
         // Verify in case an exception was expected.
-        check_exception(
-            test_case.post.expected_exceptions.clone().unwrap(),
-            execution_result,
-            &mut checks_result,
-        );
+        check_exception(expected_exceptions, execution_result, &mut checks_result);
         Ok(checks_result)
     } else {
         // Verify expected root hash.
@@ -253,12 +249,10 @@ pub fn check_accounts_state(
     genesis: Genesis,
 ) {
     // In this case, the test in the .json file does not have post account details to verify.
-    if test_case.post.state.is_none() {
+    let Some(expected_accounts_state) = test_case.post.state.clone() else {
         return;
-    }
-
+    };
     let mut accounts_diff: Vec<AccountMismatch> = Vec::new();
-    let expected_accounts_state = test_case.post.state.clone().unwrap();
 
     // For every account in the test case expected post state, compare it to the actual state.
     for (addr, expected_account) in expected_accounts_state {

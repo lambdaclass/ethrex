@@ -2,17 +2,16 @@ use std::{fmt, fs::OpenOptions, io::Write, path::PathBuf};
 
 use crate::runner_v2::{error::RunnerError, result_check::PostCheckResult, types::Test};
 
-pub fn add_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<(), RunnerError> {
-    let test = test_result.0;
-    let failed_test_cases = test_result.1;
+pub fn add_test_to_report(test_result: (&Test, Vec<PostCheckResult>)) -> Result<(), RunnerError> {
+    let (test, failed_test_cases) = test_result;
     if failed_test_cases.is_empty() {
-        write_passing_tests_to_report(test);
+        write_passing_test_to_report(test);
     } else {
-        write_failed_tests_to_report(test, failed_test_cases);
+        write_failing_test_to_report(test, failed_test_cases);
     }
     Ok(())
 }
-pub fn write_passing_tests_to_report(test: &Test) {
+pub fn write_passing_test_to_report(test: &Test) {
     let successful_report_path = PathBuf::from("./runner_v2/success_report.txt");
     let mut report = OpenOptions::new()
         .append(true)
@@ -25,7 +24,7 @@ pub fn write_passing_tests_to_report(test: &Test) {
     );
     report.write_all(content.as_bytes()).unwrap()
 }
-pub fn write_failed_tests_to_report(test: &Test, failing_test_cases: Vec<PostCheckResult>) {
+pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostCheckResult>) {
     let failing_report_path = PathBuf::from("./runner_v2/failure_report.txt");
     let mut report = OpenOptions::new()
         .append(true)

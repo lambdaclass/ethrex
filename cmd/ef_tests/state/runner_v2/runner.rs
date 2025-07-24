@@ -9,7 +9,7 @@ use ethrex_levm::{EVMConfig, Environment, tracing::LevmCallTracer, vm::VM, vm::V
 
 use crate::runner_v2::{
     error::RunnerError,
-    report::add_to_report,
+    report::add_test_to_report,
     result_check::check_test_case_results,
     types::{Env, Test, TestCase},
     utils::{effective_gas_price, load_initial_state},
@@ -77,13 +77,13 @@ pub async fn run_test(
         *total_run += 1;
 
         print!(
-            "\rTotal run tests: {} - Total passed: {} - Total failed: {}",
+            "\rTotal tests ran: {} - Total passed: {} - Total failed: {}",
             format!("{}", total_run).blue(),
             format!("{}", passing_tests).green(),
             format!("{}", failing_tests).red()
         );
     }
-    add_to_report((test, failing_test_cases))?;
+    add_test_to_report((test, failing_test_cases))?;
 
     Ok(())
 }

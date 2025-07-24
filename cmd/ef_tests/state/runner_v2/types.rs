@@ -320,12 +320,6 @@ pub struct TestCase {
     pub access_list: Vec<AccessListItem>,
     pub authorization_list: Option<Vec<AuthorizationListTuple>>,
 }
-impl TestCase {
-    /// Tells whether the execution of the test case should give an exception as a result.
-    pub fn expects_exception(&self) -> bool {
-        self.post.expected_exceptions.is_some()
-    }
-}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Post {
