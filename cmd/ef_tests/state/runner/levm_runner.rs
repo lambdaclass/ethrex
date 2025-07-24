@@ -187,7 +187,7 @@ pub fn prepare_vm_for_tx<'a>(
         }),
     };
 
-    Ok(VM::new(
+    VM::new(
         Environment {
             origin: test_tx.sender,
             gas_limit: test_tx.gas_limit,
@@ -214,7 +214,8 @@ pub fn prepare_vm_for_tx<'a>(
         &tx,
         LevmCallTracer::disabled(),
         VMType::L1, // TODO: Should we run the EF tests with L2?
-    ))
+    )
+    .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
@@ -222,7 +223,7 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
     for (address, pre_value) in &test.pre.0 {
         let account = world_state.get_account(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
-                "Failed to get account info when ensuring pre state: {e}",
+                "Failed to read account {address:#x} from world state: {e}",
             )))
         })?;
         ensure_pre_state_condition(
