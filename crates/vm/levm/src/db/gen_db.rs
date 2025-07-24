@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -16,7 +17,6 @@ use crate::vm::VM;
 
 use super::CacheDB;
 use super::Database;
-use std::collections::HashSet;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {

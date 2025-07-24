@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-07-24
+
+- Add shortcut to avoid callframe creation on precompile invocations [#3802](https://github.com/lambdaclass/ethrex/pull/3802)
+
 ### 2025-07-21
 
 - Use `rayon` to recover the sender address from transactions [#3709](https://github.com/lambdaclass/ethrex/pull/3709)
