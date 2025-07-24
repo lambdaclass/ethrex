@@ -11,7 +11,7 @@ use ethrex_rlp::{
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
 };
-use k256::PublicKey;
+use secp256k1::PublicKey;
 use serde::Serialize;
 
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
@@ -58,6 +58,13 @@ impl Capability {
     pub const fn snap(version: u8) -> Self {
         Capability {
             protocol: pad_right(b"snap"),
+            version,
+        }
+    }
+
+    pub const fn based(version: u8) -> Self {
+        Capability {
+            protocol: pad_right(b"based"),
             version,
         }
     }
