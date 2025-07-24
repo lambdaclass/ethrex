@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "./interfaces/IOnChainProposer.sol";
 
-contract RewardVault is Initializable {
+contract RewardVault is Initializable, ReentrancyGuardUpgradeable {
     IOnChainProposer public onChainProposer;
     // It must implement IERC20 and IERC20Metadata
     address public rewardToken;
@@ -26,7 +27,7 @@ contract RewardVault is Initializable {
 
     /// @notice Claims rewards for a list of batches.
     /// @param _batchNumbers The list of batch numbers to claim rewards for.
-    function claimRewards(uint256[] calldata _batchNumbers) external {
+    function claimRewards(uint256[] calldata _batchNumbers) external nonReentrant {
         address sender = msg.sender;
         uint256 numberOfBatches = _batchNumbers.length;
         uint256 gasProvenByClaimer = 0;

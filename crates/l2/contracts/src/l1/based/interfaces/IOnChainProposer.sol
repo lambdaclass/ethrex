@@ -105,12 +105,6 @@ interface IOnChainProposer {
     /// @return The VerifiedBatchInfo struct containing prover address and gas proven.
     function verifiedBatches(uint256 batchNumber) external view returns (VerifiedBatchInfo memory);
 
-    /// @notice Add a verified batch to the list of verified batches.
-    /// @param batchNumber The batch number to add.
-    /// @param prover The prover address.
-    /// @param gasProven The amount of gas proven.
-    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) internal;
-
     /// @notice Get the total gas proven across all verified batches.
     /// @return The total amount of gas proven.
     function getTotalGasProven() external view returns (uint256);

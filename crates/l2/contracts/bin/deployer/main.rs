@@ -106,6 +106,11 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
         info!("Compiling based contracts");
         compile_contract(
             &opts.contracts_path,
+            "lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol",
+            false
+        )?;
+        compile_contract(
+            &opts.contracts_path,
             "src/l1/based/SequencerRegistry.sol",
             false,
         )?;

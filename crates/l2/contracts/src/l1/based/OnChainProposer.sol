@@ -481,7 +481,6 @@ contract OnChainProposer is
     function getTotalGasProven() public view returns (uint256) {
         uint256 totalGasProven = 0;
         uint256 oneDayAgo = block.timestamp - 1 days;
-        uint256 lastVerifiedBatch = lastVerifiedBatch();
 
         // only take into account batches proven in the last day
         for (uint256 i = 0; i <= lastVerifiedBatch; i++) {
