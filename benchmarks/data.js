@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753389201994,
+  "lastUpdate": 1753394720842,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12684,6 +12684,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00771521387283237,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c7d7e5cb72f8dab903a27d77db25c2b7479687f",
+          "message": "fix(l1): fix metrics path (#3814)\n\n**Motivation**\n\nWe moved the metrics folder, but it wasn't updated here.\n\n**Description**\n\nFixes the path.",
+          "timestamp": "2025-07-24T19:04:00Z",
+          "tree_id": "c475e55d6f74b27e59053ae15e93bac2677af9c7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0c7d7e5cb72f8dab903a27d77db25c2b7479687f"
+        },
+        "date": 1753394720123,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001334732,
             "unit": "Mgas/s"
           }
         ]
