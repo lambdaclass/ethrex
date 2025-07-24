@@ -54,7 +54,11 @@ impl ProveOutput {
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input).unwrap();
+    let mut vec = vec![];
+    vec.extend_from_slice(bytes.as_slice());
+    eprintln!("{}", vec.len());
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 
