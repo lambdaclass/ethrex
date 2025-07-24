@@ -1,11 +1,10 @@
 mod state_healing;
 
+use crate::metrics::METRICS;
+use crate::sync::state_healing::heal_state_trie;
 use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
     utils::current_unix_time,
-};
-use crate::{
-    metrics::METRICS,
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
@@ -16,6 +15,7 @@ use ethrex_common::{
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use std::thread::Scope;
 use std::{
     array,
     cmp::min,
@@ -418,7 +418,7 @@ impl Syncer {
         // - Execute blocks after the pivot (like in full-sync)
         let all_block_hashes = block_sync_state.into_snap_block_hashes();
         let pivot_idx = all_block_hashes.len().saturating_sub(1);
-        let pivot_header = store
+        let mut pivot_header = store
             .get_block_header_by_hash(all_block_hashes[pivot_idx])?
             .ok_or(SyncError::CorruptDB)?;
 
@@ -438,6 +438,39 @@ impl Syncer {
             !continues,
             "since we downloaded the whole trie, the range should not continue"
         );
+
+        // TODO: remove this
+        let scores = {
+            let scores = self.peers.peer_scores.lock().await;
+            scores.clone()
+        };
+
+        let mut healing_done = false;
+        while !healing_done {
+            info!("started healing pivot movement");
+            const SNAP_LIMIT: u64 = 128;
+            let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
+            while current_unix_time() > time_limit {
+                info!("We are stale, updating pivot");
+                let Some(header) = self
+                    .peers
+                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores)
+                    .await
+                else {
+                    info!("Received None pivot_header");
+                    continue;
+                };
+                pivot_header = header;
+                info!(
+                    "New pivot block number: {}, header: {:?}",
+                    pivot_header.number, pivot_header
+                );
+                time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
+            }
+            let state_root = pivot_header.state_root;
+            healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+            info!("healing_done: {healing_done}");
+        }
 
         let empty = *EMPTY_TRIE_HASH;
 

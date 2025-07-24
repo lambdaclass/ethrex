@@ -53,7 +53,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     peer_table: Kademlia,
-    peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
+    pub peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
 }
 
 impl PeerHandler {
