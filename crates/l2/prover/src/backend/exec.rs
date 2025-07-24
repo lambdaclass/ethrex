@@ -1,11 +1,11 @@
 use tracing::warn;
 
-use zkvm_interface::io::{ProgramInput, ProgramOutput};
-
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
 };
+use zkvm_interface::input::ProgramInput;
+use zkvm_interface::output::ProgramOutput;
 
 pub struct ProveOutput(pub ProgramOutput);
 

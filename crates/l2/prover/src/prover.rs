@@ -8,7 +8,7 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, error, info, warn};
-use zkvm_interface::io::ProgramInput;
+use zkvm_interface::input::ProgramInput;
 
 pub async fn start_prover(config: ProverConfig) {
     let prover_worker = Prover::new(config);
