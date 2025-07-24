@@ -1258,16 +1258,16 @@ impl PeerHandler {
         const MAX_STORAGE_REQUEST_SIZE: usize = 200;
         // 1) split the range in chunks of same length
         let chunk_size = 300;
-        let chunk_count = (account_storage_roots.len() / chunk_size) + 1;
+        let mut total_tasks = (account_storage_roots.len() / chunk_size) + 1;
 
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
-        let mut tasks_queue_not_started = VecDeque::<(usize, usize, H256)>::new();
-        for i in 0..chunk_count {
+        let mut tasks_queue_not_started = VecDeque::<(usize, usize, H256, Option<H256>)>::new();
+        for i in 0..total_tasks {
             let chunk_start = chunk_size * i;
             let chunk_end = (chunk_start + chunk_size).min(account_storage_roots.len());
-            tasks_queue_not_started.push_back((chunk_start, chunk_end, H256::zero()));
+            tasks_queue_not_started.push_back((chunk_start, chunk_end, H256::zero(), None));
         }
         // Modify the last chunk to go up to the last element
         let last_task = tasks_queue_not_started
@@ -1291,6 +1291,8 @@ impl PeerHandler {
             remaining_start: usize,
             remaining_end: usize,
             remaining_start_hash: H256,
+            remaining_end_hash: Option<H256>,
+            should_continue: bool,
         }
 
         // channel to send the tasks to the peers
@@ -1315,6 +1317,8 @@ impl PeerHandler {
 
         let mut scores = self.peer_scores.lock().await;
 
+        let mut big_account_storages_pending_chunks = BTreeMap::new();
+
         loop {
             let new_last_metrics_update = last_metrics_update.elapsed().unwrap();
 
@@ -1333,53 +1337,154 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                     remaining_start_hash,
+                    remaining_end_hash,
+                    should_continue,
                 } = result;
 
-                if remaining_start < remaining_end {
-                    trace!("Failed to download chunk from peer {peer_id}");
-                    downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                        *downloader_is_free = true;
-                    });
-                    let task = (remaining_start, remaining_end, remaining_start_hash);
-                    tasks_queue_not_started.push_back(task);
+                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
+                    *downloader_is_free = true;
+                });
+
+                if remaining_start < remaining_end && remaining_end_hash.is_none() {
+                    // No terminamos y no se trata de una cuenta grande previamente particionada.
+                    // Hay que ver si toca particionar o se trata de una cuenta regular.
+
+                    if should_continue {
+                        // Se trata de una cuenta grande, toca particionar.
+
+                        debug!("Received incomplete chunk of a big storage account from {peer_id}");
+
+                        // Big storage account
+                        let big_storage_account_start_idx = remaining_start;
+                        let big_storage_account_end_idx = big_storage_account_start_idx + 1;
+
+                        let remaining_start_hash_as_u256 =
+                            U256::from_big_endian(remaining_start_hash.as_fixed_bytes());
+                        let remaining_end_hash_as_u256 =
+                            U256::from_big_endian(HASH_MAX.as_fixed_bytes());
+
+                        let range =
+                            remaining_end_hash_as_u256.saturating_sub(remaining_start_hash_as_u256);
+
+                        let big_storage_account_chunk = 100;
+
+                        // Registramos la cantidad de chunks que vamos a descargar
+                        big_account_storages_pending_chunks
+                            .insert((remaining_start, remaining_end), big_storage_account_chunk);
+
+                        total_tasks += big_storage_account_chunk;
+
+                        let big_storage_account_chunk_length = range / big_storage_account_chunk;
+
+                        for i in 0..big_storage_account_chunk {
+                            let chunk_start = (big_storage_account_chunk_length * i)
+                                + remaining_start_hash_as_u256;
+
+                            let chunk_end = chunk_start + big_storage_account_chunk_length;
+
+                            tasks_queue_not_started.push_back((
+                                big_storage_account_start_idx,
+                                big_storage_account_end_idx,
+                                H256::from_uint(&chunk_start),
+                                Some(H256::from_uint(&chunk_end)),
+                            ));
+                        }
+
+                        // Modify the last chunk to go up to the last element
+                        let last_task = tasks_queue_not_started
+                            .back_mut()
+                            .expect("we just inserted some elements");
+
+                        last_task.3 = Some(HASH_MAX);
+
+                        // Other missing accounts
+                        let missing_storage_account_start_idx = remaining_start + 1;
+
+                        tasks_queue_not_started.push_back((
+                            missing_storage_account_start_idx,
+                            remaining_end,
+                            remaining_start_hash,
+                            Some(HASH_MAX),
+                        ));
+                    } else {
+                        // Se trata de una cuenta regular, pero no terminamos de descargarla.
+
+                        debug!("Received incomplete regular chunk from {peer_id}");
+
+                        tasks_queue_not_started.push_back((
+                            remaining_start,
+                            remaining_end,
+                            remaining_start_hash,
+                            Some(HASH_MAX),
+                        ));
+                    }
+                } else if remaining_start < remaining_end && remaining_end_hash.is_some() {
+                    // Se trata de un chunk de una cuenta grande que no sabemos si termino o no
+                    if matches!(Some(remaining_start_hash), remaining_end_hash) {
+                        // El chunk de la cuenta grande termino
+                        debug!("Received complete chunk of a big storage account from {peer_id}");
+
+                        // Decrementamos la cantidad de chunks que tenemos que descargar
+                        big_account_storages_pending_chunks
+                            .entry((remaining_start, remaining_end))
+                            .and_modify(|count| {
+                                *count -= 1;
+                            });
+
+                        completed_tasks += 1;
+                    } else {
+                        // El chunk de la cuenta grande no termino
+                        debug!("Received incomplete chunk of a big storage account from {peer_id}");
+
+                        tasks_queue_not_started.push_back((
+                            remaining_start,
+                            remaining_end,
+                            remaining_start_hash,
+                            remaining_end_hash,
+                        ));
+                    }
                 } else {
+                    // Terminamos
                     completed_tasks += 1;
                 }
 
+                // Peer didn't return anything.
                 if account_storages.is_empty() {
                     let peer_score = scores.entry(peer_id).or_default();
                     *peer_score -= 1;
                     continue;
                 }
 
+                // Peer returned something.
                 let peer_score = scores.entry(peer_id).or_default();
                 if *peer_score < 10 {
                     *peer_score += 1;
                 }
 
                 downloaded_count += account_storages.len() as u64;
+
                 // If we didn't finish downloading the account, don't count it
                 if !remaining_start_hash.is_zero() {
                     downloaded_count -= 1;
                 }
 
-                let n_storages = account_storages.len();
-                let n_slots = account_storages
+                let downloaded_account_storages = account_storages.len();
+
+                let downloaded_slots = account_storages
                     .iter()
                     .map(|storage| storage.len())
                     .sum::<usize>();
+
                 debug!(
-                    "Downloaded {n_storages} storages ({n_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
+                    "Downloaded {downloaded_account_storages} storages ({downloaded_slots} slots) from peer {peer_id} (current count: {downloaded_count})"
                 );
-                downloaders.entry(peer_id).and_modify(|downloader_is_free| {
-                    *downloader_is_free = true;
-                });
+
                 if account_storages.len() == 1 {
                     // We downloaded a big storage account
                     all_account_storages[start_index].extend(account_storages.remove(0));
                 } else {
-                    for (i, storage) in account_storages.into_iter().enumerate() {
-                        all_account_storages[start_index + i] = storage;
+                    for (i, account_storage) in account_storages.into_iter().enumerate() {
+                        all_account_storages[start_index + i] = account_storage;
                     }
                 }
             }
@@ -1389,6 +1494,7 @@ impl PeerHandler {
                 .get_peer_channels(&SUPPORTED_SNAP_CAPABILITIES)
                 .await;
 
+            // Refresh downloaders
             for (peer_id, _peer_channels) in &peer_channels {
                 if downloaders.contains_key(peer_id) {
                     continue;
@@ -1421,6 +1527,7 @@ impl PeerHandler {
 
             let (mut free_peer_id, _) = free_downloaders[0];
 
+            // Pick the most convenient free downloader, based on its score
             for (peer_id, _) in free_downloaders.iter() {
                 let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
@@ -1441,28 +1548,35 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some((start, end, start_hash)) = tasks_queue_not_started.pop_front() else {
-                if completed_tasks >= chunk_count {
+            let Some((start, end, start_hash, maybe_big_account_partitioned_end_hash)) =
+                tasks_queue_not_started.pop_front()
+            else {
+                if downloaded_count >= account_storage_roots.len() as u64 {
                     info!("All account storages downloaded successfully");
                     break;
                 }
+                // There are tasks in flight.
                 continue;
             };
 
             let tx = task_sender.clone();
+
             downloaders
                 .entry(free_peer_id)
                 .and_modify(|downloader_is_free| {
                     *downloader_is_free = false;
                 });
+
             debug!("Downloader {free_peer_id} is now busy");
 
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
+
             let size = if !start_hash.is_zero() {
                 1
             } else {
                 end - start
             };
+
             let (chunk_account_hashes, chunk_storage_roots): (Vec<_>, Vec<_>) =
                 account_storage_roots
                     .iter()
@@ -1471,10 +1585,12 @@ impl PeerHandler {
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
 
+            // Downloader task
             tokio::spawn(async move {
                 debug!(
                     "Requesting account range from peer {free_peer_id}, chunk: {start:?} - {end:?}"
                 );
+
                 let empty_task_result = TaskResult {
                     start_index: start,
                     account_storages: Vec::new(),
@@ -1482,25 +1598,32 @@ impl PeerHandler {
                     remaining_start: start,
                     remaining_end: end,
                     remaining_start_hash: start_hash,
+                    remaining_end_hash: None,
+                    should_continue: false,
                 };
+
                 let request_id = rand::random();
+
                 let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
                     id: request_id,
                     root_hash: state_root,
                     account_hashes: chunk_account_hashes,
                     starting_hash: start_hash,
-                    limit_hash: HASH_MAX,
+                    limit_hash: maybe_big_account_partitioned_end_hash.unwrap_or_else(|| HASH_MAX),
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
+
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
+
                 if let Err(err) = (&mut free_downloader_channels_clone.connection)
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
-                    error!("Failed to send message to peer: {err:?}");
+                    error!("Failed to send message to peer {free_peer_id}: {err:?}");
                     tx.send(empty_task_result).await.ok();
                     return;
                 }
+
                 let request_result = tokio::time::timeout(Duration::from_secs(2), async move {
                     loop {
                         match receiver.recv().await {
@@ -1517,41 +1640,49 @@ impl PeerHandler {
                 .await
                 .ok()
                 .flatten();
+
                 let Some((slots, proof)) = request_result else {
-                    tracing::error!("Failed to get storage range");
+                    error!("Failed to get storage range from {free_peer_id}");
                     tx.send(empty_task_result).await.ok();
                     return;
                 };
+
                 if slots.is_empty() {
                     tx.send(empty_task_result).await.ok();
-                    // Too spammy
-                    // tracing::error!("Received empty account range");
+                    // error!("Received empty account range from {free_peer_id}");
                     return;
                 }
+
                 // Check we got some data and no more than the requested amount
                 if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
                     tx.send(empty_task_result).await.ok();
                     return;
                 }
+
                 // Unzip & validate response
                 let proof = encodable_to_proof(&proof);
+
                 let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
                 let mut should_continue = false;
                 // Validate each storage range
                 let mut storage_roots = chunk_storage_roots.into_iter();
+
                 let last_slot_index = slots.len() - 1;
+
                 for (i, next_account_slots) in slots.into_iter().enumerate() {
                     // We won't accept empty storage ranges
                     if next_account_slots.is_empty() {
                         // This shouldn't happen
-                        error!("Received empty storage range, skipping");
+                        error!("Received empty storage range from {free_peer_id}, skipping");
                         tx.send(empty_task_result).await.ok();
                         return;
                     }
+
                     let encoded_values = next_account_slots
                         .iter()
                         .map(|slot| slot.data.encode_to_vec())
                         .collect::<Vec<_>>();
+
                     let hashed_keys: Vec<_> =
                         next_account_slots.iter().map(|slot| slot.hash).collect();
 
@@ -1567,19 +1698,22 @@ impl PeerHandler {
                             &proof,
                         ) else {
                             tx.send(empty_task_result).await.ok();
+                            error!(
+                                "Received invalid account storage range proof from {free_peer_id}"
+                            );
                             return;
                         };
+
                         should_continue = sc;
-                    } else if verify_range(
+                    } else if let Err(err) = verify_range(
                         storage_root,
                         &start_hash,
                         &hashed_keys,
                         &encoded_values,
                         &[],
-                    )
-                    .is_err()
-                    {
+                    ) {
                         tx.send(empty_task_result).await.ok();
+                        error!("Got invalid storage root from {free_peer_id}");
                         return;
                     }
 
@@ -1590,14 +1724,46 @@ impl PeerHandler {
                             .collect(),
                     );
                 }
-                let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
-                    let (last_hash, _) = account_storages.last().unwrap().last().unwrap();
-                    let next_hash_u256 = U256::from_big_endian(&last_hash.0) + 1;
-                    let next_hash = H256::from_uint(&next_hash_u256);
-                    (start + account_storages.len() - 1, end, next_hash)
-                } else {
-                    (start + account_storages.len(), end, H256::zero())
-                };
+
+                let (remaining_start, remaining_end, remaining_start_hash, remaining_end_hash) =
+                    match (should_continue, maybe_big_account_partitioned_end_hash) {
+                        // // Toca continuar sobre algo ya particionado
+                        // // Nuevo remaining start, mismo remaining end
+                        // (true, Some(remaining_end_hash)) => {
+                        //     let (last_hash, _) = account_storages.last().unwrap().last().unwrap();
+                        //     let next_hash_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                        //     let next_hash = H256::from_uint(&next_hash_u256);
+                        //     (start + account_storages.len() - 1, end, next_hash, Some(remaining_end_hash))
+                        // },
+                        // // Se trata de una big account aun no particionada
+                        // (true, None) => {
+                        //     let (last_hash, _) = account_storages.last().unwrap().last().unwrap();
+                        //     let next_hash_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                        //     let next_hash = H256::from_uint(&next_hash_u256);
+                        //     (start + account_storages.len() - 1, end, next_hash, None)
+                        // }
+                        (true, maybe_remaining_end_hash) => {
+                            let (last_hash, _) = account_storages.last().unwrap().last().unwrap();
+                            let next_hash_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                            let next_hash = H256::from_uint(&next_hash_u256);
+                            (
+                                start + account_storages.len() - 1,
+                                end,
+                                next_hash,
+                                maybe_remaining_end_hash,
+                            )
+                        }
+                        // No hay que continuar sobre una tarea particionada
+                        (false, Some(remaining_end_hash)) => (
+                            start + account_storages.len(),
+                            end,
+                            remaining_end_hash,
+                            Some(remaining_end_hash),
+                        ),
+                        // No hay que continuar
+                        (false, None) => (start + account_storages.len(), end, H256::zero(), None),
+                    };
+
                 let task_result = TaskResult {
                     start_index: start,
                     account_storages,
@@ -1605,7 +1771,10 @@ impl PeerHandler {
                     remaining_start,
                     remaining_end,
                     remaining_start_hash,
+                    remaining_end_hash,
+                    should_continue,
                 };
+
                 tx.send(task_result).await.ok();
             });
 
