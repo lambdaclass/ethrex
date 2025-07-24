@@ -103,10 +103,11 @@ impl PeerHandler {
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
+    async fn get_peer_channel_with_highest_score(
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
+        // WARNING: this causes a deadlock if the scores is already locked
         let scores = self.peer_scores.lock().await;
         let (mut free_peer_id, mut free_peer_channel) = self
             .peer_table
@@ -126,6 +127,20 @@ impl PeerHandler {
         }
 
         Some((free_peer_id, free_peer_channel.clone()))
+    }
+
+    /// Returns the node id and the channel ends to an active peer connection that supports the given capability
+    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
+    /// If no peer is found, this method will try again after 10 seconds
+    async fn get_peer_channel_with_retry(
+        &self,
+        capabilities: &[Capability],
+    ) -> Option<(H256, PeerChannels)> {
+        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
+
+        peer_channels.shuffle(&mut rand::rngs::OsRng);
+
+        peer_channels.first().cloned()
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -1972,14 +1987,14 @@ impl PeerHandler {
             let (peer_id, mut peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .ok_or_else(|| { error!("We aren't finding get_peer_channel_with_retry") })
+                .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
                 .expect("############### Error");
             peer_channel
                 .connection
                 .cast(CastMessage::BackendMessage(request.clone()))
                 .await
                 .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
-                .inspect_err(|err| { error!(err) })
+                .inspect_err(|err| error!(err))
                 .expect("############### Error peer_channel connection");
 
             // debug!("(Retry {retries}) Requesting block number {sync_head} to peer {peer_id}");
