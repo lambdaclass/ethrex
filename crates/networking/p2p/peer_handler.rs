@@ -369,12 +369,6 @@ impl PeerHandler {
                     break;
                 }
 
-                let batch_show = downloaded_count / 10_000;
-
-                if current_show < batch_show {
-                    current_show += 1;
-                }
-
                 continue;
             };
 
