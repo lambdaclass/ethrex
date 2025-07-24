@@ -1,16 +1,16 @@
 use crate::{
     metrics::METRICS,
-    peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
+    peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
 };
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
-    BigEndianHash, H256, U256, U512,
+    BigEndianHash, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
-use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
+use ethrex_trie::TrieError;
 use std::{
     array,
     cmp::min,
@@ -20,29 +20,12 @@ use std::{
     },
     time::SystemTime,
 };
-use tokio::{
-    sync::mpsc::error::SendError,
-    time::{Duration, Instant},
-};
+use tokio::{sync::mpsc::error::SendError, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
-/// Max size of bach to start a bytecode fetch request in queues
-const BYTECODE_BATCH_SIZE: usize = 70;
-/// Max size of a bach to start a storage fetch request in queues
-const STORAGE_BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a node fetch request in queues
-const NODE_BATCH_SIZE: usize = 900;
-/// Maximum amount of concurrent paralell fetches for a queue
-const MAX_PARALLEL_FETCHES: usize = 10;
-/// Maximum amount of messages in a channel
-const MAX_CHANNEL_MESSAGES: usize = 500;
-/// Maximum amount of messages to read from a channel at once
-const MAX_CHANNEL_READS: usize = 200;
-/// Pace at which progress is shown via info tracing
-const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
@@ -83,10 +66,6 @@ pub struct Syncer {
     /// No outside process should modify this value, only being modified by the sync cycle
     snap_enabled: Arc<AtomicBool>,
     peers: PeerHandler,
-    /// The last block number used as a pivot for snap-sync
-    /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
-    /// TODO: Reorgs
-    last_snap_pivot: u64,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
@@ -102,7 +81,6 @@ impl Syncer {
         Self {
             snap_enabled,
             peers,
-            last_snap_pivot: 0,
             cancel_token,
             blockchain,
         }
@@ -114,7 +92,6 @@ impl Syncer {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::dummy(),
-            last_snap_pivot: 0,
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
@@ -184,7 +161,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(current_head_number, sync_head)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -318,7 +295,7 @@ impl Syncer {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(current_head_number, sync_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(current_head_number, sync_head)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -940,44 +917,6 @@ impl Syncer {
     }
 }
 
-/// Returns the partial paths to the node's children if they are not already part of the trie state
-fn node_missing_children(
-    node: &Node,
-    parent_path: &Nibbles,
-    trie_state: &dyn TrieDB,
-) -> Result<Vec<Nibbles>, TrieError> {
-    let mut paths = Vec::new();
-    match &node {
-        Node::Branch(node) => {
-            for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && child.get_node(trie_state)?.is_none() {
-                    paths.push(parent_path.append_new(index as u8));
-                }
-            }
-        }
-        Node::Extension(node) => {
-            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
-                paths.push(parent_path.concat(node.prefix.clone()));
-            }
-        }
-        _ => {}
-    }
-    Ok(paths)
-}
-
-fn seconds_to_readable(seconds: U512) -> String {
-    let (days, rest) = seconds.div_mod(U512::from(60 * 60 * 24));
-    let (hours, rest) = rest.div_mod(U512::from(60 * 60));
-    let (minutes, seconds) = rest.div_mod(U512::from(60));
-    if days > U512::zero() {
-        if days > U512::from(15) {
-            return "unknown".to_string();
-        }
-        return format!("Over {days} days");
-    }
-    format!("{hours}h{minutes}m{seconds}s")
-}
-
 #[derive(thiserror::Error, Debug)]
 enum SyncError {
     #[error(transparent)]
@@ -990,8 +929,6 @@ enum SyncError {
     Trie(#[from] TrieError),
     #[error(transparent)]
     Rlp(#[from] RLPDecodeError),
-    #[error("Corrupt path during state healing")]
-    CorruptPath,
     #[error(transparent)]
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]

@@ -126,7 +126,6 @@ impl PeerHandler {
         &self,
         start: u64,
         sync_head: H256,
-        order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
         let start_time = SystemTime::now();
 
@@ -255,7 +254,7 @@ impl PeerHandler {
                 *METRICS.total_header_downloaders.lock().await = downloaders.len() as u64;
             }
 
-            if let Ok((headers, peer_id, peer_channel, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _peer_channel, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
                 if headers.is_empty() {
