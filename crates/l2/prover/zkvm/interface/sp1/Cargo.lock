@@ -1480,6 +1480,7 @@ dependencies = [
 name = "ethrex-common"
 version = "0.1.0"
 dependencies = [
+ "bytecheck",
  "bytes",
  "crc32fast",
  "ethereum-types",
@@ -4445,6 +4446,7 @@ dependencies = [
 name = "zkvm-sp1-program"
 version = "0.1.0"
 dependencies = [
+ "bytecheck",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
@@ -4460,6 +4462,7 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
+ "bytecheck",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",

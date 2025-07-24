@@ -7,7 +7,8 @@ edition = "2024"
 
 [dependencies]
 sp1-zkvm = "=5.0.8"
-rkyv = "0.8.10"
+rkyv = { version = "0.8.10", features = ["bytecheck"] }
+bytecheck = "0.8.1"
 
 zkvm_interface = { path = "../" }
 
