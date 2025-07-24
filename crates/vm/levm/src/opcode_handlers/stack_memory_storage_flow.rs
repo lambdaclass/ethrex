@@ -329,7 +329,7 @@ impl<'a> VM<'a> {
 
     /// Check if the jump destination is valid by:
     ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
-    ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
+    ///   - Ensuring the byte, the 0x5B value, is not part of a
     ///     constant associated with a push instruction.
     fn target_address_is_valid(call_frame: &CallFrame, jump_address: usize) -> bool {
         #[expect(clippy::as_conversions)]
@@ -347,8 +347,7 @@ impl<'a> VM<'a> {
                     .take(diff);
 
                 while let Some((i, op)) = iter.next() {
-                    let op_code = Opcode::from(*op);
-                    if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
+                    if *op >= (Opcode::PUSH1 as u8) && *op <= (Opcode::PUSH32 as u8) {
                         #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
                         let num_bytes = (op - u8::from(Opcode::PUSH0)) as usize;
                         if i.wrapping_add(num_bytes) >= jump_address {
