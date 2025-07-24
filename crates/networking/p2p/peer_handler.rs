@@ -100,15 +100,12 @@ impl PeerHandler {
     /// This is used when the peer returns invalid data or is otherwise unreliable
     async fn record_peer_critical_failure(&self, _peer_id: H256) {}
 
-    /// Returns the node id and the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    /// If no peer is found, this method will try again after 10 seconds
+    /// TODO: docs
     async fn get_peer_channel_with_highest_score(
         &self,
         capabilities: &[Capability],
+        scores: &HashMap<H256, i64>,
     ) -> Option<(H256, PeerChannels)> {
-        // WARNING: this causes a deadlock if the scores is already locked
-        let scores = self.peer_scores.lock().await;
         let (mut free_peer_id, mut free_peer_channel) = self
             .peer_table
             .get_peer_channels(capabilities)
@@ -881,10 +878,11 @@ impl PeerHandler {
 
             const SNAP_LIMIT: u64 = 6;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
+            let scores_cloned = scores.clone();
             while current_unix_time() > time_limit {
                 info!("We are stale, updating pivot");
                 let Some(header) = self
-                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1)
+                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
                     .await
                 else {
                     info!("Received None pivot_header");
@@ -1610,10 +1608,11 @@ impl PeerHandler {
 
             const SNAP_LIMIT: u64 = 6;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
+            let scores_cloned = scores.clone();
             while current_unix_time() > time_limit {
                 info!("We are stale, updating pivot");
                 let Some(header) = self
-                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1)
+                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores_cloned)
                     .await
                 else {
                     info!("Received None pivot_header");
@@ -1972,7 +1971,11 @@ impl PeerHandler {
     // TODO: Implement the logic to remove a peer from the peer table
     pub async fn remove_peer(&self, _peer_id: H256) {}
 
-    pub async fn get_block_header(&self, block_number: u64) -> Option<BlockHeader> {
+    pub async fn get_block_header(
+        &self,
+        block_number: u64,
+        scores: &HashMap<H256, i64>,
+    ) -> Option<BlockHeader> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
@@ -1985,7 +1988,7 @@ impl PeerHandler {
         info!("started get_block_header with number {block_number}");
         for _ in 0..retries {
             let (peer_id, mut peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .get_peer_channel_with_highest_score(&SUPPORTED_ETH_CAPABILITIES, scores)
                 .await
                 .ok_or_else(|| error!("We aren't finding get_peer_channel_with_retry"))
                 .expect("############### Error");
