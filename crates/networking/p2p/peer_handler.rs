@@ -1967,6 +1967,7 @@ impl PeerHandler {
             reverse: false,
         });
         let retries = 5;
+        info!("started get_block_header with number {block_number}");
         for _ in 0..retries {
             let (peer_id, mut peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
@@ -1992,10 +1993,10 @@ impl PeerHandler {
                     }
                 }
                 Ok(_other_msgs) => {
-                    debug!("Received unexpected message from peer {peer_id}");
+                    info!("Received unexpected message from peer {peer_id}");
                 }
                 Err(_err) => {
-                    debug!("Timeout while waiting for sync head from {peer_id}");
+                    info!("Timeout while waiting for sync head from {peer_id}");
                 }
             }
         }
