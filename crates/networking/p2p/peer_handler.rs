@@ -1972,24 +1972,30 @@ impl PeerHandler {
             let (peer_id, mut peer_channel) = self
                 .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
                 .await
-                .unwrap();
+                .ok_or_else(|| { error!("We aren't finding get_peer_channel_with_retry") })
+                .expect("############### Error");
             peer_channel
                 .connection
                 .cast(CastMessage::BackendMessage(request.clone()))
                 .await
                 .map_err(|e| format!("Failed to send message to peer {peer_id}: {e}"))
-                .unwrap();
+                .inspect_err(|err| { error!(err) })
+                .expect("############### Error peer_channel connection");
 
             // debug!("(Retry {retries}) Requesting block number {sync_head} to peer {peer_id}");
             let receiver = peer_channel.receiver.clone();
             match tokio::time::timeout(Duration::from_secs(2), async move {
-                receiver.lock().await.recv().await.unwrap()
+                let foo = receiver.lock().await.recv().await;
+                if foo.is_none() {
+                    error!("############### Error Message");
+                };
+                foo.unwrap()
             })
             .await
             {
                 Ok(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers })) => {
                     if id == request_id && !block_headers.is_empty() {
-                        return Some(block_headers.last().unwrap().clone());
+                        return Some(block_headers.last().expect("############### Error").clone());
                     }
                 }
                 Ok(_other_msgs) => {
