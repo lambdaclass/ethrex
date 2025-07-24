@@ -233,9 +233,16 @@ impl SelectableScroller for BatchesTable {
         self.selected = is_selected;
     }
     fn scroll_up(&mut self) {
-        self.state.scroll_up_by(1);
+        let selected = self.state.selected_mut();
+        *selected = Some(selected.unwrap_or(0).saturating_sub(1))
     }
     fn scroll_down(&mut self) {
-        self.state.scroll_down_by(1);
+        let selected = self.state.selected_mut();
+        *selected = Some(
+            selected
+                .unwrap_or(0)
+                .saturating_add(1)
+                .min(self.items.len().saturating_sub(1)),
+        )
     }
 }

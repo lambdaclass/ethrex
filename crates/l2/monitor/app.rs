@@ -84,24 +84,6 @@ pub struct EthrexMonitor {
     cancellation_token: CancellationToken,
 }
 
-#[derive(Clone, Debug)]
-pub enum CastInMessage {
-    Tick,
-    Event(Event),
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum OutMessage {
-    Done,
-}
-
-#[derive(Clone)]
-pub struct EthrexMonitor {
-    widget: EthrexMonitorWidget,
-    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
-    cancellation_token: CancellationToken,
-}
-
 impl EthrexMonitor {
     pub async fn spawn(
         sequencer_state: SequencerState,
@@ -229,7 +211,7 @@ impl EthrexMonitorWidget {
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
         };
-        monitor.selected_table().selected(true);
+        monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
         Ok(monitor_widget)
     }
