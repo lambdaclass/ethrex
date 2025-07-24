@@ -194,7 +194,7 @@ impl EthrexMonitorWidget {
             logger: Arc::new(
                 TuiWidgetState::new().set_default_display_level(tui_logger::LevelFilter::Info),
             ),
-            node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.based.based),
+            node_status: NodeStatusTable::new(sequencer_state.clone(), cfg.based.enabled),
             mempool: MempoolTable::new(),
             batches_table: BatchesTable::new(cfg.l1_committer.on_chain_proposer_address),
             blocks_table: BlocksTable::new(),

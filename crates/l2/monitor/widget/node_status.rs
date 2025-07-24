@@ -51,7 +51,7 @@ impl NodeStatusTable {
             .get_latest_block_number()
             .await
             .map_err(|_| MonitorError::GetLatestBlock)?;
-        let follower_nodes = l2_client.peer_count().await?;
+        let active_peers = l2_client.peer_count().await?;
 
         Ok([
             ("Last Update:".to_string(), last_update),
@@ -65,7 +65,7 @@ impl NodeStatusTable {
                 last_known_block.to_string(),
             ),
             if is_based {
-                ("Peers:".to_string(), follower_nodes.to_string())
+                ("Peers:".to_string(), active_peers.to_string())
             } else {
                 ("".to_string(), "".to_string())
             },
