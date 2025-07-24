@@ -4,6 +4,10 @@
 
 ### 2025-07-21
 
+- Calculate invalid jump destinations lazily and cache them [#3809](https://github.com/lambdaclass/ethrex/pull/3809)
+
+### 2025-07-21
+
 - Use `rayon` to recover the sender address from transactions [#3709](https://github.com/lambdaclass/ethrex/pull/3709)
 
 ### 2025-07-18
