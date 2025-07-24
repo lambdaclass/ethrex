@@ -14,10 +14,27 @@ jobs:
     # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
     if: github.event.pull_request.head.repo.fork == false
     steps:
-      - name: Checkout Base
+      - name: Checkout PR Code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Find merge base
+        id: find_merge_base
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --depth=100000 origin $HEAD_REF
+          git fetch --depth=100000 origin $BASE_REF
+          MERGE_BASE=$(git merge-base origin/$HEAD_REF origin/$BASE_REF)
+          echo "merge_base=$MERGE_BASE" >> $GITHUB_OUTPUT
+      
+      - name: Checkout merge base commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.find_merge_base.outputs.merge_base }}
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
