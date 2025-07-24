@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753369303455,
+  "lastUpdate": 1753370188143,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5815,6 +5815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 165309285062,
             "range": "± 251370086",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8d7a9096401de0e6ff01c6e66e19513e0c522264",
+          "message": "refactor(l2): improve naming and standardize arguments in l2 tests (#3790)\n\n**Motivation**\n\nCurrently the L2 tests:\n* use unintuitive names (eth_client vs proposer_client, meaning l1 and\nl2)\n* do not have a consistent ordering of parameters\n* are inconsistent on when things (bridge address and rich private key)\nare given as parameter vs obtained from a function\n\n**Description**\n\nThis PR improves that, and gets the \"noisy\" changes out of the way for\nfurther improvements.\n\nThe rich private key was kept as a parameter to allow giving different\nones (in the future, this would allow parallelizing the tests). The\nbridge address now always uses the function, since it won't change in\nthe middle of the test.",
+          "timestamp": "2025-07-24T14:31:19Z",
+          "tree_id": "1923a7ff48eef83a37502db6250daa76a844c694",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8d7a9096401de0e6ff01c6e66e19513e0c522264"
+        },
+        "date": 1753370175014,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 166468929973,
+            "range": "± 462604060",
             "unit": "ns/iter"
           }
         ]
