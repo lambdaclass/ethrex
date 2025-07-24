@@ -98,5 +98,3 @@ harness = false
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }
-ethrex-sdk = { path = "../../crates/l2/sdk" }
-hex.workspace = true

@@ -16,7 +16,6 @@ pub fn compile_contract(
     contract_path: &Path,
     runtime_bin: bool,
     remappings: Option<&[(&str, PathBuf)]>,
-    allow_paths: &[&Path],
 ) -> Result<(), ContractCompilationError> {
     let bin_flag = if runtime_bin {
         "--bin-runtime"
@@ -42,11 +41,13 @@ pub fn compile_contract(
             .to_str()
             .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
     )
-    .arg("--overwrite");
-
-    if !allow_paths.is_empty() {
-        apply_allow_paths(&mut cmd, allow_paths)?;
-    }
+    .arg("--overwrite")
+    .arg("--allow-paths")
+    .arg(
+        output_dir
+            .to_str()
+            .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+    );
 
     let cmd_succeeded = cmd
         .spawn()
@@ -80,22 +81,5 @@ fn apply_remappings(
             cmd.arg(format!("{prefix}={path_str}"));
         }
     }
-    Ok(())
-}
-
-fn apply_allow_paths(
-    cmd: &mut Command,
-    allow_paths: &[&Path],
-) -> Result<(), ContractCompilationError> {
-    cmd.arg("--allow-paths");
-    let joined_paths = allow_paths
-        .iter()
-        .map(|p| {
-            p.to_str()
-                .ok_or(ContractCompilationError::FailedToGetStringFromPath)
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .join(",");
-    cmd.arg(joined_paths);
     Ok(())
 }
