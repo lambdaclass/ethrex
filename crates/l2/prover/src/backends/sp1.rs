@@ -1,3 +1,4 @@
+use rkyv::rancor::Error;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
@@ -68,7 +69,8 @@ pub fn prove(
     aligned_mode: bool,
 ) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
-    stdin.write(&JSONProgramInput(input));
+    let bytes = rkyv::to_bytes::<Error>(&input).unwrap();
+    stdin.write_slice(bytes.as_slice());
 
     let setup = &*PROVER_SETUP;
 
