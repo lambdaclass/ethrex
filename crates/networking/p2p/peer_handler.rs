@@ -1411,8 +1411,9 @@ impl PeerHandler {
                             let end_hash = if i == chunk_count - 1 {
                                 H256::repeat_byte(0xff)
                             } else {
-                                let end_hash_u256 =
-                                    start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
+                                let end_hash_u256 = start_hash_u256
+                                    .checked_add(chunk_size - 1)
+                                    .unwrap_or(U256::MAX);
                                 H256::from_uint(&end_hash_u256)
                             };
 
