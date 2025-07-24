@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753375353619,
+  "lastUpdate": 1753376666010,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12392,6 +12392,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007670873563218391,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7c3fffcd507ef0deb49e61a45535d6e6db0366be",
+          "message": "chore(l2): bump sp1 version to 5.0.8 (#3737)\n\n**Motivation**\n\nSome PRs that updated the Cargo.lock and bumped sp1 to 5.0.8 were\nfailing because sp1up was installing version 5.0.0.\n\n**Description**\n\n- Bump and lock all versions of sp1 to 5.0.8",
+          "timestamp": "2025-07-24T14:58:11Z",
+          "tree_id": "61796f6914bb141eccf48801f6433f68534c9961",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7c3fffcd507ef0deb49e61a45535d6e6db0366be"
+        },
+        "date": 1753376665543,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.0013888990634755463,
             "unit": "Mgas/s"
           }
         ]
