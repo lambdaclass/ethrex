@@ -302,7 +302,7 @@ impl CallFrame {
         memory: Memory,
     ) -> Self {
         let invalid_jump_destinations =
-            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
+            Box::default();
         // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
             gas_limit,
@@ -354,7 +354,7 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
+        //self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
         self.bytecode = code;
         Ok(())
     }

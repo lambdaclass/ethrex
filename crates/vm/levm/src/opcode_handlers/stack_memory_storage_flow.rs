@@ -335,11 +335,32 @@ impl<'a> VM<'a> {
         #[expect(clippy::as_conversions)]
         call_frame.bytecode.get(jump_address).is_some_and(|&value| {
             // It's a constant, therefore the conversion cannot fail.
-            value == Opcode::JUMPDEST as u8
-                && call_frame
-                    .invalid_jump_destinations
-                    .binary_search(&jump_address)
-                    .is_err()
+            value == Opcode::JUMPDEST as u8 && {
+                let start_search = jump_address.saturating_sub(32);
+                let diff = jump_address.abs_diff(start_search);
+
+                let mut iter = call_frame
+                    .bytecode
+                    .iter()
+                    .enumerate()
+                    .skip(start_search)
+                    .take(diff);
+
+                while let Some((i, op)) = iter.next() {
+                    let op_code = Opcode::from(*op);
+                    if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
+                        #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+                        let num_bytes = (op - u8::from(Opcode::PUSH0)) as usize;
+                        if i.wrapping_add(num_bytes) >= jump_address {
+                            return false;
+                        }
+                        for _ in 0..num_bytes {
+                            iter.next();
+                        }
+                    }
+                }
+                true
+            }
         })
     }
 
