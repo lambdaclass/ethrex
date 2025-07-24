@@ -324,7 +324,7 @@ impl Syncer {
 
                 let (storages_key_value_pairs, should_continue) = self
                     .peers
-                    .request_storage_ranges(pivot_header.state_root, account_storage_roots.clone())
+                    .request_storage_ranges(pivot_header, account_storage_roots.clone())
                     .await
                     .unwrap();
 
@@ -363,7 +363,6 @@ impl Syncer {
                 let account_store_time =
                     Instant::now().saturating_duration_since(account_store_start);
 
-                info!("Expected state root: {:?}", pivot_header.state_root);
                 info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
 
                 let storages_store_start = Instant::now();

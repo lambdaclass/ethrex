@@ -884,7 +884,7 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let state_root = pivot_header.state_root.clone();
+            let state_root = pivot_header.state_root;
             const SNAP_LIMIT: u64 = 6;
             let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
             while current_unix_time() > time_limit {
@@ -1317,7 +1317,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        state_root: H256,
+        mut pivot_header: BlockHeader,
         account_storage_roots: Vec<(H256, H256)>,
     ) -> Option<(Vec<Vec<(H256, U256)>>, bool)> {
         const MAX_STORAGE_REQUEST_SIZE: usize = 200;
@@ -1531,6 +1531,26 @@ impl PeerHandler {
                     .take((size).min(MAX_STORAGE_REQUEST_SIZE))
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
+
+            let state_root = pivot_header.state_root;
+            const SNAP_LIMIT: u64 = 6;
+            let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
+            while current_unix_time() > time_limit {
+                info!("We are stale, updating pivot");
+                let Some(header) = self
+                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1)
+                    .await
+                else {
+                    info!("Received None pivot_header");
+                    continue;
+                };
+                pivot_header = header;
+                info!(
+                    "New pivot block number: {}, header: {:?}",
+                    pivot_header.number, pivot_header
+                );
+                time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
+            }
 
             tokio::spawn(async move {
                 debug!(
