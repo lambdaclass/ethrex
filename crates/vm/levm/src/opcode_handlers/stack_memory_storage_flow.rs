@@ -5,6 +5,7 @@ use crate::{
     gas_cost::{self, SSTORE_STIPEND},
     memory::calculate_memory_size,
     opcodes::Opcode,
+    utils::get_invalid_jump_destinations,
     vm::VM,
 };
 use ethrex_common::{
@@ -335,11 +336,18 @@ impl<'a> VM<'a> {
         #[expect(clippy::as_conversions)]
         call_frame.bytecode.get(jump_address).is_some_and(|&value| {
             // It's a constant, therefore the conversion cannot fail.
-            value == Opcode::JUMPDEST as u8
-                && call_frame
-                    .invalid_jump_destinations
+            value == Opcode::JUMPDEST as u8 && {
+                let mut cache = call_frame.invalid_jump_destinations_cache.borrow_mut();
+
+                let invalid_jump_destinations =
+                    cache.entry(call_frame.code_address).or_insert_with(|| {
+                        get_invalid_jump_destinations(&call_frame.bytecode).unwrap_or_default()
+                    });
+
+                invalid_jump_destinations
                     .binary_search(&jump_address)
                     .is_err()
+            }
         })
     }
 

@@ -753,6 +753,7 @@ impl<'a> VM<'a> {
             0,
             stack,
             next_memory,
+            self.jump_cache.clone()
         );
         self.call_frames.push(new_call_frame);
 
@@ -832,6 +833,7 @@ impl<'a> VM<'a> {
             ret_size,
             stack,
             next_memory,
+            self.jump_cache.clone()
         );
         self.call_frames.push(new_call_frame);
 

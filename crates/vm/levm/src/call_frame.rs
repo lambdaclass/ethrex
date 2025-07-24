@@ -2,15 +2,17 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
-    utils::{get_invalid_jump_destinations, restore_cache_state},
+    utils::restore_cache_state,
     vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{Address, U256, types::Account};
 use keccak_hash::H256;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     fmt,
+    rc::Rc,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -230,7 +232,7 @@ pub struct CallFrame {
     pub depth: usize,
     /// Sorted blacklist of jump targets. Contains all offsets of 0x5B (JUMPDEST) in literals (after
     /// push instructions).
-    pub invalid_jump_destinations: Box<[usize]>,
+    pub invalid_jump_destinations_cache: Rc<RefCell<BTreeMap<Address, Box<[usize]>>>>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
@@ -300,9 +302,8 @@ impl CallFrame {
         ret_size: usize,
         stack: Stack,
         memory: Memory,
+        invalid_jump_destinations_cache: Rc<RefCell<BTreeMap<Address, Box<[usize]>>>>,
     ) -> Self {
-        let invalid_jump_destinations =
-            get_invalid_jump_destinations(&bytecode).unwrap_or_default();
         // Note: Do not use ..Default::default() because it has runtime cost.
         Self {
             gas_limit,
@@ -315,7 +316,7 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            invalid_jump_destinations,
+            invalid_jump_destinations_cache,
             should_transfer_value,
             is_create,
             ret_offset,
@@ -354,7 +355,6 @@ impl CallFrame {
     }
 
     pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
-        self.invalid_jump_destinations = get_invalid_jump_destinations(&code)?;
         self.bytecode = code;
         Ok(())
     }
