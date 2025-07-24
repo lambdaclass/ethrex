@@ -7,9 +7,7 @@ sp1_zkvm::entrypoint!(main);
 
 pub fn main() {
     let input = sp1_zkvm::io::read_vec();
-    eprintln!("{}", input.len());
-    let output =
-        execution_program(rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap()).unwrap();
-
+    let input = unsafe { rkyv::from_bytes_unchecked::<ProgramInput, Error>(&input).unwrap() };
+    let output = execution_program(input).unwrap();
     sp1_zkvm::io::commit(&output.encode());
 }
