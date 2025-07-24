@@ -11,7 +11,7 @@ The simplest task a node can do is import blocks offline. We would do so like th
 cargo build --release --bin ethrex
 
 # Execute the import
-./target/release/ethrex --network cmd/ethrex/networks/hoodi/genesis.json import test_data/hoodi-blocks-first-thousand.rlp
+./target/release/ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
 ```
 
 - The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like holesky. This is the starting state of the blockchain.
