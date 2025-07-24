@@ -1754,7 +1754,7 @@ impl PeerHandler {
                 debug!("Failed to send message to peer: {err:?}");
                 continue;
             }
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            if let Some(nodes) = tokio::time::timeout(Duration::from_secs(7), async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
