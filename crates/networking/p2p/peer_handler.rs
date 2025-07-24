@@ -1604,7 +1604,7 @@ impl PeerHandler {
                         start_index: start,
                         account_storages: chunk_account_hashes.iter().map(|_| vec![]).collect(),
                         peer_id: free_peer_id,
-                        remaining_start: start + chunk_account_hashes.len(),
+                        remaining_start: end,
                         remaining_end: end,
                         remaining_start_hash: H256::zero(),
                     };
