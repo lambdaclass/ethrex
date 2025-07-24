@@ -30,28 +30,54 @@ const COINBASE: H160 = H160([0x77; 20]);
 
 #[derive(Parser)]
 struct Cli {
-    #[arg(long, help = "Path to the input JSON file")]
+    #[arg(long, short, help = "Path to the input JSON file")]
     input: Option<String>,
 
-    #[arg(long, help = "Path to the bytecode file")]
+    #[arg(long, short, help = "Path to the bytecode/mnemonics file to execute")]
     code: Option<String>,
 
     #[arg(long, short, action = clap::ArgAction::SetTrue, help = "Enable verbose logging")]
     verbose: bool,
+
+    #[arg(
+        long,
+        short = 'b',
+        help = "Converts mnemonics file into a bytecode file"
+    )]
+    emit_bytes: Option<String>,
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    if cli.input.is_none() && cli.code.is_none() {
-        error!("Error: Either --input or --code must be provided.");
-        return;
-    }
-
     let log_level = if cli.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level))
         .format(|buf, record| writeln!(buf, "{}", record.args()))
         .init();
+
+    // Subcommand for just converting mnemonics to bytecode without executing
+    if let Some(mnemonics_path) = cli.emit_bytes {
+        let file_content =
+            fs::read_to_string(&mnemonics_path).expect("Failed to read bytecode file");
+
+        let mnemonics = file_content
+            .split_ascii_whitespace()
+            .map(String::from)
+            .collect();
+        // We convert to Bytes and then to String just because of convenience
+        // We could change the logic so that it is Mnemonic -> String -> Bytes (and here skip the last step) but it's unimportant IMO
+        let bytecode = mnemonics_to_bytecode(mnemonics);
+        let hex_string = format!("0x{}", hex::encode(&bytecode));
+
+        let output_path = format!("{}_bytes.txt", mnemonics_path.trim_end_matches(".txt"));
+        let mut output_file = File::create(&output_path).expect("Failed to create output file");
+        output_file
+            .write_all(hex_string.as_bytes())
+            .expect("Failed to write bytecode to file");
+
+        info!("Bytecode emitted to file: {}", output_path);
+        return;
+    }
 
     // Parse input
     // Input is mutable just to assign bytecode to the transaction recipient if provided
@@ -66,20 +92,35 @@ fn main() {
         RunnerInput::default()
     };
 
-    let mnemonics: Vec<String> = if let Some(code_file_path) = cli.code {
-        debug!("Reading mnemonics file: {}", code_file_path);
-        fs::read_to_string(&code_file_path)
-            .expect("Failed to read bytecode file")
+    // Parse bytecode, either from raw bytecode or mnemonics.
+    let bytecode: Bytes = if let Some(code_file_path) = cli.code {
+        debug!("Reading file: {}", code_file_path);
+        let file_content =
+            fs::read_to_string(&code_file_path).expect("Failed to read bytecode file");
+
+        let strings: Vec<String> = file_content
             .split_ascii_whitespace()
             .map(String::from)
-            .collect()
+            .collect();
+        // We interpret as bytecode if there's only one string and that string is not an opcode
+        // Otherwise, if there are multiple strings or if the string is for example ADD we'll know it's mnemonics
+        let bytecode = if strings.len() == 1 && strings[0].parse::<Opcode>().is_err() {
+            debug!("Decoding raw bytecode");
+            let code = strings[0].trim_start_matches("0x");
+            Bytes::from(hex::decode(code).expect("Failed to decode hex string"))
+        } else {
+            debug!("Parsing mnemonics");
+            mnemonics_to_bytecode(strings)
+        };
+
+        debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
+
+        bytecode
     } else {
-        vec![]
+        debug!("No code file provided, using the bytecode set in the input pre-state.");
+        // If bytecode is empty bytes then it won't be assigned to the contract during the setup
+        Bytes::new()
     };
-
-    let bytecode = mnemonics_to_bytecode(mnemonics);
-
-    debug!("Final bytecode: 0x{}", hex::encode(bytecode.clone()));
 
     // Now we want to initialize the VM, so we set up the environment and database.
     // Env

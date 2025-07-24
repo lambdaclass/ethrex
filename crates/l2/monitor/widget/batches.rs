@@ -14,6 +14,8 @@ use crate::{
     sequencer::errors::MonitorError,
 };
 
+const BATCH_WINDOW_SIZE: usize = 50;
+
 #[derive(Clone)]
 pub struct BatchLine {
     number: u64,
@@ -51,10 +53,11 @@ impl BatchesTable {
             rollup_store,
         )
         .await?;
-        new_latest_batches.truncate(50);
+        new_latest_batches.truncate(BATCH_WINDOW_SIZE);
 
         let n_new_latest_batches = new_latest_batches.len();
-        self.items.truncate(50 - n_new_latest_batches);
+        self.items
+            .truncate(BATCH_WINDOW_SIZE - n_new_latest_batches);
         self.refresh_items(rollup_store).await?;
         self.items.extend_from_slice(&new_latest_batches);
         self.items.rotate_right(n_new_latest_batches);
@@ -67,26 +70,26 @@ impl BatchesTable {
             return Ok(());
         }
 
-        let mut from = self
-            .items
-            .last()
-            .ok_or(MonitorError::NoItemsInTable)?
-            .number
-            - 1;
+        let mut refreshed_batches = Vec::new();
 
-        let refreshed_batches = Self::get_batches(
-            &mut from,
-            self.items
-                .first()
-                .ok_or(MonitorError::NoItemsInTable)?
-                .number,
-            rollup_store,
-        )
-        .await?;
+        for batch in self.items.iter() {
+            if batch.commit_tx.is_some() && batch.verify_tx.is_some() {
+                refreshed_batches.push(batch.clone());
+            } else {
+                let batch_number = batch.number;
+                let new_batch = rollup_store
+                    .get_batch(batch_number)
+                    .await
+                    .map_err(|e| MonitorError::GetBatchByNumber(batch_number, e))?
+                    .ok_or(MonitorError::BatchNotFound(batch_number))?;
 
-        let refreshed_items = Self::process_batches(refreshed_batches).await;
+                refreshed_batches.push(Self::process_batch(&new_batch));
+            }
+        }
 
-        self.items = refreshed_items;
+        Self::reorder_batches(&mut refreshed_batches);
+
+        self.items = refreshed_batches;
 
         Ok(())
     }
@@ -102,10 +105,18 @@ impl BatchesTable {
             .await
             .map_err(|_| MonitorError::GetLatestBatch)?;
 
+        *last_l2_batch_fetched = (*last_l2_batch_fetched).max(
+            last_l2_batch_number.saturating_sub(
+                BATCH_WINDOW_SIZE
+                    .try_into()
+                    .map_err(|_| MonitorError::BatchWindow)?,
+            ),
+        );
+
         let new_batches =
             Self::get_batches(last_l2_batch_fetched, last_l2_batch_number, rollup_store).await?;
 
-        Ok(Self::process_batches(new_batches).await)
+        Ok(Self::process_batches(new_batches))
     }
 
     async fn get_batches(
@@ -130,19 +141,27 @@ impl BatchesTable {
         Ok(new_batches)
     }
 
-    async fn process_batches(new_batches: Vec<Batch>) -> Vec<BatchLine> {
+    fn process_batch(batch: &Batch) -> BatchLine {
+        BatchLine {
+            number: batch.number,
+            block_count: batch.last_block - batch.first_block + 1,
+            message_count: batch.message_hashes.len(),
+            commit_tx: batch.commit_tx,
+            verify_tx: batch.verify_tx,
+        }
+    }
+
+    fn reorder_batches(new_blocks_processed: &mut [BatchLine]) {
+        new_blocks_processed.sort_by(|a, b| b.number.cmp(&a.number));
+    }
+
+    fn process_batches(new_batches: Vec<Batch>) -> Vec<BatchLine> {
         let mut new_blocks_processed = new_batches
             .iter()
-            .map(|batch| BatchLine {
-                number: batch.number,
-                block_count: batch.last_block - batch.first_block + 1,
-                message_count: batch.message_hashes.len(),
-                commit_tx: batch.commit_tx,
-                verify_tx: batch.verify_tx,
-            })
+            .map(Self::process_batch)
             .collect::<Vec<_>>();
 
-        new_blocks_processed.sort_by(|a, b| b.number.cmp(&a.number));
+        Self::reorder_batches(&mut new_blocks_processed);
 
         new_blocks_processed
     }
