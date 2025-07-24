@@ -10776,9 +10776,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-build"
-version = "5.0.0"
+version = "5.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62ef25d7c5d6f3a8fb695c57a248abfc7627eaab3a663b89edc3ceafee593cd0"
+checksum = "88d96525859507f33edf4389c16470d21f6515d33ae7a2c73d5fb0aea36f5aba"
 dependencies = [
  "anyhow",
  "cargo_metadata 0.18.1",
@@ -11147,9 +11147,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-sdk"
-version = "5.0.4"
+version = "5.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e05659d72bc760a14e2a9fb801075d5577453318316b2bd1998e0d2781cbc1b"
+checksum = "bb6f73c5efb1f55c0b6dca8a9427124eff4e36bd57108a96a7eb5a6034cf61a1"
 dependencies = [
  "alloy-primitives 1.3.0",
  "anyhow",
