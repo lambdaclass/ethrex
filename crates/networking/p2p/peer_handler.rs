@@ -1711,7 +1711,7 @@ impl PeerHandler {
         *METRICS.free_storages_downloaders.lock().await = downloaders.len() as u64;
 
         let total_slots = all_account_storages.iter().map(|s| s.len()).sum::<usize>();
-        info!("Finished downloading account ranges, total storage slots: {total_slots}");
+        info!("Finished downloading storage ranges, total storage slots: {total_slots}");
 
         Some((all_account_storages, false))
     }
