@@ -27,7 +27,7 @@ pub enum Error {
     ZkvmDyn(#[from] anyhow::Error),
 }
 
-pub fn execute(input: ProgramInput) -> Result<(), Error> {
+pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let env = ExecutorEnv::builder()
         .write(&JSONProgramInput(input))?
         .build()?;
@@ -40,7 +40,10 @@ pub fn execute(input: ProgramInput) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput, _aligned_mode: bool) -> Result<Receipt, Error> {
+pub fn prove(
+    input: ProgramInput,
+    _aligned_mode: bool,
+) -> Result<Receipt, Box<dyn std::error::Error>> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -62,8 +65,11 @@ pub fn verify(receipt: &Receipt) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn to_batch_proof(proof: Receipt, _aligned_mode: bool) -> Result<BatchProof, Error> {
-    to_calldata(proof).map(BatchProof::ProofCalldata)
+pub fn to_batch_proof(
+    proof: Receipt,
+    _aligned_mode: bool,
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
+    Ok(to_calldata(proof).map(BatchProof::ProofCalldata)?)
 }
 
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {

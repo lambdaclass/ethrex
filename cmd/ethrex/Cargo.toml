@@ -78,6 +78,8 @@ rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 rollup_storage_sql = ["ethrex-storage-rollup/sql"]
 sync-test = []
 sp1 = ["ethrex-prover/sp1"]
+gpu = ["ethrex-prover/gpu"]
+risc0 = ["ethrex-prover/risc0"]
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = [

@@ -13,7 +13,7 @@ use ethrex_l2::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::config::ProverConfig;
+use ethrex_prover_lib::{backends::Backend, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -679,6 +679,14 @@ pub struct MonitorOptions {
 #[derive(Parser)]
 pub struct ProverClientOptions {
     #[arg(
+        long = "backend",
+        env = "PROVER_CLIENT_BACKEND",
+        default_value = "exec",
+        help_heading = "Prover client options",
+        value_enum
+    )]
+    pub backend: Backend,
+    #[arg(
         long = "http.addr",
         value_name = "IP_ADDRESS",
         env = "PROVER_CLIENT_PROVER_CLIENT_ADDRESS",
@@ -724,6 +732,7 @@ pub struct ProverClientOptions {
 impl From<ProverClientOptions> for ProverConfig {
     fn from(config: ProverClientOptions) -> Self {
         Self {
+            backend: config.backend,
             http_addr: config.http_addr,
             http_port: config.http_port,
             proving_time_ms: config.proving_time_ms,
@@ -740,6 +749,7 @@ impl Default for ProverClientOptions {
             proving_time_ms: 5000,
             log_level: Level::INFO,
             aligned: false,
+            backend: Backend::Exec,
         }
     }
 }
