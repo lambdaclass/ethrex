@@ -838,7 +838,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
@@ -884,7 +884,6 @@ impl PeerHandler {
                 });
             debug!("Downloader {free_peer_id} is now busy");
 
-            let state_root = state_root.clone();
             let mut free_downloader_channels_clone = free_downloader_channels.clone();
             tokio::spawn(async move {
                 debug!(
@@ -899,7 +898,8 @@ impl PeerHandler {
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = free_downloader_channels_clone
+                    .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -1143,7 +1143,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
@@ -1215,7 +1215,8 @@ impl PeerHandler {
                     bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = free_downloader_channels_clone
+                    .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
@@ -1457,7 +1458,7 @@ impl PeerHandler {
                             let task = Task {
                                 start_index: remaining_start,
                                 end_index: remaining_start + 1,
-                                start_hash: start_hash,
+                                start_hash,
                                 end_hash: Some(end_hash),
                             };
                             tasks_queue_not_started.push_back(task);
@@ -1553,7 +1554,7 @@ impl PeerHandler {
             let (mut free_peer_id, _) = free_downloaders[0];
 
             for (peer_id, _) in free_downloaders.iter() {
-                let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+                let peer_id_score = scores.get(peer_id).unwrap_or(&0);
                 let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
                 if peer_id_score >= max_peer_id_score {
                     free_peer_id = *peer_id;
@@ -1621,7 +1622,8 @@ impl PeerHandler {
                     response_bytes: MAX_RESPONSE_BYTES,
                 });
                 let mut receiver = free_downloader_channels_clone.receiver.lock().await;
-                if let Err(err) = (&mut free_downloader_channels_clone.connection)
+                if let Err(err) = free_downloader_channels_clone
+                    .connection
                     .cast(CastMessage::BackendMessage(request))
                     .await
                 {
