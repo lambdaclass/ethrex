@@ -42,17 +42,14 @@ impl Default for PostCheckResult {
         }
     }
 }
-#[derive(Debug, Clone)]
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccountMismatch {
     pub address: Address,
-    pub expected_balance: U256,
-    pub actual_balance: U256,
-    pub expected_nonce: u64,
-    pub actual_nonce: u64,
-    pub expected_code: Bytes,
-    pub actual_code: Bytes,
-    pub expected_storage: HashMap<U256, U256>,
-    pub actual_storage: BTreeMap<H256, U256>,
+    pub balance_diff: Option<(U256, U256)>,
+    pub nonce_diff: Option<(u64, u64)>,
+    pub code_diff: Option<(Bytes, Bytes)>,
+    pub storage_diff: Option<(HashMap<U256, U256>, BTreeMap<H256, U256>)>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
@@ -298,6 +295,7 @@ fn verify_matching_accounts(
     actual_account: &Account,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
+    let mut account_mismatch = AccountMismatch::default();
     let code_matches = actual_account.code == expected_account.code;
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
@@ -314,19 +312,28 @@ fn verify_matching_accounts(
         }
     }
 
-    if !(code_matches && balance_matches && nonce_matches && storage_matches) {
-        let account_mismatch = AccountMismatch {
-            address: addr,
-            expected_balance: expected_account.balance,
-            actual_balance: actual_account.info.balance,
-            expected_nonce: expected_account.nonce,
-            actual_nonce: actual_account.info.nonce,
-            expected_code: expected_account.code.clone(),
-            actual_code: actual_account.code.clone(),
-            expected_storage: expected_account.storage.clone(),
-            actual_storage: actual_account.storage.clone(),
-        };
-        return Some(account_mismatch);
+    if !code_matches {
+        account_mismatch.code_diff =
+            Some((expected_account.code.clone(), actual_account.code.clone()));
     }
-    None
+    if !balance_matches {
+        account_mismatch.balance_diff =
+            Some((expected_account.balance, actual_account.info.balance));
+    }
+    if !nonce_matches {
+        account_mismatch.nonce_diff = Some((expected_account.nonce, actual_account.info.nonce));
+    }
+    if !storage_matches {
+        account_mismatch.storage_diff = Some((
+            expected_account.storage.clone(),
+            actual_account.storage.clone(),
+        ));
+    }
+
+    if account_mismatch != AccountMismatch::default() {
+        account_mismatch.address = addr;
+        Some(account_mismatch)
+    } else {
+        None
+    }
 }

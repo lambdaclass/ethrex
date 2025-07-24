@@ -87,17 +87,39 @@ impl fmt::Display for PostCheckResult {
             for acc_mismatch in account_mismatches {
                 writeln!(
                     f,
-                    "  ERR - ACCOUNT STATE MISMATCH:\n    Address: {:?}\n     Expected balance: {:?}\n     Actual   balance: {:?}\n     Expected nonce: {:?}\n     Actual   nonce: {:?}\n     Expected code: 0x{}\n     Actual   code: 0x{}\n     Expected storage: {:?}\n     Actual   storage: {:?}",
+                    "  ERR - ACCOUNT STATE MISMATCH:\n    Address: {:?}\n",
                     acc_mismatch.address,
-                    acc_mismatch.expected_balance,
-                    acc_mismatch.actual_balance,
-                    acc_mismatch.expected_nonce,
-                    acc_mismatch.actual_nonce,
-                    hex::encode(acc_mismatch.expected_code),
-                    hex::encode(acc_mismatch.actual_code),
-                    acc_mismatch.expected_storage,
-                    acc_mismatch.actual_storage
                 )?;
+                if let Some(balance_diff) = acc_mismatch.balance_diff {
+                    writeln!(
+                        f,
+                        "     Expected balance: {:?}\n     Actual   balance: {:?}\n",
+                        balance_diff.0, balance_diff.1
+                    )?;
+                }
+                if let Some(nonce_diff) = acc_mismatch.nonce_diff {
+                    writeln!(
+                        f,
+                        "     Expected nonce: {:?}\n     Actual   nonce: {:?}\n",
+                        nonce_diff.0, nonce_diff.1
+                    )?;
+                }
+                if let Some(code_diff) = acc_mismatch.code_diff {
+                    writeln!(
+                        f,
+                        "     Expected code: 0x{}\n     Actual   code: 0x{}\n",
+                        hex::encode(code_diff.0),
+                        hex::encode(code_diff.1)
+                    )?;
+                }
+
+                if let Some(storage_diff) = acc_mismatch.storage_diff {
+                    writeln!(
+                        f,
+                        "     Expected storage: {:?}\n     Actual   storage: {:?}",
+                        storage_diff.0, storage_diff.1
+                    )?;
+                }
             }
         }
 
