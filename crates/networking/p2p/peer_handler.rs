@@ -1262,6 +1262,7 @@ impl PeerHandler {
         // list of tasks to be executed
         // Types are (start_index, end_index, starting_hash)
         // NOTE: end_index is NOT inclusive
+        #[derive(Debug)]
         struct Task {
             start_index: usize,
             end_index: usize,
@@ -1290,6 +1291,7 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
         let mut all_account_storages = vec![vec![]; account_storage_roots.len()];
 
+        #[derive(Debug)]
         struct TaskResult {
             start_index: usize,
             account_storages: Vec<Vec<(H256, U256)>>,
@@ -1341,6 +1343,13 @@ impl PeerHandler {
                     remaining_end,
                     remaining_hash_range: (hash_start, hash_end),
                 } = result;
+                if task_count - completed_tasks < 30 {
+                    info!(
+                        "Received result for account_hash: {}, account storages: {}, peer id: {peer_id}, remaining start: {remaining_start}, remaining end: {remaining_end}, hash range: {hash_start:?} - {hash_end:?}",
+                        account_storage_roots[start_index].0,
+                        account_storages.len(),
+                    );
+                }
                 completed_tasks += 1;
 
                 downloaders.entry(peer_id).and_modify(|downloader_is_free| {
@@ -1542,6 +1551,14 @@ impl PeerHandler {
                     .take(task.end_index - task.start_index)
                     .map(|(hash, root)| (*hash, *root))
                     .unzip();
+
+            if task_count - completed_tasks < 30 {
+                info!(
+                    "Assigning task: {task:?}, account_hash: {}, storage_root: {}",
+                    chunk_account_hashes.first().unwrap_or(&H256::zero()),
+                    chunk_storage_roots.first().unwrap_or(&H256::zero()),
+                );
+            }
 
             tokio::spawn(async move {
                 let start = task.start_index;
