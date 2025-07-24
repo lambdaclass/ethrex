@@ -17,7 +17,7 @@ use crate::{
     vm::{Substate, VM, VMType},
 };
 use ExceptionalHalt::OutOfGas;
-use bytes::Bytes;
+use bytes::{Bytes, buf::IntoIter};
 use ethrex_common::{
     Address, H256, U256,
     types::{Fork, tx_fields::*},
@@ -35,7 +35,10 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    iter::Enumerate,
+};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -96,29 +99,78 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
-/// Generates blacklist of jump destinations given some bytecode.
-/// This is a necessary calculation because of PUSH opcodes.
-/// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
-/// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
-    let mut address_blacklist = Vec::new();
+#[derive(Debug)]
+pub struct JumpTargetFilter {
+    filter: Vec<usize>,
+    offset: usize,
 
-    let mut iter = code.iter().enumerate();
-    while let Some((_, &value)) = iter.next() {
-        let op_code = Opcode::from(value);
-        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
-            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
-            let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
-            address_blacklist.extend(
-                (&mut iter)
-                    .take(num_bytes)
-                    .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
-            );
+    iter: Enumerate<IntoIter<Bytes>>,
+    partial: usize,
+}
+
+impl JumpTargetFilter {
+    pub fn new(bytecode: Bytes) -> Self {
+        Self {
+            filter: Vec::new(),
+            offset: 0,
+
+            iter: bytecode.into_iter().enumerate(),
+            partial: 0,
         }
     }
 
-    Ok(address_blacklist.into_boxed_slice())
+    pub fn is_blacklisted(&mut self, address: usize) -> bool {
+        if let Some(delta) = address.checked_sub(self.offset) {
+            // It is not realistic to expect a bytecode offset to overflow an `usize`.
+            #[expect(clippy::arithmetic_side_effects)]
+            for (offset, value) in (&mut self.iter).take(delta + 1) {
+                match self.partial.checked_sub(1) {
+                    None => {
+                        // Neither the `as` conversions nor the subtraction can fail here.
+                        #[expect(clippy::as_conversions)]
+                        if (Opcode::PUSH1..=Opcode::PUSH32).contains(&Opcode::from(value)) {
+                            self.partial = value as usize - Opcode::PUSH0 as usize;
+                        }
+                    }
+                    Some(partial) => {
+                        self.partial = partial;
+
+                        #[expect(clippy::as_conversions)]
+                        if value == Opcode::JUMPDEST as u8 {
+                            self.filter.push(offset);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.filter.binary_search(&address).is_ok()
+    }
 }
+
+// /// Generates blacklist of jump destinations given some bytecode.
+// /// This is a necessary calculation because of PUSH opcodes.
+// /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
+// /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
+// pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
+//     let mut address_blacklist = Vec::new();
+
+//     let mut iter = code.iter().enumerate();
+//     while let Some((_, &value)) = iter.next() {
+//         let op_code = Opcode::from(value);
+//         if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
+//             #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+//             let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
+//             address_blacklist.extend(
+//                 (&mut iter)
+//                     .take(num_bytes)
+//                     .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
+//             );
+//         }
+//     }
+
+//     Ok(address_blacklist.into_boxed_slice())
+// }
 
 // ================== Backup related functions =======================
 
