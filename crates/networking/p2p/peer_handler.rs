@@ -1284,7 +1284,7 @@ impl PeerHandler {
                     };
                     tx.send(result).await.ok();
                 } else {
-                    tracing::error!("Failed to get account range");
+                    tracing::error!("Failed to get bytecode");
                     tx.send(empty_task_result).await.ok();
                 }
             });
@@ -1599,7 +1599,7 @@ impl PeerHandler {
                 .ok()
                 .flatten();
                 let Some((slots, proof)) = request_result else {
-                    tracing::error!("Failed to get account range");
+                    tracing::error!("Failed to get storage range");
                     let task_result = TaskResult {
                         start_index: start,
                         account_storages: chunk_account_hashes.iter().map(|_| vec![]).collect(),
