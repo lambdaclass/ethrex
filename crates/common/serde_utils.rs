@@ -46,19 +46,27 @@ pub mod u256 {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(d)?;
-        U256::from_str_radix(value.trim_start_matches("0x:bigint ").trim_start_matches("0x"), 16)
-            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+        U256::from_str_radix(
+            value
+                .trim_start_matches("0x"),
+            16,
+        )
+        .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
     }
 
     pub fn deser_hex_str_opt<'de, D>(d: D) -> Result<Option<U256>, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         let s = Option::<String>::deserialize(d)?;
         match s {
-            Some(s) => U256::from_str_radix(s.trim_start_matches("0x:bigint ").trim_start_matches("0x"), 16)
-            .map_err(|_| D::Error::custom("Failed to deserialize u256 value")).map(Some),
-            None => Ok(None)
+            Some(s) => U256::from_str_radix(
+                s.trim_start_matches("0x"),
+                16,
+            )
+            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+            .map(Some),
+            None => Ok(None),
         }
     }
 
@@ -68,8 +76,12 @@ pub mod u256 {
     {
         let value = String::deserialize(d)?;
         if value.starts_with("0x") {
-            U256::from_str_radix(value.trim_start_matches("0x"), 16)
-                .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
+            U256::from_str_radix(
+                value
+                    .trim_start_matches("0x"),
+                16,
+            )
+            .map_err(|_| D::Error::custom("Failed to deserialize u256 value"))
         } else {
             U256::from_dec_str(&value).map_err(|e| D::Error::custom(e.to_string()))
         }
@@ -253,8 +265,6 @@ pub mod u64 {
                 .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
         }
     }
-
-
 }
 
 pub mod u128 {
@@ -277,6 +287,38 @@ pub mod u128 {
             S: Serializer,
         {
             serializer.serialize_str(&format!("{value:#x}"))
+        }
+    }
+}
+
+pub mod h256 {
+    use super::*;
+
+    pub mod vec {
+        use std::str::FromStr;
+
+        use keccak_hash::H256;
+
+        use super::*;
+        pub fn deser_opt_vec<'de, D>(d: D) -> Result<Option<Vec<H256>>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s = Option::<Vec<String>>::deserialize(d)?;
+            match s {
+                Some(s) => {
+                    let mut ret = Vec::new();
+                    for s in s {
+                        ret.push(H256::from_str(s.trim_start_matches("0x")).map_err(|err| {
+                            serde::de::Error::custom(format!(
+                                "error parsing H256 when deserializing H256 vec optional: {err}"
+                            ))
+                        })?);
+                    }
+                    Ok(Some(ret))
+                }
+                None => Ok(None),
+            }
         }
     }
 }

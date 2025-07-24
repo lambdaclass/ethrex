@@ -1,9 +1,8 @@
 use crate::runner_v2::{
     deserialize::{
         deserialize_access_lists, deserialize_authorization_lists,
-        deserialize_ef_post_value_indexes, deserialize_h256_vec_optional_safe, deserialize_post,
-        deserialize_transaction_expected_exception, deserialize_u256_valued_hashmap_safe,
-        deserialize_u256_vec_safe,
+        deserialize_ef_post_value_indexes, deserialize_post,
+        deserialize_transaction_expected_exception,
     },
     error::RunnerError,
 };
@@ -14,8 +13,13 @@ use ethrex_common::{
     Address, H256, U256,
     serde_utils::{
         bytes::{deserialize as deserialize_bytes, vec::deserialize as deserialize_bytes_vec},
+        h256::vec::deser_opt_vec as deserialize_h256_vec_option,
         u64::hex_str::{deser_u64_vec as deserialize_u64_vec, deserialize as deserialize_u64},
-        u256::{deser_hex_str as deserialize_u256, deser_hex_str_opt as deserialize_option_u256},
+        u256::{
+            deser_hex_str as deserialize_u256, deser_hex_str_opt as deserialize_option_u256,
+            hashmap::deserialize as deserialize_u256_hashmap,
+            vec::deserialize as deserialize_u256_vec,
+        },
     },
     types::{AuthorizationTuple, Fork, Genesis, GenesisAccount, TxKind},
 };
@@ -346,7 +350,7 @@ pub struct AccountState {
     pub code: Bytes,
     #[serde(deserialize_with = "deserialize_u64")]
     pub nonce: u64,
-    #[serde(deserialize_with = "deserialize_u256_valued_hashmap_safe")]
+    #[serde(deserialize_with = "deserialize_u256_hashmap")]
     pub storage: HashMap<U256, U256>,
 }
 
@@ -462,7 +466,7 @@ pub struct RawTransaction {
     pub secret_key: H256,
     pub sender: Address,
     pub to: TxKind,
-    #[serde(deserialize_with = "deserialize_u256_vec_safe")]
+    #[serde(deserialize_with = "deserialize_u256_vec")]
     pub value: Vec<U256>,
     #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub max_fee_per_gas: Option<U256>,
@@ -470,7 +474,7 @@ pub struct RawTransaction {
     pub max_priority_fee_per_gas: Option<U256>,
     #[serde(default, deserialize_with = "deserialize_option_u256")]
     pub max_fee_per_blob_gas: Option<U256>,
-    #[serde(default, deserialize_with = "deserialize_h256_vec_optional_safe")]
+    #[serde(default, deserialize_with = "deserialize_h256_vec_option")]
     pub blob_versioned_hashes: Option<Vec<H256>>,
     #[serde(default, deserialize_with = "deserialize_access_lists")]
     pub access_lists: Option<Vec<Vec<AccessListItem>>>,
