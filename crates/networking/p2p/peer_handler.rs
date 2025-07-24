@@ -415,11 +415,6 @@ impl PeerHandler {
                 .unwrap();
             });
 
-            // 4) assign the tasks to the peers
-            //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-
-            // TODO!!! spawn a task to download the chunk, calling `download_chunk_from_peer`
-
             if new_last_metrics_update >= Duration::from_secs(1) {
                 last_metrics_update = SystemTime::now();
             }
@@ -465,17 +460,7 @@ impl PeerHandler {
             }
         }
 
-        // 4) assign the tasks to the peers
-        //     4.1) launch a tokio task with the chunk and a peer ready (giving the channels)
-        //     4.2) mark the peer as busy
-        //     4.3) wait for the response and handle it
-
-        // 5) loop until all the chunks are received (retry to get the chunks that failed)
-
-        // ret.sort_by(|x, y| x.number.cmp(&y.number));
-        // info!("Last header downloaded: {:?} ?? ", ret.last().unwrap());
         Some(ret)
-        // std::process::exit(0);
     }
 
     /// given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
@@ -845,17 +830,6 @@ impl PeerHandler {
                 }
             }
 
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
-
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
                     peer_id.eq(&free_peer_id).then_some(peer_channels.clone())
@@ -1149,17 +1123,6 @@ impl PeerHandler {
                     free_peer_id = *peer_id;
                 }
             }
-
-            // let peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
-
-            // let mut score_values : Vec<i64> = Vec::from_iter(scores.values().cloned());
-            // score_values.sort();
-
-            // let middle_value = score_values.get(score_values.len() / 2).unwrap_or(&0);
-
-            // if (*peer_id_score < 0) && (*peer_id_score < *middle_value) {
-            //     continue;
-            // }
 
             let Some(free_downloader_channels) =
                 peer_channels.iter().find_map(|(peer_id, peer_channels)| {
@@ -1542,14 +1505,6 @@ impl PeerHandler {
             if free_downloaders.is_empty() {
                 continue;
             }
-
-            // let Some(free_peer_id) = free_downloaders
-            //     .get(random::<usize>() % free_downloaders.len())
-            //     .map(|(peer_id, _)| *peer_id)
-            // else {
-            //     debug!("No free downloaders available, waiting for a peer to finish, retrying");
-            //     continue;
-            // };
 
             let (mut free_peer_id, _) = free_downloaders[0];
 
