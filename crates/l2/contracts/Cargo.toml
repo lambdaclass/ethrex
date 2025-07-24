@@ -46,3 +46,7 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+
+[build-dependencies]
+ethrex-sdk = { path = "../../l2/sdk" }
+hex.workspace = true
