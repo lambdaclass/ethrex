@@ -97,7 +97,7 @@ impl BlockProducer {
         block_producer
             .cast(InMessage::Produce)
             .await
-            .map_err(BlockProducerError::GenServerError)?;
+            .map_err(BlockProducerError::InternalError)?;
         Ok(())
     }
 

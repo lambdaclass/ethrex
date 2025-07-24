@@ -61,7 +61,7 @@ impl MetricsGatherer {
         metrics
             .cast(InMessage::Gather)
             .await
-            .map_err(MetricsGathererError::GenServerError)
+            .map_err(MetricsGathererError::InternalError)
     }
 
     async fn gather_metrics(&mut self) -> Result<(), MetricsGathererError> {
