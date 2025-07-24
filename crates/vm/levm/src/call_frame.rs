@@ -384,7 +384,7 @@ impl<'a> VM<'a> {
     }
 
     pub fn is_initial_call_frame(&self) -> bool {
-        self.call_frames.len() == 1
+        self.call_frames.is_empty()
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
