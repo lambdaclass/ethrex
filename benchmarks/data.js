@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753376666010,
+  "lastUpdate": 1753377954900,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12421,6 +12421,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "Risc0, RTX A6000",
             "value": 0.0013888990634755463,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7e6185d658f7b4f4871f56f044e39aa26528ab11",
+          "message": "perf(levm): add shortcut for precompile calls (#3802)\n\n**Motivation**\n\nCurrently, calls to precompiles generate a callframe (including a stack\nand a new memory).\n\n**Description**\n\nAvoid creating call frames for precompiles.",
+          "timestamp": "2025-07-24T15:36:42Z",
+          "tree_id": "c1f806a73e4a7f1e7ef1c030fd1caee99ffb8a2c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7e6185d658f7b4f4871f56f044e39aa26528ab11"
+        },
+        "date": 1753377954467,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001346853683148335,
             "unit": "Mgas/s"
           }
         ]
