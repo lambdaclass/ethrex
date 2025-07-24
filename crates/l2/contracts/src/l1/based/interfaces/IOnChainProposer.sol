@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
+/// @title Holds verified batch information.
 struct VerifiedBatchInfo {
+    /// @notice The address of the prover.
     address prover;
+    /// @notice The amount of gas proven for this batch.
     uint256 gasProven;
+    /// @notice The timestamp of the verification.
+    uint256 verificationTimestamp;
 }
 
 /// @title Interface for the OnChainProposer contract.
@@ -104,7 +109,7 @@ interface IOnChainProposer {
     /// @param batchNumber The batch number to add.
     /// @param prover The prover address.
     /// @param gasProven The amount of gas proven.
-    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) external;
+    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) internal;
 
     /// @notice Get the total gas proven across all verified batches.
     /// @return The total amount of gas proven.

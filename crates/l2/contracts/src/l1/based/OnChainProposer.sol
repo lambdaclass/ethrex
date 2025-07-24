@@ -383,12 +383,8 @@ contract OnChainProposer is
         lastVerifiedBatch = batchNumber;
 
         // Update verified batches with the new batch
-        // TODO: Should we check that this prover is registered somewhere?
         address message_sender = msg.sender;
-        _verifiedBatches[batchNumber] = VerifiedBatchInfo(
-            message_sender,
-            gasProven
-        );
+        addVerifiedBatch(batchNumber, message_sender, gasProven);
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
@@ -473,16 +469,25 @@ contract OnChainProposer is
     }
 
     // @inheritdoc IOnChainProposer
-    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) public {
-        _verifiedBatches[batchNumber] = VerifiedBatchInfo({prover: prover, gasProven: gasProven});
+    function addVerifiedBatch(uint256 batchNumber, address prover, uint256 gasProven) internal {
+        _verifiedBatches[batchNumber] = VerifiedBatchInfo({
+            prover: prover,
+            gasProven: gasProven,
+            verificationTimestamp: block.timestamp
+        });
     }
 
     // @inheritdoc IOnChainProposer
     function getTotalGasProven() public view returns (uint256) {
         uint256 totalGasProven = 0;
-        // TODO: we should only iterate through recent batches (i.e batches proven in the last day)
+        uint256 oneDayAgo = block.timestamp - 1 days;
+        uint256 lastVerifiedBatch = lastVerifiedBatch();
+
+        // only take into account batches proven in the last day
         for (uint256 i = 0; i <= lastVerifiedBatch; i++) {
-            totalGasProven += _verifiedBatches[i].gasProven;
+            if (_verifiedBatches[i].verificationTimestamp >= oneDayAgo) {
+                totalGasProven += _verifiedBatches[i].gasProven;
+            }
         }
         return totalGasProven;
     }

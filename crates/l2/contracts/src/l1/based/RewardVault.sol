@@ -3,11 +3,13 @@ pragma solidity =0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "./interfaces/IOnChainProposer.sol";
 
 contract RewardVault is Initializable {
     IOnChainProposer public onChainProposer;
-    IERC20 public rewardToken;
+    // It must implement IERC20 and IERC20Metadata
+    address public rewardToken;
 
     // TODO: we should replace this value with a mechanism that changes over time.
     uint256 public tokensUnlockedPerDay;
@@ -40,10 +42,12 @@ contract RewardVault is Initializable {
 
         // calculate the rewards for the prover and transfer them
         uint256 totalGasProven = onChainProposer.getTotalGasProven();
-        // TODO: we should use the decimals of the reward token instead of hardcoding 18.
-        uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** 18;
+        uint256 dailyRewardPool = tokensUnlockedPerDay * 10 ** IERC20Metadata(rewardToken).decimals();
         uint256 totalRewards = dailyRewardPool * gasProvenByClaimer / totalGasProven;
 
+        // TODO: mark the claimer as having claimed
+        // to prevent double claiming.
+        
         // rewardToken.transfer(sender, totalRewards);
         claimed = true;
     }
