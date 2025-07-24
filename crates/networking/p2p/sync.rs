@@ -406,33 +406,6 @@ impl Syncer {
                     }
                 }).await.expect("foo");
 
-                let mut healing_done = false;
-                while !healing_done {
-                    info!("started healing pivot movement");
-                    const SNAP_LIMIT: u64 = 128;
-                    let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
-                    while current_unix_time() > time_limit {
-                        info!("We are stale, updating pivot");
-                        let Some(header) = self
-                            .peers
-                            .get_block_header(pivot_header.number + SNAP_LIMIT - 1)
-                            .await
-                        else {
-                            info!("Received None pivot_header");
-                            continue;
-                        };
-                        pivot_header = header;
-                        info!(
-                            "New pivot block number: {}, header: {:?}",
-                            pivot_header.number, pivot_header
-                        );
-                        time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
-                    }
-                    let state_root = pivot_header.state_root;
-                    healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
-                    info!("healing_done: {healing_done}");
-                }
-
                 let storages_store_time =
                     Instant::now().saturating_duration_since(storages_store_start);
                 info!("Finished storing storage tries in: {storages_store_time:?}");
@@ -467,6 +440,33 @@ impl Syncer {
                 .await
                 .unwrap()
                 .unwrap();
+
+                let mut healing_done = false;
+                while !healing_done {
+                    info!("started healing pivot movement");
+                    const SNAP_LIMIT: u64 = 128;
+                    let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
+                    while current_unix_time() > time_limit {
+                        info!("We are stale, updating pivot");
+                        let Some(header) = self
+                            .peers
+                            .get_block_header(pivot_header.number + SNAP_LIMIT - 1)
+                            .await
+                        else {
+                            info!("Received None pivot_header");
+                            continue;
+                        };
+                        pivot_header = header;
+                        info!(
+                            "New pivot block number: {}, header: {:?}",
+                            pivot_header.number, pivot_header
+                        );
+                        time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
+                    }
+                    let state_root = pivot_header.state_root;
+                    healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+                    info!("healing_done: {healing_done}");
+                }
 
                 let block = store
                     .get_block_by_hash(all_block_hashes[pivot_idx])
