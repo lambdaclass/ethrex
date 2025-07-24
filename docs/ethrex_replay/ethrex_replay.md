@@ -102,7 +102,7 @@ make prove-batch-risc0-gpu
 
 ### Execute a transaction
 
-Required: `RPC_URL`, `TX_HASH`, `NETWORK`.
+Required: `RPC_URL`, `TX_HASH`, `NETWORK`. 
 Optionally: `L2=true` (if the transaction is L2-specific)
 
 ```sh
