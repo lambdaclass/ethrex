@@ -99,6 +99,10 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
+/// # Filter for jump target offsets.
+///
+/// Used to filter which program offsets are not valid jump targets. Implemented as a sorted list of
+/// addresses of bytes `0x5B` (`JUMPDEST`) within push constants.
 #[derive(Debug)]
 pub struct JumpTargetFilter {
     filter: Vec<usize>,
@@ -109,6 +113,7 @@ pub struct JumpTargetFilter {
 }
 
 impl JumpTargetFilter {
+    /// Create an empty `JumpTargetFilter`.
     pub fn new(bytecode: Bytes) -> Self {
         Self {
             filter: Vec::new(),
@@ -119,6 +124,9 @@ impl JumpTargetFilter {
         }
     }
 
+    /// Check whether a target jump address is blacklisted or not.
+    ///
+    /// This method may potentially grow the filter if the requested address is out of range.
     pub fn is_blacklisted(&mut self, address: usize) -> bool {
         if let Some(delta) = address.checked_sub(self.offset) {
             // It is not realistic to expect a bytecode offset to overflow an `usize`.
@@ -149,30 +157,6 @@ impl JumpTargetFilter {
         }
     }
 }
-
-// /// Generates blacklist of jump destinations given some bytecode.
-// /// This is a necessary calculation because of PUSH opcodes.
-// /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
-// /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-// pub fn get_invalid_jump_destinations(code: &Bytes) -> Result<Box<[usize]>, VMError> {
-//     let mut address_blacklist = Vec::new();
-
-//     let mut iter = code.iter().enumerate();
-//     while let Some((_, &value)) = iter.next() {
-//         let op_code = Opcode::from(value);
-//         if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op_code) {
-//             #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
-//             let num_bytes = (value - u8::from(Opcode::PUSH0)) as usize;
-//             address_blacklist.extend(
-//                 (&mut iter)
-//                     .take(num_bytes)
-//                     .filter_map(|(pc, &value)| (value == u8::from(Opcode::JUMPDEST)).then_some(pc)),
-//             );
-//         }
-//     }
-
-//     Ok(address_blacklist.into_boxed_slice())
-// }
 
 // ================== Backup related functions =======================
 
