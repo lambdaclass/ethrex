@@ -112,11 +112,19 @@ impl PeerHandler {
         &self,
         capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
-        let mut peer_channels = self.peer_table.get_peer_channels(capabilities).await;
+        let scores = self.peer_scores.lock().await;
+        let (mut free_peer_id, mut free_peer_channel) = self.peer_table.get_peer_channels(capabilities).await.first().unwrap().clone();
 
-        peer_channels.shuffle(&mut rand::rngs::OsRng);
+        for (peer_id, channel) in self.peer_table.get_peer_channels(capabilities).await.iter() {
+            let peer_id_score = scores.get(&peer_id).unwrap_or(&0);
+            let max_peer_id_score = scores.get(&free_peer_id).unwrap_or(&0);
+            if peer_id_score >= max_peer_id_score {
+                free_peer_id = *peer_id;
+                free_peer_channel = channel.clone();
+            }
+        }
 
-        peer_channels.first().cloned()
+        Some((free_peer_id, free_peer_channel.clone())) 
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
