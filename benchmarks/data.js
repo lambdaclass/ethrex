@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1753370188143,
+  "lastUpdate": 1753370993067,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12186,6 +12186,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007670873563218391,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39842759+gianbelinche@users.noreply.github.com",
+            "name": "Gianbelinche",
+            "username": "gianbelinche"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "df3a9bd81724520f527cc837775419629eebcfec",
+          "message": "feat(l2): enhance monitor performance (#3757)\n\n**Motivation**\nIf a sequencer runs for a long time, it stops, and we run it again\nactivating the monitor, it takes a long time to start and is slow.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\nMakes the monitor load and work faster by simplifying the batches\nprocessing.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n**How to Test**\n\n- Run a Sequencer (I suggest `make restart` in `crates/l2`).\n- Run the prover with `make init-prover` in `crates/l2`.\n- Let the sequencer ran for some time (at least 60 batches)\n- Kill the sequencer\n- Add `--monitor` to the `init-l2-no-metrics` target in\n`crates/l2/Makefile`.\n- Run `make init-l2-no-metrics`\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-07-24T14:16:59Z",
+          "tree_id": "aea4bef1fd38b28adda61ffe55e827444f640da9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/df3a9bd81724520f527cc837775419629eebcfec"
+        },
+        "date": 1753370978954,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Risc0, RTX A6000",
+            "value": 0.001330739780658026,
             "unit": "Mgas/s"
           }
         ]
