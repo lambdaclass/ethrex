@@ -55,11 +55,6 @@ pub struct PeerHandler {
     peer_scores: Arc<Mutex<HashMap<H256, i64>>>,
 }
 
-pub enum BlockRequestOrder {
-    OldToNew,
-    NewToOld,
-}
-
 impl PeerHandler {
     pub fn new(peer_table: Kademlia) -> PeerHandler {
         Self {
@@ -424,7 +419,7 @@ impl PeerHandler {
         debug!(
             "Downloaded {} headers in {} seconds",
             ret.len(),
-            format_duration(elapsed)
+            super::utils::format_duration(elapsed)
         );
 
         {
@@ -502,7 +497,7 @@ impl PeerHandler {
         .map_err(|_| "Failed to receive block headers")?
         .ok_or("Block no received".to_owned())?;
 
-        if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+        if super::utils::are_block_headers_chained(&block_headers) {
             Ok(block_headers)
         } else {
             warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
@@ -1884,22 +1879,4 @@ impl PeerHandler {
 
     // TODO: Implement the logic to remove a peer from the peer table
     pub async fn remove_peer(&self, _peer_id: H256) {}
-}
-
-/// Validates the block headers received from a peer by checking that the parent hash of each header
-/// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
-    block_headers.windows(2).all(|headers| match order {
-        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
-        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
-    })
-}
-
-fn format_duration(duration: Duration) -> String {
-    let total_seconds = duration.as_secs();
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    format!("{hours:02}h {minutes:02}m {seconds:02}s")
 }
