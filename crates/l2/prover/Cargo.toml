@@ -35,10 +35,10 @@ ethrex-sdk.workspace = true
 zkvm_interface = { path = "./zkvm/interface", default-features = false }
 
 risc0-zkvm = { version = "2.1.0", optional = true }
-risc0-zkp = {version = "2.0.1", optional = true }
+risc0-zkp = { version = "2.0.1", optional = true }
 
-sp1-sdk = { version = "5.0.0", optional = true }
-sp1-recursion-gnark-ffi = { version = "5.0.0", optional = true }
+sp1-sdk = { version = "=5.0.8", optional = true }
+sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true
@@ -55,11 +55,7 @@ path = "src/main.rs"
 # TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
 default = ["l2"]
 # prover backends
-risc0 = [
-  "zkvm_interface/risc0",
-  "dep:risc0-zkvm",
-  "dep:risc0-zkp",
-]
+risc0 = ["zkvm_interface/risc0", "dep:risc0-zkvm", "dep:risc0-zkp"]
 sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
