@@ -1,10 +1,7 @@
 mod bytecode_fetcher;
 mod fetcher_queue;
 mod state_healing;
-mod state_sync;
-mod storage_fetcher;
 mod storage_healing;
-mod trie_rebuild;
 
 use crate::{
     metrics::METRICS,
@@ -20,8 +17,6 @@ use ethrex_common::{
 use ethrex_rlp::{encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
-use state_healing::heal_state_trie;
-use state_sync::state_sync;
 use std::{
     array,
     cmp::min,
@@ -31,14 +26,12 @@ use std::{
     },
     time::SystemTime,
 };
-use storage_healing::storage_healer;
 use tokio::{
     sync::mpsc::error::SendError,
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use trie_rebuild::TrieRebuilder;
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -100,7 +93,6 @@ pub struct Syncer {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
@@ -117,7 +109,6 @@ impl Syncer {
             snap_enabled,
             peers,
             last_snap_pivot: 0,
-            trie_rebuilder: None,
             cancel_token,
             blockchain,
         }
@@ -130,7 +121,6 @@ impl Syncer {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::dummy(),
             last_snap_pivot: 0,
-            trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
@@ -953,101 +943,6 @@ impl Syncer {
         store.update_latest_block_number(pivot_number).await?;
 
         Ok(())
-    }
-
-    // Downloads the latest state trie and all associated storage tries & bytecodes from peers
-    // Rebuilds the state trie and all storage tries based on the downloaded data
-    // Performs state healing in order to fix all inconsistencies with the downloaded state
-    // Returns the success status, if it is true, then the state is fully consistent and
-    // new blocks can be executed on top of it, if false then the state is still inconsistent and
-    // snap sync must be resumed on the next sync cycle
-    async fn snap_sync_old(&mut self, state_root: H256, store: Store) -> Result<bool, SyncError> {
-        // Begin the background trie rebuild process if it is not active yet or if it crashed
-        if !self
-            .trie_rebuilder
-            .as_ref()
-            .is_some_and(|rebuilder| rebuilder.alive())
-        {
-            self.trie_rebuilder = Some(TrieRebuilder::startup(
-                self.cancel_token.clone(),
-                store.clone(),
-            ));
-        };
-        // Spawn storage healer earlier so we can start healing stale storages
-        // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
-        let storage_healer_cancell_token = self.cancel_token.child_token();
-        // Create an AtomicBool to signal to the storage healer whether state healing has ended
-        let state_healing_ended = Arc::new(AtomicBool::new(false));
-        let storage_healer_handler = tokio::spawn(storage_healer(
-            state_root,
-            self.peers.clone(),
-            store.clone(),
-            storage_healer_cancell_token.clone(),
-            state_healing_ended.clone(),
-        ));
-        // Perform state sync if it was not already completed on a previous cycle
-        // Retrieve storage data to check which snap sync phase we are in
-        let key_checkpoints = store.get_state_trie_key_checkpoint().await?;
-        // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
-        if key_checkpoints.is_none()
-            || key_checkpoints.is_some_and(|ch| {
-                ch.into_iter()
-                    .zip(STATE_TRIE_SEGMENTS_END.into_iter())
-                    .any(|(ch, end)| ch < end)
-            })
-        {
-            let storage_trie_rebuilder_sender = self
-                .trie_rebuilder
-                .as_ref()
-                .ok_or(SyncError::Trie(TrieError::InconsistentTree))?
-                .storage_rebuilder_sender
-                .clone();
-
-            let stale_pivot = state_sync(
-                state_root,
-                store.clone(),
-                self.peers.clone(),
-                key_checkpoints,
-                storage_trie_rebuilder_sender,
-            )
-            .await?;
-            if stale_pivot {
-                warn!("Stale Pivot, aborting state sync");
-                storage_healer_cancell_token.cancel();
-                storage_healer_handler.await??;
-                return Ok(false);
-            }
-        }
-        // Wait for the trie rebuilder to finish
-        info!("Waiting for the trie rebuild to finish");
-        let rebuild_start = Instant::now();
-        let rebuilder = self
-            .trie_rebuilder
-            .take()
-            .ok_or(SyncError::Trie(TrieError::InconsistentTree))?;
-        rebuilder.complete().await?;
-
-        info!(
-            "State trie rebuilt from snapshot, overtime: {}",
-            rebuild_start.elapsed().as_secs()
-        );
-        // Clear snapshot
-        store.clear_snapshot().await?;
-
-        // Perform Healing
-        let state_heal_complete =
-            heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
-        // Wait for storage healer to end
-        if state_heal_complete {
-            state_healing_ended.store(true, Ordering::Relaxed);
-        } else {
-            storage_healer_cancell_token.cancel();
-        }
-        let storage_heal_complete = storage_healer_handler.await??;
-        if !(state_heal_complete && storage_heal_complete) {
-            warn!("Stale pivot, aborting healing");
-        }
-        Ok(state_heal_complete && storage_heal_complete)
     }
 }
 

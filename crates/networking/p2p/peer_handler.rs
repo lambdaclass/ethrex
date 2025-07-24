@@ -13,7 +13,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use rand::{random, seq::SliceRandom};
-use serde::de::EnumAccess;
 use tokio::sync::Mutex;
 
 use crate::{
