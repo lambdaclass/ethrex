@@ -8,7 +8,10 @@
 //! This process will stop once it has fixed all trie inconsistencies or when the pivot becomes stale, in which case it can be resumed on the next cycle
 //! All healed accounts will also have their bytecodes and storages healed by the corresponding processes
 
-use std::{cmp::min, time::{Duration, Instant}};
+use std::{
+    cmp::min,
+    time::{Duration, Instant},
+};
 
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -17,9 +20,7 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
 use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, info};
 
-use crate::{
-    peer_handler::PeerHandler, sync::node_missing_children,
-};
+use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;

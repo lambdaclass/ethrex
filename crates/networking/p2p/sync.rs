@@ -6,6 +6,7 @@ use crate::{
     peer_handler::{HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler},
     utils::current_unix_time,
 };
+use aes::cipher::consts::U2;
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     BigEndianHash, H256, U256,
@@ -445,32 +446,32 @@ impl Syncer {
             scores.clone()
         };
 
-        let mut healing_done = false;
-        while !healing_done {
-            info!("started healing pivot movement");
-            const SNAP_LIMIT: u64 = 128;
-            let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
-            while current_unix_time() > time_limit {
-                info!("We are stale, updating pivot");
-                let Some(header) = self
-                    .peers
-                    .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores)
-                    .await
-                else {
-                    info!("Received None pivot_header");
-                    continue;
-                };
-                pivot_header = header;
-                info!(
-                    "New pivot block number: {}, header: {:?}",
-                    pivot_header.number, pivot_header
-                );
-                time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
-            }
-            let state_root = pivot_header.state_root;
-            healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
-            info!("healing_done: {healing_done}");
-        }
+        // let mut healing_done = false;
+        // while !healing_done {
+        //     info!("started healing pivot movement");
+        //     const SNAP_LIMIT: u64 = 128;
+        //     let mut time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT);
+        //     while current_unix_time() > time_limit {
+        //         info!("We are stale, updating pivot");
+        //         let Some(header) = self
+        //             .peers
+        //             .get_block_header(pivot_header.number + SNAP_LIMIT - 1, &scores)
+        //             .await
+        //         else {
+        //             info!("Received None pivot_header");
+        //             continue;
+        //         };
+        //         pivot_header = header;
+        //         info!(
+        //             "New pivot block number: {}, header: {:?}",
+        //             pivot_header.number, pivot_header
+        //         );
+        //         time_limit = pivot_header.timestamp + (12 * SNAP_LIMIT); //TODO remove hack
+        //     }
+        //     let state_root = pivot_header.state_root;
+        //     healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+        //     info!("healing_done: {healing_done}");
+        // }
 
         let empty = *EMPTY_TRIE_HASH;
 
@@ -501,8 +502,18 @@ impl Syncer {
         let (computed_state_root, bytecode_hashes) = tokio::task::spawn_blocking(move || {
             let mut bytecode_hashes = vec![];
             let mut trie = trie;
-
-            for (account_hash, account) in account_hashes.into_iter().zip(account_states) {
+            let mut i = 0;
+            let accounts_len = account_hashes.len();
+            for (account_hash, mut account) in account_hashes.into_iter().zip(account_states) {
+                // TODO: remove this, just for debugging ❌❌❌❌❌❌❌❌❌❌
+                if i == accounts_len - 1 {
+                    info!("Modifying the last account");
+                    account.nonce += 1;
+                    account.balance = U256::max_value();
+                    account.storage_root = H256::repeat_byte(0xff);
+                    account.code_hash = H256::repeat_byte(0xff);
+                }
+                i += 1;
                 if account.code_hash != *EMPTY_KECCACK_HASH {
                     bytecode_hashes.push(account.code_hash);
                 }
@@ -523,6 +534,13 @@ impl Syncer {
 
         info!("Expected state root: {state_root:?}");
         info!("Computed state root: {computed_state_root:?} in {account_store_time:?}");
+
+        let mut healing_done = false;
+        info!("Starting healing");
+        while !healing_done {
+            healing_done = heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+        }
+        info!("Finished healing");
 
         let storages_store_start = Instant::now();
 
