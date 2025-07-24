@@ -130,9 +130,15 @@ DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
 DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
+	@if [ -z "$$G" ]; then \
+		GPU=""; \
+	else \
+		GPU=",gpu"; \
+	fi; \
+
 	export $(shell cat .env | xargs); \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "rollup_storage_sql,metrics" -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "$$PROVER$$GPU,rollup_storage_sql,metrics" -- \
 	l2 init \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -164,20 +170,24 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
-init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	../../target/release/ethrex_prover \
-	--http.addr 127.0.0.1 \
-  	--http.port 3900 \
-	--log.level debug
+init-prover: ../../target/release/ethrex ## 🚀 Initializes the Prover
+	@if [ -z "$$PROVER" ]; then \
+		PROVER="exec"; \
+	fi; \
+	BACKEND="$$PROVER" \
+	../../target/release/ethrex l2 prover \
+		--backend "$$PROVER" \
+		--http.addr 127.0.0.1 \
+		--http.port 3900 \
+		--log.level debug
 
 build-prover:
-	rm -f ../../target/release/ethrex_prover
-	$(MAKE) ../../target/release/ethrex_prover
+	rm -f ../../target/release/ethrex
+	$(MAKE) ../../target/release/ethrex
 
-../../target/release/ethrex_prover: $(PROVER_SRC_FILES)
+../../target/release/ethrex: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
-		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
+		echo "Warn: ProverType (PROVER) is missing. Building only with exec mode."; \
 		echo "Please provide it as an argument:"; \
 		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
 		echo "The prover can also be run with GPU (G)"; \
@@ -189,10 +199,10 @@ build-prover:
 		GPU=",gpu"; \
 	fi; \
 
-	RUSTFLAGS='-C target-cpu=native' \
-	cargo build --release --features "$$PROVER$$GPU,l2" \
-	--manifest-path ./prover/Cargo.toml  \
-	--bin ethrex_prover
+	cargo build --release \
+		--manifest-path ../../Cargo.toml \
+		--bin ethrex \
+		--features "$$PROVER$$GPU,rollup_storage_sql,metrics"
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
