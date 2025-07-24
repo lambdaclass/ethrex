@@ -347,4 +347,6 @@ pub enum MonitorError {
     NoItemsInTable,
     #[error("RPC List can't be empty")]
     RPCListEmpty,
+    #[error("Error converting batch window")]
+    BatchWindow,
 }
