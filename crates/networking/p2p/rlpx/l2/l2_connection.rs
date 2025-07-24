@@ -220,7 +220,12 @@ pub(crate) async fn send_new_block(established: &mut Established) -> Result<(), 
                     let mut sig = [0u8; 65];
                     sig[..64].copy_from_slice(&signature);
                     sig[64] = recovery_id;
-                    Signature::from_slice(&sig)
+                    let signature = Signature::from_slice(&sig);
+                    l2_state
+                        .store_rollup
+                        .store_signature_by_block(new_block.hash(), signature)
+                        .await?;
+                    signature
                 }
             };
             NewBlock {
@@ -406,7 +411,15 @@ pub(crate) async fn send_sealed_batch(established: &mut Established) -> Result<(
             }) {
             Ok(Some(recovered_sig)) => BatchSealed::new(batch, recovered_sig),
             Ok(None) | Err(_) => {
-                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())?
+                let msg = BatchSealed::from_batch_and_key(
+                    batch,
+                    l2_state.committer_key.clone().as_ref(),
+                )?;
+                l2_state
+                    .store_rollup
+                    .store_signature_by_batch(msg.batch.number, msg.signature)
+                    .await?;
+                msg
             }
         }
     };
